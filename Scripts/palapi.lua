@@ -231,6 +231,10 @@ function M.camp_pals(camp)
                         name = M.pal_name(param),
                         species = M.pal_species(param),
                         slot_index = i,
+                        -- Identity that survives the roster being reordered.
+                        -- Slot position only stands in when the guid will
+                        -- not read.
+                        key = M.guid_key(id) or ("slot" .. i),
                     }
                 end
             end

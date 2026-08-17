@@ -28,7 +28,11 @@ local function script_dir()
     return path:match("^(.*[\\/])") or ""
 end
 
-local DIR = script_dir()
+-- Output goes to the mod root rather than Scripts/, because redeploying
+-- replaces Scripts/ wholesale and would take the log with it.
+local SCRIPT_DIR = script_dir()
+local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
+
 log.file_path = DIR .. "priority.log"
 
 -- ---------------------------------------------------------------------------

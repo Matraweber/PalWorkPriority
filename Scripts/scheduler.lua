@@ -36,18 +36,34 @@ local function priority_for(cfg, pal, work_name)
     return cfg.work_priority[work_name]
 end
 
--- Highest suitability rank wins; ties break on slot order so the result is
--- stable between passes and pals do not shuffle jobs for no reason.
+-- Picks the pal that should take this work.
+--
+-- An explicit pal_overrides entry outranks suitability: setting
+-- ["Diggy"] = { Mining = 1 } means you want Diggy mining even if a better
+-- miner is standing next to them. Only when two pals carry the same
+-- priority does raw suitability rank decide, and slot order breaks the
+-- remaining ties so repeat passes stay stable and pals do not shuffle jobs
+-- for no reason.
 local function best_candidate(cfg, pals, claimed, work_name, value)
-    local best, best_rank = nil, 0
+    local best, best_prio, best_rank = nil, nil, 0
 
     for _, pal in ipairs(pals) do
-        if not claimed[pal.slot_index] then
+        if not claimed[pal.key] then
             local prio = priority_for(cfg, pal, work_name)
-            if prio ~= nil and prio ~= false then
+            if type(prio) == "number" then
                 local rank = api.suitability_rank(pal.param, value)
-                if rank >= cfg.min_suitability_rank and rank > best_rank then
-                    best, best_rank = pal, rank
+                if rank >= cfg.min_suitability_rank then
+                    local wins
+                    if best == nil then
+                        wins = true
+                    elseif prio ~= best_prio then
+                        wins = prio < best_prio
+                    else
+                        wins = rank > best_rank
+                    end
+                    if wins then
+                        best, best_prio, best_rank = pal, prio, rank
+                    end
                 end
             end
         end
@@ -138,10 +154,10 @@ local function run_camp(cfg, camp, stats)
             local pal, rank = best_candidate(cfg, pals, claimed, bucket.name, bucket.value)
 
             if pal then
-                claimed[pal.slot_index] = true
+                claimed[pal.key] = true
 
                 local wkey = work_key(w)
-                if last_assignment[wkey] == pal.slot_index then
+                if last_assignment[wkey] == pal.key then
                     stats.unchanged = stats.unchanged + 1
                 else
                     local line = string.format(
@@ -154,7 +170,7 @@ local function run_camp(cfg, camp, stats)
                     else
                         local ok, err = api.assign(camp_id, api.work_id(w), pal.id)
                         if ok then
-                            last_assignment[wkey] = pal.slot_index
+                            last_assignment[wkey] = pal.key
                             stats.assigned = stats.assigned + 1
                             log.info(line)
                         else

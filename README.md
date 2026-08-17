@@ -78,6 +78,10 @@ pal_overrides = {
 }
 ```
 
+An override outranks suitability. `["Diggy"] = { Mining = 1 }` puts Diggy on mining even when a
+better-suited miner is standing next to them; rank only decides between Pals that share the same
+priority. `false` removes the Pal from that work type entirely.
+
 `min_suitability_rank` stops low-rank Pals from occupying jobs a specialist should be doing.
 
 ## Chat commands
