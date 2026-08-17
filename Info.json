@@ -1,0 +1,23 @@
+{
+  "ModName": "Pal Work Priority",
+  "PackageName": "PalWorkPriority",
+  "Thumbnail": "thumbnail.png",
+  "Version": "0.1.0",
+  "MinRevision": 82182,
+  "Author": "Matraweber",
+  "Dependencies": [
+    3625223587
+  ],
+  "Tags": [
+    "Gameplay",
+    "Quality of Life"
+  ],
+  "InstallRule": [
+    {
+      "Type": "Scripts",
+      "Targets": [
+        "./Scripts/"
+      ]
+    }
+  ]
+}
