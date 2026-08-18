@@ -398,4 +398,73 @@ function M.request_work_replication(camp_id, on)
     return ok
 end
 
+-- ---------------------------------------------------------------------------
+-- Base storage
+-- ---------------------------------------------------------------------------
+
+-- Chest concrete-model classes. A class that does not resolve on a build is
+-- normal; the list is deliberately wider than any one version needs.
+M.CHEST_CLASSES = {
+    "PalMapObjectItemChestModel",
+    "PalMapObjectGuildChestModel",
+}
+
+-- Totals every item held in one camp's chests: { [StaticId] = count }.
+--
+-- Every hop here is a replicated property read rather than an out-param
+-- UFunction call, which is why this also answers on a dedicated-server
+-- client. GetBaseCampIdBelongTo is the exception and is a UFunction on
+-- concrete models.
+--
+-- A chest whose camp id will not read is skipped rather than counted:
+-- crediting someone else's chest to this base would silently inflate the
+-- total and suspend work that should still be running. The second return
+-- value is how many chests actually answered, so a caller can tell "no
+-- wood" apart from "read nothing".
+function M.camp_item_totals(camp_key)
+    local totals, chests = {}, 0
+    if not camp_key then return totals, 0 end
+
+    for _, cls in ipairs(M.CHEST_CLASSES) do
+        pcall(function()
+            for _, m in ipairs(FindAllOf(cls) or {}) do
+                pcall(function()
+                    if not valid(m) then return end
+
+                    local cid
+                    pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
+                    if cid ~= camp_key then return end
+
+                    local module
+                    pcall(function() module = m:GetItemContainerModule() end)
+                    if not valid(module) then return end
+
+                    local container = prop(module, "TargetContainer")
+                    if not valid(container) then return end
+
+                    local slots = prop(container, "ItemSlotArray")
+                    if slots == nil then return end
+
+                    chests = chests + 1
+
+                    local n = 0
+                    pcall(function() n = #slots end)
+                    for i = 1, n do
+                        pcall(function()
+                            local slot = slots[i]
+                            local sid = slot.ItemId.StaticId:ToString()
+                            if sid and sid ~= "None" then
+                                totals[sid] = (totals[sid] or 0)
+                                    + (tonumber(slot.StackCount) or 0)
+                            end
+                        end)
+                    end
+                end)
+            end
+        end)
+    end
+
+    return totals, chests
+end
+
 return M

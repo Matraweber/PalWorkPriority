@@ -15,8 +15,9 @@ patched, and unmodded players in the same session are unaffected.
 Each pass, per base camp:
 
 1. every pending work is bucketed by the suitability it needs
-2. buckets are visited in your configured priority order
-3. inside a bucket, each work takes the highest-ranked Pal not already claimed this pass
+2. buckets whose resource ceiling is already met are dropped
+3. surviving buckets are visited in your configured priority order
+4. inside a bucket, each work takes the highest-ranked Pal not already claimed this pass
 
 A Pal is claimed at most once per pass. That single rule is what makes priority mean something:
 priority 1 picks from everyone, priority 5 picks from the leftovers.
@@ -84,6 +85,31 @@ priority. `false` removes the Pal from that work type entirely.
 
 `min_suitability_rank` stops low-rank Pals from occupying jobs a specialist should be doing.
 
+## Resource ceilings
+
+A work type can be suspended once the base already holds enough of what it produces. The Pals
+that would have worked it are still unclaimed when the next priority comes round, so they drop
+down to it rather than standing idle next to a full chest.
+
+```lua
+work_caps = {
+    Deforest = { Wood = 5000 },
+    Mining   = { Stone = 3000, Ore = 2000 },
+},
+```
+
+With several items listed, the work type is suspended only when *every* one is at or above its
+ceiling — mining keeps running while either stone or ore is still short.
+
+The keys are internal item ids, not display names, and a misspelled id produces a ceiling that
+silently never fires. Run `!pwp stock` while standing in your base to print exactly what is in
+storage, by id, and write the full list to `Stock.txt`.
+
+Storage is read by walking the base's chests. If no chest answers, totals read as zero and work
+keeps running — overshooting a ceiling is a far milder failure than suspending a work type
+because a container did not reply. Storage is only read at all when at least one ceiling is
+configured.
+
 ## Chat commands
 
 | Command | Effect |
@@ -93,6 +119,7 @@ priority. `false` removes the Pal from that work type entirely.
 | `!pwp dry` / `!pwp live` | log-only, or actually assign |
 | `!pwp on` / `!pwp off` | enable or disable |
 | `!pwp reload` | re-read `config.lua` without restarting |
+| `!pwp stock` | print base storage by item id, and write `Stock.txt` |
 | `!pwp discover` | write `Discovery.txt` (see below) |
 
 `F10` runs a pass and `F11` writes `Discovery.txt`, for sessions where chat input is not available.
@@ -143,8 +170,10 @@ The game-side symbols were learned by reading mods that already run on this buil
 
 - **AutoAssignResearchLab** by Wol4ara896 — the worker director walk, `GetWorkSuitabilityRank`,
   and `RequestFixedAssignWorkInBaseCamp_ToServer`
-- **BreedingHelper** — `GetWorkProgressManager`, the `WorkCollection.WorkIds` sweep, and the
-  reflection walk that `discover.lua` reuses
+- **BreedingHelper** — `GetWorkProgressManager`, the `WorkCollection.WorkIds` sweep, the
+  reflection walk that `discover.lua` reuses, and the storage chain behind resource ceilings
+  (chest model classes, `GetItemContainerModule().TargetContainer.ItemSlotArray`,
+  `ItemId.StaticId` and `StackCount`)
 
 This is an independent implementation. It shares no code with PalPriority and takes a different
 approach: PalPriority flips the vanilla per-Pal work toggles, this drives fixed assignments.

@@ -51,6 +51,25 @@ return {
     -- rank-3 pal should be doing.
     min_suitability_rank = 1,
 
+    -- Resource ceilings. When a base already holds enough of something, the
+    -- work that produces it is suspended for that pass and its pals fall
+    -- through to the next priority instead of standing idle.
+    --
+    -- Keyed by work type, then by the item's internal StaticId. Run
+    -- "!pwp stock" in game to print the ids and counts actually present in
+    -- your base rather than guessing at spellings.
+    --
+    -- A work type with several items listed is suspended only when every
+    -- one of them is at or above its ceiling, so mining keeps running while
+    -- either stone or ore is still short.
+    --
+    -- work_caps = {
+    --     Deforest = { Wood = 5000 },
+    --     Mining   = { Stone = 3000, Ore = 2000 },
+    --     Seeding  = { WheatSeeds = 500 },
+    -- },
+    work_caps = {},
+
     -- Per-pal overrides, keyed by nickname first and species name second.
     -- Any work type you leave out falls back to work_priority above.
     --

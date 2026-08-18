@@ -57,6 +57,25 @@ local function validate(c)
         end
     end
 
+    -- A ceiling on a work type that does not exist, or one whose value is
+    -- not a number, would simply never fire. Say so rather than let someone
+    -- believe a cap is in force.
+    c.work_caps = c.work_caps or {}
+    for name, caps in pairs(c.work_caps) do
+        if not workdefs.is_known(name) then
+            log.warn("config.work_caps has unknown work type '" .. tostring(name) .. "'")
+        elseif type(caps) ~= "table" then
+            log.warn("config.work_caps['" .. name .. "'] should be a table of item = amount")
+        else
+            for item, ceiling in pairs(caps) do
+                if type(ceiling) ~= "number" then
+                    log.warn("config.work_caps['" .. name .. "']['" .. tostring(item) ..
+                        "'] should be a number")
+                end
+            end
+        end
+    end
+
     c.pal_overrides = c.pal_overrides or {}
     c.min_suitability_rank = c.min_suitability_rank or 1
     c.interval_seconds = math.max(5, tonumber(c.interval_seconds) or 30)
@@ -124,6 +143,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " live      actually assign pals")
     log.say("  " .. p .. " on / off  enable or disable")
     log.say("  " .. p .. " reload    re-read config.lua")
+    log.say("  " .. p .. " stock     print base storage by item id")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 runs a pass, F11 writes Discovery.txt")
 end
@@ -181,6 +201,57 @@ end
 COMMANDS.discover = function()
     ExecuteInGameThread(function()
         discover.run(DIR .. "Discovery.txt")
+    end)
+end
+
+-- Prints what the base is actually holding, by internal item id. Those ids
+-- are what work_caps keys on, and guessing their spelling is the easiest way
+-- to write a ceiling that silently never triggers.
+COMMANDS.stock = function()
+    ExecuteInGameThread(function()
+        local camps = api.base_camps()
+        if #camps == 0 then
+            log.say("no camps loaded — stand in your base and try again")
+            return
+        end
+
+        local path = DIR .. "Stock.txt"
+        local f = io.open(path, "wb")
+        if f then f:write("base storage " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n") end
+
+        for ci, camp in ipairs(camps) do
+            local totals, chests = api.camp_item_totals(api.guid_key(api.camp_id(camp)))
+
+            local rows = {}
+            for id, n in pairs(totals) do rows[#rows + 1] = { id = id, n = n } end
+            table.sort(rows, function(a, b)
+                if a.n ~= b.n then return a.n > b.n end
+                return a.id < b.id
+            end)
+
+            local header = string.format("camp %d: %d chest(s), %d item type(s)",
+                ci, chests, #rows)
+            log.say(header)
+            if f then f:write("\n" .. header .. "\n") end
+
+            for i, row in ipairs(rows) do
+                local line = string.format("  %-30s %d", row.id, row.n)
+                if i <= 15 then log.say(line) end
+                if f then f:write(line .. "\n") end
+            end
+
+            if #rows > 15 then
+                log.say(string.format("  ... and %d more, full list in Stock.txt", #rows - 15))
+            end
+            if chests == 0 then
+                log.say("  no chests answered — ceilings would read as unmet")
+            end
+        end
+
+        if f then
+            f:close()
+            log.say("written to " .. path)
+        end
     end)
 end
 
