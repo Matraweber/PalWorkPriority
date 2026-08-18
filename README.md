@@ -95,7 +95,7 @@ priority. `false` removes the Pal from that work type entirely.
 | `!pwp reload` | re-read `config.lua` without restarting |
 | `!pwp discover` | write `Discovery.txt` (see below) |
 
-`F8` also runs a pass.
+`F10` runs a pass and `F11` writes `Discovery.txt`, for sessions where chat input is not available.
 
 ## Two things this build has not confirmed
 

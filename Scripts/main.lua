@@ -125,6 +125,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " on / off  enable or disable")
     log.say("  " .. p .. " reload    re-read config.lua")
     log.say("  " .. p .. " discover  write Discovery.txt")
+    log.say("keys: F10 runs a pass, F11 writes Discovery.txt")
 end
 
 COMMANDS.status = function()
@@ -233,7 +234,7 @@ RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
 end)
 
 pcall(function()
-    RegisterKeyBind(Key.F8, function()
+    RegisterKeyBind(Key.F10, function()
         run_pass("keybind")
     end)
 end)
@@ -243,3 +244,13 @@ log.say(string.format("%s %s loaded — %s, %s. Type '%s help' in chat.",
     cfg.enabled and "enabled" or "disabled",
     cfg.dry_run and "dry run" or "live",
     cfg.chat_prefix))
+
+-- Chat input is not reliably available in every singleplayer session, so the
+-- discovery dump gets its own key instead of living only behind a chat
+-- command. F10/F11 were picked because every other Fn key in the low range
+-- is already claimed by another installed mod.
+pcall(function()
+    RegisterKeyBind(Key.F11, function()
+        COMMANDS.discover()
+    end)
+end)

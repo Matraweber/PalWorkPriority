@@ -43,7 +43,7 @@ function Set-ModsTxtEntry {
     param([bool]$Enabled)
 
     if (-not (Test-Path $ModsTxt)) {
-        Write-Warning "mods.txt not found at $ModsTxt — skipping registration."
+        Write-Warning "mods.txt not found at $ModsTxt - skipping registration."
         return
     }
 
