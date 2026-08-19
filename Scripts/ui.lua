@@ -2,8 +2,9 @@
 --
 -- Two layers, both read-only:
 --   * one number per grid cell — the priority in force for that pal and work
---     type, drawn over the vanilla checkbox; the cell the last pass actually
---     assigned is drawn green
+--     type, replacing the vanilla checkbox, coloured on RimWorld's work-tab
+--     scale; white marks the cell the last pass actually assigned. Work the
+--     pal cannot do keeps its vanilla dash.
 --   * a one-line status strip on the menu itself: mode, cap, dry/live, and
 --     the last pass summary
 --
@@ -66,6 +67,7 @@ local cell_cache = nil          -- array of cell widgets, revalidated per use
 local cell_row = {}             -- cell full name -> row full name
 local cell_text = {}            -- cell full name -> injected TextBlock
 local cell_last = {}            -- cell full name -> last style token written
+local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -121,6 +123,7 @@ function M.detach()
     menu_ref = nil
     cell_text = {}
     cell_last = {}
+    cell_cb = {}
     invalidate_cells()
 end
 
@@ -199,16 +202,27 @@ local function try_hook_bind()
                     -- Nickname and species are captured here, not looked up
                     -- from the last pass: overrides have to render for every
                     -- pal on the list, including ones no pass ever placed.
+                    -- Ranks are captured here too. A pal with no aptitude
+                    -- for a work type must keep its vanilla dash: writing a
+                    -- priority into that cell claims the pal will do work it
+                    -- is simply incapable of.
                     local name, species
+                    local ranks = {}
                     pcall(function()
                         local param = handle:TryGetIndividualParameter()
                         if alive(param) then
                             name = api.pal_name(param)
                             species = api.pal_species(param)
+                            for t = 1, #workdefs.ORDER do
+                                local r = api.suitability_rank(param, t)
+                                if type(r) == "number" and r > 0 then ranks[t] = r end
+                            end
                         end
                     end)
 
-                    row_pal[rname] = { key = key, name = name, species = species }
+                    row_pal[rname] = {
+                        key = key, name = name, species = species, ranks = ranks,
+                    }
                     -- rows binding means the screen is opening or scrolling;
                     -- either way the cell list has moved
                     menu_likely_open = true
@@ -400,11 +414,55 @@ local function ensure_cell_text(cell, cell_name)
     return tb
 end
 
-local COLOR = {
-    normal   = { R = 1.0, G = 0.85, B = 0.1, A = 1.0 },  -- gold: priority in force
-    assigned = { R = 0.3, G = 1.0, B = 0.4, A = 1.0 },   -- green: last pass put the pal here
-    off      = { R = 0.7, G = 0.3, B = 0.3, A = 0.9 },   -- dim red: X, never assign
+-- RimWorld's work-tab palette (WidgetsWork.ColorOfPriority): 1 green,
+-- 2 yellow, 3 orange, 4 red, anything beyond grey. Lifted very slightly off
+-- pure primaries, which read harshly against this darker UI.
+--
+-- Colour carries the PRIORITY, so "assigned" cannot also be green. It gets
+-- white instead — unmistakable against the whole scale, and it reads as
+-- "this is the one live right now".
+local COLOUR = {
+    p1       = { R = 0.25, G = 1.00, B = 0.25, A = 1.0 },
+    p2       = { R = 1.00, G = 1.00, B = 0.15, A = 1.0 },
+    p3       = { R = 1.00, G = 0.55, B = 0.05, A = 1.0 },
+    p4       = { R = 1.00, G = 0.25, B = 0.18, A = 1.0 },
+    p5       = { R = 0.62, G = 0.62, B = 0.62, A = 1.0 },
+    off      = { R = 0.42, G = 0.42, B = 0.45, A = 0.9 },
+    assigned = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
+    blank    = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
 }
+
+local function colour_for(prio)
+    local n = math.floor(tonumber(prio) or 0)
+    if n < 1 then return "p5" end
+    return "p" .. math.min(n, 5)
+end
+
+-- The vanilla checkbox has to go where a number is drawn, or the tick shows
+-- through the glyph. Hidden (2) rather than Collapsed keeps the cell's layout
+-- space, so the grid does not shift. The vanilla row refresh can re-show it,
+-- hence hiding every tick rather than once.
+local function hide_checkbox(cell, cell_name)
+    pcall(function()
+        local cb = cell.PalCheckBox
+        if not alive(cb) then return end
+        if cell_cb[cell_name] == nil then
+            local ok, v = pcall(function() return cb:GetVisibility() end)
+            cell_cb[cell_name] = (ok and type(v) == "number") and v or 0
+        end
+        cb:SetVisibility(2)
+    end)
+end
+
+local function restore_checkbox(cell, cell_name)
+    if cell_cb[cell_name] == nil then return end
+    local want = cell_cb[cell_name]
+    pcall(function()
+        local cb = cell.PalCheckBox
+        if alive(cb) then cb:SetVisibility(want) end
+    end)
+    cell_cb[cell_name] = nil
+end
 
 local function set_cell(tb, cell_name, glyph, color_key)
     local token = glyph .. "|" .. color_key
@@ -418,7 +476,7 @@ local function set_cell(tb, cell_name, glyph, color_key)
 
     pcall(function()
         tb:SetColorAndOpacity({
-            SpecifiedColor = COLOR[color_key],
+            SpecifiedColor = COLOUR[color_key],
             ColorUseRule = 0,
         })
     end)
@@ -473,27 +531,40 @@ local function handle_cell(cfg, lookup, cell)
     local pal = row_pal[rname]
     if not pal then return end
 
-    local assigned = lookup.assign[pal.key .. "|" .. t]
     local prio = effective_priority(cfg, pal, work_name)
+
+    -- Hand the cell back to the game when we have nothing to say about it:
+    -- the pal cannot do this work at all, or the work type is not configured.
+    -- Vanilla draws a dash for the first case, and a number there would claim
+    -- the pal will do something it is incapable of.
+    local capable = pal.ranks and pal.ranks[t] ~= nil
+    if not capable or prio == nil then
+        local existing = cell_text[cell_name]
+        if existing and alive(existing) then
+            set_cell(existing, cell_name, "", "blank")
+        end
+        restore_checkbox(cell, cell_name)
+        return
+    end
 
     local tb = ensure_cell_text(cell, cell_name)
     if not tb then return end
 
-    -- The glyph is always the effective priority; green only says the last
-    -- pass put this pal on this work. Showing the bucket's global priority in
-    -- the assigned cell would contradict the pal's own override sitting in
-    -- every other cell of the same column.
+    -- Ours now, so the tick underneath has to go or it shows through.
+    hide_checkbox(cell, cell_name)
+
+    -- Colour carries the priority; white says the last pass actually put this
+    -- pal on this work. The glyph is the effective priority either way —
+    -- showing the bucket's global number in the assigned cell would
+    -- contradict the pal's own override sitting in the rest of that column.
+    local assigned = lookup.assign[pal.key .. "|" .. t]
     local glyph, colour
-    if assigned then
-        glyph = tostring(type(prio) == "number" and prio or assigned.prio)
-        colour = "assigned"
-    elseif prio == false then
+
+    if prio == false then
         glyph, colour = "X", "off"
-    elseif type(prio) == "number" then
-        glyph, colour = tostring(prio), "normal"
     else
-        -- unconfigured work type: show nothing, leave the vanilla checkbox be
-        glyph, colour = "", "normal"
+        glyph = tostring(math.floor(prio))
+        colour = assigned and "assigned" or colour_for(prio)
     end
 
     set_cell(tb, cell_name, glyph, colour)
@@ -559,12 +630,14 @@ local function attach_strip(menu, tree, root)
     if pcall(function() slot = root:AddChildToCanvas(tb) end) and slot then
         pcall(function()
             slot:SetAutoSize(true)
-            -- bottom-left of a 1080p-authored canvas: out of the way of both
-            -- the grid and the pal info card
+            -- Anchored to the bottom-left of the canvas and lifted clear of
+            -- the hotbar and the game's own toast line, which the first
+            -- attempt sat directly on top of. X lines it up with the menu
+            -- panel's left edge rather than the screen's.
             slot:SetAnchors({ Minimum = { X = 0.0, Y = 1.0 },
                               Maximum = { X = 0.0, Y = 1.0 } })
             slot:SetAlignment({ X = 0.0, Y = 1.0 })
-            slot:SetPosition({ X = 40.0, Y = -24.0 })
+            slot:SetPosition({ X = 160.0, Y = -155.0 })
         end)
         placed = true
     elseif pcall(function() slot = root:AddChildToOverlay(tb) end) and slot then
