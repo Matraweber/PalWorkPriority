@@ -212,35 +212,32 @@ to print what is in storage, by id, and write the full list to `Stock.txt`.
 
 ### What counts toward a ceiling
 
-Chests and production stations, set by `counted_containers` in `config.lua`:
-
-    PalMapObjectItemChestModel      chests
-    PalMapObjectGuildChestModel     guild chest
-    PalMapObjectProductItemModel    a logging or mining site's output
-
-The production station is in the default set because a Logging Site sitting on 297 wood is wood
-the base has, and leaving it out makes a wood ceiling overshoot by whatever every station
-happens to be holding.
-
-Left out by default, and addable:
+Every container on the base, chests and stations alike, minus the exceptions in
+`uncounted_containers`:
 
     PalMapObjectPalFoodBoxModel         food set aside for pals to eat
-    PalMapObjectConvertItemModel        furnace, pot, mill: inputs and outputs mixed together
     PalMapObjectDropItemModel           dropped on the ground
     PalMapObjectPickupItemOnLevelModel  lying about waiting to be collected
 
-The feed box is the deliberate one. That food exists to be eaten, so counting it would stop a
-ranch that is only keeping pace with what the pals get through. Conversion stations are out
-because their slots mix inputs with outputs, and counting an input as stock is backwards.
+This started as a list of classes to *include* and that was the wrong way round. Palworld has
+far more station types than any hand written list will name, and each one missed is a ceiling
+quietly overshooting by whatever that station holds. A Logging Site sitting on 297 wood was the
+one that showed it. Counting everything and naming the exceptions means a station type this mod
+has never heard of still counts.
 
-Ceilings are measured per base by default, so each base is judged on its own storage. If you
-run a mod that pools storage across bases, `Alt+F12` (or `!pwp scope`) switches to counting
-every container the game currently has loaded, and `storage_scope = "global"` makes that the
-default.
+The feed box is the deliberate exception. That food exists to be eaten, so counting it would
+stop a ranch that is only keeping pace with what the Pals get through. Dropped and lying-about
+items are loose world clutter rather than base stock, and one test base carried 54 of them.
 
-Neither setting can see a base you are away from. Palworld only keeps a camp's chests in memory
-while it is streamed in, so an unloaded base has no objects to read at all. Global means
-"every base loaded right now", not "every base you own".
+To go the other way and count only certain classes, set `counted_containers` to a list. That
+overrides `uncounted_containers` entirely:
+
+```lua
+counted_containers = {
+    "PalMapObjectItemChestModel",
+    "PalMapObjectGuildChestModel",
+},
+```
 
 Whatever is not in the list is still printed by `F12`, under `holding stock but NOT counted by
 ceilings`, along with what it holds. If a ceiling is not firing when you think it should, look

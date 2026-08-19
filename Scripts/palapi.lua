@@ -688,22 +688,27 @@ end
 -- Base storage
 -- ---------------------------------------------------------------------------
 
--- What counts as base storage for a resource ceiling. A class that does not
--- resolve on a build is normal; the list is wider than any one version needs.
+-- Base storage for a resource ceiling is every container on the base, minus
+-- the few below.
 --
--- Production stations are in the default set alongside chests. A logging site
--- holding 297 wood is wood the base has, and leaving it out makes a ceiling
--- overshoot by whatever every station happens to be sitting on.
+-- This was a list of classes to include and that was the wrong way round.
+-- Palworld has far more station types than any list written by hand will
+-- name, and each one missing is a ceiling quietly overshooting by whatever
+-- that station is holding. Counting everything and naming the exceptions
+-- means a station type nobody here has ever seen still counts.
 --
--- Deliberately NOT here by default, though config can add them:
---   PalMapObjectPalFoodBoxModel         food set aside for pals to eat
---   PalMapObjectConvertItemModel        mid conversion, inputs and outputs mixed
---   PalMapObjectDropItemModel           dropped on the ground
---   PalMapObjectPickupItemOnLevelModel  lying about waiting to be collected
-M.DEFAULT_COUNTED = {
-    "PalMapObjectItemChestModel",
-    "PalMapObjectGuildChestModel",
-    "PalMapObjectProductItemModel",
+-- Everything derives from this, chests and stations alike.
+M.CONTAINER_BASE_CLASS = "PalMapObjectConcreteModelBase"
+
+-- The exceptions, and why each one is an exception:
+--   the feed box holds food set aside for pals to eat, so counting it stops
+--     a ranch that is only keeping pace with what gets eaten
+--   dropped and lying-about items are loose world clutter rather than base
+--     stock, and one test base had 54 of them
+M.DEFAULT_UNCOUNTED = {
+    "PalMapObjectPalFoodBoxModel",
+    "PalMapObjectDropItemModel",
+    "PalMapObjectPickupItemOnLevelModel",
 }
 
 -- Totals the items in every chest `accept` says yes to: { [StaticId] = n }.
@@ -715,44 +720,81 @@ M.DEFAULT_COUNTED = {
 --
 -- The second return value is how many chests actually answered, so a caller
 -- can tell "no wood" apart from "read nothing".
-local function walk_chests(classes, accept)
+-- GetFullName leads with the class, which is how work classes are read
+-- elsewhere in this file.
+function M.model_class(m)
+    local cls
+    pcall(function()
+        local full = m:GetFullName()
+        if type(full) == "string" then cls = full:match("^(%S+)") end
+    end)
+    return cls or "<unknown>"
+end
+
+-- opts.include, when given, is a list of class names to count and nothing
+-- else. Otherwise every container is counted except the names in
+-- opts.exclude. One scan of the base class covers both, since every chest and
+-- station derives from it.
+local function walk_chests(opts, accept)
     local totals, chests = {}, 0
+    opts = opts or {}
 
-    for _, cls in ipairs(classes or M.DEFAULT_COUNTED) do
-        pcall(function()
-            for _, m in ipairs(FindAllOf(cls) or {}) do
-                pcall(function()
-                    if not valid(m) then return end
-                    if not accept(m) then return end
-
-                    local module
-                    pcall(function() module = m:GetItemContainerModule() end)
-                    if not valid(module) then return end
-
-                    local container = prop(module, "TargetContainer")
-                    if not valid(container) then return end
-
-                    local slots = prop(container, "ItemSlotArray")
-                    if slots == nil then return end
-
-                    chests = chests + 1
-
-                    local n = 0
-                    pcall(function() n = #slots end)
-                    for i = 1, n do
-                        pcall(function()
-                            local slot = slots[i]
-                            local sid = slot.ItemId.StaticId:ToString()
-                            if sid and sid ~= "None" then
-                                totals[sid] = (totals[sid] or 0)
-                                    + (tonumber(slot.StackCount) or 0)
-                            end
-                        end)
-                    end
-                end)
-            end
-        end)
+    local include = nil
+    if type(opts.include) == "table" and #opts.include > 0 then
+        include = {}
+        for _, cls in ipairs(opts.include) do include[cls] = true end
     end
+
+    local exclude = {}
+    for _, cls in ipairs(opts.exclude or M.DEFAULT_UNCOUNTED) do
+        exclude[cls] = true
+    end
+
+    pcall(function()
+        for _, m in ipairs(FindAllOf(M.CONTAINER_BASE_CLASS) or {}) do
+            pcall(function()
+                if not valid(m) then return end
+                if not accept(m) then return end
+
+                -- Container first, class name second. Most of what derives
+                -- from the base class is scenery, walls and floors and
+                -- fences, and reading a class name means building a string
+                -- per object. Doing that only for things that actually hold
+                -- items keeps a pass over a large base cheap.
+                local module
+                pcall(function() module = m:GetItemContainerModule() end)
+                if not valid(module) then return end
+
+                local container = prop(module, "TargetContainer")
+                if not valid(container) then return end
+
+                local slots = prop(container, "ItemSlotArray")
+                if slots == nil then return end
+
+                local cls = M.model_class(m)
+                if include then
+                    if not include[cls] then return end
+                elseif exclude[cls] then
+                    return
+                end
+
+                chests = chests + 1
+
+                local n = 0
+                pcall(function() n = #slots end)
+                for i = 1, n do
+                    pcall(function()
+                        local slot = slots[i]
+                        local sid = slot.ItemId.StaticId:ToString()
+                        if sid and sid ~= "None" then
+                            totals[sid] = (totals[sid] or 0)
+                                + (tonumber(slot.StackCount) or 0)
+                        end
+                    end)
+                end
+            end)
+        end
+    end)
 
     return totals, chests
 end
@@ -762,10 +804,10 @@ end
 -- A chest whose camp id will not read is skipped rather than counted:
 -- crediting someone else's chest to this base would silently inflate the
 -- total and suspend work that should still be running.
-function M.camp_item_totals(camp_key, classes)
+function M.camp_item_totals(camp_key, opts)
     if not camp_key then return {}, 0 end
 
-    return walk_chests(classes, function(m)
+    return walk_chests(opts, function(m)
         local cid
         pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
         return cid == camp_key
@@ -777,8 +819,8 @@ end
 -- The counterpart to camp_item_totals for storage_scope = "global". It can
 -- only ever cover bases currently streamed in: an unloaded camp has no chest
 -- objects in memory at all, so there is nothing there to add up.
-function M.all_chest_totals(classes)
-    return walk_chests(classes, function() return true end)
+function M.all_chest_totals(opts)
+    return walk_chests(opts, function() return true end)
 end
 
 -- Every camp-owned map object holding items, whatever its class.
@@ -797,7 +839,7 @@ function M.camp_containers(camp_key)
         -- The concrete-model base rather than the two chest classes, so
         -- anything derived from it turns up: logging sites, mining sites,
         -- feed boxes, breeding pens.
-        for _, m in ipairs(FindAllOf("PalMapObjectConcreteModelBase") or {}) do
+        for _, m in ipairs(FindAllOf(M.CONTAINER_BASE_CLASS) or {}) do
             pcall(function()
                 if not valid(m) then return end
 
@@ -833,15 +875,7 @@ function M.camp_containers(camp_key)
                 -- them on a built-up base.
                 if total == 0 then return end
 
-                -- GetFullName leads with the class, which is how work classes
-                -- are read elsewhere in this file.
-                local cls = "<unknown>"
-                pcall(function()
-                    local full = m:GetFullName()
-                    if type(full) == "string" then cls = full:match("^(%S+)") or full end
-                end)
-
-                found[#found + 1] = { class = cls, items = items }
+                found[#found + 1] = { class = M.model_class(m), items = items }
             end)
         end
     end)

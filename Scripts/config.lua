@@ -98,29 +98,29 @@ return {
         MonsterFarm = "Wool",
     },
 
-    -- Which containers count as storage for a ceiling.
+    -- Which containers do NOT count as storage for a ceiling.
     --
-    -- Press F12 in game to see what each of these is holding on your base.
-    -- Anything present but not listed here is printed under "holding stock
-    -- but NOT counted by ceilings", so the gap is visible rather than a
-    -- mystery about why a limit has not fired.
+    -- Everything else on the base does, chests and every station alike, so a
+    -- station type this file has never heard of still counts. Listing what to
+    -- include instead was the wrong way round: Palworld has more station
+    -- types than any hand written list will name, and each one missed is a
+    -- ceiling quietly overshooting by whatever that station is holding.
     --
-    --   PalMapObjectItemChestModel          chests
-    --   PalMapObjectGuildChestModel         guild chest
-    --   PalMapObjectProductItemModel        a logging or mining site's output
-    --   PalMapObjectPalFoodBoxModel         the feed box
-    --   PalMapObjectConvertItemModel        furnace, pot, mill
-    --   PalMapObjectDropItemModel           dropped on the ground
-    --   PalMapObjectPickupItemOnLevelModel  lying about to be collected
-    --
-    -- The feed box is left out on purpose: that food is set aside for the
-    -- pals to eat, and counting it would stop a ranch that is only keeping
-    -- up with what gets eaten.
-    counted_containers = {
-        "PalMapObjectItemChestModel",
-        "PalMapObjectGuildChestModel",
-        "PalMapObjectProductItemModel",
+    -- Press F12 to print what every container on your base is holding.
+    uncounted_containers = {
+        -- Food set aside for the pals to eat. Counting it would stop a ranch
+        -- that is only keeping pace with what gets eaten.
+        "PalMapObjectPalFoodBoxModel",
+        -- Loose world clutter rather than base stock. One test base had 54.
+        "PalMapObjectDropItemModel",
+        "PalMapObjectPickupItemOnLevelModel",
     },
+
+    -- Set this to a list of class names to count ONLY those and nothing else,
+    -- ignoring uncounted_containers. Chests alone would be:
+    --   counted_containers = { "PalMapObjectItemChestModel",
+    --                          "PalMapObjectGuildChestModel" },
+    counted_containers = nil,
 
     -- Which storage a ceiling is measured against.
     --

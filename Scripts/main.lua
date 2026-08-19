@@ -346,7 +346,9 @@ COMMANDS.stock = function()
 
         for ci, camp in ipairs(camps) do
             local totals, chests = api.camp_item_totals(
-                api.guid_key(api.camp_id(camp)), cfg.counted_containers)
+                api.guid_key(api.camp_id(camp)),
+                { include = cfg.counted_containers,
+                  exclude = cfg.uncounted_containers })
 
             local rows = {}
             for id, n in pairs(totals) do rows[#rows + 1] = { id = id, n = n } end
@@ -377,14 +379,26 @@ COMMANDS.stock = function()
             -- stock is invisible to them, so name it rather than leaving a
             -- limit to look broken when the resource is really just sitting
             -- somewhere that is not counted.
-            local counted = {}
-            for _, cls in ipairs(cfg.counted_containers or api.DEFAULT_COUNTED) do
-                counted[cls] = true
+            local include = nil
+            if type(cfg.counted_containers) == "table"
+                and #cfg.counted_containers > 0 then
+                include = {}
+                for _, cls in ipairs(cfg.counted_containers) do include[cls] = true end
+            end
+
+            local excluded = {}
+            for _, cls in ipairs(cfg.uncounted_containers or api.DEFAULT_UNCOUNTED) do
+                excluded[cls] = true
+            end
+
+            local function is_counted(cls)
+                if include then return include[cls] == true end
+                return not excluded[cls]
             end
 
             local uncounted = {}
             for _, holder in ipairs(api.camp_containers(api.guid_key(api.camp_id(camp)))) do
-                if not counted[holder.class] then
+                if not is_counted(holder.class) then
                     local entry = uncounted[holder.class]
                     if entry == nil then
                         entry = { objects = 0, items = {} }
@@ -456,11 +470,20 @@ end
 -- Item totals across every loaded camp. Used to check a spelling and to show
 -- what a ceiling is up against. The ceilings themselves are still judged one
 -- camp at a time by the scheduler.
+-- How the scheduler is currently told to read storage, so the listing and
+-- the pass can never disagree about what counts.
+local function container_opts()
+    return {
+        include = cfg.counted_containers,
+        exclude = cfg.uncounted_containers,
+    }
+end
+
 local function stock_across_camps()
     -- Global scope counts chests the camp filter would drop, so ask for them
     -- the same way the scheduler does rather than summing per camp.
     if cfg.storage_scope == "global" then
-        return (api.all_chest_totals(cfg.counted_containers))
+        return (api.all_chest_totals(container_opts()))
     end
 
     local totals = {}
@@ -468,8 +491,7 @@ local function stock_across_camps()
     for _, camp in ipairs(api.base_camps()) do
         local camp_id = api.camp_id(camp)
         if camp_id then
-            local part = api.camp_item_totals(api.guid_key(camp_id),
-                cfg.counted_containers)
+            local part = api.camp_item_totals(api.guid_key(camp_id), container_opts())
             for id, n in pairs(part or {}) do
                 totals[id] = (totals[id] or 0) + n
             end
