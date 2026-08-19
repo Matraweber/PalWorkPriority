@@ -133,26 +133,43 @@ end
 -- Every work type this pal is physically capable of and not barred from.
 -- This is its permission set when nothing fences it, and what it is restored
 -- to when the mod stops managing it.
-local function base_allowed(cfg, pal)
-    local out = {}
+-- Two sets, and conflating them was a real bug.
+--
+--   capable  every work type the pal has the skill for. This is the domain
+--            apply_pal walks, so a type missing from it can never be switched
+--            off, only left however the game last had it.
+--   allowed  what the pal may actually do: capable, minus X, minus anything
+--            whose rule is already satisfied.
+--
+-- An unfenced pal gets `allowed` as its plan. When those were one set, a
+-- satisfied rule stopped the mod fencing anyone onto that work but never
+-- withdrew the permission, so any pal that ended up unfenced had it switched
+-- straight back on. That is a rule reading "done" while pals keep mining.
+local function base_allowed(cfg, pal, capped)
+    local capable, allowed = {}, {}
+
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
         local value = workdefs.value(name)
 
         if api.suitability_rank(pal.param, value) >= 1 then
-            -- X is the only thing that bars a pal outright. A work type with
-            -- no configured priority stays permitted: having no opinion on it
-            -- is not the same as forbidding it.
-            if store.effective(cfg, pal, name, value) ~= false then
-                out[value] = true
+            capable[value] = true
+
+            -- X bars a pal outright, and a met ceiling bars the work for
+            -- everyone. A work type with no opinion set stays permitted:
+            -- having no opinion is not the same as forbidding it.
+            if store.effective(cfg, pal, name, value) ~= false
+                and not capped[value] then
+                allowed[value] = true
             end
         end
     end
-    return out
+
+    return capable, allowed
 end
 
 -- Returns pal key -> set of work values that pal may do this pass.
-local function plan_fences(cfg, pals, demand, objects, stats)
+local function plan_fences(cfg, pals, demand, objects, stats, capped)
     local plan, fenced = {}, {}
     local taken = {}            -- work value -> pals fenced onto it
     local cap = tonumber(cfg.max_pals_per_work_type)
@@ -176,7 +193,7 @@ local function plan_fences(cfg, pals, demand, objects, stats)
     end
 
     for _, pal in ipairs(pals) do
-        pal.base = base_allowed(cfg, pal)
+        pal.capable, pal.base = base_allowed(cfg, pal, capped or {})
         pal.current = api.current_work_suitability(pal.param)
 
         -- Sorted, because pairs() order is not stable in Lua and this list
@@ -303,7 +320,7 @@ local function apply_pal(cfg, pal, want, stats)
         return
     end
 
-    for value in pairs(pal.base or {}) do
+    for value in pairs(pal.capable or pal.base or {}) do
         if stats.toggles + stats.would_toggle >= MAX_TOGGLES_PER_PASS then
             stats.deferred = stats.deferred + 1
             return
@@ -430,6 +447,17 @@ local function run_camp(cfg, camp, stats)
         end
     end
 
+    -- Which work types have a satisfied rule right now. Worked out once for
+    -- the camp and used both to drop them from demand and to withdraw the
+    -- permission, so a rule reading "done" actually stops the work.
+    local capped = {}
+    for i = 1, #workdefs.ORDER do
+        local name = workdefs.ORDER[i]
+        if name ~= workdefs.ANYONE and cap_reached(cfg, name, totals) then
+            capped[workdefs.value(name)] = true
+        end
+    end
+
     stats.camps = stats.camps + 1
     stats.pals = stats.pals + #pals
     stats.works = stats.works + counted
@@ -455,7 +483,7 @@ local function run_camp(cfg, camp, stats)
     end
 
     local objects = count_work_objects(camp)
-    local plan = plan_fences(cfg, pals, demand, objects, stats)
+    local plan = plan_fences(cfg, pals, demand, objects, stats, capped)
 
     for _, pal in ipairs(pals) do
         local want = plan[pal.key] or pal.base or {}
@@ -479,6 +507,7 @@ local function run_camp(cfg, camp, stats)
         -- cheap and keeps that an implementation detail rather than a
         -- dependency.
         pal.base = nil
+        pal.capable = nil
         pal.order = nil
         pal.current = nil
     end
