@@ -8,10 +8,14 @@
 -- the two need different shapes: a rule names an item, and there is nowhere
 -- in a per-pal-per-work grid for an item to live.
 --
--- Everything is drawn as TextBlocks on a canvas we own, positioned by hand.
--- That is more code than a proper UMG layout, but it reuses the one injection
--- route already proven to work on this build, and it keeps hit testing to
--- IsHovered, which the priority cells already rely on.
+-- Styled after the Creative Menu mod: a dark slab, one row per entry, a cyan
+-- accent on whatever the mouse is over. That mod ships as a pak of
+-- blueprints, so none of its widgets can be reused, only the look.
+--
+-- Widgets are constructed against the WidgetTree, never against the canvas
+-- they are parented into. A UMG widget belongs to a tree; giving one a canvas
+-- as its outer leaves it owned by something that does not keep widgets alive,
+-- and the renderer then walks a freed object and takes the game with it.
 
 local log = require("log")
 local api = require("palapi")
@@ -29,32 +33,43 @@ M.wants_pass = false
 -- "work"  choosing which job that rule gates
 local mode = "list"
 local draft = nil               -- { item = string } while a rule is being made
-local search = ""
+local page = 0
+local show_all = false          -- the picker starts on what the base holds
 
-local root = nil                -- our canvas, child of the game's UI layout
-local root_owner = nil          -- the layout we hung it off, to spot a swap
-local root_tree = nil           -- that layout's WidgetTree, the construction outer
+local root = nil                -- the canvas we hang off
+local root_owner = nil          -- the layout it belongs to, to spot a swap
+local root_tree = nil           -- that layout's WidgetTree, our outer
+local backdrop = nil
 local blocks = {}               -- key -> TextBlock
-local drawn = {}                -- key -> last string drawn, to skip no-op sets
-local hits = {}                 -- key -> what clicking that line means
+local drawn = {}                -- key -> last token drawn
+local hits = {}                 -- key -> what clicking it means
+local used = {}                 -- keys touched this frame, so the rest blank
+local hover_key = nil
 
 local ftext_mode = nil
 local warned = {}
 
--- Geometry. One column of lines, so there is only ever one number to change
--- when something needs to move.
-local X, Y = 80, 140
-local W, LINE = 560, 22
-local ROWS = 16                 -- lines of content before paging kicks in
+-- LINE has to clear the font, which is about 20 tall at 1440p. At 22 the
+-- rows drew through each other.
+local X, Y = 80, 130
+local W = 640
+local LINE = 34
+local PAD = 16
+local COL2 = 420
+local PER_PAGE = 12
 
 local COLOUR = {
-    title   = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
-    dim     = { R = 0.55, G = 0.57, B = 0.62, A = 1.0 },
-    item    = { R = 0.85, G = 0.88, B = 0.95, A = 1.0 },
-    met     = { R = 0.30, G = 0.95, B = 0.40, A = 1.0 },
-    unmet   = { R = 1.00, G = 0.70, B = 0.20, A = 1.0 },
-    action  = { R = 0.40, G = 0.78, B = 1.00, A = 1.0 },
+    title  = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
+    dim    = { R = 0.58, G = 0.62, B = 0.70, A = 1.00 },
+    item   = { R = 0.86, G = 0.89, B = 0.95, A = 1.00 },
+    met    = { R = 0.30, G = 0.95, B = 0.40, A = 1.00 },
+    unmet  = { R = 1.00, G = 0.70, B = 0.20, A = 1.00 },
+    action = { R = 0.40, G = 0.82, B = 1.00, A = 1.00 },
+    hover  = { R = 0.35, G = 1.00, B = 1.00, A = 1.00 },
 }
+
+local BACKDROP = { R = 0.03, G = 0.05, B = 0.08, A = 0.90 }
+local CLEAR = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -99,9 +114,8 @@ end
 -- Attaching to the game's UI
 -- ---------------------------------------------------------------------------
 
--- The panel opens on a hotkey rather than from a menu, so it cannot hang off
--- the Monitoring Stand the way the grid does. It goes on the overall UI
--- layout, which outlives any single screen.
+-- Opened on a hotkey, so it cannot hang off the Monitoring Stand the way the
+-- grid does. It goes on the overall UI layout, which outlives any one screen.
 local function first_canvas(node, budget)
     budget = budget or { n = 0 }
     if budget.n > 400 or not alive(node) then return nil end
@@ -125,7 +139,7 @@ end
 local function ensure_root()
     if alive(root) and alive(root_owner) and alive(root_tree) then return root end
 
-    root, root_owner, root_tree = nil, nil, nil
+    root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn = {}, {}
 
     local layout
@@ -153,26 +167,56 @@ local function ensure_root()
     return root
 end
 
--- One TextBlock per line, kept and reused. Rebuilding them every refresh
--- would leave orphans on the canvas, which is how the status strip ended up
--- drawing itself twice.
+-- A dark slab behind the text. Without one the panel is white words floating
+-- over grass, which is exactly what the first version looked like.
+local function ensure_backdrop(rows)
+    if not ensure_root() then return end
+
+    if not alive(backdrop) then
+        local cls = api.cdo("/Script/UMG.Border")
+        if not cls or not alive(root_tree) then return end
+
+        pcall(function() backdrop = StaticConstructObject(cls, root_tree) end)
+        if not alive(backdrop) then return end
+
+        local slot
+        local ok = pcall(function() slot = root:AddChildToCanvas(backdrop) end)
+        if not ok or not alive(slot) then
+            backdrop = nil
+            return
+        end
+
+        pcall(function() slot:SetAutoSize(false) end)
+        pcall(function() slot:SetPosition({ X = X - PAD, Y = Y - PAD }) end)
+        -- Under the text, over the world.
+        pcall(function() slot:SetZOrder(8990) end)
+        -- Hit test invisible, so the slab cannot swallow a click meant for a
+        -- row sitting on top of it.
+        pcall(function() backdrop:SetVisibility(3) end)
+    end
+
+    pcall(function() backdrop:SetBrushColor(BACKDROP) end)
+
+    local slot
+    pcall(function() slot = backdrop.Slot end)
+    if alive(slot) then
+        pcall(function()
+            slot:SetSize({ X = W + PAD * 2, Y = rows * LINE + PAD * 2 })
+        end)
+    end
+end
+
 local function line(key, row, col, text, colour_key)
     local canvas = ensure_root()
     if not canvas then return end
+
+    used[key] = true
 
     local tb = blocks[key]
     if not alive(tb) then
         local cls = api.cdo("/Script/UMG.TextBlock")
         if not cls or not alive(root_tree) then return end
 
-        -- Constructed against the WidgetTree, not the canvas.
-        --
-        -- A UMG widget belongs to a WidgetTree; the panel it renders in is
-        -- parenting, not ownership. Giving it a CanvasPanel as its outer
-        -- leaves it owned by something that does not keep widgets alive, and
-        -- the game crashed inside UE4SS on the first frame after this panel
-        -- was drawn. The cell numbers on the stand have always used the tree,
-        -- which is why they never did this.
         pcall(function() tb = StaticConstructObject(cls, root_tree) end)
         if not alive(tb) then return end
 
@@ -181,7 +225,6 @@ local function line(key, row, col, text, colour_key)
         if not ok or not alive(slot) then return end
 
         pcall(function() slot:SetAutoSize(false) end)
-        pcall(function() slot:SetPosition({ X = X + col, Y = Y + row * LINE }) end)
         pcall(function() slot:SetSize({ X = W - col, Y = LINE }) end)
         pcall(function() slot:SetZOrder(9000) end)
         pcall(function() tb:SetVisibility(0) end)
@@ -191,34 +234,43 @@ local function line(key, row, col, text, colour_key)
         drawn[key] = nil
     end
 
-    local token = text .. "|" .. colour_key
+    -- Position every frame, not only at construction: a row moves when the
+    -- screen above it changes length.
+    local slot
+    pcall(function() slot = tb.Slot end)
+    if alive(slot) then
+        pcall(function() slot:SetPosition({ X = X + col, Y = Y + row * LINE }) end)
+    end
+
+    local shown = (key == hover_key) and "hover" or colour_key
+
+    local token = text .. "|" .. shown
     if drawn[key] ~= token then
         local ft = make_ftext(text)
         if ft then
             pcall(function() tb:SetText(ft) end)
             pcall(function()
                 tb:SetColorAndOpacity({
-                    SpecifiedColor = COLOUR[colour_key],
+                    SpecifiedColor = COLOUR[shown],
                     ColorUseRule = 0,
                 })
             end)
             drawn[key] = token
         end
     end
-    return tb
 end
 
--- Lines left over from a previous, longer screen. Emptied rather than
--- destroyed: a destroyed widget leaves a dead wrapper behind, and an empty
--- one costs nothing.
-local function clear_from(row)
+-- Anything not drawn this frame is emptied rather than destroyed. A destroyed
+-- widget leaves a dead wrapper behind; an empty one costs nothing. The first
+-- version cleared only keys matching one prefix, which is how an item name
+-- was left stranded across the rules list.
+local function blank_unused()
     for key, tb in pairs(blocks) do
-        local n = tonumber(key:match("^r(%d+)$") or "")
-        if n and n >= row and alive(tb) and drawn[key] ~= "|dim" then
+        if not used[key] and drawn[key] ~= "" and alive(tb) then
             local ft = make_ftext("")
             if ft then
                 pcall(function() tb:SetText(ft) end)
-                drawn[key] = "|dim"
+                drawn[key] = ""
             end
         end
     end
@@ -228,11 +280,8 @@ end
 -- Stock
 -- ---------------------------------------------------------------------------
 
--- What the bases are holding, measured the same way the scheduler measures
--- it, so a rule shown as met is one the scheduler also treats as met.
--- Cached, because the panel redraws every second and reading every container
--- on every loaded base is the most expensive thing this mod does. The
--- scheduler does it once per pass for a reason.
+-- Cached: the panel redraws every second, and reading every container on
+-- every loaded base is the most expensive thing this mod does.
 local totals_cache = nil
 local totals_at = 0
 local TOTALS_TTL = 3.0
@@ -272,9 +321,6 @@ end
 -- Screens
 -- ---------------------------------------------------------------------------
 
--- Every rule in force, so one written into config.lua shows here alongside
--- the ones clicked in. Clicking a config rule writes an override to caps.txt,
--- which is the same precedence the priority grid uses.
 local function rule_list(cfg)
     local out = {}
     for work, by_item in pairs(caps.all(cfg)) do
@@ -290,85 +336,136 @@ local function rule_list(cfg)
 end
 
 local function draw_list(cfg, totals)
-    line("title", 0, 0, "WORK RULES", "title")
-    line("hint", 0, 300, "left click raise, right click lower", "dim")
-
     local rules = rule_list(cfg)
-    local row = 2
+    local row = 0
+
+    line("title", row, 0, "WORK RULES", "title")
+    row = row + 1
+    line("sub", row, 0,
+        "left click raises, right click lowers, past the lowest removes", "dim")
+    row = row + 2
 
     if #rules == 0 then
-        line("r" .. row, row, 16, "no rules, every job runs unlimited", "dim")
+        line("empty", row, PAD, "no rules yet, every job runs unlimited", "dim")
         row = row + 2
     else
-        for _, rule in ipairs(rules) do
+        for i, rule in ipairs(rules) do
             local have = totals[rule.item] or 0
             local met = have >= rule.amount
+            local key = "rule" .. i
 
-            line("r" .. row, row, 16, string.format("%-22s %-24s",
-                workdefs.label(rule.work), rule.item), "item")
-            line("n" .. row, row, 380, string.format("%d / %d%s",
+            line(key, row, PAD,
+                workdefs.label(rule.work) .. "   " .. rule.item, "item")
+            line("amt" .. i, row, COL2, string.format("%d / %d%s",
                 have, rule.amount, met and "   done" or ""),
                 met and "met" or "unmet")
 
-            hits["r" .. row] = { kind = "rule", rule = rule }
-            hits["n" .. row] = { kind = "rule", rule = rule }
+            hits[key] = { kind = "rule", rule = rule }
             row = row + 1
         end
         row = row + 1
     end
 
-    line("r" .. row, row, 16, "+ new rule", "action")
-    hits["r" .. row] = { kind = "new" }
-    clear_from(row + 1)
+    line("new", row, PAD, "+   new rule", "action")
+    hits["new"] = { kind = "new" }
+    row = row + 1
+
+    line("close", row, PAD, "x   close", "dim")
+    hits["close"] = { kind = "close" }
+
+    return row + 2
+end
+
+local function picker_source(totals)
+    if show_all then
+        return items.load(), true
+    end
+
+    -- What the base actually holds: a dozen or so rather than 2466, and what
+    -- a rule is nearly always about. Sorted by quantity, so the things worth
+    -- capping are at the top.
+    local out = {}
+    for id in pairs(totals) do out[#out + 1] = id end
+    table.sort(out, function(a, b)
+        if totals[a] ~= totals[b] then return totals[a] > totals[b] end
+        return a < b
+    end)
+    return out, false
 end
 
 local function draw_item_picker(cfg, totals)
-    line("title", 0, 0, "NEW RULE - pick an item", "title")
-    line("hint", 0, 300,
-        search == "" and "showing everything" or ("filter: " .. search), "dim")
+    local source, everything = picker_source(totals)
+    local pages = math.max(1, math.ceil(#source / PER_PAGE))
+    if page >= pages then page = pages - 1 end
+    if page < 0 then page = 0 end
 
-    local found = items.search(search, ROWS)
-    local row = 2
+    local row = 0
+    line("title", row, 0, "NEW RULE   pick an item", "title")
+    row = row + 1
+    line("sub", row, 0, string.format("%s,  %d item(s),  page %d of %d",
+        everything and "every item in the game" or "what your storage holds",
+        #source, page + 1, pages), "dim")
+    row = row + 2
 
-    if #found == 0 then
-        line("r" .. row, row, 16, "nothing matches " .. search, "dim")
+    local from = page * PER_PAGE + 1
+    for i = from, math.min(from + PER_PAGE - 1, #source) do
+        local id = source[i]
+        local have = totals[id] or 0
+        local key = "pick" .. i
+
+        line(key, row, PAD, id, "item")
+        line("cnt" .. i, row, COL2,
+            have > 0 and (have .. " in storage") or "", "dim")
+
+        hits[key] = { kind = "item", item = id }
         row = row + 1
-    else
-        for _, id in ipairs(found) do
-            local have = totals[id] or 0
-            line("r" .. row, row, 16, id, "item")
-            line("n" .. row, row, 380,
-                have > 0 and string.format("%d in storage", have) or "",
-                "dim")
-            hits["r" .. row] = { kind = "item", item = id }
-            hits["n" .. row] = { kind = "item", item = id }
-            row = row + 1
-        end
+    end
+    row = row + 1
+
+    if pages > 1 then
+        line("prev", row, PAD, "<   previous", page > 0 and "action" or "dim")
+        line("next", row, 220, "next   >",
+            page < pages - 1 and "action" or "dim")
+        if page > 0 then hits["prev"] = { kind = "page", by = -1 } end
+        if page < pages - 1 then hits["next"] = { kind = "page", by = 1 } end
+        row = row + 1
     end
 
+    line("all", row, PAD,
+        everything and "show only what I have" or "show every item in the game",
+        "action")
+    hits["all"] = { kind = "toggle_all" }
     row = row + 1
-    line("r" .. row, row, 16, "< back", "action")
-    hits["r" .. row] = { kind = "back" }
-    clear_from(row + 1)
+
+    line("back", row, PAD, "<   back", "action")
+    hits["back"] = { kind = "back" }
+
+    return row + 2
 end
 
 local function draw_work_picker(cfg)
-    line("title", 0, 0, "NEW RULE - which job produces it", "title")
-    line("hint", 0, 300, draft and draft.item or "", "dim")
+    local row = 0
+    line("title", row, 0, "NEW RULE   which job makes it", "title")
+    row = row + 1
+    line("sub", row, 0, draft and draft.item or "", "dim")
+    row = row + 2
 
-    local row = 2
+    local i = 0
     for _, name in ipairs(workdefs.ORDER) do
         if name ~= workdefs.ANYONE then
-            line("r" .. row, row, 16, workdefs.label(name), "item")
-            hits["r" .. row] = { kind = "work", work = name }
+            i = i + 1
+            local key = "job" .. i
+            line(key, row, PAD, workdefs.label(name), "item")
+            hits[key] = { kind = "work", work = name }
             row = row + 1
         end
     end
-
     row = row + 1
-    line("r" .. row, row, 16, "< back", "action")
-    hits["r" .. row] = { kind = "back" }
-    clear_from(row + 1)
+
+    line("back", row, PAD, "<   back", "action")
+    hits["back"] = { kind = "back" }
+
+    return row + 2
 end
 
 -- ---------------------------------------------------------------------------
@@ -379,16 +476,36 @@ function M.refresh(cfg)
     if not M.open then return end
     if not ensure_root() then return end
 
-    hits = {}
+    -- Which row the mouse is on, decided from last frame's map before it is
+    -- rebuilt. One frame of lag on a highlight is invisible; drawing the whole
+    -- screen twice to avoid it is not.
+    hover_key = nil
+    for key in pairs(hits) do
+        local tb = blocks[key]
+        local over = false
+        pcall(function()
+            if alive(tb) then over = tb:IsHovered() end
+        end)
+        if over == true then
+            hover_key = key
+            break
+        end
+    end
+
+    hits, used = {}, {}
     local totals = stock_totals(cfg)
 
+    local rows
     if mode == "item" then
-        draw_item_picker(cfg, totals)
+        rows = draw_item_picker(cfg, totals)
     elseif mode == "work" then
-        draw_work_picker(cfg)
+        rows = draw_work_picker(cfg)
     else
-        draw_list(cfg, totals)
+        rows = draw_list(cfg, totals)
     end
+
+    ensure_backdrop(rows)
+    blank_unused()
 end
 
 local function blank_everything()
@@ -397,17 +514,20 @@ local function blank_everything()
             local ft = make_ftext("")
             if ft then
                 pcall(function() tb:SetText(ft) end)
-                drawn[key] = nil
+                drawn[key] = ""
             end
         end
     end
-    hits = {}
+    if alive(backdrop) then
+        pcall(function() backdrop:SetBrushColor(CLEAR) end)
+    end
+    hits, hover_key = {}, nil
 end
 
 -- Opened on a hotkey, which means it can come up during ordinary play where
--- there is no mouse cursor at all. Without one nothing can be hovered, and
--- IsHovered is the whole of the panel's hit testing, so the cursor is turned
--- on with it and put back as it was on close.
+-- there is no mouse cursor at all. Nothing can be hovered without one, and
+-- IsHovered is the whole of the hit testing, so the cursor comes on with the
+-- panel and goes back as it was on close.
 local cursor_was = nil
 
 local function set_cursor(on)
@@ -431,7 +551,7 @@ function M.toggle()
     if not M.open then
         blank_everything()
         set_cursor(false)
-        mode, draft, search = "list", nil, ""
+        mode, draft, page, show_all = "list", nil, 0, false
         return
     end
 
@@ -443,9 +563,10 @@ function M.reset()
     M.open = false
     cursor_was = nil
     totals_cache, totals_at = nil, 0
-    root, root_owner, root_tree = nil, nil, nil
-    blocks, drawn, hits = {}, {}, {}
-    mode, draft, search = "list", nil, ""
+    root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+    blocks, drawn, hits, used = {}, {}, {}, {}
+    hover_key = nil
+    mode, draft, page, show_all = "list", nil, 0, false
     ftext_mode = nil
     warned = {}
 end
@@ -481,25 +602,40 @@ end
 local function hovered()
     for key, what in pairs(hits) do
         local tb = blocks[key]
-        local hit = false
+        local over = false
         pcall(function()
-            if alive(tb) then hit = tb:IsHovered() end
+            if alive(tb) then over = tb:IsHovered() end
         end)
-        if hit == true then return what end
+        if over == true then return what end
     end
     return nil
 end
 
--- Returns true when the click was ours, so the caller leaves the priority
--- grid alone.
+-- Returns true when the click was ours, so the caller leaves the grid alone.
 function M.handle_click(cfg, dir)
     if not M.open then return false end
 
     local what = hovered()
     if what == nil then return false end
 
+    if what.kind == "close" then
+        M.toggle()
+        return true
+    end
+
     if what.kind == "new" then
-        mode, search = "item", ""
+        mode, page, show_all = "item", 0, false
+        return true
+    end
+
+    if what.kind == "page" then
+        page = page + what.by
+        return true
+    end
+
+    if what.kind == "toggle_all" then
+        show_all = not show_all
+        page = 0
         return true
     end
 
@@ -507,7 +643,7 @@ function M.handle_click(cfg, dir)
         if mode == "work" then
             mode, draft = "item", nil
         else
-            mode, search = "list", ""
+            mode, page = "list", 0
         end
         return true
     end
