@@ -2,9 +2,9 @@
 --
 -- Two layers, both read-only:
 --   * one number per grid cell — the priority in force for that pal and work
---     type, replacing the vanilla checkbox, coloured on RimWorld's work-tab
---     scale; white marks the cell the last pass actually assigned. Work the
---     pal cannot do keeps its vanilla dash.
+--     type, replacing the vanilla checkbox, coloured strictly on RimWorld's
+--     work-tab scale. A cyan glow behind the number marks the cell the last
+--     pass actually assigned. Work the pal cannot do keeps its vanilla dash.
 --   * a one-line status strip on the menu itself: mode, cap, dry/live, and
 --     the last pass summary
 --
@@ -418,9 +418,8 @@ end
 -- 2 yellow, 3 orange, 4 red, anything beyond grey. Lifted very slightly off
 -- pure primaries, which read harshly against this darker UI.
 --
--- Colour carries the PRIORITY, so "assigned" cannot also be green. It gets
--- cyan, which sits outside the whole green-to-red scale and stays legible
--- next to the grey of priority 5.
+-- These are the ONLY thing that decides a number's colour. Whether the pal
+-- is currently assigned there is shown by the shadow, not by the fill.
 local COLOUR = {
     p1       = { R = 0.25, G = 1.00, B = 0.25, A = 1.0 },
     p2       = { R = 1.00, G = 1.00, B = 0.15, A = 1.0 },
@@ -428,10 +427,6 @@ local COLOUR = {
     p4       = { R = 1.00, G = 0.25, B = 0.18, A = 1.0 },
     p5       = { R = 0.62, G = 0.62, B = 0.62, A = 1.0 },
     off      = { R = 0.42, G = 0.42, B = 0.45, A = 0.9 },
-    -- Cyan, not white: white against grey p5 was too close to read, and a
-    -- priority-5 cell that happens to be assigned is exactly the case where
-    -- the difference matters most.
-    assigned = { R = 0.35, G = 0.90, B = 1.00, A = 1.0 },
     blank    = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
 }
 
@@ -467,8 +462,20 @@ local function restore_checkbox(cell, cell_name)
     cell_cb[cell_name] = nil
 end
 
-local function set_cell(tb, cell_name, glyph, color_key)
-    local token = glyph .. "|" .. color_key
+-- Colour says priority and NOTHING else, so the same number is always the
+-- same colour. Assignment rides on the drop shadow instead: a cyan glow
+-- behind the glyph rather than a different glyph colour.
+--
+-- The first attempt had colour carry both, which meant two pals both at
+-- priority 3 rendered differently and read as a rendering fault rather than
+-- as information. Two facts need two channels.
+local SHADOW = {
+    plain    = { R = 0.0,  G = 0.0,  B = 0.0,  A = 0.9 },
+    assigned = { R = 0.15, G = 0.85, B = 1.0,  A = 1.0 },
+}
+
+local function set_cell(tb, cell_name, glyph, colour_key, assigned)
+    local token = glyph .. "|" .. colour_key .. "|" .. tostring(assigned and 1 or 0)
     if cell_last[cell_name] == token then return end
 
     local ft = make_ftext(glyph)
@@ -479,10 +486,18 @@ local function set_cell(tb, cell_name, glyph, color_key)
 
     pcall(function()
         tb:SetColorAndOpacity({
-            SpecifiedColor = COLOUR[color_key],
+            SpecifiedColor = COLOUR[colour_key],
             ColorUseRule = 0,
         })
     end)
+
+    pcall(function()
+        tb:SetShadowColorAndOpacity(assigned and SHADOW.assigned or SHADOW.plain)
+        -- A wider offset for the glow, so it reads as a halo rather than as
+        -- an ordinary text shadow.
+        tb:SetShadowOffset(assigned and { X = 2, Y = 2 } or { X = 1, Y = 1 })
+    end)
+
     cell_last[cell_name] = token
 end
 
@@ -544,7 +559,7 @@ local function handle_cell(cfg, lookup, cell)
     if not capable or prio == nil then
         local existing = cell_text[cell_name]
         if existing and alive(existing) then
-            set_cell(existing, cell_name, "", "blank")
+            set_cell(existing, cell_name, "", "blank", false)
         end
         restore_checkbox(cell, cell_name)
         return
@@ -560,17 +575,16 @@ local function handle_cell(cfg, lookup, cell)
     -- pal on this work. The glyph is the effective priority either way —
     -- showing the bucket's global number in the assigned cell would
     -- contradict the pal's own override sitting in the rest of that column.
-    local assigned = lookup.assign[pal.key .. "|" .. t]
+    local assigned = lookup.assign[pal.key .. "|" .. t] ~= nil
     local glyph, colour
 
     if prio == false then
         glyph, colour = "X", "off"
     else
-        glyph = tostring(math.floor(prio))
-        colour = assigned and "assigned" or colour_for(prio)
+        glyph, colour = tostring(math.floor(prio)), colour_for(prio)
     end
 
-    set_cell(tb, cell_name, glyph, colour)
+    set_cell(tb, cell_name, glyph, colour, assigned)
 end
 
 local function refresh_cells(cfg, report)
