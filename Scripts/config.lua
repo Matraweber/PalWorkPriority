@@ -79,6 +79,25 @@ return {
     -- rank-3 pal should be doing.
     min_suitability_rank = 1,
 
+    -- The material a ceiling applies to when you set one by clicking the
+    -- stand. Only work types with one obvious output have an answer here.
+    --
+    -- Handiwork and Transporting produce nothing in particular, so their
+    -- columns stay blank and have to be set through config or chat, where a
+    -- material can actually be named. Mining lists stone rather than ore
+    -- because only one can be clicked; add the other by hand if you want
+    -- both, and mining then pauses only when both are full.
+    --
+    -- These are internal item ids. Press F12 to print the ones your base
+    -- actually holds.
+    ceiling_material = {
+        Deforest = "Wood",
+        Mining = "Stone",
+        Collection = "Fiber",
+        Seeding = "BerrySeeds",
+        MonsterFarm = "Wool",
+    },
+
     -- Which containers count as storage for a ceiling.
     --
     -- Press F12 in game to see what each of these is holding on your base.
