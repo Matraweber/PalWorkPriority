@@ -83,9 +83,18 @@ return {
     -- work that produces it is suspended for that pass and its pals fall
     -- through to the next priority instead of standing idle.
     --
+    -- You do not have to edit this. "!pwp limit Lumbering Wood 5000" in chat
+    -- does the same thing without a restart and remembers it in caps.txt,
+    -- and "!pwp limit" on its own lists what is set against what the base
+    -- currently holds. Anything set that way wins over what is written here.
+    --
     -- Keyed by work type, then by the item's internal StaticId. Run
     -- "!pwp stock" in game to print the ids and counts actually present in
     -- your base rather than guessing at spellings.
+    --
+    -- Only chests are counted. "!pwp stock" also names anything else on the
+    -- base that is holding items, so you can tell a ceiling that has not
+    -- triggered from a resource sitting somewhere that does not count.
     --
     -- A work type with several items listed is suspended only when every
     -- one of them is at or above its ceiling, so mining keeps running while

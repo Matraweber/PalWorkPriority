@@ -87,6 +87,32 @@ if ($Remove) {
     return
 }
 
+# A Lua syntax error does not announce itself. UE4SS drops the mod and the
+# game starts perfectly well without it, so the first symptom is every keybind
+# doing nothing. Check before anything reaches the game folder, and stop.
+$Checker = Join-Path $PSScriptRoot 'luacheck.py'
+if (Test-Path $Checker) {
+    $Python = $null
+    foreach ($candidate in 'python', 'python3', 'py') {
+        try { $Python = (Get-Command $candidate -ErrorAction Stop).Source; break } catch { }
+    }
+
+    if ($Python) {
+        Push-Location $Source
+        try {
+            & $Python $Checker 'Scripts/*.lua'
+            $checkResult = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        if ($checkResult -ne 0) {
+            throw 'Lua check failed. Nothing was deployed.'
+        }
+    } else {
+        Write-Warning 'python not found, skipping the Lua check'
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 
 # Wipe only the code, never priority.log or Discovery.txt sitting alongside it.

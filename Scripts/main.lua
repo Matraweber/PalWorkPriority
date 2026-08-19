@@ -16,6 +16,7 @@ local scheduler = require("scheduler")
 local discover = require("discover")
 local ui = require("ui")
 local store = require("store")
+local caps = require("caps")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -38,6 +39,7 @@ local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
 store.load(DIR .. "priorities.txt")
+caps.load(DIR .. "caps.txt")
 
 -- ---------------------------------------------------------------------------
 -- Config
@@ -213,6 +215,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " mode      spread <-> fill")
     log.say("  " .. p .. " cap       cycle max pals per work type")
     log.say("  " .. p .. " stock     print base storage by item id")
+    log.say("  " .. p .. " limit     set a stock ceiling for a work type")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
     log.say("      Alt+F10 mode, Alt+F11 cap")
@@ -355,6 +358,55 @@ COMMANDS.stock = function()
             if chests == 0 then
                 log.say("  no chests answered, so ceilings would read as unmet")
             end
+
+            -- Ceilings count chests only. Anything else on the base holding
+            -- stock is invisible to them, so name it rather than leaving a
+            -- limit to look broken when the resource is really just sitting
+            -- somewhere that is not counted.
+            local counted = {}
+            for _, cls in ipairs(api.CHEST_CLASSES) do counted[cls] = true end
+
+            local uncounted = {}
+            for _, holder in ipairs(api.camp_containers(api.guid_key(api.camp_id(camp)))) do
+                if not counted[holder.class] then
+                    local entry = uncounted[holder.class]
+                    if entry == nil then
+                        entry = { objects = 0, items = {} }
+                        uncounted[holder.class] = entry
+                    end
+                    entry.objects = entry.objects + 1
+                    for id, n in pairs(holder.items) do
+                        entry.items[id] = (entry.items[id] or 0) + n
+                    end
+                end
+            end
+
+            local classes = {}
+            for cls in pairs(uncounted) do classes[#classes + 1] = cls end
+            table.sort(classes)
+
+            if #classes > 0 then
+                local title = "  holding stock but NOT counted by ceilings:"
+                log.say(title)
+                if f then f:write(title .. "\n") end
+
+                for _, cls in ipairs(classes) do
+                    local entry = uncounted[cls]
+                    local ids = {}
+                    for id in pairs(entry.items) do ids[#ids + 1] = id end
+                    table.sort(ids)
+
+                    local parts = {}
+                    for _, id in ipairs(ids) do
+                        parts[#parts + 1] = id .. " " .. entry.items[id]
+                    end
+
+                    local line = string.format("    %s x%d: %s",
+                        cls, entry.objects, table.concat(parts, ", "))
+                    log.say(line)
+                    if f then f:write(line .. "\n") end
+                end
+            end
         end
 
         if f then
@@ -364,16 +416,184 @@ COMMANDS.stock = function()
     end)
 end
 
+-- ---------------------------------------------------------------------------
+-- Stock limits
+-- ---------------------------------------------------------------------------
+
+local function split_words(text)
+    local out = {}
+    for word in tostring(text or ""):gmatch("%S+") do out[#out + 1] = word end
+    return out
+end
+
+-- Accepts the internal name (Deforest) or the in-game label (Lumbering), in
+-- any case, because the stand and the icons only ever show the label.
+local function resolve_work(text)
+    if type(text) ~= "string" or text == "" then return nil end
+
+    for _, name in ipairs(workdefs.ORDER) do
+        if name:lower() == text:lower() then return name end
+    end
+    return workdefs.from_label(text)
+end
+
+-- Item totals across every loaded camp. Used to check a spelling and to show
+-- what a ceiling is up against. The ceilings themselves are still judged one
+-- camp at a time by the scheduler.
+local function stock_across_camps()
+    local totals = {}
+
+    for _, camp in ipairs(api.base_camps()) do
+        local camp_id = api.camp_id(camp)
+        if camp_id then
+            local part = api.camp_item_totals(api.guid_key(camp_id))
+            for id, n in pairs(part or {}) do
+                totals[id] = (totals[id] or 0) + n
+            end
+        end
+    end
+    return totals
+end
+
+-- The id as the base actually spells it. Ceilings are compared against ids
+-- read out of chests, so a lower case "wood" would never match "Wood" and
+-- the limit would sit there looking set while doing nothing at all.
+local function match_stock_id(totals, wanted)
+    if totals[wanted] then return wanted end
+
+    local lowered = wanted:lower()
+    for id in pairs(totals) do
+        if id:lower() == lowered then return id end
+    end
+    return nil
+end
+
+local function show_limits()
+    local all = caps.all(cfg)
+
+    local works = {}
+    for work in pairs(all) do works[#works + 1] = work end
+    table.sort(works)
+
+    if #works == 0 then
+        log.say("no stock limits set")
+        log.say("  " .. cfg.chat_prefix .. " limit Lumbering Wood 5000")
+        log.say("run " .. cfg.chat_prefix .. " stock for the item ids this base holds")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        local totals = stock_across_camps()
+
+        log.say("stock limits:")
+        for _, work in ipairs(works) do
+            local items = {}
+            for item in pairs(all[work]) do items[#items + 1] = item end
+            table.sort(items)
+
+            for _, item in ipairs(items) do
+                local ceiling = all[work][item]
+                local have = totals[item] or 0
+                log.say(string.format("  %-22s %-24s %d / %d%s",
+                    workdefs.label(work), item, have, ceiling,
+                    have >= ceiling and "   met" or ""))
+            end
+        end
+        log.say("a work type pauses once every item listed for it is at its limit")
+    end)
+end
+
+-- Ceilings, set from chat so they can be tried without a restart.
+--
+-- The verb is "limit" rather than "cap" because "cap" already means how many
+-- pals may pile onto one work type.
+COMMANDS.limit = function(args)
+    local w = split_words(args)
+
+    if #w == 0 then
+        show_limits()
+        return
+    end
+
+    if #w < 3 then
+        log.say("usage: " .. cfg.chat_prefix .. " limit <work> <item> <amount>")
+        log.say("       " .. cfg.chat_prefix .. " limit <work> <item> off")
+        log.say("run " .. cfg.chat_prefix .. " stock for the item ids this base holds")
+        return
+    end
+
+    -- Read from the end: item ids never contain spaces and neither do
+    -- amounts, so whatever is left in front is the work name. That keeps two
+    -- word labels like Oil Extraction working without any quoting.
+    local amount_text = w[#w]
+    local item_text = w[#w - 1]
+    local work_text = table.concat(w, " ", 1, #w - 2)
+
+    local work = resolve_work(work_text)
+    if work == nil then
+        log.say("no work type called " .. work_text)
+        log.say("use the names on the stand, for example Lumbering or Mining")
+        return
+    end
+
+    local lowered = amount_text:lower()
+    local ceiling = tonumber(amount_text)
+
+    -- 0 removes the ceiling rather than being read literally. Taken at face
+    -- value it would mean "you already have at least none of these", which
+    -- suspends the work type for good, and priority X on the stand already
+    -- says that far more clearly.
+    local clearing = (lowered == "off" or lowered == "none"
+        or lowered == "clear" or ceiling == 0)
+
+    if not clearing and (ceiling == nil or ceiling < 1) then
+        log.say(amount_text .. " is not an amount, use a number or 0 to remove")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        local totals = stock_across_camps()
+
+        if clearing then
+            local id = match_stock_id(totals, item_text) or item_text
+            if caps.clear(work, id) then
+                log.say("limit removed: " .. workdefs.label(work) .. " " .. id)
+            else
+                log.say("no limit was set for " .. workdefs.label(work) .. " " .. id)
+                return
+            end
+        else
+            local id = match_stock_id(totals, item_text)
+            if id == nil then
+                -- Not fatal: capping something the base has none of yet is a
+                -- perfectly good thing to want. A typo looks the same though,
+                -- so say so rather than letting it fail quietly later.
+                id = item_text
+                log.warn("nothing called " .. item_text .. " is in this base right " ..
+                    "now, so check the spelling with " .. cfg.chat_prefix .. " stock")
+            end
+
+            caps.set(work, id, math.floor(ceiling))
+            log.say(string.format("limit set: %s pauses at %d %s, base holds %d",
+                workdefs.label(work), math.floor(ceiling), id, totals[id] or 0))
+        end
+
+        scheduler.forget()
+        run_pass("limit change", true)
+    end)
+end
+
 local function handle_command(text)
     local prefix = cfg.chat_prefix
     if text:sub(1, #prefix):lower() ~= prefix:lower() then return false end
 
     local rest = text:sub(#prefix + 1):match("^%s*(.-)%s*$") or ""
     local verb = rest:match("^(%S+)") or "help"
+    local args = rest:match("^%S+%s+(.*)$") or ""
 
     local fn = COMMANDS[verb:lower()]
     if fn then
-        local ok, err = pcall(fn)
+        local ok, err = pcall(fn, args)
         if not ok then log.error("command '" .. verb .. "' failed: " .. tostring(err)) end
     else
         log.say("unknown command '" .. verb .. "', try " .. prefix .. " help")

@@ -753,4 +753,72 @@ function M.camp_item_totals(camp_key)
     return totals, chests
 end
 
+-- Every camp-owned map object holding items, whatever its class.
+--
+-- Diagnostic only. camp_item_totals above counts chests and nothing else, so
+-- a resource sitting in some other container is invisible to a ceiling. This
+-- is how to find out what those other containers actually are on a live base
+-- instead of guessing at the class list.
+--
+-- Returns a list of { class = string, items = { [StaticId] = count } }.
+function M.camp_containers(camp_key)
+    local found = {}
+    if not camp_key then return found end
+
+    pcall(function()
+        -- The concrete-model base rather than the two chest classes, so
+        -- anything derived from it turns up: logging sites, mining sites,
+        -- feed boxes, breeding pens.
+        for _, m in ipairs(FindAllOf("PalMapObjectConcreteModelBase") or {}) do
+            pcall(function()
+                if not valid(m) then return end
+
+                local cid
+                pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
+                if cid ~= camp_key then return end
+
+                local module
+                pcall(function() module = m:GetItemContainerModule() end)
+                if not valid(module) then return end
+
+                local container = prop(module, "TargetContainer")
+                if not valid(container) then return end
+
+                local slots = prop(container, "ItemSlotArray")
+                if slots == nil then return end
+
+                local items, n, total = {}, 0, 0
+                pcall(function() n = #slots end)
+                for i = 1, n do
+                    pcall(function()
+                        local slot = slots[i]
+                        local sid = slot.ItemId.StaticId:ToString()
+                        if sid and sid ~= "None" then
+                            local count = tonumber(slot.StackCount) or 0
+                            items[sid] = (items[sid] or 0) + count
+                            total = total + count
+                        end
+                    end)
+                end
+
+                -- Empty containers say nothing useful and there are a lot of
+                -- them on a built-up base.
+                if total == 0 then return end
+
+                -- GetFullName leads with the class, which is how work classes
+                -- are read elsewhere in this file.
+                local cls = "<unknown>"
+                pcall(function()
+                    local full = m:GetFullName()
+                    if type(full) == "string" then cls = full:match("^(%S+)") or full end
+                end)
+
+                found[#found + 1] = { class = cls, items = items }
+            end)
+        end
+    end)
+
+    return found
+end
+
 return M

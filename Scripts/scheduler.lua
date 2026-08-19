@@ -19,6 +19,7 @@
 -- The cost is that a work type unchecked by hand in vanilla comes back on.
 
 local log = require("log")
+local caps = require("caps")
 local api = require("palapi")
 local workdefs = require("workdefs")
 local store = require("store")
@@ -57,11 +58,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local function cap_reached(cfg, work_name, totals)
-    local caps = (cfg.work_caps or {})[work_name]
-    if type(caps) ~= "table" then return false end
+    local ceilings = caps.for_work(cfg, work_name)
+    if ceilings == nil then return false end
 
     local listed = false
-    for item, ceiling in pairs(caps) do
+    for item, ceiling in pairs(ceilings) do
         listed = true
         if type(ceiling) == "number" and (totals[item] or 0) < ceiling then
             return false
@@ -347,10 +348,10 @@ end
 -- One camp, one pass
 -- ---------------------------------------------------------------------------
 
+-- Reading every chest in a camp is the most expensive thing a pass does, so
+-- it only happens when some ceiling could actually use the answer.
 local function needs_totals(cfg)
-    local caps = cfg.work_caps
-    if type(caps) ~= "table" then return false end
-    return next(caps) ~= nil
+    return caps.any(cfg)
 end
 
 local function run_camp(cfg, camp, stats)

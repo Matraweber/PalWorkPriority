@@ -179,6 +179,21 @@ A work type can be suspended once the base already holds enough of what it produ
 that would have worked it are still unclaimed when the next priority comes round, so they drop
 down to it rather than standing idle next to a full chest.
 
+Set one from chat, no restart:
+
+```
+!pwp limit Lumbering Wood 5000     set it
+!pwp limit Lumbering Wood 0        remove it, "off" also works
+!pwp limit                         list every limit against what the base holds
+```
+
+Ceilings set this way live in `caps.txt` next to the mod and outrank `config.lua`, the same way
+a priority clicked on the stand outranks the configured one. `0` removes a limit rather than
+being read literally: taken at face value it would mean "you already have at least none of
+these" and suspend the work type for good, which is what priority `X` on the stand is for.
+
+The equivalent in `config.lua`, for anyone who would rather keep it in a file:
+
 ```lua
 work_caps = {
     Deforest = { Wood = 5000 },
@@ -189,14 +204,25 @@ work_caps = {
 With several items listed, the work type is suspended only when *every* one is at or above its
 ceiling, mining keeps running while either stone or ore is still short.
 
-The keys are internal item ids, not display names, and a misspelled id produces a ceiling that
-silently never fires. Run `!pwp stock` while standing in your base to print exactly what is in
-storage, by id, and write the full list to `Stock.txt`.
+The keys are internal item ids, not display names. `!pwp limit` matches what you type against
+what the base is holding and stores the id as the game spells it, so case does not matter, and
+it warns when nothing on the base matches at all. Editing `config.lua` by hand has no such
+guard and a misspelled id there produces a ceiling that silently never fires. Run `!pwp stock`
+to print what is in storage, by id, and write the full list to `Stock.txt`.
 
-Storage is read by walking the base's chests. If no chest answers, totals read as zero and work
-keeps running, overshooting a ceiling is a far milder failure than suspending a work type
-because a container did not reply. Storage is only read at all when at least one ceiling is
-configured.
+### What counts toward a ceiling
+
+Chests only, `PalMapObjectItemChestModel` and `PalMapObjectGuildChestModel`. A Logging Site or
+a feed box holding stock does not count toward anything.
+
+That is a real limitation rather than a decision, so `!pwp stock` also lists every other object
+on the base that is holding items, under `holding stock but NOT counted by ceilings`. If a
+ceiling is not firing when you think it should, look there first: the resource may simply be
+sitting somewhere the count does not reach.
+
+If no chest answers at all, totals read as zero and work keeps running. Overshooting a ceiling
+is a far milder failure than suspending a work type because a container did not reply. Storage
+is only read when at least one ceiling exists, in `caps.txt` or in `config.lua`.
 
 ## The Monitoring Stand display
 
@@ -278,6 +304,7 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp mode` | toggle spread / fill |
 | `!pwp cap` | cycle max Pals per work type |
 | `!pwp stock` | print base storage by item id, and write `Stock.txt` |
+| `!pwp limit` | set, clear or list resource ceilings |
 | `!pwp discover` | write `Discovery.txt` with live work probes |
 
 `F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles
