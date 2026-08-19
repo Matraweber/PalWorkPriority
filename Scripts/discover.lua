@@ -13,6 +13,7 @@
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
+local ui = require("ui")
 
 local M = {}
 

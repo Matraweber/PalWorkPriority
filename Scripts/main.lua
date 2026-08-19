@@ -14,6 +14,7 @@ local api = require("palapi")
 local workdefs = require("workdefs")
 local scheduler = require("scheduler")
 local discover = require("discover")
+local ui = require("ui")
 
 local MOD_NAME = "Pal Work Priority"
 local VERSION = "0.1.0"
@@ -162,6 +163,28 @@ local function start_timer()
     ExecuteWithDelay(cfg.interval_seconds * 1000, tick)
 end
 
+-- The stand panel needs its own cadence. A pass runs every 30s, but the menu
+-- can be opened at any moment and a panel that appears half a minute late is
+-- worse than none. This only looks for the menu; when the stand is shut it
+-- finds nothing and stops there.
+local ui_running = false
+
+local function ui_tick()
+    if not ui_running then return end
+    if cfg and cfg.enabled then
+        ExecuteInGameThread(function()
+            pcall(function() ui.refresh(cfg, scheduler.last_report) end)
+        end)
+    end
+    ExecuteWithDelay(1000, ui_tick)
+end
+
+local function start_ui()
+    if ui_running then return end
+    ui_running = true
+    ExecuteWithDelay(1000, ui_tick)
+end
+
 -- ---------------------------------------------------------------------------
 -- Commands
 -- ---------------------------------------------------------------------------
@@ -253,6 +276,7 @@ end
 COMMANDS.on = function()
     cfg.enabled = true
     start_timer()
+    start_ui()
     log.say("enabled")
 end
 
@@ -357,6 +381,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- memo built from them.
     api.reset()
     scheduler.forget()
+    ui.reset()
 
     if cfg.run_on_world_load then
         -- Base camps and their worker slots are not populated the instant
@@ -364,6 +389,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         ExecuteWithDelay(15000, function() run_pass("world load") end)
     end
     start_timer()
+    start_ui()
 end)
 
 RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)

@@ -26,6 +26,8 @@ local M = {}
 -- is not re-sent every cycle.
 local last_assignment = {}
 
+M.last_report = nil
+
 function M.forget()
     last_assignment = {}
 end
@@ -251,6 +253,16 @@ local function run_camp(cfg, camp, stats)
 
         claimed[pal.key] = true
 
+        -- Recorded before the unchanged check on purpose: a pal already doing
+        -- the right job is still part of what the pass decided, and leaving it
+        -- out would make the stand panel look emptier every cycle.
+        stats.lines[#stats.lines + 1] = {
+            label = workdefs.label(bucket.name),
+            prio = bucket.prio,
+            pal = pal.name,
+            rank = rank,
+        }
+
         local wkey = work_key(w)
         if last_assignment[wkey] == pal.key then
             stats.unchanged = stats.unchanged + 1
@@ -332,6 +344,8 @@ function M.run_pass(cfg)
         assigned = 0, would_assign = 0, unchanged = 0, failed = 0,
         unstaffed = 0, unknown_work = 0, unconfigured = 0, disabled_work = 0,
         ignored = 0, queued = 0,
+        -- what the pass decided, for the Monitoring Stand panel
+        lines = {},
         capped = 0,
     }
 
@@ -347,6 +361,13 @@ function M.run_pass(cfg)
             log.warn("pass threw on a camp: " .. tostring(err))
         end
     end
+
+    -- Held for the stand panel, which renders between passes and has no other
+    -- way to know what the last one concluded.
+    M.last_report = {
+        lines = stats.lines,
+        summary = (stats.camps > 0) and M.format_stats(cfg, stats) or "no base camp loaded",
+    }
 
     return stats
 end
