@@ -33,6 +33,7 @@ local search = ""
 
 local root = nil                -- our canvas, child of the game's UI layout
 local root_owner = nil          -- the layout we hung it off, to spot a swap
+local root_tree = nil           -- that layout's WidgetTree, the construction outer
 local blocks = {}               -- key -> TextBlock
 local drawn = {}                -- key -> last string drawn, to skip no-op sets
 local hits = {}                 -- key -> what clicking that line means
@@ -122,9 +123,9 @@ local function first_canvas(node, budget)
 end
 
 local function ensure_root()
-    if alive(root) and alive(root_owner) then return root end
+    if alive(root) and alive(root_owner) and alive(root_tree) then return root end
 
-    root, root_owner = nil, nil
+    root, root_owner, root_tree = nil, nil, nil
     blocks, drawn = {}, {}
 
     local layout
@@ -148,7 +149,7 @@ local function ensure_root()
         return nil
     end
 
-    root, root_owner = canvas, layout
+    root, root_owner, root_tree = canvas, layout, tree
     return root
 end
 
@@ -162,9 +163,17 @@ local function line(key, row, col, text, colour_key)
     local tb = blocks[key]
     if not alive(tb) then
         local cls = api.cdo("/Script/UMG.TextBlock")
-        if not cls then return end
+        if not cls or not alive(root_tree) then return end
 
-        pcall(function() tb = StaticConstructObject(cls, canvas) end)
+        -- Constructed against the WidgetTree, not the canvas.
+        --
+        -- A UMG widget belongs to a WidgetTree; the panel it renders in is
+        -- parenting, not ownership. Giving it a CanvasPanel as its outer
+        -- leaves it owned by something that does not keep widgets alive, and
+        -- the game crashed inside UE4SS on the first frame after this panel
+        -- was drawn. The cell numbers on the stand have always used the tree,
+        -- which is why they never did this.
+        pcall(function() tb = StaticConstructObject(cls, root_tree) end)
         if not alive(tb) then return end
 
         local slot
@@ -221,26 +230,41 @@ end
 
 -- What the bases are holding, measured the same way the scheduler measures
 -- it, so a rule shown as met is one the scheduler also treats as met.
+-- Cached, because the panel redraws every second and reading every container
+-- on every loaded base is the most expensive thing this mod does. The
+-- scheduler does it once per pass for a reason.
+local totals_cache = nil
+local totals_at = 0
+local TOTALS_TTL = 3.0
+
 local function stock_totals(cfg)
+    local now = os.clock()
+    if totals_cache and (now - totals_at) < TOTALS_TTL then
+        return totals_cache
+    end
+
     local opts = {
         include = cfg.counted_containers,
         exclude = cfg.uncounted_containers,
     }
 
+    local totals
     if cfg.storage_scope == "global" then
-        return (api.all_chest_totals(opts))
-    end
-
-    local totals = {}
-    for _, camp in ipairs(api.base_camps()) do
-        local camp_id = api.camp_id(camp)
-        if camp_id then
-            local part = api.camp_item_totals(api.guid_key(camp_id), opts)
-            for id, n in pairs(part or {}) do
-                totals[id] = (totals[id] or 0) + n
+        totals = (api.all_chest_totals(opts))
+    else
+        totals = {}
+        for _, camp in ipairs(api.base_camps()) do
+            local camp_id = api.camp_id(camp)
+            if camp_id then
+                local part = api.camp_item_totals(api.guid_key(camp_id), opts)
+                for id, n in pairs(part or {}) do
+                    totals[id] = (totals[id] or 0) + n
+                end
             end
         end
     end
+
+    totals_cache, totals_at = totals, now
     return totals
 end
 
@@ -418,7 +442,8 @@ end
 function M.reset()
     M.open = false
     cursor_was = nil
-    root, root_owner = nil, nil
+    totals_cache, totals_at = nil, 0
+    root, root_owner, root_tree = nil, nil, nil
     blocks, drawn, hits = {}, {}, {}
     mode, draft, search = "list", nil, ""
     ftext_mode = nil

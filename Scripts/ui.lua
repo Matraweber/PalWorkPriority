@@ -707,14 +707,18 @@ local function header_columns(menu)
         if alive(icon) then pcall(function() itree = icon.WidgetTree end) end
         if alive(itree) then pcall(function() iroot = itree.RootWidget end) end
 
-        if alive(iroot) then cols[i + 1] = iroot end
+        -- Canvas and tree both: the canvas is where the number is parented,
+        -- the tree is what must own it. See ensure_ceiling_text.
+        if alive(iroot) and alive(itree) then
+            cols[i + 1] = { canvas = iroot, tree = itree }
+        end
     end
 
     ceiling_cols = cols
     return cols
 end
 
-local function ensure_ceiling_text(value, canvas)
+local function ensure_ceiling_text(value, column)
     local cached = ceiling_text[value]
     if cached then
         if alive(cached) then return cached end
@@ -722,11 +726,17 @@ local function ensure_ceiling_text(value, canvas)
         ceiling_last[value] = nil
     end
 
+    local canvas, tree = column.canvas, column.tree
+    if not alive(canvas) or not alive(tree) then return nil end
+
     local cls = api.cdo("/Script/UMG.TextBlock")
     if not cls then return nil end
 
+    -- Constructed against the WidgetTree rather than the canvas. A UMG widget
+    -- belongs to a tree; the panel it renders in is parenting, not ownership.
+    -- Giving one a CanvasPanel as its outer crashed the game inside UE4SS.
     local tb
-    pcall(function() tb = StaticConstructObject(cls, canvas) end)
+    pcall(function() tb = StaticConstructObject(cls, tree) end)
     if not alive(tb) then return nil end
 
     local slot
@@ -768,9 +778,9 @@ function refresh_ceilings(cfg, menu)
     local cols = header_columns(menu)
     if cols == nil then return end
 
-    for value, canvas in pairs(cols) do
+    for value, column in pairs(cols) do
         local work_name = workdefs.name(value)
-        if work_name and alive(canvas) then
+        if work_name and alive(column.canvas) then
             local item = ceiling_material(cfg, work_name)
             local ceiling = ceiling_now(cfg, work_name, item)
 
@@ -787,7 +797,7 @@ function refresh_ceilings(cfg, menu)
 
             local token = glyph .. "|" .. colour
             if ceiling_last[value] ~= token then
-                local tb = ensure_ceiling_text(value, canvas)
+                local tb = ensure_ceiling_text(value, column)
                 if tb then
                     local ft = make_ftext(glyph)
                     if ft then
