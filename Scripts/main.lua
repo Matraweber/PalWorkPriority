@@ -19,6 +19,7 @@ local store = require("store")
 local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
+local net = require("net")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -227,10 +228,11 @@ COMMANDS.help = function()
     log.say("  " .. p .. " stock     print base storage by item id")
     log.say("  " .. p .. " limit     set a stock ceiling for a work type")
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
+    log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
-    log.say("      Alt+F9 work rules, Alt+F10 mode, Alt+F11 cap,")
-    log.say("      Alt+F12 storage scope")
+    log.say("      Alt+F8 transport test, Alt+F9 work rules,")
+    log.say("      Alt+F10 mode, Alt+F11 cap, Alt+F12 storage scope")
 end
 
 COMMANDS.status = function()
@@ -251,6 +253,9 @@ COMMANDS.status = function()
         ", " .. demandidx.pulses .. " pulse(s) seen" ..
         (demandidx.live() and demandidx.pulses == 0
             and "  (nothing wants doing, which is normal while pals sleep)" or ""))
+    log.say("  transport: " .. (net.installed and "hooked" or "NOT HOOKED") ..
+        ", echo " .. net.stats.echo_returned .. "/" .. net.stats.echo_sent ..
+        " returned")
     log.say("  authority: " .. (api.has_authority()
         and "yes, this machine runs the world"
         or "NO, this is a client. Work is estimated from the camp's own work " ..
@@ -295,6 +300,14 @@ COMMANDS.cap = function()
     log.say("max pals per work type: " ..
         (next_cap and tostring(next_cap) or "no limit"))
     run_pass("cap change", true)
+end
+
+-- Phase 0 of the multiplayer plan. Everything networked depends on these two
+-- RPCs actually crossing, so there is a command that does nothing but find
+-- out, and it reports rather than assuming.
+COMMANDS.net = function()
+    net.report()
+    net.selftest()
 end
 
 COMMANDS.scope = function()
@@ -674,6 +687,10 @@ end
 -- exists, and a hook registered late misses every job already running.
 demandidx.install()
 
+-- Registered at load like the demand hook, and for the same reason: a hook
+-- registered late misses everything that happened before it.
+net.install()
+
 -- A client connected to a dedicated server can read the base and can ask the
 -- server to change work suitability, but it never sees the work pulses: the
 -- hook behind them is on a _ServerInternal function. Say so once at startup,
@@ -694,6 +711,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     ui.reset()
     items.reset()
     panel.reset()
+    net.reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
@@ -791,4 +809,11 @@ end, { ModifierKey.ALT })
 -- this sits on the modifier alongside the other toggles.
 bind(Key.F9, "Alt+F9 (work rules)", function()
     panel.toggle()
+end, { ModifierKey.ALT })
+
+-- The transport test needs a key of its own, because the machine most worth
+-- running it on is a client in single player, where there is no chat box to
+-- type a command into.
+bind(Key.F8, "Alt+F8 (transport test)", function()
+    COMMANDS.net()
 end, { ModifierKey.ALT })
