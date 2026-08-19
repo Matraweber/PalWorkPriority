@@ -100,6 +100,10 @@ local function probe_works(f)
     local total, resolved = 0, 0
     local unresolved = {}
     local by_type = {}
+    -- OverrideWorkType value -> how many works reported it, and one example
+    -- of each. This is the raw material for WORKTYPE_TO_SUIT: pair each
+    -- number with its name from the EPalWorkType dump above.
+    local worktypes = {}
 
     for ci, camp in ipairs(camps) do
         local works, err = api.camp_works(camp)
@@ -113,6 +117,20 @@ local function probe_works(f)
             local work_name = text_of(w, "func", "GetWorkName")
             local full = api.work_full_name(w)
             local override = api.as_int(api.prop(w, "OverrideWorkType"))
+
+            if override then
+                local slot = worktypes[override]
+                if slot then
+                    slot.n = slot.n + 1
+                else
+                    worktypes[override] = {
+                        n = 1,
+                        assign = assign_id or "?",
+                        work_name = work_name or "?",
+                        class = full:gsub("%s.*$", ""),
+                    }
+                end
+            end
 
             local value = api.work_suitability(w)
             local resolved_name = value and workdefs.name(value) or nil
@@ -146,6 +164,18 @@ local function probe_works(f)
         table.sort(names)
         for _, name in ipairs(names) do
             f:write(string.format("    %-22s %d\n", name, by_type[name]))
+        end
+    end
+
+    if next(worktypes) then
+        f:write("  OverrideWorkType values seen (match against the EPalWorkType dump):\n")
+        local vals = {}
+        for v in pairs(worktypes) do vals[#vals + 1] = v end
+        table.sort(vals)
+        for _, v in ipairs(vals) do
+            local e = worktypes[v]
+            f:write(string.format("    %3d  x%-4d %s | %s | %s\n",
+                v, e.n, e.assign, e.work_name, e.class))
         end
     end
 
@@ -197,22 +227,32 @@ local function probe_ranks(f)
     end
 end
 
-local function enum_names(f)
-    f:write("=== EPalWorkSuitability\n")
+local function dump_enum(f, path, upto)
+    f:write("=== " .. path .. "\n")
     local ok = pcall(function()
-        local e = StaticFindObject("/Script/Pal.EPalWorkSuitability")
+        local e = StaticFindObject(path)
         if not api.valid(e) then
             f:write("  enum object not found (normal on some builds)\n")
             return
         end
         f:write("  found: " .. tostring(e:GetFullName()) .. "\n")
-        for v = 0, 14 do
+        for v = 0, upto do
             local name
             pcall(function() name = e:GetNameByValue(v):ToString() end)
             if name then f:write(string.format("  %2d = %s\n", v, name)) end
         end
     end)
     if not ok then f:write("  enum walk unavailable\n") end
+end
+
+-- EPalWorkType is the enum behind a work's OverrideWorkType, and it is NOT
+-- EPalWorkSuitability — the two are different sets with overlapping small
+-- integers, which is exactly how a wrong reading gets filed as plausible.
+-- Its names are what WORKTYPE_TO_SUIT in palapi.lua has to be built from.
+local function enum_names(f)
+    dump_enum(f, "/Script/Pal.EPalWorkSuitability", 16)
+    f:write("\n")
+    dump_enum(f, "/Script/Pal.EPalWorkType", 60)
 end
 
 function M.run(out_path)

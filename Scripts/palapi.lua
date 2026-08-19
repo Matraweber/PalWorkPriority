@@ -104,6 +104,7 @@ local cdo_cache = {}
 function M.reset()
     cdo_cache = {}
     M._suitability_source = nil
+    M._unknown_worktype = {}
     M._suitability_warned = false
 end
 
@@ -254,10 +255,19 @@ function M.camp_pals(camp)
     return out, nil
 end
 
+-- GetWorkSuitabilityRankWithCharacterRank folds in the pal's character rank,
+-- so a condenser-upgraded pal reads at the rank it actually works at rather
+-- than its base rank. Falls back to the plain call on builds without it.
+-- (Function name via PalPriority.)
 function M.suitability_rank(param, value)
     if type(value) ~= "number" then return 0 end
-    local rank = 0
-    pcall(function() rank = param:GetWorkSuitabilityRank(value) end)
+
+    local rank
+    pcall(function() rank = param:GetWorkSuitabilityRankWithCharacterRank(value) end)
+    if type(rank) ~= "number" then
+        pcall(function() rank = param:GetWorkSuitabilityRank(value) end)
+    end
+
     if type(rank) ~= "number" then return 0 end
     return rank
 end
@@ -329,40 +339,50 @@ end
 
 -- Which suitability a work needs.
 --
--- PalWorkBase carries no such field. The live schema on revision 82182 has
--- AssignDefineDataId, OverrideWorkType and GetWorkName, and the requirement
--- is not stored on the work object at all — it lives in an assign-define
--- data row the work only references by name.
+-- PalWorkBase carries no such field: the requirement lives in an
+-- assign-define data row the work only references by name. What a work does
+-- expose is OverrideWorkType plus some text, and the ORDER these are
+-- consulted in matters more than any one of them.
 --
--- What the work does expose is text that names the job:
--- PalWorkDeforestFoliage, PalWorkTransportItemInBaseCamp. So the type is
--- read out of that text, trying the most specific source first.
+-- OverrideWorkType is EPalWorkType, a different enum from
+-- EPalWorkSuitability, and it is the job's own declaration of what it is.
+-- One class carries several of them: the transport class was observed
+-- reporting 7, 11, 16 and 17. Reading the class name first therefore files
+-- every pickable-collection job under Transport and hides it from pals set
+-- to Collection — on this save that was 26 of 79 works. That OverrideWorkType
+-- is EPalWorkType, and that it has to outrank the class name, are both
+-- credited to PalPriority (see README).
 --
--- A warning about probing by property name: UE4SS returns a live-looking
--- TrivialObject for ANY property name, including ones that do not exist. A
--- non-nil read proves nothing, which is exactly how the first four
--- candidates all appeared to answer while meaning nothing. Only text that
--- resolves to a known work type is accepted here.
--- first_token trims a full object name down to its leading class token
--- before matching. GetFullName returns the whole path, and a map or level
--- name that happens to contain "cool" or "farm" would otherwise classify a
--- work by its address rather than its job.
-M.SUITABILITY_SOURCES = {
-    { kind = "prop", name = "AssignDefineDataId" },
-    { kind = "func", name = "GetWorkName" },
-    { kind = "func", name = "GetFullName", first_token = true },
+-- WORKTYPE_TO_SUIT stays empty until discover.lua dumps EPalWorkType from
+-- the running build. An unmapped value falls through to the text sources
+-- rather than being guessed at, and is logged so it can be filled in.
+M.WORKTYPE_TO_SUIT = {}
+
+-- Stations whose job reports OverrideWorkType = 0 under the generic
+-- PalWorkProgress class, where AssignDefineDataId is the only thing that
+-- tells a furnace from a bench. Only ids actually observed on a live build
+-- belong here.
+M.STATION_SUIT = {
+    ["CampFire_0"] = "EmitFlame",
+    ["BlastFurnace_0"] = "EmitFlame",
 }
 
-M._suitability_source = nil
+-- Not work at all. Listed so it reports as skipped instead of padding the
+-- unreadable count and looking like a gap in coverage.
+M.WORK_IGNORE = {
+    ["Idle"] = true,
+}
+
+M._unknown_worktype = {}
 M._suitability_warned = false
 
-local function source_text(w, source)
+local function work_text(w, kind, name, first_token)
     local raw
-    if source.kind == "func" then
-        local ok = pcall(function() raw = w[source.name](w) end)
+    if kind == "func" then
+        local ok = pcall(function() raw = w[name](w) end)
         if not ok then return nil end
     else
-        raw = prop(w, source.name)
+        raw = prop(w, name)
     end
 
     local text
@@ -377,60 +397,62 @@ local function source_text(w, source)
     end
 
     if type(text) ~= "string" or text == "" or text == "None" then return nil end
-    if source.first_token then text = text:match("^(%S+)") or text end
+    if first_token then text = text:match("^(%S+)") or text end
     return text
 end
 
--- Returns the integer suitability this work needs, or nil when the work
--- cannot be classified. Warns once per session rather than once per work.
+M.work_text = work_text
+
+-- Returns (value, reason). value is the integer suitability, or nil when the
+-- work could not be typed. reason is "ignored" for things that are
+-- deliberately not work.
 function M.work_suitability(w)
     local workdefs = require("workdefs")
 
-    -- OverrideWorkType wins when it is set to something meaningful: it is an
-    -- explicit statement on the work, where the text below is inference.
-    -- Validated against the known range, because a bogus enum read would
-    -- otherwise file the work under whatever integer happened to come back.
-    local override = as_int(prop(w, "OverrideWorkType"))
-    if override and workdefs.name(override) then
-        return override
-    end
-
-    local ordered = M.SUITABILITY_SOURCES
-    if M._suitability_source then
-        ordered = { M._suitability_source }
-    end
-
-    for _, source in ipairs(ordered) do
-        local text = source_text(w, source)
-        local name = text and workdefs.from_text(text) or nil
-        if name then
-            if M._suitability_source == nil then
-                M._suitability_source = source
-                log.info(string.format("reading work type from %s '%s'",
-                    source.kind, source.name))
-            end
-            return workdefs.value(name)
+    -- 1. The job's own declaration.
+    local wt = as_int(prop(w, "OverrideWorkType"))
+    if wt and wt ~= 0 then
+        local name = M.WORKTYPE_TO_SUIT[wt]
+        if name then return workdefs.value(name) end
+        if not M._unknown_worktype[wt] then
+            M._unknown_worktype[wt] = true
+            log.debug("unmapped EPalWorkType " .. tostring(wt) ..
+                " — run '!pwp discover' to dump the enum")
         end
     end
 
-    -- The cached source failed on this particular work. Fall back to the
-    -- full list for it rather than reporting it unreadable, since works of
-    -- different classes do not all name themselves the same way.
-    if M._suitability_source then
-        for _, source in ipairs(M.SUITABILITY_SOURCES) do
-            local text = source_text(w, source)
-            local name = text and workdefs.from_text(text) or nil
-            if name then return workdefs.value(name) end
-        end
+    -- 2. The game's own display name. For several jobs this string IS the
+    --    suitability label, and it is right in exactly the cases where the
+    --    class name misleads.
+    local work_name = work_text(w, "func", "GetWorkName")
+    if work_name then
+        if M.WORK_IGNORE[work_name] then return nil, "ignored" end
+        local labelled = workdefs.from_label(work_name)
+        if labelled then return workdefs.value(labelled) end
     end
+
+    -- 3. Station identity, for the generic PalWorkProgress objects.
+    local assign = work_text(w, "prop", "AssignDefineDataId")
+    if assign then
+        local mapped = M.STATION_SUIT[assign]
+        if mapped then return workdefs.value(mapped) end
+        local kw = workdefs.from_text(assign)
+        if kw then return workdefs.value(kw) end
+    end
+
+    -- 4. Class name last, because one class serves several work types.
+    local cls = work_text(w, "func", "GetFullName", true)
+    local kw = cls and workdefs.from_text(cls) or nil
+    if kw then return workdefs.value(kw) end
 
     if not M._suitability_warned then
         M._suitability_warned = true
-        log.warn("could not read a work type from any source on this build — " ..
-            "run '!pwp discover' and check the live work probes section")
+        log.warn("some work could not be typed — run '!pwp discover' and read " ..
+            "the UNRESOLVED list")
     end
     return nil
 end
+
 
 -- ---------------------------------------------------------------------------
 -- Acting on the world

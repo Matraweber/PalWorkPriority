@@ -118,11 +118,18 @@ local function build_buckets(cfg, works, totals, stats)
     local capped_names = {}
 
     for _, w in ipairs(works) do
-        local value = api.work_suitability(w)
+        local value, reason = api.work_suitability(w)
         local name = value and workdefs.name(value) or nil
 
         if name == nil then
-            stats.unknown_work = stats.unknown_work + 1
+            -- "ignored" is a thing that is deliberately not work, such as an
+            -- idle placeholder. Counting it as unreadable would make coverage
+            -- look worse than it is.
+            if reason == "ignored" then
+                stats.ignored = stats.ignored + 1
+            else
+                stats.unknown_work = stats.unknown_work + 1
+            end
         else
             local prio = cfg.work_priority[name]
             if prio == nil then
@@ -253,6 +260,7 @@ function M.run_pass(cfg)
         camps = 0, pals = 0, works = 0, chests = 0,
         assigned = 0, would_assign = 0, unchanged = 0, failed = 0,
         unstaffed = 0, unknown_work = 0, unconfigured = 0, disabled_work = 0,
+        ignored = 0,
         capped = 0,
     }
 
@@ -288,6 +296,7 @@ function M.format_stats(cfg, stats)
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " unreadable" end
     if stats.unconfigured > 0 then parts[#parts + 1] = stats.unconfigured .. " unconfigured" end
     if stats.disabled_work > 0 then parts[#parts + 1] = stats.disabled_work .. " off" end
+    if stats.ignored > 0 then parts[#parts + 1] = stats.ignored .. " not work" end
     return table.concat(parts, ", ")
 end
 

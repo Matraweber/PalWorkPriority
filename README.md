@@ -130,16 +130,23 @@ A live schema dump settled this: `PalWorkBase` has **no** work-suitability field
 requirement is not on the work object at all — it lives in an assign-define data row the work
 only references by name through `AssignDefineDataId`.
 
-What the work does expose is text that names the job. On revision 82182 the classes read
-`PalWorkDeforestFoliage`, `PalWorkTransportItemInBaseCamp`, and so on, so the type is recovered
-from that text via the keyword table in `Scripts/workdefs.lua`. Sources are tried most specific
-first: `AssignDefineDataId`, then `GetWorkName`, then the leading class token of the full object
-name. `OverrideWorkType` wins outright when it is set to something in range, since that is an
-explicit statement rather than inference.
+What a work does expose is `OverrideWorkType` plus some text, and the order they are consulted
+in matters more than any one of them:
 
-Generic `PalWorkProgress` objects carry no job in their class name and depend on the first two
-sources. Anything that resolves to nothing is reported as unreadable and skipped rather than
-guessed at — a mis-classified work would put a Pal on the wrong job silently.
+1. **`OverrideWorkType`**, the job's own declaration. This is `EPalWorkType` — a *different* enum
+   from `EPalWorkSuitability`, mapped through `WORKTYPE_TO_SUIT` in `Scripts/palapi.lua`.
+2. **`GetWorkName`**, the game's display name. For several jobs this string is literally the
+   suitability label, and it is right precisely where the class name misleads.
+3. **`AssignDefineDataId`**, the station identity, for generic `PalWorkProgress` objects where
+   one class covers a furnace and a bench alike.
+4. **Class name**, last, because one class serves several work types.
+
+Class name has to come last. The transport class reports `OverrideWorkType` 7, 11, 16 and 17
+depending on the job; reading its name first files every pickable-collection job under Transport
+and hides it from Pals set to Collection. On one test base that was 26 of 79 works.
+
+Anything that resolves to nothing is reported as unreadable and skipped rather than guessed at —
+a mis-classified work puts a Pal on the wrong job silently.
 
 `!pwp discover` lists every unresolved work with its three text sources, which is exactly what a
 new `workdefs.KEYWORDS` entry needs to match.
@@ -186,8 +193,16 @@ The game-side symbols were learned by reading mods that already run on this buil
   (chest model classes, `GetItemContainerModule().TargetContainer.ItemSlotArray`,
   `ItemId.StaticId` and `StackCount`)
 
-This is an independent implementation. It shares no code with PalPriority and takes a different
-approach: PalPriority flips the vanilla per-Pal work toggles, this drives fixed assignments.
+- **PalPriority** ([Nexus 3830](https://www.nexusmods.com/palworld/mods/3830)) — for establishing
+  that a work's `OverrideWorkType` is `EPalWorkType` rather than `EPalWorkSuitability`, that it
+  has to outrank the class name, and for `GetWorkSuitabilityRankWithCharacterRank`
+
+This is an independent implementation and shares no code with PalPriority. The two take different
+approaches: PalPriority flips the vanilla per-Pal work toggles through
+`RequestChangeWorkSuitability_ToServer`, while this drives fixed assignments through
+`RequestFixedAssignWorkInBaseCamp_ToServer`. What was taken from it is factual — which engine
+symbol means what — not implementation. `WORKTYPE_TO_SUIT` is built from a `EPalWorkType` dump of
+the running build rather than copied.
 
 ## License
 

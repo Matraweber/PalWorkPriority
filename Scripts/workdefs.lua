@@ -48,6 +48,19 @@ M.LABEL = {
     Anyone = "Any Pal",
 }
 
+-- Reverse of LABEL. GetWorkName returns the game's own display name for a
+-- work, and for some works that string IS the suitability label — a job
+-- reporting "Gathering" is Collection work whatever its class is called.
+M.BY_LABEL = {}
+for name, label in pairs(M.LABEL) do
+    M.BY_LABEL[label:lower()] = name
+end
+
+function M.from_label(text)
+    if type(text) ~= "string" then return nil end
+    return M.BY_LABEL[text:lower()]
+end
+
 function M.value(name)
     for i, n in ipairs(M.ORDER) do
         if n == name then
