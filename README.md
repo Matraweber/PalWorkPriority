@@ -201,7 +201,6 @@ worse — tinting broke colour consistency, a coloured drop shadow rendered as a
 already answers that in its own info panel. The grid is an editor: it shows what you set.
 - **Work a Pal cannot do keeps its vanilla dash.** A number there would claim the Pal will do
   something it is incapable of, so those cells are left alone entirely.
-- **A status strip** along the bottom: mode, cap, dry/live, and the last pass summary.
 
 Numbers reflect `pal_overrides` too, resolved nickname-first then species exactly as the
 scheduler resolves them — so what the grid shows and what the scheduler does cannot drift apart.

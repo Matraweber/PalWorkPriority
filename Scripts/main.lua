@@ -31,8 +31,8 @@ local function script_dir()
     return path:match("^(.*[\\/])") or ""
 end
 
--- Output goes to the mod root rather than Scripts/, because redeploying
--- replaces Scripts/ wholesale and would take the log with it.
+-- Output goes to the mod root: redeploying replaces Scripts/ wholesale and
+-- would take the log with it.
 local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
@@ -124,10 +124,9 @@ end
 -- Passes
 -- ---------------------------------------------------------------------------
 
--- explicit marks a pass the user asked for by hand. Those always report
--- something, even when there was nothing to do: a keypress that produces no
--- output at all is indistinguishable from a mod that is not loaded, and
--- sends you debugging the wrong thing.
+-- explicit marks a pass asked for by hand. Those always report something,
+-- even when there was nothing to do: a keypress with no output at all is
+-- indistinguishable from a mod that failed to load.
 local function run_pass(reason, explicit)
     if not cfg then return end
 
@@ -166,26 +165,22 @@ local function start_timer()
     ExecuteWithDelay(cfg.interval_seconds * 1000, tick)
 end
 
--- The stand panel needs its own cadence. A pass runs every 30s, but the menu
--- can be opened at any moment and a panel that appears half a minute late is
--- worse than none. This only looks for the menu; when the stand is shut it
--- finds nothing and stops there.
+-- The grid needs its own cadence: the stand can be opened at any moment and
+-- numbers that appear a pass later read as broken. This only looks for the
+-- menu, and finds nothing while the stand is shut.
 local ui_running = false
 
 local function ui_tick()
     if not ui_running then return end
-    -- Runs even when the mod is disabled: compose() renders an OFF state, and
-    -- gating here instead would freeze the panel showing DRY RUN or LIVE for
-    -- the rest of the session after '!pwp off'. refresh() costs nothing while
-    -- the stand is shut.
+    -- Runs even when disabled, so the grid still reflects edits. It costs
+    -- nothing while the stand is shut.
     if cfg then
         ExecuteInGameThread(function()
-            pcall(function() ui.refresh(cfg, scheduler.last_report) end)
+            pcall(function() ui.refresh(cfg) end)
         end)
 
-        -- A priority just changed on the stand. Re-fence now rather than
-        -- leaving the edit inert until the next 30s tick, which reads as the
-        -- click having done nothing.
+        -- A priority just changed. Re-fence now rather than leaving the edit
+        -- inert until the next tick, which reads as the click doing nothing.
         if ui.wants_pass then
             ui.wants_pass = false
             run_pass("edit")

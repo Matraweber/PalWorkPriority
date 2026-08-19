@@ -1,31 +1,22 @@
 -- The priority pass, as a fence rather than an assignment.
 --
--- The mod does not hand pals specific jobs. It decides which work types each
--- pal is ALLOWED to do right now and switches the rest off, then lets
--- Palworld's own AI choose within that. A pal whose top-priority work has
--- something waiting gets everything else switched off, so the AI has nowhere
--- else to send it.
---
--- The earlier design pinned one pal to one work object through
--- RequestFixedAssignWorkInBaseCamp_ToServer and left the AI otherwise free,
--- so a pal could still wander off to a lower-priority job the moment it
--- finished — items waiting to be carried while a pal went watering instead.
--- Fencing is how PalPriority does it, and it is the mechanism that actually
--- makes a priority order govern behaviour.
+-- The mod does not hand pals jobs. It decides which work types each pal is
+-- ALLOWED to do right now and switches the rest off, leaving the game's own
+-- AI to choose within that. Assigning a pal to one specific work instead
+-- leaves the AI free between jobs, which is how a pal ends up watering while
+-- hauling waits.
 --
 -- Per camp, per pass:
---   1. count DEMAND: how many pending jobs exist of each work type
---   2. walk priority levels 1..MAX, fencing each pal to the first level where
---      it is capable of something that still has demand to spare
---   3. a pal fenced nowhere is left unfenced — everything it may legally do
---      stays on, since barring an unneeded pal from everything just idles it
---   4. diff against the game's own permissions and send only the differences
+--   1. count DEMAND per work type from the game's own pulses
+--   2. walk priority levels 1..MAX, fencing each pal to the first level with
+--      demand to spare
+--   3. a pal already working a type keeps it, bounded by HOLD_SECONDS
+--   4. a pal fenced nowhere is left unfenced rather than idled
+--   5. diff against the game's permissions and send only the differences
 --
--- Restoring is stateless. A pal's permissions are always
--- "capable AND not X AND (fenced-in OR unfenced)", so switching the mod off
--- puts back "capable AND not X" with no record of what was there before.
--- The cost is that a work type you unchecked by hand in vanilla will be
--- switched back on; X is how you say "never" to this mod.
+-- Restoring is stateless: permissions are always "capable AND not X AND
+-- (fenced-in OR unfenced)", so switching off restores "capable AND not X".
+-- The cost is that a work type unchecked by hand in vanilla comes back on.
 
 local log = require("log")
 local api = require("palapi")
@@ -44,14 +35,10 @@ local MAX_TOGGLES_PER_PASS = 40
 
 -- How long a pal may be held on work that no longer announces itself.
 --
--- The hold exists to stop a fence being released mid-job, which takes
--- seconds to a minute. It must NOT outlast the job: a workbench keeps its
--- work object forever, and a pal that has finished crafting still reports
--- Handiwork as its current work, so an unbounded hold pins it at the bench
--- with everything else switched off and nothing left to do.
---
--- Real demand resets the clock, so a pal that keeps getting genuine work of
--- that type is never aged out — only one that has run dry.
+-- The hold stops a fence being released mid-job. It must not outlast the job:
+-- a workbench keeps its work object forever and a finished crafter still
+-- reports Handiwork, so an unbounded hold pins it at the bench with nothing
+-- to do. Real demand resets the clock.
 local HOLD_SECONDS = 90
 
 -- pal key -> { value, since }. Which work each pal is being held on and when
@@ -83,15 +70,12 @@ local function cap_reached(cfg, work_name, totals)
     return listed
 end
 
--- How many pending jobs of each work type this camp has. A work type whose
--- resource ceiling is met contributes nothing, which is what makes a ceiling
--- release pals to other work rather than merely stop them.
+-- Pending jobs per work type. A type whose resource ceiling is met
+-- contributes nothing, which is what lets a ceiling release pals rather than
+-- merely stop them.
 --
--- `works` here must be the camp's REQUIRED works, not every work object it
--- owns. A station keeps a work object for as long as it stands, so counting
--- all of them makes a cold campfire look like pending kindling — and a pal
--- fenced to kindling on the strength of it stands idle while the logging it
--- was barred from goes undone.
+-- Only reached by the estimated fallback, where `works` is every work object
+-- the camp owns. That overstates demand badly: a cold campfire has one.
 local function build_demand(cfg, works, totals, stats)
     local demand = {}
 
@@ -129,13 +113,9 @@ local function build_demand(cfg, works, totals, stats)
     return demand
 end
 
--- How many work objects of each type exist in this camp, announcing or not.
---
--- This is NOT demand. A station keeps its work object while it stands, so
--- these counts happily include a cold campfire. It answers a narrower
--- question: is there any work of this type left at all? That is enough to
--- decide whether a pal already doing that work should carry on, without
--- being enough to pull an idle pal in.
+-- Work objects of each type that exist, announcing or not. NOT demand: a cold
+-- campfire has one. It answers only "is there any of this left?", which is
+-- enough to keep a pal working but not to pull one in.
 local function count_work_objects(camp)
     local out = {}
     for _, w in ipairs(api.camp_works(camp)) do
@@ -181,15 +161,12 @@ local function plan_fences(cfg, pals, demand, objects, stats)
         return (demand[value] or 0) > 0
     end
 
-    -- Whether a work type can still absorb ANOTHER pal. Demand is the real
-    -- limit: three pending haul jobs never need a fourth hauler, whatever the
-    -- priorities say. In spread mode lap tightens it further, so every work
-    -- type gets one pal before any gets a second.
+    -- What a type can still absorb: three pending haul jobs never need a
+    -- fourth hauler. In spread mode lap tightens it so every type gets one pal
+    -- before any gets a second.
     --
-    -- This decides only whether a pal is PULLED to a level. It must not
-    -- decide what goes in the fence — doing both meant a pal with two
-    -- priority-1 types lost one of them the moment another pal took the last
-    -- slot on it, and got that work switched off while it was still wanted.
+    -- This decides only whether a pal is PULLED here, never what goes in the
+    -- fence. Doing both cost a pal one of its two priority-1 types.
     local function room(value, lap)
         local limit = demand[value] or 0
         if cap and cap < limit then limit = cap end
@@ -211,18 +188,13 @@ local function plan_fences(cfg, pals, demand, objects, stats)
         table.sort(pal.order)
     end
 
-    -- A pal already working a type keeps it while any work of that type
-    -- remains, even when none of it is announcing.
+    -- The asymmetry that holds this together. To PULL a pal to a work type
+    -- takes a real pulse, so nobody is sent to a cold station. To KEEP a pal
+    -- where it is takes only that work of that type still exists.
     --
-    -- This is the asymmetry that makes the whole thing hold together. To PULL
-    -- a pal to a work type takes a real pulse, so nobody is sent to a cold
-    -- station. To KEEP a pal where it already is takes only that work of that
-    -- type still exists. Without it a fence is released the instant a job is
-    -- assigned - because an assigned job stops asking for anyone, so by demand
-    -- alone it looks finished the moment it truly starts. The pal then has its
-    -- other work types switched back on mid-swing and wanders off to a lower
-    -- priority the moment the tree falls, with the whole logging site still
-    -- standing.
+    -- Without it the fence is released the instant a job is ASSIGNED: an
+    -- assigned job stops asking for anyone, so it looks finished the moment
+    -- it truly starts.
     local now = os.time()
 
     local function keeps(pal, value)
@@ -544,8 +516,8 @@ function M.run_pass(cfg)
     return stats
 end
 
--- "3 type(s)" says nothing about WHICH three, and which they are is the
--- whole question when a pal is on the wrong job. Name them.
+-- Which types want a worker. "3 type(s)" says nothing when a pal is on the
+-- wrong job.
 local function demand_summary(stats)
     local names = {}
     for name in pairs(stats.demand_by_name) do names[#names + 1] = name end

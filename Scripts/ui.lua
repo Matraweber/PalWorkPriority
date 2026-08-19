@@ -1,11 +1,9 @@
 -- The Monitoring Stand display.
 --
--- Two layers, both read-only:
---   * one number per grid cell — the priority in force for that pal and work
---     type, replacing the vanilla checkbox, coloured on RimWorld's work-tab
---     scale. Work the pal cannot do keeps its vanilla dash.
---   * a one-line status strip on the menu itself: mode, cap, dry/live, and
---     the last pass summary
+-- One number per grid cell: the priority in force for that pal and work type,
+-- replacing the vanilla checkbox and coloured on RimWorld's work-tab scale.
+-- Work the pal cannot do keeps its vanilla dash. Left click raises a cell,
+-- right click lowers it.
 --
 -- Game-facing facts (class names, the BindFromSlot hook, BindedSuitability,
 -- the checkbox-sibling placement) follow what PalPriority's UI mod proves
@@ -45,16 +43,6 @@ local ROW_BIND_FN = ROW_BP_PATH .. ":BindFromSlot"
 
 local warned = {}
 local ftext_mode = nil          -- "direct" | "kismet"
-
--- Status strip.
-local strip = nil               -- TextBlock on the menu root
-local strip_menu = nil          -- menu instance it belongs to
-local strip_last = nil
--- Every strip ever created, so a new one can evict the old regardless of why
--- the reference to it was lost. Two strips sit at identical coordinates and
--- render as doubled, unreadable glyphs; guessing at each cause of a re-attach
--- fixed one and missed another, so this removes the possibility instead.
-local strips = {}
 
 -- Live menu cache. Multiple instances coexist (seen live: a hidden stale one
 -- alongside the open one), so only a VISIBLE instance may be cached.
@@ -101,36 +89,18 @@ local function class_name(o)
     return n
 end
 
--- Drops only the lookup caches. cell_text and cell_last deliberately survive.
---
--- This runs on every BindFromSlot, which means every scroll step — and rows
--- RECYCLE rather than being destroyed, so the cell widget and the TextBlock
--- already injected into it are both still alive. Clearing cell_text here
--- would make ensure_cell_text construct a second TextBlock at the same copied
--- geometry on the next tick, leaving the first one orphaned and still
--- rendering the previous pal's number. One scroll would double every glyph in
--- the grid, and it would keep stacking from there.
---
--- ensure_cell_text already drops entries whose widget genuinely died, which
--- is the only case that needs handling.
+-- Lookup caches only. cell_text MUST survive: this runs on every scroll, rows
+-- recycle rather than die, and dropping the reference to a live TextBlock
+-- makes the next tick inject a second one on top of it.
 local function invalidate_cells()
     cell_cache = nil
     cell_row = {}
 end
 
--- Lost sight of the menu. Only the lookups are dropped — every reference to
--- something we injected is kept, and alive() decides whether it is still
--- usable.
---
--- Clearing those maps here was wrong for the same reason it was wrong in
--- invalidate_cells. detach fires whenever the menu is not found, including
--- the transient case where it is merely reported invisible for a frame; the
--- widgets are still very much alive, and dropping the references made the
--- next tick inject a second copy on top of the first. That is what was
--- rendering the status strip twice, its two versions overlapping into
--- unreadable doubled glyphs.
+-- Lost sight of the menu. Injected references are kept and alive() decides
+-- what is still usable: detach fires on a merely-invisible frame too, so
+-- dropping them here would duplicate widgets on the next tick.
 function M.detach()
-    strip_last = nil
     menu_ref = nil
     invalidate_cells()
 end
@@ -141,9 +111,6 @@ function M.reset()
     M.detach()
     -- A world switch really does destroy everything, so this is where the
     -- injected references are dropped rather than in detach.
-    strips = {}
-    strip = nil
-    strip_menu = nil
     cell_text = {}
     cell_last = {}
     cell_cb = {}
@@ -316,9 +283,8 @@ end
 -- Cell -> row
 -- ---------------------------------------------------------------------------
 
--- The cell's Outer chain goes to the GameInstance (dynamic CreateWidget), so
--- identity must come through the SLATE parent: the panel the cell actually
--- renders in lives inside the row's tree, and its Outer chain reaches the row.
+-- The cell's Outer chain leads to the GameInstance, not the row. The SLATE
+-- parent does reach it: the panel the cell renders in lives in the row's tree.
 local function row_of_cell(cell)
     local node
     pcall(function() node = cell:GetParent() end)
@@ -337,9 +303,8 @@ end
 -- Per-cell TextBlock
 -- ---------------------------------------------------------------------------
 
--- Sibling-of-checkbox with copied slot geometry: identical placement by
--- construction. The cell's internals are canvas-style absolute layout, so
--- geometry is copied, never inferred.
+-- Sibling of the checkbox with its slot geometry copied. The cell uses
+-- absolute layout, so geometry must be copied rather than inferred.
 local function inject_at_checkbox(cell, tb)
     local cb
     pcall(function() cb = cell.PalCheckBox end)
@@ -444,12 +409,9 @@ local function ensure_cell_text(cell, cell_name)
     return tb
 end
 
--- RimWorld's work-tab palette (WidgetsWork.ColorOfPriority): 1 green,
--- 2 yellow, 3 orange, 4 red, anything beyond grey. Lifted very slightly off
--- pure primaries, which read harshly against this darker UI.
---
--- These are the ONLY thing that decides a number's colour. Whether the pal
--- is currently assigned there is shown by the shadow, not by the fill.
+-- RimWorld's work-tab palette (WidgetsWork.ColorOfPriority), lifted slightly
+-- off pure primaries for this darker UI. Colour means priority and nothing
+-- else, so the same number is always the same colour.
 local COLOUR = {
     p1       = { R = 0.25, G = 1.00, B = 0.25, A = 1.0 },
     p2       = { R = 1.00, G = 1.00, B = 0.15, A = 1.0 },
@@ -466,10 +428,9 @@ local function colour_for(prio)
     return "p" .. math.min(n, 5)
 end
 
--- The vanilla checkbox has to go where a number is drawn, or the tick shows
--- through the glyph. Hidden (2) rather than Collapsed keeps the cell's layout
--- space, so the grid does not shift. The vanilla row refresh can re-show it,
--- hence hiding every tick rather than once.
+-- Hidden (2), not Collapsed, so the cell keeps its layout space and the grid
+-- does not shift. Re-hidden every tick because the vanilla row refresh can
+-- put it back.
 local function hide_checkbox(cell, cell_name)
     pcall(function()
         local cb = cell.PalCheckBox
@@ -492,13 +453,9 @@ local function restore_checkbox(cell, cell_name)
     cell_cb[cell_name] = nil
 end
 
--- Colour says priority, and the grid says nothing else at all.
---
--- Three attempts at also marking "the pal is on this job right now" all made
--- the grid worse: tinting broke colour consistency, a coloured drop shadow
--- rendered as a duplicate digit, and an enlarged glyph just looked wrong.
--- The game already answers that question in its own info panel, and the grid
--- is an editor. It shows what you set, and nothing else.
+-- The grid deliberately does not mark which job a pal is on right now. Three
+-- attempts all made it worse, and the game already answers that in its own
+-- info panel. This is an editor: it shows what you set.
 local function set_cell(tb, cell_name, glyph, colour_key)
     local token = glyph .. "|" .. colour_key
     if cell_last[cell_name] == token then return end
@@ -602,129 +559,19 @@ local function refresh_cells(cfg)
 end
 
 -- ---------------------------------------------------------------------------
--- Status strip
--- ---------------------------------------------------------------------------
-
--- Deliberately terse. The log summary is around 120 characters and ran off
--- the side of the screen; the strip has roughly 50 to work with.
-function M.compose(cfg, report)
-    local head = string.format("PWP  %s  %s  cap %s",
-        cfg.enabled and (cfg.dry_run and "DRY RUN" or "LIVE") or "OFF",
-        cfg.assignment_mode,
-        cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "-")
-
-    if not report then return head .. "   no pass yet" end
-    if (report.camps or 0) == 0 then return head .. "   no base camp" end
-
-    return string.format("%s   %d/%d fenced   %d %s",
-        head, report.fenced or 0, report.pals or 0, report.toggles or 0,
-        cfg.dry_run and "would move" or "moved")
-end
-
--- Detaches every strip we have made. RemoveFromParent is what makes this
--- reliable: it does not matter whether the reference was lost, whether the
--- menu was rebuilt, or how many accumulated.
-local function drop_strips()
-    for i = #strips, 1, -1 do
-        local tb = strips[i]
-        if alive(tb) then pcall(function() tb:RemoveFromParent() end) end
-        strips[i] = nil
-    end
-    strip = nil
-    strip_last = nil
-end
-
-local function attach_strip(menu, tree, root)
-    drop_strips()
-
-    local cls = api.cdo("/Script/UMG.TextBlock")
-    if not cls then
-        warn_once("tbclass", "UMG.TextBlock not found — status strip unavailable")
-        return false
-    end
-
-    local tb
-    pcall(function() tb = StaticConstructObject(cls, tree) end)
-    if not alive(tb) then
-        warn_once("construct", "could not construct the status strip")
-        return false
-    end
-
-    local placed = false
-    local slot
-    if pcall(function() slot = root:AddChildToCanvas(tb) end) and slot then
-        pcall(function()
-            slot:SetAutoSize(true)
-            -- The menu's own title bar, to the right of "Monitoring Stand".
-            -- It is the one wide empty run on this screen: the bottom of the
-            -- canvas put the strip over the hotbar, and lifting it only moved
-            -- it onto the panel border and the pal info card.
-            slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 },
-                              Maximum = { X = 0.0, Y = 0.0 } })
-            slot:SetAlignment({ X = 0.0, Y = 0.5 })
-            slot:SetPosition({ X = 410.0, Y = 176.0 })
-        end)
-        placed = true
-    elseif pcall(function() slot = root:AddChildToOverlay(tb) end) and slot then
-        pcall(function()
-            slot:SetHorizontalAlignment(0)
-            slot:SetVerticalAlignment(2)
-        end)
-        placed = true
-    elseif pcall(function() root:AddChild(tb) end) then
-        placed = true
-    end
-
-    if not placed then
-        warn_once("stripadd", "stand menu root accepted no child — status strip unavailable")
-        return false
-    end
-
-    pcall(function() tb:SetVisibility(3) end)
-    pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
-    pcall(function()
-        tb:SetColorAndOpacity({
-            SpecifiedColor = { R = 0.9, G = 0.9, B = 0.9, A = 1.0 },
-            ColorUseRule = 0,
-        })
-    end)
-
-    strip = tb
-    strip_menu = menu
-    strip_last = nil
-    strips[#strips + 1] = tb
-    return true
-end
-
-local function refresh_strip(cfg, report, menu, tree, root)
-    if strip_menu ~= menu or not alive(strip) then
-        if not attach_strip(menu, tree, root) then return end
-    end
-
-    local text = M.compose(cfg, report)
-    if text == strip_last then return end
-
-    local ft = make_ftext(text)
-    if not ft then return end
-    if pcall(function() strip:SetText(ft) end) then
-        strip_last = text
-    end
-end
-
--- ---------------------------------------------------------------------------
 -- Entry point, once per UI tick
 -- ---------------------------------------------------------------------------
 
-function M.refresh(cfg, report)
+function M.refresh(cfg)
     try_hook_bind()
 
     -- Plain Lua read while the stand has never been opened: zero engine calls
     -- is the whole idle cost of the mod.
     if not menu_likely_open then return false end
 
-    local menu, tree, root = live_menu()
+    local menu = live_menu()
     if not menu then
-        if strip_menu ~= nil then M.detach() end
+        if menu_ref ~= nil then M.detach() end
         -- Stand down until a row binds again. Without this the mod runs a
         -- FindAllOf every second for the rest of the session after the stand
         -- is opened once.
@@ -732,7 +579,6 @@ function M.refresh(cfg, report)
         return false
     end
 
-    refresh_strip(cfg, report, menu, tree, root)
     refresh_cells(cfg)
 
     store.flush()
@@ -747,9 +593,8 @@ M.wants_pass = false
 -- Clicking a cell
 -- ---------------------------------------------------------------------------
 
--- Exactly one cell can be under the pointer. IsHovered still answers with the
--- vanilla checkbox hidden, because Hidden only takes the checkbox out of hit
--- testing, not the cell widget that contains it.
+-- Exactly one cell can be hovered. IsHovered still answers with the checkbox
+-- hidden, since Hidden removes the checkbox from hit testing, not the cell.
 local function hovered_cell()
     if cell_cache == nil then return nil end
     for _, cell in ipairs(cell_cache) do
@@ -820,16 +665,9 @@ local function bump(cfg, dir)
 
     store.set(pal.key, t, next_prio)
 
-    -- Deliberately NOT writing the game's permission flag here.
-    --
-    -- The fence owns those flags now. Writing one here as well gave a single
-    -- click three authorities: the vanilla handler toggling it, this
-    -- re-asserting it, and the next pass overriding both — which is what
-    -- shows up as the checkbox flicking between tick and cross under the
-    -- number. A click changes policy; the pass applies it.
-    --
-    -- The vanilla toggle underneath is left to be corrected by that pass,
-    -- which diffs against the game's real state and puts it right.
+    -- Deliberately NOT writing the game's permission flag here: the fence
+    -- owns those. A click changes policy, the pass applies it. Writing here
+    -- too gave one click three authorities and made the checkbox flicker.
     M.wants_pass = true
 
     -- Repaint this one cell immediately rather than waiting up to a second

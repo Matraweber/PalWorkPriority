@@ -1,25 +1,17 @@
 -- Which work types currently want a worker.
 --
--- Palworld announces this itself: PalBaseCampWorkerDirector fires
--- OnRequiredAssignWork_ServerInternal repeatedly, every few seconds, for
--- every work still needing someone. Catching that pulse is the only reliable
--- source, and it is what the reference implementation uses.
+-- The game announces this itself: PalBaseCampWorkerDirector fires
+-- OnRequiredAssignWork_ServerInternal every few seconds for each work still
+-- needing someone. Catching that pulse is the only reliable source.
 --
--- Two simpler approaches were tried against this build and both failed:
+-- Two simpler sources were tried on this build and both failed, so do not
+-- simplify back to either. Counting every work object overstates demand
+-- enormously: a base with a few ripe bushes reported 78 gathering works.
+-- Reading WorkerDirector.RequiredAssignWorks reads an EMPTY array almost
+-- always, since a work sits there only for the instant it is asking.
 --
---   Counting every work object in a camp overstates demand enormously. A
---   station keeps its work object for as long as it stands, so a base with a
---   handful of ripe bushes reported 78 gathering works, and pals were fenced
---   onto stations with nothing to do while real work went undone.
---
---   Reading WorkerDirector.RequiredAssignWorks reads an EMPTY array almost
---   every time, because a work sits in that list only for the instant it is
---   asking. Polling it every 30 seconds sees nothing, which looks identical
---   to an idle base and made the mod stop governing anything at all.
---
--- A job is considered finished when it stops pulsing. Demand is recounted
--- from the live set on every pass rather than kept as a running total, so a
--- missed event cannot leave a permanent phantom job behind.
+-- Demand is recounted from the live set each pass rather than kept as a
+-- running total, so a missed event cannot leave a phantom job behind.
 
 local api = require("palapi")
 local log = require("log")
@@ -28,19 +20,14 @@ local M = {}
 
 -- How long a job survives without another pulse.
 --
--- This is the single most delicate number in the mod, and it was far too
--- small at first. Work types announce themselves at wildly different rates:
--- on one live base all 77 gathering works pulsed, while only 2 of 16
--- lumbering works ever did. A window of 25 seconds meant those two jobs
--- expired while the trees were still standing, lumbering dropped out of
--- demand entirely, and a pal configured to prefer it drifted back to a
--- campfire it had at priority 5.
+-- The most delicate number here. Work types announce at wildly different
+-- rates: on one base all 77 gathering works pulsed while only 2 of 16
+-- lumbering works ever did, so a short window starved lumbering entirely.
 --
--- The real end-of-job signal is the work OBJECT dying, which is checked
--- separately and prunes within one pass. This window is only the backstop for
--- work that finishes without its object going away, so it can afford to be
--- generous. Overstating demand costs at most a fenced pal; understating it
--- silently stops the mod governing that work type at all.
+-- The real end-of-job signal is the work OBJECT dying, checked separately and
+-- pruned within a pass. This is only the backstop, so it can afford to be
+-- generous: overstating demand costs a fenced pal, understating it stops the
+-- mod governing that work type at all.
 M.FRESH_SECONDS = 180
 
 M.pulses = 0                -- total ever seen
@@ -120,11 +107,8 @@ function M.install()
 end
 
 -- Prunes finished jobs and returns { [work value] = count } for one camp,
--- plus how many live jobs are known across all camps.
---
--- A job whose camp could not be read is counted for every camp rather than
--- dropped: a job nobody can place is worse than one placed twice, since the
--- first leaves work undone and the second only fences a spare pal.
+-- plus how many live jobs are known overall. A job whose camp will not read
+-- counts for every camp: placing it twice beats losing it.
 function M.for_camp(camp_key)
     local now = os.time()
     local out, live = {}, 0
