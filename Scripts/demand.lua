@@ -26,14 +26,22 @@ local log = require("log")
 
 local M = {}
 
--- How long a job survives without a pulse. This must exceed the worst gap
--- between re-fires or jobs oscillate in and out of demand and the toggles
--- flip at pulse frequency; the reference settled on 6 for that reason and
--- this is deliberately more generous still.
+-- How long a job survives without another pulse.
 --
--- It also has to comfortably exceed the pass interval, or a job can live and
--- die entirely between two passes and never be seen at all.
-M.FRESH_SECONDS = 25
+-- This is the single most delicate number in the mod, and it was far too
+-- small at first. Work types announce themselves at wildly different rates:
+-- on one live base all 77 gathering works pulsed, while only 2 of 16
+-- lumbering works ever did. A window of 25 seconds meant those two jobs
+-- expired while the trees were still standing, lumbering dropped out of
+-- demand entirely, and a pal configured to prefer it drifted back to a
+-- campfire it had at priority 5.
+--
+-- The real end-of-job signal is the work OBJECT dying, which is checked
+-- separately and prunes within one pass. This window is only the backstop for
+-- work that finishes without its object going away, so it can afford to be
+-- generous. Overstating demand costs at most a fenced pal; understating it
+-- silently stops the mod governing that work type at all.
+M.FRESH_SECONDS = 180
 
 M.pulses = 0                -- total ever seen
 -- Pulses per work type, never pruned. This distinguishes "that work type
