@@ -29,6 +29,11 @@ local CLASSES = {
     -- holds those registrations is how the mod's effect can be detected
     -- rather than having to be declared in config.
     "/Script/Pal.PalBaseCampModuleItemStorage",
+    -- Every data table read came back with zero rows, which is a failed read
+    -- rather than an empty table. These say what a DataTable actually exposes
+    -- and what shape GetDataTableRowNames wants its arguments in.
+    "/Script/Engine.DataTable",
+    "/Script/Engine.DataTableFunctionLibrary",
 }
 
 local function dump_schema(f, class_path)
@@ -331,79 +336,138 @@ end
 --
 -- A rule picker has to offer items the base has never held, so it cannot be
 -- built from what is sitting in chests. The names come from the game's own
--- item data table, and its path is not something to guess at: a wrong
--- StaticFindObject returns nil, but a wrong property read on the object that
--- does resolve returns a live looking wrapper and would look like it worked.
+-- item data table.
 --
--- So list every DataTable actually loaded, with a few row names from each,
--- and pick the real one off the output.
+-- The first attempt found 391 tables and read zero rows out of every one of
+-- them, so the table is not the problem, the reading is. Rather than guess
+-- again, this tries each plausible route against one known table and says
+-- which of them actually returned anything.
+local ITEM_TABLE = "/Game/Pal/DataTable/Item/DT_ItemDataTable.DT_ItemDataTable"
+
+local function try_route(f, label, fn)
+    local names = {}
+    local ok, err = pcall(fn, names)
+
+    if not ok then
+        f:write(string.format("  %-42s error: %s\n", label, tostring(err)))
+        return nil
+    end
+    if #names == 0 then
+        f:write(string.format("  %-42s no rows\n", label))
+        return nil
+    end
+
+    local sample = {}
+    for i = 1, math.min(8, #names) do sample[i] = tostring(names[i]) end
+    f:write(string.format("  %-42s %d row(s): %s\n",
+        label, #names, table.concat(sample, ", ")))
+    return names
+end
+
 local function probe_item_tables(f)
-    f:write("=== data tables loaded\n")
-    f:write("  looking for the one holding item ids, for the rule picker\n")
+    f:write("=== item table access\n")
+    f:write("  target: " .. ITEM_TABLE .. "\n")
 
-    local tables = {}
-    pcall(function()
-        for _, t in ipairs(FindAllOf("DataTable") or {}) do
-            if api.valid(t) then tables[#tables + 1] = t end
-        end
-    end)
-
-    f:write("  " .. #tables .. " table(s)\n")
-    if #tables == 0 then
-        f:write("  none loaded. Data tables may only exist once something has " ..
-            "asked for them, so try this again after opening an inventory.\n")
+    local tbl
+    pcall(function() tbl = StaticFindObject(ITEM_TABLE) end)
+    if not api.valid(tbl) then
+        f:write("  table did not resolve at all\n")
         return
     end
 
-    local rows = {}
-    for _, t in ipairs(tables) do
-        local name = "?"
-        pcall(function()
-            local full = t:GetFullName()
-            if type(full) == "string" then name = full end
+    local cls = "?"
+    pcall(function() cls = tbl:GetClass():GetFName():ToString() end)
+    f:write("  resolved, class " .. cls .. "\n")
+
+    -- What the object actually carries. A CompositeDataTable builds its rows
+    -- from parent tables, so the row store may not be where it is on a plain
+    -- DataTable, and this says which properties really exist.
+    f:write("  properties:\n")
+    pcall(function()
+        tbl:GetClass():ForEachProperty(function(prop)
+            local n = "?"
+            pcall(function() n = prop:GetFullName() end)
+            f:write("    " .. n .. "\n")
         end)
-        rows[#rows + 1] = { obj = t, name = name }
-    end
+    end)
 
-    table.sort(rows, function(a, b) return a.name < b.name end)
+    f:write("  functions:\n")
+    pcall(function()
+        tbl:GetClass():ForEachFunction(function(fn)
+            local n = "?"
+            pcall(function() n = fn:GetFName():ToString() end)
+            f:write("    " .. n .. "\n")
+        end)
+    end)
 
-    -- Row names first through the Blueprint library, which is the documented
-    -- route, then straight off the RowMap if that is not available on this
-    -- build. Whichever answers, the point is to see real ids rather than to
-    -- trust either call.
+    f:write("  routes:\n")
+
     local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
+    f:write("  DataTableFunctionLibrary CDO: " .. tostring(lib ~= nil) .. "\n")
 
-    for _, row in ipairs(rows) do
-        local sample, count = {}, 0
-
-        pcall(function()
-            if not lib then return end
-            local names = lib:GetDataTableRowNames(row.obj)
-            if not names then return end
-            names:ForEach(function(_, elem)
-                count = count + 1
-                if #sample < 6 then
-                    local v = elem:get()
-                    sample[#sample + 1] = tostring(v and v:ToString() or v)
-                end
-            end)
+    -- 1. the documented call, return value
+    try_route(f, "lib:GetDataTableRowNames(t) return", function(out)
+        local ret = lib:GetDataTableRowNames(tbl)
+        if ret == nil then return end
+        ret:ForEach(function(_, elem)
+            local v = elem:get()
+            out[#out + 1] = v and v:ToString() or tostring(v)
         end)
+    end)
 
-        if count == 0 then
-            pcall(function()
-                local map = row.obj.RowMap
-                if map == nil then return end
-                map:ForEach(function(k)
-                    count = count + 1
-                    if #sample < 6 then sample[#sample + 1] = tostring(k) end
-                end)
-            end)
+    -- 2. the same call with an out parameter, which is how UE4SS usually
+    --    surfaces an engine out-param
+    try_route(f, "lib:GetDataTableRowNames(t, {}) out", function(out)
+        local holder = {}
+        lib:GetDataTableRowNames(tbl, holder)
+        for _, v in ipairs(holder) do
+            out[#out + 1] = type(v) == "table" and tostring(v) or tostring(v)
         end
+    end)
 
-        f:write(string.format("  %-70s %d row(s)\n", row.name, count))
-        if #sample > 0 then
-            f:write("      " .. table.concat(sample, ", ") .. "\n")
-        end
+    -- 3. straight off the row store
+    try_route(f, "t.RowMap ForEach(key)", function(out)
+        tbl.RowMap:ForEach(function(k)
+            out[#out + 1] = tostring(k)
+        end)
+    end)
+
+    try_route(f, "t.RowMap ForEach(key, value)", function(out)
+        tbl.RowMap:ForEach(function(k, _)
+            local key = k
+            pcall(function() key = k:get() end)
+            pcall(function() key = key:ToString() end)
+            out[#out + 1] = tostring(key)
+        end)
+    end)
+
+    -- 4. a method on the table itself, if this build has one
+    try_route(f, "t:GetRowNames()", function(out)
+        local ret = tbl:GetRowNames()
+        ret:ForEach(function(_, elem)
+            local v = elem:get()
+            out[#out + 1] = v and v:ToString() or tostring(v)
+        end)
+    end)
+
+    -- 5. a composite table keeps its sources in ParentTables, so if the
+    --    composite reads empty the parents may not
+    f:write("  parent tables:\n")
+    local parents = 0
+    pcall(function()
+        tbl.ParentTables:ForEach(function(_, elem)
+            parents = parents + 1
+            local pt = elem:get()
+            local name = "?"
+            pcall(function() name = pt:GetFullName() end)
+
+            local rows = 0
+            pcall(function() pt.RowMap:ForEach(function() rows = rows + 1 end) end)
+            f:write(string.format("    %-60s %d row(s)\n", name, rows))
+        end)
+    end)
+    if parents == 0 then
+        f:write("    none readable\n")
     end
 end
 
