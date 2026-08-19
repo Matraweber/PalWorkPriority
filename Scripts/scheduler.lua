@@ -213,15 +213,44 @@ local function run_camp(cfg, camp, stats)
         end
     end
 
+    -- A pal has to be distinguishable from its neighbours. If identity
+    -- collapses, the claim set accepts one pal and every other work in the
+    -- base reports as unstaffed — which looks like a ranking problem and is
+    -- not one. Worth a line of checking to never chase that again.
+    local distinct, seen_keys = 0, {}
+    for _, p in ipairs(pals) do
+        if p.key ~= nil and not seen_keys[p.key] then
+            seen_keys[p.key] = true
+            distinct = distinct + 1
+        end
+    end
+    if distinct < #pals then
+        log.warn(string.format(
+            "pal identity collision: %d pal(s) share only %d key(s) — at most %d will be assigned",
+            #pals, distinct, distinct))
+    end
+
     local buckets = build_buckets(cfg, works, totals, stats)
     local claimed = {}
+    local claimed_count = 0
+    local exhausted = false
 
     for _, bucket in ipairs(buckets) do
         for _, w in ipairs(bucket.works) do
+            -- Once every pal is busy there is nothing left to decide. The
+            -- remaining work is not a failure to staff, it is simply more
+            -- work than pals, so it is counted apart from unstaffed.
+            if exhausted then
+                stats.queued = stats.queued + 1
+                goto continue_work
+            end
+
             local pal, rank = best_candidate(cfg, pals, claimed, bucket.name, bucket.value)
 
             if pal then
                 claimed[pal.key] = true
+                claimed_count = claimed_count + 1
+                if claimed_count >= #pals then exhausted = true end
 
                 local wkey = work_key(w)
                 if last_assignment[wkey] == pal.key then
@@ -249,6 +278,8 @@ local function run_camp(cfg, camp, stats)
             else
                 stats.unstaffed = stats.unstaffed + 1
             end
+
+            ::continue_work::
         end
     end
 end
@@ -260,7 +291,7 @@ function M.run_pass(cfg)
         camps = 0, pals = 0, works = 0, chests = 0,
         assigned = 0, would_assign = 0, unchanged = 0, failed = 0,
         unstaffed = 0, unknown_work = 0, unconfigured = 0, disabled_work = 0,
-        ignored = 0,
+        ignored = 0, queued = 0,
         capped = 0,
     }
 
@@ -293,6 +324,7 @@ function M.format_stats(cfg, stats)
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
     if stats.failed > 0 then parts[#parts + 1] = stats.failed .. " failed" end
     if stats.unstaffed > 0 then parts[#parts + 1] = stats.unstaffed .. " unstaffed" end
+    if stats.queued > 0 then parts[#parts + 1] = stats.queued .. " queued (all pals busy)" end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " unreadable" end
     if stats.unconfigured > 0 then parts[#parts + 1] = stats.unconfigured .. " unconfigured" end
     if stats.disabled_work > 0 then parts[#parts + 1] = stats.disabled_work .. " off" end

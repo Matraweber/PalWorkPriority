@@ -73,14 +73,24 @@ end
 -- carrying out — re-assigning every cycle would make workers drop their job
 -- and re-path constantly. Returns nil when the guid cannot be read, and the
 -- caller falls back to the work's full name.
+-- Each component must come back as a real NUMBER. tostring() is not good
+-- enough: on a value that is not actually an FGuid, UE4SS answers every
+-- field with a TrivialObject wrapper, and those stringify to a reused
+-- address — so all four parts match, and so does every other object's key.
+-- That silently collapses distinct pals onto one identity, and a claim set
+-- keyed on it accepts exactly one pal per pass.
 function M.guid_key(g)
     if g == nil then return nil end
+
     local parts = {}
     local ok = pcall(function()
         for _, field in ipairs({ "A", "B", "C", "D" }) do
-            parts[#parts + 1] = tostring(g[field])
+            local n = as_int(g[field])
+            if n == nil then return end
+            parts[#parts + 1] = tostring(n)
         end
     end)
+
     if ok and #parts == 4 then
         local key = table.concat(parts, "-")
         -- an all-zero guid is a replication placeholder, not an identity
