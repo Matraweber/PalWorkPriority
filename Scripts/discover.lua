@@ -24,6 +24,11 @@ local CLASSES = {
     "/Script/Pal.PalBaseCampWorkerDirector",
     "/Script/Pal.PalNetworkBaseCampComponent",
     "/Script/Pal.PalIndividualCharacterParameter",
+    -- The camp's storage module. A storage-pooling mod works by registering
+    -- one camp's chests into another camp's copy of this, so whatever field
+    -- holds those registrations is how the mod's effect can be detected
+    -- rather than having to be declared in config.
+    "/Script/Pal.PalBaseCampModuleItemStorage",
 }
 
 local function dump_schema(f, class_path)
