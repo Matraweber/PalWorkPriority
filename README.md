@@ -122,7 +122,7 @@ configured.
 | `!pwp stock` | print base storage by item id, and write `Stock.txt` |
 | `!pwp discover` | write `Discovery.txt` with live work probes |
 
-`F10` runs a pass and `F11` writes `Discovery.txt`, for sessions where chat input is not available.
+`F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage — for sessions where chat input is not available.
 
 ## How a work's type is determined
 

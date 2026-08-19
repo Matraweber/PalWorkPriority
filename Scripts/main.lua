@@ -145,7 +145,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " reload    re-read config.lua")
     log.say("  " .. p .. " stock     print base storage by item id")
     log.say("  " .. p .. " discover  write Discovery.txt")
-    log.say("keys: F10 runs a pass, F11 writes Discovery.txt")
+    log.say("keys: F10 pass, F11 Discovery.txt, F12 stock")
 end
 
 COMMANDS.status = function()
@@ -323,5 +323,14 @@ log.say(string.format("%s %s loaded — %s, %s. Type '%s help' in chat.",
 pcall(function()
     RegisterKeyBind(Key.F11, function()
         COMMANDS.discover()
+    end)
+end)
+
+-- Base storage on a key too. Ceilings are keyed by internal item id, and
+-- without a way to print those ids outside chat the whole feature is
+-- unreachable in a session where chat input is not available.
+pcall(function()
+    RegisterKeyBind(Key.F12, function()
+        COMMANDS.stock()
     end)
 end)
