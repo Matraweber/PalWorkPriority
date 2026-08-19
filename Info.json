@@ -14,9 +14,9 @@
   ],
   "InstallRule": [
     {
-      "Type": "Scripts",
+      "Type": "Lua",
       "Targets": [
-        "./Scripts/"
+        "./Scripts"
       ]
     }
   ]
