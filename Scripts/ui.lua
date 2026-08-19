@@ -713,6 +713,72 @@ end
 -- Diagnostics
 -- ---------------------------------------------------------------------------
 
+-- Walks an open menu's widget tree, with canvas geometry where there is any.
+--
+-- The ceiling row has to line up under the work type icons, and neither the
+-- widget that holds those icons nor the x of each column is something to
+-- guess at. Reading any property name off a UE4SS object returns a live
+-- looking wrapper whether or not it exists, so the only safe move is to
+-- print what is actually there and build against that.
+--
+-- Only useful with the stand open. With it shut the menu has no tree.
+local function dump_tree(f, node, depth, budget)
+    if budget.n >= 500 then return end
+    if not alive(node) then return end
+    budget.n = budget.n + 1
+
+    local name = "?"
+    pcall(function() name = node:GetFName():ToString() end)
+
+    local geom = ""
+    local slot
+    pcall(function() slot = node.Slot end)
+    if alive(slot) and class_name(slot) == "CanvasPanelSlot" then
+        pcall(function()
+            local pos = slot:GetPosition()
+            local size = slot:GetSize()
+            geom = string.format("  pos=(%.0f,%.0f) size=(%.0f,%.0f)",
+                pos.X, pos.Y, size.X, size.Y)
+        end)
+    end
+
+    -- The suitability a cell is bound to, so a column can be matched to a
+    -- work type by something better than its position in the list.
+    local suit
+    pcall(function() suit = api.as_int(node.BindedSuitability) end)
+    if suit and suit > 0 then
+        geom = geom .. "  suit=" .. suit .. " (" ..
+            tostring(workdefs.name(suit)) .. ")"
+    end
+
+    f:write(string.rep("  ", depth) .. (class_name(node) or "?") ..
+        " " .. name .. geom .. "\n")
+
+    if depth >= 9 then
+        f:write(string.rep("  ", depth + 1) .. "...\n")
+        return
+    end
+
+    -- A nested UserWidget keeps its children in its own WidgetTree rather
+    -- than behind GetChildAt, so both routes have to be walked.
+    local tree
+    pcall(function() tree = node.WidgetTree end)
+    if alive(tree) then
+        local root
+        pcall(function() root = tree.RootWidget end)
+        if alive(root) then dump_tree(f, root, depth + 1, budget) end
+    end
+
+    local count = 0
+    pcall(function() count = node:GetChildrenCount() end)
+    if type(count) ~= "number" then return end
+    for i = 0, count - 1 do
+        local child
+        pcall(function() child = node:GetChildAt(i) end)
+        if alive(child) then dump_tree(f, child, depth + 1, budget) end
+    end
+end
+
 function M.dump(f)
     f:write("=== monitoring stand (" .. M.MENU_CLASS .. ")\n")
     f:write("  bind hook: " .. tostring(bind_hooked) ..
@@ -738,6 +804,22 @@ function M.dump(f)
         f:write(string.format("   [%d] tree=%s root=%s showing=%s  %s\n",
             i, tostring(alive(t)), tostring(alive(r)),
             tostring(alive(m) and is_showing(m)), name))
+
+        if alive(r) and alive(m) and is_showing(m) then
+            f:write("   widget tree:\n")
+            dump_tree(f, r, 4, { n = 0 })
+        end
+    end
+
+    if #instances > 0 then
+        local any = false
+        for _, m in ipairs(instances) do
+            if alive(m) and is_showing(m) then any = true end
+        end
+        if not any then
+            f:write("  no menu on screen, so no tree to walk. " ..
+                "Open the Monitoring Stand and run this again.\n")
+        end
     end
 
     local cells = {}
