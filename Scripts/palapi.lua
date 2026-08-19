@@ -381,27 +381,47 @@ function M.camp_required_works(camp)
     if list == nil then return nil end
 
     local wpm = M.work_progress_manager()
-    local out, ok = {}, false
+    local out, ok, seen = {}, false, 0
+
+    -- An entry may be the work itself, the work's id, or a struct carrying
+    -- the id. IsValid() cannot tell them apart — it answers true for a plain
+    -- struct wrapper too, which is how a list of ids was accepted as a list
+    -- of works and every one of them came back untyped.
+    --
+    -- The test is therefore behavioural: a real work answers GetWorkId with
+    -- something that reads as a guid. Nothing else does.
+    local function resolve(entry)
+        local id
+        if pcall(function() id = entry:GetWorkId() end) and M.guid_key(id) then
+            return entry
+        end
+
+        if wpm == nil then return nil end
+
+        local w
+        pcall(function() w = wpm:GetWork(entry) end)
+        if valid(w) then return w end
+
+        pcall(function() w = wpm:GetWork(entry.WorkId) end)
+        if valid(w) then return w end
+
+        return nil
+    end
 
     pcall(function()
         list:ForEach(function(_, entry)
             local e = unwrap(entry)
             if e == nil then return end
+            seen = seen + 1
 
-            -- The entry may be the work itself or an id that needs resolving.
-            local w = valid(e) and e or nil
-            if w == nil and wpm then
-                local resolved
-                pcall(function() resolved = wpm:GetWork(e) end)
-                if valid(resolved) then w = resolved end
-            end
+            local w = resolve(e)
             if w then out[#out + 1] = w end
         end)
         ok = true
     end)
 
     if not ok then return nil end
-    return out
+    return out, seen
 end
 
 function M.work_id(w)

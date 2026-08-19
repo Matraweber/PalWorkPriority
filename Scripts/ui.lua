@@ -50,6 +50,11 @@ local ftext_mode = nil          -- "direct" | "kismet"
 local strip = nil               -- TextBlock on the menu root
 local strip_menu = nil          -- menu instance it belongs to
 local strip_last = nil
+-- Every strip ever created, so a new one can evict the old regardless of why
+-- the reference to it was lost. Two strips sit at identical coordinates and
+-- render as doubled, unreadable glyphs; guessing at each cause of a re-attach
+-- fixed one and missed another, so this removes the possibility instead.
+local strips = {}
 
 -- Live menu cache. Multiple instances coexist (seen live: a hidden stale one
 -- alongside the open one), so only a VISIBLE instance may be cached.
@@ -136,6 +141,7 @@ function M.reset()
     M.detach()
     -- A world switch really does destroy everything, so this is where the
     -- injected references are dropped rather than in detach.
+    strips = {}
     strip = nil
     strip_menu = nil
     cell_text = {}
@@ -615,7 +621,22 @@ function M.compose(cfg, report)
         cfg.dry_run and "would move" or "moved")
 end
 
+-- Detaches every strip we have made. RemoveFromParent is what makes this
+-- reliable: it does not matter whether the reference was lost, whether the
+-- menu was rebuilt, or how many accumulated.
+local function drop_strips()
+    for i = #strips, 1, -1 do
+        local tb = strips[i]
+        if alive(tb) then pcall(function() tb:RemoveFromParent() end) end
+        strips[i] = nil
+    end
+    strip = nil
+    strip_last = nil
+end
+
 local function attach_strip(menu, tree, root)
+    drop_strips()
+
     local cls = api.cdo("/Script/UMG.TextBlock")
     if not cls then
         warn_once("tbclass", "UMG.TextBlock not found — status strip unavailable")
@@ -671,6 +692,7 @@ local function attach_strip(menu, tree, root)
     strip = tb
     strip_menu = menu
     strip_last = nil
+    strips[#strips + 1] = tb
     return true
 end
 

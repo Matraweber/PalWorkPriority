@@ -293,12 +293,26 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
-    -- What the camp actually wants doing. Falling back to every work object
-    -- is deliberately noisy in the stats, because that fallback overstates
-    -- demand and it should be obvious when it is in use rather than quietly
-    -- producing idle pals.
-    local works = api.camp_required_works(camp)
-    if works == nil then
+    -- What the camp actually wants doing.
+    --
+    -- Falling back to every work object overstates demand, so it is reported
+    -- loudly rather than allowed to pass for a working pass. But it is still
+    -- far better than the alternative: with no demand at all NOTHING is
+    -- fenced, every pal reverts to "may do anything it can", and the mod
+    -- silently stops governing anything while still looking healthy.
+    local required, raw_count = api.camp_required_works(camp)
+    local works = required
+
+    if works == nil or (raw_count and raw_count > 0 and #works == 0) then
+        -- Either the list would not read, or it had entries and not one of
+        -- them resolved to a work — which means the entry shape is not
+        -- understood and the count is a lie.
+        if works ~= nil then
+            log.debug(string.format(
+                "required-work list had %d entr(ies), none resolvable — estimating demand",
+                raw_count or 0))
+        end
+
         local all, work_err = api.camp_works(camp)
         if work_err then
             log.debug("camp works unavailable: " .. work_err)
