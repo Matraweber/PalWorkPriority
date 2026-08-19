@@ -167,10 +167,8 @@ end
 -- from a campfire with nothing to burn? Both exist as work objects, and using
 -- the wrong predicate either idles pals at cold stations or hides real work.
 local function probe_readiness(f)
-    f:write("=== work readiness by type
-")
-    f:write("  pulses column counts every announcement ever seen this session
-")
+    f:write("=== work readiness by type\n")
+    f:write("  pulses counts every announcement ever seen this session\n")
 
     local agg = {}
     for _, camp in ipairs(api.base_camps()) do
@@ -207,8 +205,7 @@ local function probe_readiness(f)
     for name in pairs(agg) do names[#names + 1] = name end
     table.sort(names)
 
-    f:write(string.format("  %-22s %5s %6s %9s %8s  %s
-",
+    f:write(string.format("  %-22s %5s %6s %9s %8s  %s\n",
         "type", "works", "free", "unmanned", "pulses", "CurrentState counts"))
     for _, name in ipairs(names) do
         local e = agg[name]
@@ -216,8 +213,7 @@ local function probe_readiness(f)
         for st, c in pairs(e.states) do states[#states + 1] = st .. "x" .. c end
         table.sort(states)
 
-        f:write(string.format("  %-22s %5d %6d %9d %8s  %s
-",
+        f:write(string.format("  %-22s %5d %6d %9d %8s  %s\n",
             name, e.n, e.slot, e.unmanned,
             tostring(e.value and demandidx.pulses_by_value[e.value] or 0),
             table.concat(states, " ")))
