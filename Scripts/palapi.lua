@@ -183,6 +183,23 @@ function M.network_component()
     return nil
 end
 
+-- Whether this machine is the authority for the world.
+--
+-- PalGameMode exists only where the game is being run: single player, or the
+-- host of a co-op session. A client connected to a dedicated server does not
+-- have one. The technique is lifted from the resource sharing mod, which uses
+-- the same probe to decide whether it may touch storage at all.
+--
+-- This matters more than it looks. The demand hook is on
+-- OnRequiredAssignWork_ServerInternal, which by definition only runs on the
+-- authority, so a client registers that hook successfully and then never
+-- receives a single pulse.
+function M.has_authority()
+    local gm
+    pcall(function() gm = FindFirstOf("PalGameMode") end)
+    return valid(gm)
+end
+
 function M.base_camps()
     local camps = {}
     pcall(function()

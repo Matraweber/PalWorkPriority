@@ -249,8 +249,12 @@ COMMANDS.status = function()
     log.say("  enum offset: " .. workdefs.enum_offset)
     log.say("  demand hook: " .. (demandidx.hooked and "installed" or "NOT INSTALLED") ..
         ", " .. demandidx.pulses .. " pulse(s) seen" ..
-        (demandidx.hooked and demandidx.pulses == 0
+        (demandidx.live() and demandidx.pulses == 0
             and "  (nothing wants doing, which is normal while pals sleep)" or ""))
+    log.say("  authority: " .. (api.has_authority()
+        and "yes, this machine runs the world"
+        or "NO, this is a client. Work is estimated from the camp's own work " ..
+           "objects, because the server's pulses never reach a client"))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
     log.say("  ceilings measured against: " ..
@@ -669,6 +673,17 @@ end
 -- Installed at load, not on world entry: the pulses start as soon as a camp
 -- exists, and a hook registered late misses every job already running.
 demandidx.install()
+
+-- A client connected to a dedicated server can read the base and can ask the
+-- server to change work suitability, but it never sees the work pulses: the
+-- hook behind them is on a _ServerInternal function. Say so once at startup,
+-- because the failure it used to cause was silence, and silence is the
+-- hardest thing to diagnose from the outside.
+if not api.has_authority() then
+    log.warn("no authority here, so this looks like a client on a dedicated " ..
+        "server. Work demand will be estimated from the camp's own work " ..
+        "objects rather than read from the server's pulses, which is coarser.")
+end
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Engine wrappers do not survive a world switch, and neither should any

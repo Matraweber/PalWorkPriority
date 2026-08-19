@@ -53,6 +53,15 @@ local function work_key(w)
     return api.work_full_name(w)
 end
 
+-- Registering the hook and receiving from it are different things. The hook
+-- is on a _ServerInternal function, so on a client connected to a dedicated
+-- server it registers cleanly and then never fires. Callers need to know that
+-- an empty index means "cannot see the work" rather than "there is no work",
+-- because those two call for opposite behaviour.
+function M.live()
+    return M.hooked and api.has_authority()
+end
+
 function M.install()
     if M.hooked then return true end
 
