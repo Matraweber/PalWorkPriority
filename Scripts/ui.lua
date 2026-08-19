@@ -970,7 +970,10 @@ end
 
 -- Bound once, not per menu. The handlers bail on a plain Lua flag when the
 -- stand is shut, so ordinary gameplay clicks cost nothing measurable.
-function M.bind_mouse(cfg_ref)
+-- `before` gets first refusal on every click and returning true consumes it.
+-- The rules panel uses that: it can be open over the stand, and a click meant
+-- for a rule must not also land on whatever priority cell sits underneath.
+function M.bind_mouse(cfg_ref, before)
     local bound = 0
 
     local function try(key_name, dir)
@@ -984,7 +987,13 @@ function M.bind_mouse(cfg_ref)
         end
         local ok = pcall(function()
             RegisterKeyBind(key, function()
-                pcall(function() bump(cfg_ref(), dir) end)
+                local consumed = false
+                if before then
+                    pcall(function() consumed = before(dir) == true end)
+                end
+                if not consumed then
+                    pcall(function() bump(cfg_ref(), dir) end)
+                end
             end)
         end)
         if ok then bound = bound + 1 end

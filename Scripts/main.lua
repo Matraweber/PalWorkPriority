@@ -18,6 +18,7 @@ local ui = require("ui")
 local store = require("store")
 local caps = require("caps")
 local items = require("items")
+local panel = require("panel")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -180,7 +181,15 @@ local function ui_tick()
     if cfg then
         ExecuteInGameThread(function()
             pcall(function() ui.refresh(cfg) end)
+            -- Drawn on the same tick but independently: the panel opens on a
+            -- hotkey and has to keep working with the stand shut.
+            pcall(function() panel.refresh(cfg) end)
         end)
+
+        if panel.wants_pass then
+            panel.wants_pass = false
+            run_pass("rule change")
+        end
 
         -- A priority just changed. Re-fence now rather than leaving the edit
         -- inert until the next tick, which reads as the click doing nothing.
@@ -220,7 +229,8 @@ COMMANDS.help = function()
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
-    log.say("      Alt+F10 mode, Alt+F11 cap, Alt+F12 storage scope")
+    log.say("      Alt+F9 work rules, Alt+F10 mode, Alt+F11 cap,")
+    log.say("      Alt+F12 storage scope")
 end
 
 COMMANDS.status = function()
@@ -668,6 +678,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     demandidx.reset()
     ui.reset()
     items.reset()
+    panel.reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
@@ -734,7 +745,9 @@ end)
 -- Left click raises a cell towards priority 1, right click lowers it towards
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
 do
-    local n = ui.bind_mouse(function() return cfg end)
+    local n = ui.bind_mouse(function() return cfg end, function(dir)
+        return panel.handle_click(cfg, dir)
+    end)
     if n < 2 then
         log.warn("only " .. n .. " of 2 mouse buttons bound, " ..
             "priority clicking will be partly unavailable")
@@ -757,4 +770,10 @@ end, { ModifierKey.ALT })
 -- well, or it may as well not exist for a single player game.
 bind(Key.F12, "Alt+F12 (storage scope)", function()
     COMMANDS.scope()
+end, { ModifierKey.ALT })
+
+-- The rules panel. F9 is taken by another installed mod and F8 by two, so
+-- this sits on the modifier alongside the other toggles.
+bind(Key.F9, "Alt+F9 (work rules)", function()
+    panel.toggle()
 end, { ModifierKey.ALT })
