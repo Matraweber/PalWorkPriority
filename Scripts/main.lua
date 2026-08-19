@@ -100,14 +100,28 @@ end
 -- Passes
 -- ---------------------------------------------------------------------------
 
-local function run_pass(reason)
-    if not cfg or not cfg.enabled then return end
+-- explicit marks a pass the user asked for by hand. Those always report
+-- something, even when there was nothing to do: a keypress that produces no
+-- output at all is indistinguishable from a mod that is not loaded, and
+-- sends you debugging the wrong thing.
+local function run_pass(reason, explicit)
+    if not cfg then return end
+
+    if not cfg.enabled then
+        if explicit then
+            log.say(reason .. ": disabled — '" .. cfg.chat_prefix .. " on' to enable")
+        end
+        return
+    end
 
     ExecuteInGameThread(function()
         local ok, err = pcall(function()
             local stats = scheduler.run_pass(cfg)
             if stats.camps > 0 then
                 log.info(reason .. ": " .. scheduler.format_stats(cfg, stats))
+            elseif explicit then
+                log.say(reason .. ": no base camp loaded. Camps only exist while " ..
+                    "streamed in, so stand inside your base and try again.")
             end
         end)
         if not ok then
@@ -165,7 +179,7 @@ COMMANDS.status = function()
 end
 
 COMMANDS.run = function()
-    run_pass("manual")
+    run_pass("manual", true)
 end
 
 COMMANDS.dry = function()
@@ -304,10 +318,18 @@ RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
     if not ok then log.debug("chat hook: " .. tostring(err)) end
 end)
 
-pcall(function()
-    RegisterKeyBind(Key.F10, function()
-        run_pass("keybind")
-    end)
+-- A keybind that fails to register does so silently, which then reads as
+-- "the mod is broken" the first time a key does nothing. Report it.
+local function bind(key, label, fn)
+    local ok, err = pcall(function() RegisterKeyBind(key, fn) end)
+    if not ok then
+        log.warn("could not bind " .. label .. ": " .. tostring(err))
+    end
+    return ok
+end
+
+bind(Key.F10, "F10 (run pass)", function()
+    run_pass("keybind", true)
 end)
 
 log.say(string.format("%s %s loaded — %s, %s. Type '%s help' in chat.",
@@ -320,17 +342,13 @@ log.say(string.format("%s %s loaded — %s, %s. Type '%s help' in chat.",
 -- discovery dump gets its own key instead of living only behind a chat
 -- command. F10/F11 were picked because every other Fn key in the low range
 -- is already claimed by another installed mod.
-pcall(function()
-    RegisterKeyBind(Key.F11, function()
-        COMMANDS.discover()
-    end)
+bind(Key.F11, "F11 (discovery)", function()
+    COMMANDS.discover()
 end)
 
 -- Base storage on a key too. Ceilings are keyed by internal item id, and
 -- without a way to print those ids outside chat the whole feature is
 -- unreachable in a session where chat input is not available.
-pcall(function()
-    RegisterKeyBind(Key.F12, function()
-        COMMANDS.stock()
-    end)
+bind(Key.F12, "F12 (stock)", function()
+    COMMANDS.stock()
 end)
