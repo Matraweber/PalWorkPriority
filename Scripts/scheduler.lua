@@ -1,20 +1,31 @@
--- The priority pass.
+-- The priority pass, as a fence rather than an assignment.
 --
--- For one base camp:
---   1. every work is bucketed by the suitability it needs
---   2. buckets whose resource ceiling is already met are dropped
---   3. surviving buckets are visited in configured priority order, 1 before 5
---   4. inside a bucket, each work takes the best-suited pal not yet claimed
+-- The mod does not hand pals specific jobs. It decides which work types each
+-- pal is ALLOWED to do right now and switches the rest off, then lets
+-- Palworld's own AI choose within that. A pal whose top-priority work has
+-- something waiting gets everything else switched off, so the AI has nowhere
+-- else to send it.
 --
--- A pal is claimed at most once per pass, which is what makes the ordering
--- mean anything: priority 1 gets first pick of the whole roster, priority 5
--- gets whatever is left. A pal set to false for a work type is never a
--- candidate for it.
+-- The earlier design pinned one pal to one work object through
+-- RequestFixedAssignWorkInBaseCamp_ToServer and left the AI otherwise free,
+-- so a pal could still wander off to a lower-priority job the moment it
+-- finished — items waiting to be carried while a pal went watering instead.
+-- Fencing is how PalPriority does it, and it is the mechanism that actually
+-- makes a priority order govern behaviour.
 --
--- Dropping a capped bucket in step 2 is what makes ceilings useful rather
--- than merely restrictive: the pals that would have worked it are still
--- unclaimed when the next priority is reached, so they move down to it
--- instead of standing idle next to a full wood chest.
+-- Per camp, per pass:
+--   1. count DEMAND: how many pending jobs exist of each work type
+--   2. walk priority levels 1..MAX, fencing each pal to the first level where
+--      it is capable of something that still has demand to spare
+--   3. a pal fenced nowhere is left unfenced — everything it may legally do
+--      stays on, since barring an unneeded pal from everything just idles it
+--   4. diff against the game's own permissions and send only the differences
+--
+-- Restoring is stateless. A pal's permissions are always
+-- "capable AND not X AND (fenced-in OR unfenced)", so switching the mod off
+-- puts back "capable AND not X" with no record of what was there before.
+-- The cost is that a work type you unchecked by hand in vanilla will be
+-- switched back on; X is how you say "never" to this mod.
 
 local log = require("log")
 local api = require("palapi")
@@ -23,25 +34,23 @@ local store = require("store")
 
 local M = {}
 
--- work key -> pal key, remembered across passes so an unchanged assignment
--- is not re-sent every cycle.
-local last_assignment = {}
-
 M.last_report = nil
 
+-- One pass never issues an unbounded number of RPCs. Steady state sends
+-- almost nothing because only differences go out; this bounds the first pass
+-- over a large base, and whatever is skipped is picked up next tick.
+local MAX_TOGGLES_PER_PASS = 40
+
 function M.forget()
-    last_assignment = {}
+    -- Nothing is remembered between passes any more: the fence is recomputed
+    -- from demand every time, and the game's own permissions are the only
+    -- persistent state. Kept so callers need not care.
 end
 
--- True when every item listed for this work type is at or above its ceiling.
---
--- "Every" rather than "any" on purpose: a mining cap covering stone plus ore
--- should keep mining alive while either one is still short. A work type with
--- no entry, or an empty entry, is never capped.
---
--- An unreadable storage total counts as zero, which errs toward keeping work
--- running. Suspending a whole work type because a chest failed to reply
--- would be a much worse failure than briefly overshooting a ceiling.
+-- ---------------------------------------------------------------------------
+-- Demand
+-- ---------------------------------------------------------------------------
+
 local function cap_reached(cfg, work_name, totals)
     local caps = (cfg.work_caps or {})[work_name]
     if type(caps) ~= "table" then return false end
@@ -56,107 +65,187 @@ local function cap_reached(cfg, work_name, totals)
     return listed
 end
 
--- Picks the pal that should take this work.
---
--- An explicit priority - a click on the stand, or a pal_overrides entry -
--- outranks suitability: setting
--- ["Diggy"] = { Mining = 1 } means you want Diggy mining even if a better
--- miner is standing next to them. Only when two pals carry the same priority
--- does raw suitability rank decide, and slot order breaks the remaining ties
--- so repeat passes stay stable and pals do not shuffle jobs for no reason.
-local function best_candidate(cfg, pals, claimed, work_name, value)
-    local best, best_prio, best_rank = nil, nil, 0
-
-    -- Work filed under Anyone names no skill, so every pal scores 0 on it.
-    -- Ranking and the rank floor are both meaningless there; treating every
-    -- pal as an equal candidate is the only reading that assigns anybody.
-    local unskilled = (work_name == workdefs.ANYONE)
-
-    for _, pal in ipairs(pals) do
-        if not claimed[pal.key] then
-            local prio = store.effective(cfg, pal, work_name, value)
-            if type(prio) == "number" then
-                local rank = unskilled and 1 or api.suitability_rank(pal.param, value)
-                if rank >= (unskilled and 1 or cfg.min_suitability_rank) then
-                    local wins
-                    if best == nil then
-                        wins = true
-                    elseif prio ~= best_prio then
-                        wins = prio < best_prio
-                    else
-                        wins = rank > best_rank
-                    end
-                    if wins then
-                        best, best_prio, best_rank = pal, prio, rank
-                    end
-                end
-            end
-        end
-    end
-
-    return best, best_rank
-end
-
-local function work_key(w)
-    local key = api.guid_key(api.work_id(w))
-    if key then return key end
-    return api.work_full_name(w)
-end
-
--- Groups the works of a camp by the suitability they need, and returns the
--- groups already sorted into priority order.
-local function build_buckets(cfg, works, totals, stats)
-    local by_name = {}
-    local capped_names = {}
+-- How many pending jobs of each work type this camp has. A work type whose
+-- resource ceiling is met contributes nothing, which is what makes a ceiling
+-- release pals to other work rather than merely stop them.
+local function build_demand(cfg, works, totals, stats)
+    local demand = {}
 
     for _, w in ipairs(works) do
         local value, reason = api.work_suitability(w)
         local name = value and workdefs.name(value) or nil
 
         if name == nil then
-            -- "ignored" is a thing that is deliberately not work, such as an
-            -- idle placeholder. Counting it as unreadable would make coverage
-            -- look worse than it is.
             if reason == "ignored" then
                 stats.ignored = stats.ignored + 1
             else
                 stats.unknown_work = stats.unknown_work + 1
             end
+        elseif cfg.work_priority[name] == nil then
+            stats.unconfigured = stats.unconfigured + 1
+        elseif cap_reached(cfg, name, totals) then
+            stats.capped = stats.capped + 1
         else
-            local prio = cfg.work_priority[name]
-            if prio == nil then
-                stats.unconfigured = stats.unconfigured + 1
-            elseif prio == false then
-                stats.disabled_work = stats.disabled_work + 1
-            elseif cap_reached(cfg, name, totals) then
-                stats.capped = stats.capped + 1
-                capped_names[name] = true
-            else
-                by_name[name] = by_name[name]
-                    or { name = name, prio = prio, value = value, works = {} }
-                table.insert(by_name[name].works, w)
+            demand[value] = (demand[value] or 0) + 1
+        end
+    end
+
+    return demand
+end
+
+-- ---------------------------------------------------------------------------
+-- Planning the fence
+-- ---------------------------------------------------------------------------
+
+-- Every work type this pal is physically capable of and not barred from.
+-- This is its permission set when nothing fences it, and what it is restored
+-- to when the mod stops managing it.
+local function base_allowed(cfg, pal)
+    local out = {}
+    for i = 1, #workdefs.ORDER do
+        local name = workdefs.ORDER[i]
+        local value = workdefs.value(name)
+
+        if api.suitability_rank(pal.param, value) >= 1 then
+            -- X is the only thing that bars a pal outright. A work type with
+            -- no configured priority stays permitted: having no opinion on it
+            -- is not the same as forbidding it.
+            if store.effective(cfg, pal, name, value) ~= false then
+                out[value] = true
+            end
+        end
+    end
+    return out
+end
+
+-- Returns pal key -> set of work values that pal may do this pass.
+local function plan_fences(cfg, pals, demand, stats)
+    local plan, fenced = {}, {}
+    local taken = {}            -- work value -> pals fenced onto it
+    local cap = tonumber(cfg.max_pals_per_work_type)
+    local spread = (cfg.assignment_mode ~= "fill")
+
+    -- What a work type can still absorb. Demand is the real limit: three
+    -- pending haul jobs never need a fourth hauler, whatever the priorities
+    -- say. In spread mode lap tightens it further, so every work type gets
+    -- one pal before any gets a second.
+    local function room(value, lap)
+        local limit = demand[value] or 0
+        if cap and cap < limit then limit = cap end
+        if spread and lap < limit then limit = lap end
+        return (taken[value] or 0) < limit
+    end
+
+    for _, pal in ipairs(pals) do
+        pal.base = base_allowed(cfg, pal)
+    end
+
+    local laps = spread and math.max(cap or #pals, 1) or 1
+    for lap = 1, laps do
+        for level = 1, store.MAX do
+            for _, pal in ipairs(pals) do
+                if not fenced[pal.key] then
+                    local fence = {}
+                    local best, best_rank = nil, -1
+
+                    for value in pairs(pal.base) do
+                        local name = workdefs.name(value)
+                        if store.effective(cfg, pal, name, value) == level
+                            and room(value, lap) then
+
+                            local rank = api.suitability_rank(pal.param, value)
+                            if rank >= cfg.min_suitability_rank then
+                                fence[value] = true
+                                if rank > best_rank then best, best_rank = value, rank end
+                            end
+                        end
+                    end
+
+                    if best then
+                        -- Fenced to the whole level, not only the one type it
+                        -- is best at: a pal should be free to move between
+                        -- equally-wanted jobs without waiting on a re-plan.
+                        plan[pal.key] = fence
+                        fenced[pal.key] = true
+                        taken[best] = (taken[best] or 0) + 1
+                        stats.fenced = stats.fenced + 1
+                    end
+                end
             end
         end
     end
 
-    for name in pairs(capped_names) do
-        log.debug("ceiling reached, " .. workdefs.label(name) .. " suspended this pass")
+    for _, pal in ipairs(pals) do
+        if not fenced[pal.key] then
+            plan[pal.key] = pal.base
+            stats.free = stats.free + 1
+        end
     end
 
-    local ordered = {}
-    for _, bucket in pairs(by_name) do
-        ordered[#ordered + 1] = bucket
-    end
-    table.sort(ordered, function(a, b)
-        if a.prio ~= b.prio then return a.prio < b.prio end
-        return a.name < b.name
-    end)
-
-    return ordered
+    return plan
 end
 
--- Storage is only read when at least one ceiling is configured, so a default
--- setup pays nothing for a feature it is not using.
+-- ---------------------------------------------------------------------------
+-- Applying it
+-- ---------------------------------------------------------------------------
+
+local function apply_pal(cfg, pal, want, stats)
+    -- The game's own record is the only ground truth. Diffing against what we
+    -- believe we set last time would drift the moment anything else touched a
+    -- toggle, including the player.
+    local off = api.work_off_set(pal.param)
+    if off == nil then
+        -- Nothing to diff against. Sending the whole set blind would spam the
+        -- channel every pass, so skip and retry next tick.
+        stats.unreadable = stats.unreadable + 1
+        return
+    end
+
+    for value in pairs(pal.base or {}) do
+        if stats.toggles + stats.would_toggle >= MAX_TOGGLES_PER_PASS then
+            stats.deferred = stats.deferred + 1
+            return
+        end
+
+        local should_be_on = want[value] == true
+        local is_on = not off[value]
+
+        if should_be_on ~= is_on then
+            if cfg.dry_run then
+                stats.would_toggle = stats.would_toggle + 1
+                log.info(string.format("[dry run] %s %s -> %s",
+                    pal.name, workdefs.label(workdefs.name(value)),
+                    should_be_on and "on" or "off"))
+            elseif api.set_work_enabled(pal.id, value, should_be_on) then
+                stats.toggles = stats.toggles + 1
+            else
+                stats.failed = stats.failed + 1
+            end
+        end
+    end
+
+    -- X is absolute: it applies whether or not the pal is fenced, and it is
+    -- the whole reason X can stop a pal working at all.
+    for i = 1, #workdefs.ORDER do
+        local name = workdefs.ORDER[i]
+        local value = workdefs.value(name)
+
+        if store.effective(cfg, pal, name, value) == false and not off[value]
+            and api.suitability_rank(pal.param, value) >= 1 then
+
+            if cfg.dry_run then
+                stats.would_toggle = stats.would_toggle + 1
+            elseif api.set_work_enabled(pal.id, value, false) then
+                stats.toggles = stats.toggles + 1
+            end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- One camp, one pass
+-- ---------------------------------------------------------------------------
+
 local function needs_totals(cfg)
     local caps = cfg.work_caps
     if type(caps) ~= "table" then return false end
@@ -186,10 +275,6 @@ local function run_camp(cfg, camp, stats)
         api.request_work_replication(camp_id, true)
         return
     end
-    if #works == 0 then
-        log.debug("camp has no pending work")
-        return
-    end
 
     stats.camps = stats.camps + 1
     stats.pals = stats.pals + #pals
@@ -200,152 +285,48 @@ local function run_camp(cfg, camp, stats)
         local chests
         totals, chests = api.camp_item_totals(api.guid_key(camp_id))
         stats.chests = stats.chests + (chests or 0)
-        if chests == 0 then
-            log.debug("no chests answered for this camp, ceilings treated as unmet")
-        end
     end
 
-    -- A pal has to be distinguishable from its neighbours. If identity
-    -- collapses, the claim set accepts one pal and every other work in the
-    -- base reports as unstaffed — which looks like a ranking problem and is
-    -- not one. Worth a line of checking to never chase that again.
-    local distinct, seen_keys = 0, {}
-    for _, p in ipairs(pals) do
-        if p.key ~= nil and not seen_keys[p.key] then
-            seen_keys[p.key] = true
-            distinct = distinct + 1
-        end
-    end
-    if distinct < #pals then
-        log.warn(string.format(
-            "pal identity collision: %d pal(s) share only %d key(s) — at most %d will be assigned",
-            #pals, distinct, distinct))
-    end
+    local demand = build_demand(cfg, works, totals, stats)
+    for _ in pairs(demand) do stats.demand_types = stats.demand_types + 1 end
 
-    local buckets = build_buckets(cfg, works, totals, stats)
+    local plan = plan_fences(cfg, pals, demand, stats)
 
-    local claimed, claimed_count = {}, 0
-    local taken = {}                  -- work type -> pals placed on it this pass
-    local cursor = {}                 -- per bucket, the next work to consider
-    for i = 1, #buckets do cursor[i] = 1 end
+    for _, pal in ipairs(pals) do
+        local want = plan[pal.key] or pal.base or {}
+        apply_pal(cfg, pal, want, stats)
 
-    local spread = (cfg.assignment_mode ~= "fill")
-    local cap = tonumber(cfg.max_pals_per_work_type)
-
-    -- Places one pal on one work. Returns the pal, or nil when nothing
-    -- qualified — in which case the work is spent and counted unstaffed.
-    local function place(bucket, w)
-        local pal, rank = best_candidate(cfg, pals, claimed, bucket.name, bucket.value)
-        if not pal then
-            stats.unstaffed = stats.unstaffed + 1
-            return nil
-        end
-
-        claimed[pal.key] = true
-
-        -- Recorded before the unchanged check on purpose: a pal already doing
-        -- the right job is still part of what the pass decided, and leaving it
-        -- out would make the stand panel look emptier every cycle.
-        stats.lines[#stats.lines + 1] = {
-            label = workdefs.label(bucket.name),
-            prio = bucket.prio,
-            pal = pal.name,
-            rank = rank,
-            -- identity and suitability value, so the stand UI can find the
-            -- exact cell this decision belongs to
-            key = pal.key,
-            value = bucket.value,
-        }
-
-        local wkey = work_key(w)
-        if last_assignment[wkey] == pal.key then
-            stats.unchanged = stats.unchanged + 1
-            return pal
-        end
-
-        local line = string.format("%s (p%d) -> %s rank %d",
-            workdefs.label(bucket.name), bucket.prio, pal.name, rank)
-
-        if cfg.dry_run then
-            stats.would_assign = stats.would_assign + 1
-            log.info("[dry run] " .. line)
-        else
-            local ok, err = api.assign(camp_id, api.work_id(w), pal.id)
-            if ok then
-                last_assignment[wkey] = pal.key
-                stats.assigned = stats.assigned + 1
-                log.info(line)
-            else
-                stats.failed = stats.failed + 1
-                log.warn("assign failed for " .. line .. ": " .. tostring(err))
+        if want ~= pal.base then
+            local names = {}
+            for value in pairs(want) do
+                names[#names + 1] = workdefs.label(workdefs.name(value))
             end
+            table.sort(names)
+            stats.lines[#stats.lines + 1] = {
+                pal = pal.name,
+                key = pal.key,
+                fence = table.concat(names, ", "),
+            }
         end
-        return pal
-    end
 
-    -- Buckets are walked in priority order, repeatedly.
-    --
-    -- In spread mode each visit places at most ONE pal, so every work type
-    -- gets somebody before any of them gets a second — a base with 46
-    -- pending transport jobs no longer swallows the whole roster before
-    -- mining is even considered. In fill mode a visit places as many as it
-    -- can, which is the older "priority 1 first, completely" reading.
-    --
-    -- Either way a work type stops accepting pals once it holds cap of them.
-    -- Laps end when one produces no assignment at all, or when every pal is
-    -- busy.
-    local lap_progress = true
-    while lap_progress and claimed_count < #pals do
-        lap_progress = false
-
-        for bi, bucket in ipairs(buckets) do
-            if claimed_count >= #pals then break end
-
-            local quota = spread and 1 or #bucket.works
-            local placed = 0
-
-            while placed < quota
-                and cursor[bi] <= #bucket.works
-                and claimed_count < #pals
-                and not (cap and (taken[bucket.name] or 0) >= cap) do
-
-                local w = bucket.works[cursor[bi]]
-                cursor[bi] = cursor[bi] + 1
-
-                if place(bucket, w) then
-                    claimed_count = claimed_count + 1
-                    taken[bucket.name] = (taken[bucket.name] or 0) + 1
-                    placed = placed + 1
-                    lap_progress = true
-                end
-            end
-        end
-    end
-
-    -- Work never reached: the roster ran out, or its work type hit the cap.
-    -- Not a failure to staff, just more work than there are pals to do it.
-    for bi, bucket in ipairs(buckets) do
-        local left = #bucket.works - (cursor[bi] - 1)
-        if left > 0 then stats.queued = stats.queued + left end
+        pal.base = nil
     end
 end
 
--- Runs one pass over every loaded camp. Returns a stats table; the caller
--- decides whether to print it.
 function M.run_pass(cfg)
     local stats = {
         camps = 0, pals = 0, works = 0, chests = 0,
-        assigned = 0, would_assign = 0, unchanged = 0, failed = 0,
-        unstaffed = 0, unknown_work = 0, unconfigured = 0, disabled_work = 0,
-        ignored = 0, queued = 0,
-        -- what the pass decided, for the Monitoring Stand panel
+        fenced = 0, free = 0,
+        toggles = 0, would_toggle = 0, failed = 0, deferred = 0, unreadable = 0,
+        demand_types = 0,
+        unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
         lines = {},
-        capped = 0,
     }
 
     local camps = api.base_camps()
     if #camps == 0 then
         log.debug("no base camps loaded")
+        M.last_report = nil
         return stats
     end
 
@@ -356,41 +337,34 @@ function M.run_pass(cfg)
         end
     end
 
-    -- Held for the stand panel, which renders between passes and has no other
-    -- way to know what the last one concluded.
-    -- The counts the stand strip needs, kept apart from the log summary:
-    -- the strip has roughly fifty characters of room and the log line runs to
-    -- a hundred and twenty.
     M.last_report = {
         lines = stats.lines,
         summary = (stats.camps > 0) and M.format_stats(cfg, stats) or "no base camp loaded",
         camps = stats.camps,
         pals = stats.pals,
-        placed = (cfg.dry_run and stats.would_assign or stats.assigned) + stats.unchanged,
-        queued = stats.queued,
+        fenced = stats.fenced,
+        toggles = cfg.dry_run and stats.would_toggle or stats.toggles,
     }
 
     return stats
 end
 
 function M.format_stats(cfg, stats)
-    local verb = cfg.dry_run
-        and (stats.would_assign .. " would assign")
-        or (stats.assigned .. " assigned")
-
     local parts = {
-        string.format("%d camp(s), %d pal(s), %d work(s)", stats.camps, stats.pals, stats.works),
-        verb,
-        stats.unchanged .. " unchanged",
+        string.format("%d camp(s), %d pal(s), %d work(s) in %d type(s)",
+            stats.camps, stats.pals, stats.works, stats.demand_types),
+        stats.fenced .. " fenced",
+        stats.free .. " free",
     }
-    if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
+
+    local moved = cfg.dry_run and stats.would_toggle or stats.toggles
+    parts[#parts + 1] = moved .. (cfg.dry_run and " would toggle" or " toggled")
+
     if stats.failed > 0 then parts[#parts + 1] = stats.failed .. " failed" end
-    if stats.unstaffed > 0 then parts[#parts + 1] = stats.unstaffed .. " unstaffed" end
-    if stats.queued > 0 then parts[#parts + 1] = stats.queued .. " queued" end
-    if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " unreadable" end
-    if stats.unconfigured > 0 then parts[#parts + 1] = stats.unconfigured .. " unconfigured" end
-    if stats.disabled_work > 0 then parts[#parts + 1] = stats.disabled_work .. " off" end
-    if stats.ignored > 0 then parts[#parts + 1] = stats.ignored .. " not work" end
+    if stats.deferred > 0 then parts[#parts + 1] = stats.deferred .. " deferred" end
+    if stats.unreadable > 0 then parts[#parts + 1] = stats.unreadable .. " unreadable" end
+    if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
+    if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " untyped" end
     return table.concat(parts, ", ")
 end
 

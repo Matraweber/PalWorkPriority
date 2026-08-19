@@ -553,6 +553,29 @@ function M.assign(camp_id, work_id, individual_id)
     return true, nil
 end
 
+-- The work types this pal currently has switched OFF, as a set. This is the
+-- game's own record and the only ground truth for what a pal is allowed to
+-- do, so the fencer diffs against it rather than against what it believes it
+-- set last time. Returns nil when it cannot be read at all, which is
+-- different from "nothing is off" and must not be treated as an empty set.
+function M.work_off_set(param)
+    if not valid(param) then return nil end
+
+    local out, ok = {}, false
+    pcall(function()
+        local list = param.SaveParameter.WorkSuitabilityOptionInfo.OffWorkSuitabilityList
+        if list == nil then return end
+        list:ForEach(function(_, entry)
+            local v = as_int(unwrap(entry))
+            if v then out[v] = true end
+        end)
+        ok = true
+    end)
+
+    if not ok then return nil end
+    return out
+end
+
 -- Turns one work type on or off for one pal, which is what the vanilla
 -- checkbox does. This is the game's OWN permission flag, and it is the only
 -- thing that actually stops Palworld's AI handing a pal that job — declining

@@ -600,8 +600,9 @@ function M.compose(cfg, report)
     if not report then return head .. "   no pass yet" end
     if (report.camps or 0) == 0 then return head .. "   no base camp" end
 
-    return string.format("%s   %d/%d pals   %d queued",
-        head, report.placed or 0, report.pals or 0, report.queued or 0)
+    return string.format("%s   %d/%d fenced   %d %s",
+        head, report.fenced or 0, report.pals or 0, report.toggles or 0,
+        cfg.dry_run and "would move" or "moved")
 end
 
 local function attach_strip(menu, tree, root)

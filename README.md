@@ -8,23 +8,34 @@ Vanilla only lets you tick a work type on or off per Pal. This adds an ordering 
 
 ## How it works
 
-Assignments go out through `RequestFixedAssignWorkInBaseCamp_ToServer` — the same server RPC the
-vanilla "assign to this workstation" UI uses. Nothing is written to your save, no game files are
-patched, and unmodded players in the same session are unaffected.
+The mod does not hand Pals jobs. It decides which work types each Pal is **allowed** to do right
+now and switches the rest off, then lets Palworld's own AI choose within that. A Pal whose
+top-priority work has something waiting gets everything else switched off, so the AI has nowhere
+else to send it.
 
 Each pass, per base camp:
 
-1. every pending work is bucketed by the suitability it needs
-2. buckets whose resource ceiling is already met are dropped
-3. surviving buckets are visited in your configured priority order, repeatedly
-4. each visit places one Pal (spread) or as many as it can (fill), up to the cap
-5. within a work type, the highest-ranked Pal not already claimed takes the job
+1. count **demand** — how many pending jobs exist of each work type
+2. work types whose resource ceiling is met contribute no demand
+3. walk priority levels 1 to 5, fencing each Pal to the first level where it can do something that
+   still has demand to spare
+4. a Pal fenced nowhere is left unfenced, keeping everything it may legally do
+5. diff against the game's own permissions and send only the differences
 
-A Pal is claimed at most once per pass. That single rule is what makes priority mean something:
-priority 1 picks from everyone, priority 5 picks from the leftovers.
+Permissions go through `RequestChangeWorkSuitability_ToServer` — the same flag the vanilla
+checkboxes write. No game files are patched.
 
-Assignments are remembered between passes, so a Pal already doing the right job is left alone
-rather than being re-assigned every cycle and made to re-path.
+An earlier version pinned one Pal to one work object with
+`RequestFixedAssignWorkInBaseCamp_ToServer` and left the AI otherwise free, so a Pal could still
+wander off to a lower-priority job the moment it finished — items sitting waiting to be carried
+while a Pal went watering instead. Fencing is the mechanism that makes a priority order actually
+govern behaviour.
+
+**This means the mod continuously writes work-permission flags to your save.** Restoring is
+stateless: a Pal's permissions are always *capable AND not X AND (fenced-in OR unfenced)*, so
+switching the mod off puts back *capable AND not X* without needing a record of what came before.
+The cost is that a work type you unchecked by hand in vanilla gets switched back on — **X is how
+you say "never" to this mod.**
 
 ## Requirements
 

@@ -4,10 +4,10 @@
 -- work is staffed before priority 5 work, and within a priority the best
 -- suited pal takes the job.
 --
--- Assignments go out through the game's own
--- RequestFixedAssignWorkInBaseCamp_ToServer RPC — the same call the vanilla
--- "assign to this workstation" UI makes — so nothing is written to the save
--- and unmodded players in the session stay vanilla.
+-- The mod does not hand pals jobs. It decides which work types each pal may
+-- do right now and switches the rest off through
+-- RequestChangeWorkSuitability_ToServer — the same flag the vanilla
+-- checkboxes write — leaving Palworld's own AI to choose within that fence.
 
 local log = require("log")
 local api = require("palapi")
