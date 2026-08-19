@@ -333,8 +333,10 @@ the following pass usually succeeds. Hosting or singleplayer needs none of this.
 
 - set `Author` to your Steam name
 - set `MinRevision` to the game revision you actually tested on
-- confirm the `Dependencies` entry: `3625223587` is the UE4SS Experimental Workshop item. If it
-  is gone or you targeted a different UE4SS core, point this at the one you tested against
+- confirm the `Dependencies` entry. These are **`PackageName` strings, not Workshop IDs**: every
+  installed mod that depends on UE4SS lists `"UE4SSExperimentalPW"`, and PalSchema mods list
+  `"PalSchema"`. A numeric ID there makes the Mod Uploader fail to read the file at all, and the
+  mod shows up in its list with a blank name
 - add a `thumbnail.png`
 
 Then upload with Pocketpair's [PalworldModUploader](https://github.com/pocketpairjp/PalworldModUploader).

@@ -3,10 +3,11 @@
   "PackageName": "PalWorkPriority",
   "Thumbnail": "thumbnail.png",
   "Version": "0.1.0",
+  "DebugMode": false,
   "MinRevision": 82182,
   "Author": "Matraweber",
   "Dependencies": [
-    3625223587
+    "UE4SSExperimentalPW"
   ],
   "Tags": [
     "UE4SS",
