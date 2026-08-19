@@ -40,9 +40,11 @@ reported 78 gathering works. Reading `WorkerDirector.RequiredAssignWorks` reads 
 almost every time, because a work sits in that list only for the instant it is asking; polling it
 looks exactly like an idle base and stops the mod governing anything.
 
-If the pulse hook ever fails to register, the mod falls back to counting every work object and
-says `demand ESTIMATED` in its summary rather than quietly doing nothing. `!pwp status` reports
-how many pulses have been seen.
+If the pulse hook ever fails to **register**, the mod falls back to counting every work object and
+says `demand ESTIMATED` rather than quietly doing nothing. That test is deliberately about
+registration and not about whether any pulse has arrived: a base whose Pals are all asleep
+produces no pulses at all, and treating that as a broken hook would fence the whole roster onto
+night work that does not exist. `!pwp status` reports both.
 
 **This means the mod continuously writes work-permission flags to your save.** Restoring is
 stateless: a Pal's permissions are always *capable AND not X AND (fenced-in OR unfenced)*, so

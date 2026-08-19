@@ -31,10 +31,14 @@ local M = {}
 -- slowly only briefly overstates demand.
 M.FRESH_SECONDS = 15
 
-M.pulses = 0                -- total ever seen; zero means the hook never fired
+M.pulses = 0                -- total ever seen
+-- Whether the hook is in place. This, NOT the pulse count, is what says
+-- demand can be trusted: a base whose pals are all asleep produces no pulses
+-- at all, and treating that as a broken hook would fall back to counting
+-- every work object and fence the whole roster onto imaginary night work.
+M.hooked = false
 
 local jobs = {}             -- work key -> { camp, value, seen, work }
-local installed = false
 
 function M.reset()
     jobs = {}
@@ -47,7 +51,7 @@ local function work_key(w)
 end
 
 function M.install()
-    if installed then return true end
+    if M.hooked then return true end
 
     local ok = pcall(function()
         RegisterHook("/Script/Pal.PalBaseCampWorkerDirector:OnRequiredAssignWork_ServerInternal",
@@ -86,13 +90,13 @@ function M.install()
     end)
 
     if ok then
-        installed = true
+        M.hooked = true
         log.debug("required-work pulse hook installed")
     else
         log.warn("could not hook OnRequiredAssignWork_ServerInternal — " ..
             "demand will fall back to counting every work object")
     end
-    return installed
+    return M.hooked
 end
 
 -- Prunes finished jobs and returns { [work value] = count } for one camp,

@@ -315,15 +315,16 @@ local function run_camp(cfg, camp, stats)
 
     -- What the camp actually wants doing, from the game's own pulses.
     --
-    -- The all-works fallback only runs when no pulse has EVER been heard,
-    -- which means the hook did not take. It overstates demand badly and says
-    -- so in the summary, but that beats the alternative: with no demand at
-    -- all nothing is fenced and the mod silently governs nothing.
+    -- The all-works fallback runs only when the hook did not REGISTER. It
+    -- must not key off the pulse count: a base whose pals are asleep produces
+    -- no pulses, and falling back there would fence the whole roster onto
+    -- night work that does not exist. No pulses with a live hook means
+    -- nothing wants doing, which is a real answer.
     local camp_key = api.guid_key(camp_id)
     local demand, live = demandidx.for_camp(camp_key)
     local counted = live
 
-    if demandidx.pulses == 0 then
+    if not demandidx.hooked then
         local all, work_err = api.camp_works(camp)
         if work_err then
             log.debug("camp works unavailable: " .. work_err)

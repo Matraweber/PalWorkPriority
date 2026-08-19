@@ -237,8 +237,10 @@ COMMANDS.status = function()
     log.say("  work type read from: " ..
         (probe and (probe.kind .. " " .. probe.name) or "not resolved yet"))
     log.say("  enum offset: " .. workdefs.enum_offset)
-    log.say("  work pulses seen: " .. demandidx.pulses ..
-        (demandidx.pulses == 0 and "  (demand is being ESTIMATED)" or ""))
+    log.say("  demand hook: " .. (demandidx.hooked and "installed" or "NOT INSTALLED") ..
+        ", " .. demandidx.pulses .. " pulse(s) seen" ..
+        (demandidx.hooked and demandidx.pulses == 0
+            and "  (nothing wants doing — normal while pals sleep)" or ""))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
 end
