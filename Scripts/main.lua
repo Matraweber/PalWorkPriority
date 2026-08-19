@@ -345,7 +345,8 @@ COMMANDS.stock = function()
         if f then f:write("base storage " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n") end
 
         for ci, camp in ipairs(camps) do
-            local totals, chests = api.camp_item_totals(api.guid_key(api.camp_id(camp)))
+            local totals, chests = api.camp_item_totals(
+                api.guid_key(api.camp_id(camp)), cfg.counted_containers)
 
             local rows = {}
             for id, n in pairs(totals) do rows[#rows + 1] = { id = id, n = n } end
@@ -369,7 +370,7 @@ COMMANDS.stock = function()
                 log.say(string.format("  ... and %d more, full list in Stock.txt", #rows - 15))
             end
             if chests == 0 then
-                log.say("  no chests answered, so ceilings would read as unmet")
+                log.say("  no container answered, so ceilings would read as unmet")
             end
 
             -- Ceilings count chests only. Anything else on the base holding
@@ -377,7 +378,9 @@ COMMANDS.stock = function()
             -- limit to look broken when the resource is really just sitting
             -- somewhere that is not counted.
             local counted = {}
-            for _, cls in ipairs(api.CHEST_CLASSES) do counted[cls] = true end
+            for _, cls in ipairs(cfg.counted_containers or api.DEFAULT_COUNTED) do
+                counted[cls] = true
+            end
 
             local uncounted = {}
             for _, holder in ipairs(api.camp_containers(api.guid_key(api.camp_id(camp)))) do
@@ -457,7 +460,7 @@ local function stock_across_camps()
     -- Global scope counts chests the camp filter would drop, so ask for them
     -- the same way the scheduler does rather than summing per camp.
     if cfg.storage_scope == "global" then
-        return (api.all_chest_totals())
+        return (api.all_chest_totals(cfg.counted_containers))
     end
 
     local totals = {}
@@ -465,7 +468,8 @@ local function stock_across_camps()
     for _, camp in ipairs(api.base_camps()) do
         local camp_id = api.camp_id(camp)
         if camp_id then
-            local part = api.camp_item_totals(api.guid_key(camp_id))
+            local part = api.camp_item_totals(api.guid_key(camp_id),
+                cfg.counted_containers)
             for id, n in pairs(part or {}) do
                 totals[id] = (totals[id] or 0) + n
             end

@@ -688,11 +688,22 @@ end
 -- Base storage
 -- ---------------------------------------------------------------------------
 
--- Chest concrete-model classes. A class that does not resolve on a build is
--- normal; the list is wider than any one version needs.
-M.CHEST_CLASSES = {
+-- What counts as base storage for a resource ceiling. A class that does not
+-- resolve on a build is normal; the list is wider than any one version needs.
+--
+-- Production stations are in the default set alongside chests. A logging site
+-- holding 297 wood is wood the base has, and leaving it out makes a ceiling
+-- overshoot by whatever every station happens to be sitting on.
+--
+-- Deliberately NOT here by default, though config can add them:
+--   PalMapObjectPalFoodBoxModel         food set aside for pals to eat
+--   PalMapObjectConvertItemModel        mid conversion, inputs and outputs mixed
+--   PalMapObjectDropItemModel           dropped on the ground
+--   PalMapObjectPickupItemOnLevelModel  lying about waiting to be collected
+M.DEFAULT_COUNTED = {
     "PalMapObjectItemChestModel",
     "PalMapObjectGuildChestModel",
+    "PalMapObjectProductItemModel",
 }
 
 -- Totals the items in every chest `accept` says yes to: { [StaticId] = n }.
@@ -704,10 +715,10 @@ M.CHEST_CLASSES = {
 --
 -- The second return value is how many chests actually answered, so a caller
 -- can tell "no wood" apart from "read nothing".
-local function walk_chests(accept)
+local function walk_chests(classes, accept)
     local totals, chests = {}, 0
 
-    for _, cls in ipairs(M.CHEST_CLASSES) do
+    for _, cls in ipairs(classes or M.DEFAULT_COUNTED) do
         pcall(function()
             for _, m in ipairs(FindAllOf(cls) or {}) do
                 pcall(function()
@@ -751,10 +762,10 @@ end
 -- A chest whose camp id will not read is skipped rather than counted:
 -- crediting someone else's chest to this base would silently inflate the
 -- total and suspend work that should still be running.
-function M.camp_item_totals(camp_key)
+function M.camp_item_totals(camp_key, classes)
     if not camp_key then return {}, 0 end
 
-    return walk_chests(function(m)
+    return walk_chests(classes, function(m)
         local cid
         pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
         return cid == camp_key
@@ -766,8 +777,8 @@ end
 -- The counterpart to camp_item_totals for storage_scope = "global". It can
 -- only ever cover bases currently streamed in: an unloaded camp has no chest
 -- objects in memory at all, so there is nothing there to add up.
-function M.all_chest_totals()
-    return walk_chests(function() return true end)
+function M.all_chest_totals(classes)
+    return walk_chests(classes, function() return true end)
 end
 
 -- Every camp-owned map object holding items, whatever its class.

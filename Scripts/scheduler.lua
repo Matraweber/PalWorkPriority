@@ -374,10 +374,11 @@ local function run_camp(cfg, camp, stats)
     local totals = {}
     if needs_totals(cfg) then
         local chests
+        local counted = cfg.counted_containers
         if cfg.storage_scope == "global" then
-            totals, chests = api.all_chest_totals()
+            totals, chests = api.all_chest_totals(counted)
         else
-            totals, chests = api.camp_item_totals(api.guid_key(camp_id))
+            totals, chests = api.camp_item_totals(api.guid_key(camp_id), counted)
         end
         stats.chests = stats.chests + (chests or 0)
     end
