@@ -93,6 +93,10 @@ return {
     -- Per-pal overrides, keyed by nickname first and species name second.
     -- Any work type you leave out falls back to work_priority above.
     --
+    -- These sit BELOW anything clicked on the Monitoring Stand: a cell you
+    -- have clicked keeps what you clicked, and is stored in priorities.txt
+    -- next to this mod rather than here.
+    --
     -- pal_overrides = {
     --     ["Diggy"]    = { Mining = 1, Transport = false },
     --     ["Anubis"]   = { Handcraft = 1 },

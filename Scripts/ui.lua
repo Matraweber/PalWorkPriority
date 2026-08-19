@@ -25,6 +25,7 @@
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
+local store = require("store")
 
 local M = {}
 
@@ -505,20 +506,6 @@ end
 -- What a cell should show
 -- ---------------------------------------------------------------------------
 
--- Effective priority for one pal and work type. This must resolve exactly as
--- scheduler.priority_for does — nickname first, species second — or the grid
--- shows a policy the scheduler is not following.
-local function effective_priority(cfg, pal, work_name)
-    local overrides = cfg.pal_overrides or {}
-    local entry = pal.name and overrides[pal.name] or nil
-    if entry == nil and pal.species then entry = overrides[pal.species] end
-
-    if type(entry) == "table" and entry[work_name] ~= nil then
-        return entry[work_name]
-    end
-    return cfg.work_priority[work_name]
-end
-
 local function handle_cell(cfg, lookup, cell)
     if not alive(cell) then return end
     local cell_name = full_name(cell)
@@ -549,7 +536,7 @@ local function handle_cell(cfg, lookup, cell)
     local pal = row_pal[rname]
     if not pal then return end
 
-    local prio = effective_priority(cfg, pal, work_name)
+    local prio = store.effective(cfg, pal, work_name, t)
 
     -- Hand the cell back to the game when we have nothing to say about it:
     -- the pal cannot do this work at all, or the work type is not configured.
@@ -730,7 +717,127 @@ function M.refresh(cfg, report)
 
     refresh_strip(cfg, report, menu, tree, root)
     refresh_cells(cfg, report)
+
+    M.dirty = false
+    store.flush()
     return true
+end
+
+M.dirty = false
+
+-- ---------------------------------------------------------------------------
+-- Clicking a cell
+-- ---------------------------------------------------------------------------
+
+-- Exactly one cell can be under the pointer. IsHovered still answers with the
+-- vanilla checkbox hidden, because Hidden only takes the checkbox out of hit
+-- testing, not the cell widget that contains it.
+local function hovered_cell()
+    if cell_cache == nil then return nil end
+    for _, cell in ipairs(cell_cache) do
+        local hit = false
+        pcall(function()
+            if alive(cell) then hit = cell:IsHovered() end
+        end)
+        if hit == true then return cell end
+    end
+    return nil
+end
+
+-- Resolves a cell to the pal and work type it represents, or nil when it is
+-- not one of ours to touch.
+local function cell_target(cell)
+    if not alive(cell) then return nil end
+
+    local battle = false
+    pcall(function() battle = cell.IsBattleSettingMode end)
+    if battle == true then return nil end
+
+    local t = api.as_int((function()
+        local v
+        pcall(function() v = cell.BindedSuitability end)
+        return v
+    end)())
+    if t == nil or t <= 0 then return nil end
+
+    local work_name = workdefs.name(t)
+    if work_name == nil then return nil end
+
+    local cname = full_name(cell)
+    if not cname then return nil end
+
+    local rname = cell_row[cname]
+    if not rname then
+        local row = row_of_cell(cell)
+        if not row then return nil end
+        rname = full_name(row)
+        if not rname then return nil end
+        cell_row[cname] = rname
+    end
+
+    local pal = row_pal[rname]
+    if not pal then return nil end
+
+    -- Never write a priority into a cell for work the pal cannot do: the
+    -- grid leaves those to vanilla, and an invisible edit sitting under a
+    -- dash would surface later as a mystery.
+    if not (pal.ranks and pal.ranks[t]) then return nil end
+
+    return pal, t, work_name, cname
+end
+
+-- dir -1 for left click (towards priority 1), +1 for right click.
+local function bump(cfg, dir)
+    if not menu_likely_open then return end
+
+    local cell = hovered_cell()
+    if not cell then return end
+
+    local pal, t, work_name, cname = cell_target(cell)
+    if not pal then return end
+
+    local current = store.effective(cfg, pal, work_name, t)
+    local next_prio = store.cycle(current, dir)
+    if next_prio == current then return end
+
+    store.set(pal.key, t, next_prio)
+
+    -- Repaint this one cell immediately rather than waiting up to a second
+    -- for the poll: a priority control that answers late feels broken even
+    -- when it is working.
+    cell_last[cname] = nil
+    M.dirty = true
+
+    log.debug(string.format("%s %s -> %s",
+        tostring(pal.name), work_name,
+        next_prio == false and "X" or tostring(next_prio)))
+end
+
+-- Bound once, not per menu. The handlers bail on a plain Lua flag when the
+-- stand is shut, so ordinary gameplay clicks cost nothing measurable.
+function M.bind_mouse(cfg_ref)
+    local bound = 0
+
+    local function try(key_name, dir)
+        local key
+        pcall(function() key = Key[key_name] end)
+        if key == nil then
+            warn_once("mouse" .. key_name,
+                key_name .. " not available in this UE4SS build — " ..
+                "click editing disabled for that button")
+            return
+        end
+        local ok = pcall(function()
+            RegisterKeyBind(key, function()
+                pcall(function() bump(cfg_ref(), dir) end)
+            end)
+        end)
+        if ok then bound = bound + 1 end
+    end
+
+    try("LEFT_MOUSE_BUTTON", -1)
+    try("RIGHT_MOUSE_BUTTON", 1)
+    return bound
 end
 
 -- ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
+local store = require("store")
 
 local M = {}
 
@@ -30,18 +31,6 @@ M.last_report = nil
 
 function M.forget()
     last_assignment = {}
-end
-
-local function priority_for(cfg, pal, work_name)
-    local overrides = cfg.pal_overrides or {}
-    local entry = overrides[pal.name]
-    if entry == nil and pal.species then entry = overrides[pal.species] end
-
-    if type(entry) == "table" then
-        local v = entry[work_name]
-        if v ~= nil then return v end
-    end
-    return cfg.work_priority[work_name]
 end
 
 -- True when every item listed for this work type is at or above its ceiling.
@@ -69,7 +58,8 @@ end
 
 -- Picks the pal that should take this work.
 --
--- An explicit pal_overrides entry outranks suitability: setting
+-- An explicit priority - a click on the stand, or a pal_overrides entry -
+-- outranks suitability: setting
 -- ["Diggy"] = { Mining = 1 } means you want Diggy mining even if a better
 -- miner is standing next to them. Only when two pals carry the same priority
 -- does raw suitability rank decide, and slot order breaks the remaining ties
@@ -84,7 +74,7 @@ local function best_candidate(cfg, pals, claimed, work_name, value)
 
     for _, pal in ipairs(pals) do
         if not claimed[pal.key] then
-            local prio = priority_for(cfg, pal, work_name)
+            local prio = store.effective(cfg, pal, work_name, value)
             if type(prio) == "number" then
                 local rank = unskilled and 1 or api.suitability_rank(pal.param, value)
                 if rank >= (unskilled and 1 or cfg.min_suitability_rank) then

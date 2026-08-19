@@ -15,6 +15,7 @@ local workdefs = require("workdefs")
 local scheduler = require("scheduler")
 local discover = require("discover")
 local ui = require("ui")
+local store = require("store")
 
 local MOD_NAME = "Pal Work Priority"
 local VERSION = "0.1.0"
@@ -35,6 +36,7 @@ local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
+store.load(DIR .. "priorities.txt")
 
 -- ---------------------------------------------------------------------------
 -- Config
@@ -445,6 +447,16 @@ end)
 bind(Key.F12, "F12 (stock)", function()
     COMMANDS.stock()
 end)
+
+-- Left click raises a cell towards priority 1, right click lowers it towards
+-- never. cfg is passed as a getter because '!pwp reload' replaces the table.
+do
+    local n = ui.bind_mouse(function() return cfg end)
+    if n < 2 then
+        log.warn("only " .. n .. " of 2 mouse buttons bound — " ..
+            "priority clicking will be partly unavailable")
+    end
+end
 
 -- Toggles on modifiers rather than fresh F-keys: the plain ones are getting
 -- crowded, and Alt+F10/F11 are clear of every keybind the other installed

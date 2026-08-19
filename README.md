@@ -163,8 +163,28 @@ channels.
 Numbers reflect `pal_overrides` too, resolved nickname-first then species exactly as the
 scheduler resolves them — so what the grid shows and what the scheduler does cannot drift apart.
 
-Nothing here is editable yet, and nothing can eat a click: the text is hit-test-invisible, so the
-vanilla checkboxes keep working normally underneath.
+### Clicking to change a priority
+
+**Left click raises** a cell towards priority 1. **Right click lowers** it towards never.
+
+```
+1  <-  2  <-  3  <-  4  <-  5  <-  X          left click
+1  ->  2  ->  3  ->  4  ->  5  ->  X          right click
+```
+
+Both ends clamp rather than wrap. Wrapping means one click too many on a priority-1 cell silently
+excludes the Pal from that work, with nothing in the number to show it happened.
+
+Clicks only land on cells the mod owns — a Pal that cannot do a work type keeps its vanilla dash
+and ignores clicks there, so an invisible edit can never end up hiding under one.
+
+Edits are per Pal and per work type, and they outrank everything in `config.lua`. They persist to
+`priorities.txt` next to the mod, written a couple of seconds after a burst of clicks settles
+rather than once per click.
+
+The resolution order is: **a click you made** → `pal_overrides` → `work_priority`. One function in
+`store.lua` decides it, called by both the scheduler and the grid, because when they each had
+their own copy the two silently disagreed.
 
 ### How it attaches
 
