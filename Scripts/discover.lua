@@ -268,6 +268,8 @@ function M.run(out_path)
 
     pcall(function() enum_names(f) end)
     f:write("\n")
+    pcall(function() ui.dump(f) end)
+    f:write("\n")
     pcall(function() probe_ranks(f) end)
     f:write("\n")
     pcall(function() probe_works(f) end)

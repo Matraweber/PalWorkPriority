@@ -79,14 +79,46 @@ end
 -- Finding somewhere to put it
 -- ---------------------------------------------------------------------------
 
-local function find_menu()
-    local found
+-- FindAllOf turns up every object of the class still in memory: the class
+-- default object, and any instance the game has finished with but not yet
+-- collected. Only one of them is the live menu, and the rest answer
+-- WidgetTree with nothing — which is what the first field run hit, taking
+-- the first valid object and giving up when it had no tree.
+--
+-- So pick by usability rather than by being first, and return the tree and
+-- root along with it since they had to be resolved anyway.
+local function usable_menu()
+    local menu, tree, root
+    local rejected, total = 0, 0
+
     pcall(function()
         for _, m in ipairs(FindAllOf(M.MENU_CLASS) or {}) do
-            if api.valid(m) and found == nil then found = m end
+            total = total + 1
+
+            if menu == nil and api.valid(m) then
+                local name = ""
+                pcall(function() name = m:GetFullName() end)
+
+                if name:find("Default__", 1, true) then
+                    rejected = rejected + 1
+                else
+                    local t, r
+                    pcall(function() t = m.WidgetTree end)
+                    if api.valid(t) then
+                        pcall(function() r = t.RootWidget end)
+                    end
+
+                    if api.valid(t) and api.valid(r) then
+                        menu, tree, root = m, t, r
+                    else
+                        rejected = rejected + 1
+                    end
+                end
+            end
         end
     end)
-    return found
+
+    return menu, tree, root, total, rejected
 end
 
 -- Adds the widget to whatever the menu root will accept. The three calls are
@@ -118,21 +150,7 @@ local function add_to_root(root, widget)
     return nil
 end
 
-local function attach(menu)
-    local tree
-    pcall(function() tree = menu.WidgetTree end)
-    if not api.valid(tree) then
-        warn_once("tree", "stand menu has no readable WidgetTree — panel unavailable")
-        return false
-    end
-
-    local root
-    pcall(function() root = tree.RootWidget end)
-    if not api.valid(root) then
-        warn_once("root", "stand menu has no readable RootWidget — panel unavailable")
-        return false
-    end
-
+local function attach(menu, tree, root)
     local cls = api.cdo("/Script/UMG.TextBlock")
     if not cls then
         warn_once("tbclass", "UMG.TextBlock not found — panel unavailable")
@@ -219,15 +237,23 @@ end
 -- while the panel is live. Cheap enough to call on a short timer, and does
 -- nothing at all when the stand is closed.
 function M.refresh(cfg, report)
-    local menu = find_menu()
+    local menu, tree, root, total, rejected = usable_menu()
+
     if not menu then
         if panel_menu ~= nil then M.detach() end
+        -- Instances existed but none was usable: that is a real problem worth
+        -- naming, unlike the ordinary case of the stand simply being shut.
+        if total > 0 then
+            warn_once("nousable", string.format(
+                "found %d stand menu object(s) but none had a usable WidgetTree " ..
+                "(%d rejected) — open the stand and run '!pwp discover'", total, rejected))
+        end
         return false
     end
 
     if panel_menu ~= menu or not api.valid(panel) then
         M.detach()
-        if not attach(menu) then return false end
+        if not attach(menu, tree, root) then return false end
     end
 
     local text = M.compose(cfg, report)
@@ -250,21 +276,43 @@ end
 function M.dump(f)
     f:write("=== monitoring stand menu (" .. M.MENU_CLASS .. ")\n")
 
-    local menu = find_menu()
+    -- Every instance, not just the one picked, with why each was passed over.
+    -- "found a menu but it had no tree" is only diagnosable if the rejects
+    -- are visible next to the keeper.
+    local instances = {}
+    pcall(function()
+        for _, m in ipairs(FindAllOf(M.MENU_CLASS) or {}) do
+            instances[#instances + 1] = m
+        end
+    end)
+
+    f:write("  instances: " .. #instances .. "\n")
+    for i, m in ipairs(instances) do
+        local name, t, r = "?", nil, nil
+        pcall(function() name = m:GetFullName() end)
+        pcall(function() t = m.WidgetTree end)
+        if api.valid(t) then pcall(function() r = t.RootWidget end) end
+
+        f:write(string.format("   [%d] tree=%s root=%s  %s\n",
+            i, tostring(api.valid(t)), tostring(api.valid(r)), name))
+    end
+
+    local menu, tree, root = usable_menu()
     if not menu then
-        f:write("  menu not open — open the Monitoring Stand and dump again\n")
+        f:write("  no usable instance. If the stand was shut when this ran, open it\n")
+        f:write("  and dump again — the live menu only exists while the menu is up.\n")
         return
     end
 
-    local tree, root
-    pcall(function() tree = menu.WidgetTree end)
-    pcall(function() if tree then root = tree.RootWidget end end)
-
-    f:write("  tree: " .. tostring(api.valid(tree)) ..
-        "  root: " .. tostring(api.valid(root)) .. "\n")
-    if not api.valid(root) then return end
-
     pcall(function() f:write("  root class: " .. root:GetFullName() .. "\n") end)
+
+    -- What the root will actually accept decides how the panel attaches.
+    for _, fn in ipairs({ "AddChildToCanvas", "AddChildToOverlay", "AddChild",
+                          "GetChildrenCount", "AddChildToVerticalBox" }) do
+        local present = false
+        pcall(function() present = (root[fn] ~= nil) end)
+        f:write(string.format("   root has %-22s %s\n", fn, tostring(present)))
+    end
 
     local function walk(widget, depth)
         if depth > 6 or not api.valid(widget) then return end
