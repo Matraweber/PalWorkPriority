@@ -87,14 +87,16 @@ stops loading after a game update or a Workshop subscription change, re-run the 
 
 ## First run
 
-The mod ships with `dry_run = true`. It works out every assignment and logs it without sending
-anything. Do one session like that first:
+`config.lua` currently has `dry_run = false`, so the mod writes work permissions for real. Set it
+to `true` for a session first if you would rather watch before letting it touch a base:
 
 1. load a save with a staffed base
-2. type `!pwp run` in chat
+2. press **F10**, or type `!pwp run` in chat
 3. read the `[PalWorkPriority]` lines in `UE4SS.log`
 
-If the assignments look right, set `dry_run = false` in `Scripts/config.lua` and `!pwp reload`.
+In dry run every pass logs what it *would* toggle and sends nothing. The summary line names the
+work types wanting a worker and which Pal was fenced where, which is the fastest way to see
+whether the priorities are doing what you meant.
 
 ## Configuration
 
