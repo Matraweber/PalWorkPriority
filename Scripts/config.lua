@@ -13,7 +13,7 @@ return {
     --
     -- Ships as true on purpose. Run one pass, read the log, confirm the
     -- assignments look sane on your build, then set this to false.
-    dry_run = true,
+    dry_run = false,
 
     -- Seconds between automatic passes. A pass is cheap but not free; below
     -- about 15 seconds you are just adding hitches.
