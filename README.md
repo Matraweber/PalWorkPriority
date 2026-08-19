@@ -21,8 +21,16 @@ Each pass, per base camp:
 2. work types whose resource ceiling is met contribute no demand
 3. walk priority levels 1 to 5, fencing each Pal to the first level where it can do something that
    still has demand to spare
-4. a Pal fenced nowhere is left unfenced, keeping everything it may legally do
-5. diff against the game's own permissions and send only the differences
+4. a Pal already doing a work type keeps it while any work of that type remains
+5. a Pal fenced nowhere is left unfenced, keeping everything it may legally do
+6. diff against the game's own permissions and send only the differences
+
+Step 4 is an asymmetry worth understanding. To **pull** a Pal to a work type takes a real pulse,
+so nobody is sent to a cold station. To **keep** a Pal where it already is takes only that work of
+that type still exists. Without it, a fence is released the instant a job is assigned — an
+assigned job stops asking for anyone, so by demand alone it looks finished the moment it truly
+starts. The Pal gets its other work types switched back on mid-swing and wanders off to a lower
+priority the moment the tree falls, with the whole logging site still standing.
 
 Permissions go through `RequestChangeWorkSuitability_ToServer` — the same flag the vanilla
 checkboxes write. No game files are patched.

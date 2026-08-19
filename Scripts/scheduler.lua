@@ -112,6 +112,22 @@ local function build_demand(cfg, works, totals, stats)
     return demand
 end
 
+-- How many work objects of each type exist in this camp, announcing or not.
+--
+-- This is NOT demand. A station keeps its work object while it stands, so
+-- these counts happily include a cold campfire. It answers a narrower
+-- question: is there any work of this type left at all? That is enough to
+-- decide whether a pal already doing that work should carry on, without
+-- being enough to pull an idle pal in.
+local function count_work_objects(camp)
+    local out = {}
+    for _, w in ipairs(api.camp_works(camp)) do
+        local value = api.work_suitability(w)
+        if value then out[value] = (out[value] or 0) + 1 end
+    end
+    return out
+end
+
 -- ---------------------------------------------------------------------------
 -- Planning the fence
 -- ---------------------------------------------------------------------------
@@ -138,7 +154,7 @@ local function base_allowed(cfg, pal)
 end
 
 -- Returns pal key -> set of work values that pal may do this pass.
-local function plan_fences(cfg, pals, demand, stats)
+local function plan_fences(cfg, pals, demand, objects, stats)
     local plan, fenced = {}, {}
     local taken = {}            -- work value -> pals fenced onto it
     local cap = tonumber(cfg.max_pals_per_work_type)
@@ -166,6 +182,23 @@ local function plan_fences(cfg, pals, demand, stats)
 
     for _, pal in ipairs(pals) do
         pal.base = base_allowed(cfg, pal)
+        pal.current = api.current_work_suitability(pal.param)
+    end
+
+    -- A pal already working a type keeps it while any work of that type
+    -- remains, even when none of it is announcing.
+    --
+    -- This is the asymmetry that makes the whole thing hold together. To PULL
+    -- a pal to a work type takes a real pulse, so nobody is sent to a cold
+    -- station. To KEEP a pal where it already is takes only that work of that
+    -- type still exists. Without it a fence is released the instant a job is
+    -- assigned - because an assigned job stops asking for anyone, so by demand
+    -- alone it looks finished the moment it truly starts. The pal then has its
+    -- other work types switched back on mid-swing and wanders off to a lower
+    -- priority the moment the tree falls, with the whole logging site still
+    -- standing.
+    local function keeps(pal, value)
+        return pal.current == value and (objects[value] or 0) > 0
     end
 
     local laps = spread and math.max(cap or #pals, 1) or 1
@@ -176,10 +209,14 @@ local function plan_fences(cfg, pals, demand, stats)
                     local fence = {}
                     local best, best_rank = nil, -1
 
+                    local consumes = false
+
                     for value in pairs(pal.base) do
                         local name = workdefs.name(value)
+                        local held = keeps(pal, value)
+
                         if store.effective(cfg, pal, name, value) == level
-                            and wanted(value) then
+                            and (wanted(value) or held) then
 
                             local rank = api.suitability_rank(pal.param, value)
                             if rank >= cfg.min_suitability_rank then
@@ -188,11 +225,13 @@ local function plan_fences(cfg, pals, demand, stats)
                                 -- equally-wanted jobs without a re-plan.
                                 fence[value] = true
 
-                                -- But only a type with room actually pulls the
-                                -- pal here, and only that counts against the
-                                -- allocation.
-                                if room(value, lap) and rank > best_rank then
+                                -- A type with room pulls the pal here. So does
+                                -- the job it is already doing — but that one
+                                -- claims no allocation, since the pal is
+                                -- staying put rather than being handed out.
+                                if (room(value, lap) or held) and rank > best_rank then
                                     best, best_rank = value, rank
+                                    consumes = not held
                                 end
                             end
                         end
@@ -204,8 +243,9 @@ local function plan_fences(cfg, pals, demand, stats)
                         -- equally-wanted jobs without waiting on a re-plan.
                         plan[pal.key] = fence
                         fenced[pal.key] = true
-                        taken[best] = (taken[best] or 0) + 1
+                        if consumes then taken[best] = (taken[best] or 0) + 1 end
                         stats.fenced = stats.fenced + 1
+                        if not consumes then stats.held = stats.held + 1 end
                     end
                 end
             end
@@ -375,7 +415,8 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
-    local plan = plan_fences(cfg, pals, demand, stats)
+    local objects = count_work_objects(camp)
+    local plan = plan_fences(cfg, pals, demand, objects, stats)
 
     for _, pal in ipairs(pals) do
         local want = plan[pal.key] or pal.base or {}
@@ -406,7 +447,7 @@ function M.run_pass(cfg)
         demand_types = 0,
         unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
         demand_estimated = false,
-        needed = 0, covered = 0, idle_skipped = 0,
+        needed = 0, covered = 0, idle_skipped = 0, held = 0,
         demand_by_name = {},
         lines = {},
     }
@@ -469,7 +510,7 @@ function M.format_stats(cfg, stats)
     local parts = {
         string.format("%d camp(s), %d pal(s), %d work(s) in %d type(s)",
             stats.camps, stats.pals, stats.works, stats.demand_types),
-        stats.fenced .. " fenced",
+        stats.fenced .. " fenced" .. (stats.held > 0 and (" (" .. stats.held .. " holding)") or ""),
         stats.free .. " free",
     }
 

@@ -311,6 +311,20 @@ function M.suitability_rank(param, value)
     return rank
 end
 
+-- What this pal is doing right now, as an EPalWorkSuitability value, or nil.
+--
+-- This is what keeps a fence from being pulled out from under a job in
+-- progress: once a work is assigned to a pal it stops asking for one, so by
+-- demand alone it looks finished the moment it actually starts.
+-- (Function name via PalPriority.)
+function M.current_work_suitability(param)
+    local v
+    pcall(function() v = param:GetCurrentWorkSuitability() end)
+    local n = as_int(v)
+    if n and n > 0 then return n end
+    return nil
+end
+
 -- ---------------------------------------------------------------------------
 -- Works in a base
 -- ---------------------------------------------------------------------------
