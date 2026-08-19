@@ -355,7 +355,13 @@ local function run_camp(cfg, camp, stats)
     stats.pals = stats.pals + #pals
     stats.works = stats.works + counted
 
-    for _ in pairs(demand) do stats.demand_types = stats.demand_types + 1 end
+    for value, n in pairs(demand) do
+        stats.demand_types = stats.demand_types + 1
+        local name = workdefs.name(value)
+        if name then
+            stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + n
+        end
+    end
 
     -- Nothing wanted. That is either a genuinely idle base or a read that
     -- came back empty for a moment, and the two are indistinguishable from
@@ -401,6 +407,7 @@ function M.run_pass(cfg)
         unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
         demand_estimated = false,
         needed = 0, covered = 0, idle_skipped = 0,
+        demand_by_name = {},
         lines = {},
     }
 
@@ -418,6 +425,14 @@ function M.run_pass(cfg)
         end
     end
 
+    if #stats.lines > 0 then
+        local who = {}
+        for _, e in ipairs(stats.lines) do
+            who[#who + 1] = e.pal .. " -> " .. e.fence
+        end
+        log.info("fenced: " .. table.concat(who, "; "))
+    end
+
     M.last_report = {
         lines = stats.lines,
         summary = (stats.camps > 0) and M.format_stats(cfg, stats) or "no base camp loaded",
@@ -428,6 +443,26 @@ function M.run_pass(cfg)
     }
 
     return stats
+end
+
+-- "3 type(s)" says nothing about WHICH three, and which they are is the
+-- whole question when a pal is on the wrong job. Name them.
+local function demand_summary(stats)
+    local names = {}
+    for name in pairs(stats.demand_by_name) do names[#names + 1] = name end
+    if #names == 0 then return nil end
+
+    table.sort(names, function(a, b)
+        local ca, cb = stats.demand_by_name[a], stats.demand_by_name[b]
+        if ca ~= cb then return ca > cb end
+        return a < b
+    end)
+
+    local out = {}
+    for _, name in ipairs(names) do
+        out[#out + 1] = workdefs.label(name) .. " " .. stats.demand_by_name[name]
+    end
+    return table.concat(out, ", ")
 end
 
 function M.format_stats(cfg, stats)
@@ -449,6 +484,9 @@ function M.format_stats(cfg, stats)
     if stats.covered > 0 then parts[#parts + 1] = stats.covered .. " covered" end
     if stats.idle_skipped > 0 then parts[#parts + 1] = stats.idle_skipped .. " camp(s) idle" end
     if stats.demand_estimated then parts[#parts + 1] = "demand ESTIMATED" end
+
+    local wants = demand_summary(stats)
+    if wants then return table.concat(parts, ", ") .. "  |  wanted: " .. wants end
     return table.concat(parts, ", ")
 end
 
