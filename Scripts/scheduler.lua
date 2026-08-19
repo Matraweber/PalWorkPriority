@@ -183,6 +183,15 @@ local function plan_fences(cfg, pals, demand, objects, stats)
     for _, pal in ipairs(pals) do
         pal.base = base_allowed(cfg, pal)
         pal.current = api.current_work_suitability(pal.param)
+
+        -- Sorted, because pairs() order is not stable in Lua and this list
+        -- decides ties. A pal equally suited to two work types at the same
+        -- priority was picking whichever the hash happened to yield first,
+        -- so it flipped between them every pass and spent its toggles going
+        -- back and forth instead of working.
+        pal.order = {}
+        for value in pairs(pal.base) do pal.order[#pal.order + 1] = value end
+        table.sort(pal.order)
     end
 
     -- A pal already working a type keeps it while any work of that type
@@ -211,7 +220,7 @@ local function plan_fences(cfg, pals, demand, objects, stats)
 
                     local consumes = false
 
-                    for value in pairs(pal.base) do
+                    for _, value in ipairs(pal.order) do
                         local name = workdefs.name(value)
                         local held = keeps(pal, value)
 
@@ -229,7 +238,15 @@ local function plan_fences(cfg, pals, demand, objects, stats)
                                 -- the job it is already doing — but that one
                                 -- claims no allocation, since the pal is
                                 -- staying put rather than being handed out.
-                                if (room(value, lap) or held) and rank > best_rank then
+                                -- Strictly greater, so the first of equal
+                                -- ranks wins and the sorted order decides it.
+                                -- A job already in progress beats a tie
+                                -- outright, so a pal is never shuffled off
+                                -- work it is doing for an equal alternative.
+                                local better = rank > best_rank
+                                    or (held and rank == best_rank)
+
+                                if (room(value, lap) or held) and better then
                                     best, best_rank = value, rank
                                     consumes = not held
                                 end
@@ -435,7 +452,13 @@ local function run_camp(cfg, camp, stats)
             }
         end
 
+        -- Scratch fields, dropped so nothing survives into the next pass.
+        -- The pal tables come fresh from camp_pals each time, but clearing is
+        -- cheap and keeps that an implementation detail rather than a
+        -- dependency.
         pal.base = nil
+        pal.order = nil
+        pal.current = nil
     end
 end
 
