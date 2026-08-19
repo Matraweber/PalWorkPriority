@@ -149,13 +149,14 @@ Everything the mod decides is shown on the vanilla work-suitability screen, read
 - **A number in each grid cell** — the priority in force for that Pal and work type, replacing
   the vanilla checkbox. Coloured on RimWorld's work-tab scale: **1 green, 2 yellow, 3 orange,
   4 red, 5 grey**. A dim **X** means never assign.
-- **A cyan glow behind a number** marks the cell the last pass actually assigned. Colour is what
-  you asked for, the glow is what happened.
+- **A larger number** marks the cell the last pass actually assigned. Colour is what you asked
+  for, size is what happened.
 
-Colour means priority and nothing else, so the same number is always the same colour. An earlier
-version tinted assigned cells instead, which meant two Pals both at priority 3 rendered
-differently and read as a rendering fault rather than as information — two facts need two
-channels.
+Colour means priority and nothing else, so the same number is always the same colour. Two earlier
+attempts got this wrong: tinting assigned cells made two Pals both at priority 3 render
+differently and read as a fault, and a coloured drop shadow was worse — a shadow is literally a
+second copy of the glyph offset behind it, so it looked like a duplicate number rather than a
+glow.
 - **Work a Pal cannot do keeps its vanilla dash.** A number there would claim the Pal will do
   something it is incapable of, so those cells are left alone entirely.
 - **A status strip** along the bottom: mode, cap, dry/live, and the last pass summary.
@@ -177,6 +178,14 @@ excludes the Pal from that work, with nothing in the number to show it happened.
 
 Clicks only land on cells the mod owns — a Pal that cannot do a work type keeps its vanilla dash
 and ignores clicks there, so an invisible edit can never end up hiding under one.
+
+**Setting X also switches the game's own work permission off for that Pal**, which is the only
+thing that actually stops work. The mod declining to assign a Pal means nothing to Palworld's own
+AI, which will pick the job up regardless — and in dry run nothing is assigned at all, so an X
+that only changed a number on screen changed nothing whatsoever. Setting any number switches the
+permission back on. This is also what settles the fight with the vanilla left-click, which toggles
+that same flag underneath: whatever it did, the click handler puts it back in agreement with the
+number now showing.
 
 Edits are per Pal and per work type, and they outrank everything in `config.lua`. They persist to
 `priorities.txt` next to the mod, written a couple of seconds after a burst of clicks settles

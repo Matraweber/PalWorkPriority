@@ -553,6 +553,28 @@ function M.assign(camp_id, work_id, individual_id)
     return true, nil
 end
 
+-- Turns one work type on or off for one pal, which is what the vanilla
+-- checkbox does. This is the game's OWN permission flag, and it is the only
+-- thing that actually stops Palworld's AI handing a pal that job — declining
+-- to fixed-assign them ourselves does nothing about it.
+--
+-- raw_id carries the unmasked guid ints straight from GetIndividualID; the
+-- hex key used everywhere else is lossy for this purpose.
+function M.set_work_enabled(raw_id, work_value, on)
+    if raw_id == nil or type(work_value) ~= "number" then return false end
+
+    local comp = M.network_component()
+    if not valid(comp) then return false, "PalNetworkBaseCampComponent unavailable" end
+
+    local ok, err = pcall(function()
+        comp:RequestChangeWorkSuitability_ToServer(
+            { PlayerUId = raw_id.PlayerUId, InstanceId = raw_id.InstanceId, DebugName = "" },
+            work_value, on and true or false)
+    end)
+    if not ok then return false, tostring(err) end
+    return true
+end
+
 -- On a multiplayer client the camp's work data is not replicated until it is
 -- asked for. Harmless on a host.
 function M.request_work_replication(camp_id, on)

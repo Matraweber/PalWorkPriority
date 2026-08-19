@@ -221,8 +221,22 @@ local function try_hook_bind()
                         end
                     end)
 
+                    -- The unmasked ints as well as the hex key: turning a
+                    -- work type off goes through an RPC that wants the guid
+                    -- structs verbatim, and the key cannot be turned back.
+                    local raw
+                    pcall(function()
+                        raw = {
+                            PlayerUId  = { A = id.PlayerUId.A,  B = id.PlayerUId.B,
+                                           C = id.PlayerUId.C,  D = id.PlayerUId.D },
+                            InstanceId = { A = id.InstanceId.A, B = id.InstanceId.B,
+                                           C = id.InstanceId.C, D = id.InstanceId.D },
+                        }
+                    end)
+
                     row_pal[rname] = {
-                        key = key, name = name, species = species, ranks = ranks,
+                        key = key, name = name, species = species,
+                        ranks = ranks, raw = raw,
                     }
                     -- rows binding means the screen is opening or scrolling;
                     -- either way the cell list has moved
@@ -464,17 +478,11 @@ local function restore_checkbox(cell, cell_name)
 end
 
 -- Colour says priority and NOTHING else, so the same number is always the
--- same colour. Assignment rides on the drop shadow instead: a cyan glow
--- behind the glyph rather than a different glyph colour.
+-- same colour. Assignment is shown by drawing that number larger.
 --
--- The first attempt had colour carry both, which meant two pals both at
--- priority 3 rendered differently and read as a rendering fault rather than
--- as information. Two facts need two channels.
-local SHADOW = {
-    plain    = { R = 0.0,  G = 0.0,  B = 0.0,  A = 0.9 },
-    assigned = { R = 0.15, G = 0.85, B = 1.0,  A = 1.0 },
-}
-
+-- Colour carrying both facts made two pals at priority 3 render differently
+-- and read as a fault. A coloured drop shadow was worse: it is literally a
+-- second copy of the glyph, and looked like one.
 local function set_cell(tb, cell_name, glyph, colour_key, assigned)
     local token = glyph .. "|" .. colour_key .. "|" .. tostring(assigned and 1 or 0)
     if cell_last[cell_name] == token then return end
@@ -492,11 +500,13 @@ local function set_cell(tb, cell_name, glyph, colour_key, assigned)
         })
     end)
 
+    -- Size, not colour and not shadow. A drop shadow is a second copy of the
+    -- glyph drawn behind and offset, so a bright one reads as a duplicate
+    -- number rather than a glow — which is exactly how the cyan attempt
+    -- looked in game. Scaling keeps one glyph, one colour, and still makes
+    -- the assigned cell obvious.
     pcall(function()
-        tb:SetShadowColorAndOpacity(assigned and SHADOW.assigned or SHADOW.plain)
-        -- A wider offset for the glow, so it reads as a halo rather than as
-        -- an ordinary text shadow.
-        tb:SetShadowOffset(assigned and { X = 2, Y = 2 } or { X = 1, Y = 1 })
+        tb:SetRenderScale(assigned and { X = 1.35, Y = 1.35 } or { X = 1.0, Y = 1.0 })
     end)
 
     cell_last[cell_name] = token
@@ -801,6 +811,24 @@ local function bump(cfg, dir)
     if next_prio == current then return end
 
     store.set(pal.key, t, next_prio)
+
+    -- X has to actually stop the pal. Our scheduler declining to assign them
+    -- means nothing to Palworld's own AI, which will pick the job up anyway —
+    -- and in dry run we assign nothing at all, so without this an X changed
+    -- only the number on screen. The game's own permission flag is the thing
+    -- that stops work, so it is set to match: a number means allowed, X means
+    -- not.
+    --
+    -- This also settles the fight with the vanilla left-click, which toggles
+    -- that same flag underneath us: whatever it did, this puts the flag back
+    -- in agreement with the number now showing.
+    if pal.raw then
+        local ok, err = api.set_work_enabled(pal.raw, t, next_prio ~= false)
+        if not ok and err then
+            warn_once("toggle", "could not change the game's own work permission: " ..
+                tostring(err))
+        end
+    end
 
     -- Repaint this one cell immediately rather than waiting up to a second
     -- for the poll: a priority control that answers late feels broken even
