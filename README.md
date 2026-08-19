@@ -149,14 +149,13 @@ Everything the mod decides is shown on the vanilla work-suitability screen, read
 - **A number in each grid cell** — the priority in force for that Pal and work type, replacing
   the vanilla checkbox. Coloured on RimWorld's work-tab scale: **1 green, 2 yellow, 3 orange,
   4 red, 5 grey**. A dim **X** means never assign.
-- **A larger number** marks the cell the last pass actually assigned. Colour is what you asked
-  for, size is what happened.
 
-Colour means priority and nothing else, so the same number is always the same colour. Two earlier
-attempts got this wrong: tinting assigned cells made two Pals both at priority 3 render
-differently and read as a fault, and a coloured drop shadow was worse — a shadow is literally a
-second copy of the glyph offset behind it, so it looked like a duplicate number rather than a
-glow.
+Colour means priority and nothing else, so the same number is always the same colour.
+
+The grid deliberately does not mark which job a Pal is on right now. Three attempts all made it
+worse — tinting broke colour consistency, a coloured drop shadow rendered as a duplicate digit
+(a shadow *is* a second copy of the glyph), and an enlarged glyph just looked wrong. The game
+already answers that in its own info panel. The grid is an editor: it shows what you set.
 - **Work a Pal cannot do keeps its vanilla dash.** A number there would claim the Pal will do
   something it is incapable of, so those cells are left alone entirely.
 - **A status strip** along the bottom: mode, cap, dry/live, and the last pass summary.

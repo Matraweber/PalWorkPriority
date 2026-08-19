@@ -2,9 +2,8 @@
 --
 -- Two layers, both read-only:
 --   * one number per grid cell — the priority in force for that pal and work
---     type, replacing the vanilla checkbox, coloured strictly on RimWorld's
---     work-tab scale. A cyan glow behind the number marks the cell the last
---     pass actually assigned. Work the pal cannot do keeps its vanilla dash.
+--     type, replacing the vanilla checkbox, coloured on RimWorld's work-tab
+--     scale. Work the pal cannot do keeps its vanilla dash.
 --   * a one-line status strip on the menu itself: mode, cap, dry/live, and
 --     the last pass summary
 --
@@ -477,14 +476,15 @@ local function restore_checkbox(cell, cell_name)
     cell_cb[cell_name] = nil
 end
 
--- Colour says priority and NOTHING else, so the same number is always the
--- same colour. Assignment is shown by drawing that number larger.
+-- Colour says priority, and the grid says nothing else at all.
 --
--- Colour carrying both facts made two pals at priority 3 render differently
--- and read as a fault. A coloured drop shadow was worse: it is literally a
--- second copy of the glyph, and looked like one.
-local function set_cell(tb, cell_name, glyph, colour_key, assigned)
-    local token = glyph .. "|" .. colour_key .. "|" .. tostring(assigned and 1 or 0)
+-- Three attempts at also marking "the pal is on this job right now" all made
+-- the grid worse: tinting broke colour consistency, a coloured drop shadow
+-- rendered as a duplicate digit, and an enlarged glyph just looked wrong.
+-- The game already answers that question in its own info panel, and the grid
+-- is an editor. It shows what you set, and nothing else.
+local function set_cell(tb, cell_name, glyph, colour_key)
+    local token = glyph .. "|" .. colour_key
     if cell_last[cell_name] == token then return end
 
     local ft = make_ftext(glyph)
@@ -500,15 +500,6 @@ local function set_cell(tb, cell_name, glyph, colour_key, assigned)
         })
     end)
 
-    -- Size, not colour and not shadow. A drop shadow is a second copy of the
-    -- glyph drawn behind and offset, so a bright one reads as a duplicate
-    -- number rather than a glow — which is exactly how the cyan attempt
-    -- looked in game. Scaling keeps one glyph, one colour, and still makes
-    -- the assigned cell obvious.
-    pcall(function()
-        tb:SetRenderScale(assigned and { X = 1.35, Y = 1.35 } or { X = 1.0, Y = 1.0 })
-    end)
-
     cell_last[cell_name] = token
 end
 
@@ -516,7 +507,7 @@ end
 -- What a cell should show
 -- ---------------------------------------------------------------------------
 
-local function handle_cell(cfg, lookup, cell)
+local function handle_cell(cfg, cell)
     if not alive(cell) then return end
     local cell_name = full_name(cell)
     if not cell_name or cell_name:find("Default__", 1, true) then return end
@@ -556,7 +547,7 @@ local function handle_cell(cfg, lookup, cell)
     if not capable or prio == nil then
         local existing = cell_text[cell_name]
         if existing and alive(existing) then
-            set_cell(existing, cell_name, "", "blank", false)
+            set_cell(existing, cell_name, "", "blank")
         end
         restore_checkbox(cell, cell_name)
         return
@@ -568,33 +559,18 @@ local function handle_cell(cfg, lookup, cell)
     -- Ours now, so the tick underneath has to go or it shows through.
     hide_checkbox(cell, cell_name)
 
-    -- Colour carries the priority; white says the last pass actually put this
-    -- pal on this work. The glyph is the effective priority either way —
-    -- showing the bucket's global number in the assigned cell would
-    -- contradict the pal's own override sitting in the rest of that column.
-    local assigned = lookup.assign[pal.key .. "|" .. t] ~= nil
     local glyph, colour
-
     if prio == false then
         glyph, colour = "X", "off"
     else
         glyph, colour = tostring(math.floor(prio)), colour_for(prio)
     end
 
-    set_cell(tb, cell_name, glyph, colour, assigned)
+    set_cell(tb, cell_name, glyph, colour)
 end
 
-local function refresh_cells(cfg, report)
+local function refresh_cells(cfg)
     -- Index the last pass once per refresh, not once per cell.
-    local lookup = { assign = {} }
-    if report and report.lines then
-        for _, e in ipairs(report.lines) do
-            if e.key and e.value then
-                lookup.assign[e.key .. "|" .. e.value] = e
-            end
-        end
-    end
-
     if cell_cache == nil then
         cell_cache = {}
         pcall(function()
@@ -605,7 +581,7 @@ local function refresh_cells(cfg, report)
     end
 
     for _, cell in ipairs(cell_cache) do
-        pcall(function() handle_cell(cfg, lookup, cell) end)
+        pcall(function() handle_cell(cfg, cell) end)
     end
 end
 
@@ -726,7 +702,7 @@ function M.refresh(cfg, report)
     end
 
     refresh_strip(cfg, report, menu, tree, root)
-    refresh_cells(cfg, report)
+    refresh_cells(cfg)
 
     M.dirty = false
     store.flush()
