@@ -189,13 +189,15 @@ excludes the Pal from that work, with nothing in the number to show it happened.
 Clicks only land on cells the mod owns — a Pal that cannot do a work type keeps its vanilla dash
 and ignores clicks there, so an invisible edit can never end up hiding under one.
 
-**Setting X also switches the game's own work permission off for that Pal**, which is the only
-thing that actually stops work. The mod declining to assign a Pal means nothing to Palworld's own
-AI, which will pick the job up regardless — and in dry run nothing is assigned at all, so an X
-that only changed a number on screen changed nothing whatsoever. Setting any number switches the
-permission back on. This is also what settles the fight with the vanilla left-click, which toggles
-that same flag underneath: whatever it did, the click handler puts it back in agreement with the
-number now showing.
+A click changes **policy only** — it never writes the game's permission flags itself. The fence is
+the sole writer of those, and a click schedules a pass so the change lands within a second.
+
+That matters because the vanilla left-click still fires underneath and toggles the same flag. An
+earlier version had the click handler re-assert the flag too, which gave one click three
+authorities — vanilla toggling it, the handler re-asserting it, the next pass overriding both —
+and showed up as the checkbox flicking between tick and cross beneath the number. Now the vanilla
+toggle is simply left for the next pass to correct, which it does by diffing against the game's
+real state.
 
 Edits are per Pal and per work type, and they outrank everything in `config.lua`. They persist to
 `priorities.txt` next to the mod, written a couple of seconds after a burst of clicks settles

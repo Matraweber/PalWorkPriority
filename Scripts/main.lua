@@ -181,6 +181,14 @@ local function ui_tick()
         ExecuteInGameThread(function()
             pcall(function() ui.refresh(cfg, scheduler.last_report) end)
         end)
+
+        -- A priority just changed on the stand. Re-fence now rather than
+        -- leaving the edit inert until the next 30s tick, which reads as the
+        -- click having done nothing.
+        if ui.wants_pass then
+            ui.wants_pass = false
+            run_pass("edit")
+        end
     end
     ExecuteWithDelay(1000, ui_tick)
 end

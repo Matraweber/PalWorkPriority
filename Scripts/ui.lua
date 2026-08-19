@@ -735,12 +735,13 @@ function M.refresh(cfg, report)
     refresh_strip(cfg, report, menu, tree, root)
     refresh_cells(cfg)
 
-    M.dirty = false
     store.flush()
     return true
 end
 
-M.dirty = false
+-- Set by a click; main clears it after running a pass, so an edit takes
+-- effect within a second rather than waiting out the 30s cycle.
+M.wants_pass = false
 
 -- ---------------------------------------------------------------------------
 -- Clicking a cell
@@ -819,29 +820,24 @@ local function bump(cfg, dir)
 
     store.set(pal.key, t, next_prio)
 
-    -- X has to actually stop the pal. Our scheduler declining to assign them
-    -- means nothing to Palworld's own AI, which will pick the job up anyway —
-    -- and in dry run we assign nothing at all, so without this an X changed
-    -- only the number on screen. The game's own permission flag is the thing
-    -- that stops work, so it is set to match: a number means allowed, X means
-    -- not.
+    -- Deliberately NOT writing the game's permission flag here.
     --
-    -- This also settles the fight with the vanilla left-click, which toggles
-    -- that same flag underneath us: whatever it did, this puts the flag back
-    -- in agreement with the number now showing.
-    if pal.raw then
-        local ok, err = api.set_work_enabled(pal.raw, t, next_prio ~= false)
-        if not ok and err then
-            warn_once("toggle", "could not change the game's own work permission: " ..
-                tostring(err))
-        end
-    end
+    -- The fence owns those flags now. Writing one here as well gave a single
+    -- click three authorities: the vanilla handler toggling it, this
+    -- re-asserting it, and the next pass overriding both — which is what
+    -- shows up as the checkbox flicking between tick and cross under the
+    -- number. A click changes policy; the pass applies it.
+    --
+    -- The vanilla toggle underneath is left to be corrected by that pass,
+    -- which diffs against the game's real state and puts it right.
+    M.wants_pass = true
 
     -- Repaint this one cell immediately rather than waiting up to a second
     -- for the poll: a priority control that answers late feels broken even
-    -- when it is working.
+    -- when it is working, and repainting also re-hides the checkbox the
+    -- vanilla click just made visible again.
     cell_last[cname] = nil
-    M.dirty = true
+    pcall(function() handle_cell(cfg, cell) end)
 
     log.debug(string.format("%s %s -> %s",
         tostring(pal.name), work_name,
