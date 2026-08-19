@@ -105,6 +105,41 @@ local function probe_demand(f)
         f:write(string.format("camp %d: required=%s  all=%d\n", ci,
             required and tostring(#required) or "UNREADABLE", #all))
 
+        -- What the raw entries of RequiredAssignWorks actually are. Two
+        -- attempts at reading that list have now failed, and the reference
+        -- avoids it entirely in favour of hooking the event, so the shape of
+        -- an entry is the thing still not established.
+        local director = api.prop(camp, "WorkerDirector")
+        local raw = director and api.prop(director, "RequiredAssignWorks") or nil
+        if raw ~= nil then
+            local shown = 0
+            pcall(function()
+                raw:ForEach(function(_, entry)
+                    if shown >= 3 then return end
+                    shown = shown + 1
+                    local e = api.unwrap(entry)
+
+                    local cls = "?"
+                    pcall(function() cls = e:GetClass():GetFName():ToString() end)
+
+                    local wid, has_id = nil, false
+                    if pcall(function() wid = e:GetWorkId() end) then
+                        has_id = api.guid_key(wid) ~= nil
+                    end
+
+                    local as_guid = api.guid_key(e)
+                    local sub = api.guid_key(api.prop(e, "WorkId"))
+
+                    f:write(string.format(
+                        "    entry %d: class=%s  GetWorkId=%s  isGuid=%s  .WorkId=%s\n",
+                        shown, tostring(cls), tostring(has_id),
+                        tostring(as_guid ~= nil), tostring(sub ~= nil)))
+                end)
+            end)
+        else
+            f:write("    RequiredAssignWorks property did not read at all\n")
+        end
+
         if required then
             local by_type = {}
             for _, w in ipairs(required) do

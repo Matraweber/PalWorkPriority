@@ -92,7 +92,19 @@ local function build_demand(cfg, works, totals, stats)
         elseif cap_reached(cfg, name, totals) then
             stats.capped = stats.capped + 1
         else
-            demand[value] = (demand[value] or 0) + 1
+            -- A work with no assignable slot left is already covered and
+            -- needs nobody. Unreadable counts as needing someone, since
+            -- overstating demand only wastes a pal while understating it
+            -- leaves work undone.
+            local free_slot = true
+            pcall(function() free_slot = w:IsExistAssignableSlot() end)
+
+            if free_slot ~= false then
+                demand[value] = (demand[value] or 0) + 1
+                stats.needed = stats.needed + 1
+            else
+                stats.covered = stats.covered + 1
+            end
         end
     end
 
@@ -337,6 +349,18 @@ local function run_camp(cfg, camp, stats)
     local demand = build_demand(cfg, works, totals, stats)
     for _ in pairs(demand) do stats.demand_types = stats.demand_types + 1 end
 
+    -- Nothing wanted. That is either a genuinely idle base or a read that
+    -- came back empty for a moment, and the two are indistinguishable from
+    -- here — a live pass was seen reporting 0 works between passes reporting
+    -- 200. Unfencing the whole base on it costs a dozen toggles and another
+    -- dozen to put back, so the existing fences are left exactly as they are.
+    -- An idle base loses nothing by staying fenced; there is no work either
+    -- way.
+    if next(demand) == nil then
+        stats.idle_skipped = stats.idle_skipped + 1
+        return
+    end
+
     local plan = plan_fences(cfg, pals, demand, stats)
 
     for _, pal in ipairs(pals) do
@@ -368,6 +392,7 @@ function M.run_pass(cfg)
         demand_types = 0,
         unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
         demand_estimated = false,
+        needed = 0, covered = 0, idle_skipped = 0,
         lines = {},
     }
 
@@ -413,6 +438,8 @@ function M.format_stats(cfg, stats)
     if stats.unreadable > 0 then parts[#parts + 1] = stats.unreadable .. " unreadable" end
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " untyped" end
+    if stats.covered > 0 then parts[#parts + 1] = stats.covered .. " covered" end
+    if stats.idle_skipped > 0 then parts[#parts + 1] = stats.idle_skipped .. " camp(s) idle" end
     if stats.demand_estimated then parts[#parts + 1] = "demand ESTIMATED" end
     return table.concat(parts, ", ")
 end
