@@ -68,6 +68,12 @@ end
 -- How many pending jobs of each work type this camp has. A work type whose
 -- resource ceiling is met contributes nothing, which is what makes a ceiling
 -- release pals to other work rather than merely stop them.
+--
+-- `works` here must be the camp's REQUIRED works, not every work object it
+-- owns. A station keeps a work object for as long as it stands, so counting
+-- all of them makes a cold campfire look like pending kindling — and a pal
+-- fenced to kindling on the strength of it stands idle while the logging it
+-- was barred from goes undone.
 local function build_demand(cfg, works, totals, stats)
     local demand = {}
 
@@ -269,11 +275,20 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
-    local works, work_err = api.camp_works(camp)
-    if work_err then
-        log.debug("camp works unavailable: " .. work_err)
-        api.request_work_replication(camp_id, true)
-        return
+    -- What the camp actually wants doing. Falling back to every work object
+    -- is deliberately noisy in the stats, because that fallback overstates
+    -- demand and it should be obvious when it is in use rather than quietly
+    -- producing idle pals.
+    local works = api.camp_required_works(camp)
+    if works == nil then
+        local all, work_err = api.camp_works(camp)
+        if work_err then
+            log.debug("camp works unavailable: " .. work_err)
+            api.request_work_replication(camp_id, true)
+            return
+        end
+        works = all
+        stats.demand_estimated = true
     end
 
     stats.camps = stats.camps + 1
@@ -320,6 +335,7 @@ function M.run_pass(cfg)
         toggles = 0, would_toggle = 0, failed = 0, deferred = 0, unreadable = 0,
         demand_types = 0,
         unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
+        demand_estimated = false,
         lines = {},
     }
 
@@ -365,6 +381,7 @@ function M.format_stats(cfg, stats)
     if stats.unreadable > 0 then parts[#parts + 1] = stats.unreadable .. " unreadable" end
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " untyped" end
+    if stats.demand_estimated then parts[#parts + 1] = "demand ESTIMATED" end
     return table.concat(parts, ", ")
 end
 

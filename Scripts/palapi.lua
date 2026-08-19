@@ -363,6 +363,47 @@ function M.camp_works(camp)
     return out, nil
 end
 
+-- The works this camp currently wants a worker for.
+--
+-- This is the game's own list, and it is NOT the same as "every work object
+-- in the camp". A station has a work object for as long as the station
+-- exists, whether or not there is anything to do at it: a cold campfire
+-- still has one. Counting those as demand fences pals onto work that does
+-- not need them, and they stand idle next to jobs they were barred from.
+--
+-- Returns nil when the list cannot be read at all, which the caller must
+-- treat differently from an empty list.
+function M.camp_required_works(camp)
+    local director = prop(camp, "WorkerDirector")
+    if not valid(director) then return nil end
+
+    local list = prop(director, "RequiredAssignWorks")
+    if list == nil then return nil end
+
+    local wpm = M.work_progress_manager()
+    local out, ok = {}, false
+
+    pcall(function()
+        list:ForEach(function(_, entry)
+            local e = unwrap(entry)
+            if e == nil then return end
+
+            -- The entry may be the work itself or an id that needs resolving.
+            local w = valid(e) and e or nil
+            if w == nil and wpm then
+                local resolved
+                pcall(function() resolved = wpm:GetWork(e) end)
+                if valid(resolved) then w = resolved end
+            end
+            if w then out[#out + 1] = w end
+        end)
+        ok = true
+    end)
+
+    if not ok then return nil end
+    return out
+end
+
 function M.work_id(w)
     local id
     pcall(function() id = w:GetWorkId() end)

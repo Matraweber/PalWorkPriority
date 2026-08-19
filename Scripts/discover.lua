@@ -92,6 +92,37 @@ local function text_of(w, kind, name)
     return nil
 end
 
+-- Required works next to total works. If the two numbers are equal the
+-- required list is filtering nothing and demand is being overstated, which
+-- is what fences a pal onto a station that has nothing to do.
+local function probe_demand(f)
+    f:write("=== required works vs all works\n")
+
+    for ci, camp in ipairs(api.base_camps()) do
+        local required = api.camp_required_works(camp)
+        local all = api.camp_works(camp)
+
+        f:write(string.format("camp %d: required=%s  all=%d\n", ci,
+            required and tostring(#required) or "UNREADABLE", #all))
+
+        if required then
+            local by_type = {}
+            for _, w in ipairs(required) do
+                local v = api.work_suitability(w)
+                local n = v and workdefs.name(v) or "?"
+                by_type[n] = (by_type[n] or 0) + 1
+            end
+
+            local names = {}
+            for n in pairs(by_type) do names[#names + 1] = n end
+            table.sort(names)
+            for _, n in ipairs(names) do
+                f:write(string.format("    %-22s %d\n", n, by_type[n]))
+            end
+        end
+    end
+end
+
 local function probe_works(f)
     f:write("=== live work probes\n")
 
@@ -271,6 +302,8 @@ function M.run(out_path)
     pcall(function() ui.dump(f) end)
     f:write("\n")
     pcall(function() probe_ranks(f) end)
+    f:write("\n")
+    pcall(function() probe_demand(f) end)
     f:write("\n")
     pcall(function() probe_works(f) end)
     f:write("\n")
