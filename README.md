@@ -212,23 +212,41 @@ to print what is in storage, by id, and write the full list to `Stock.txt`.
 
 ### What counts toward a ceiling
 
-Chests only, `PalMapObjectItemChestModel` and `PalMapObjectGuildChestModel`. A Logging Site or
-a feed box holding stock does not count toward anything.
+Chests and production stations, set by `counted_containers` in `config.lua`:
+
+    PalMapObjectItemChestModel      chests
+    PalMapObjectGuildChestModel     guild chest
+    PalMapObjectProductItemModel    a logging or mining site's output
+
+The production station is in the default set because a Logging Site sitting on 297 wood is wood
+the base has, and leaving it out makes a wood ceiling overshoot by whatever every station
+happens to be holding.
+
+Left out by default, and addable:
+
+    PalMapObjectPalFoodBoxModel         food set aside for pals to eat
+    PalMapObjectConvertItemModel        furnace, pot, mill: inputs and outputs mixed together
+    PalMapObjectDropItemModel           dropped on the ground
+    PalMapObjectPickupItemOnLevelModel  lying about waiting to be collected
+
+The feed box is the deliberate one. That food exists to be eaten, so counting it would stop a
+ranch that is only keeping pace with what the pals get through. Conversion stations are out
+because their slots mix inputs with outputs, and counting an input as stock is backwards.
 
 Ceilings are measured per base by default, so each base is judged on its own storage. If you
-run a mod that pools storage across bases, `!pwp scope` switches to counting every chest the
-game currently has loaded instead, and `storage_scope = "global"` makes that the default.
+run a mod that pools storage across bases, `Alt+F12` (or `!pwp scope`) switches to counting
+every container the game currently has loaded, and `storage_scope = "global"` makes that the
+default.
 
 Neither setting can see a base you are away from. Palworld only keeps a camp's chests in memory
-while it is streamed in, so an unloaded base has no chest objects to read at all. Global means
+while it is streamed in, so an unloaded base has no objects to read at all. Global means
 "every base loaded right now", not "every base you own".
 
-That is a real limitation rather than a decision, so `!pwp stock` also lists every other object
-on the base that is holding items, under `holding stock but NOT counted by ceilings`. If a
-ceiling is not firing when you think it should, look there first: the resource may simply be
-sitting somewhere the count does not reach.
+Whatever is not in the list is still printed by `F12`, under `holding stock but NOT counted by
+ceilings`, along with what it holds. If a ceiling is not firing when you think it should, look
+there first: the resource may be sitting somewhere the count does not reach.
 
-If no chest answers at all, totals read as zero and work keeps running. Overshooting a ceiling
+If no container answers at all, totals read as zero and work keeps running. Overshooting a ceiling
 is a far milder failure than suspending a work type because a container did not reply. Storage
 is only read when at least one ceiling exists, in `caps.txt` or in `config.lua`.
 
