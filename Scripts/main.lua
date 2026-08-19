@@ -16,6 +16,7 @@ local scheduler = require("scheduler")
 local discover = require("discover")
 local ui = require("ui")
 local store = require("store")
+local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
 local VERSION = "0.1.0"
@@ -236,6 +237,8 @@ COMMANDS.status = function()
     log.say("  work type read from: " ..
         (probe and (probe.kind .. " " .. probe.name) or "not resolved yet"))
     log.say("  enum offset: " .. workdefs.enum_offset)
+    log.say("  work pulses seen: " .. demandidx.pulses ..
+        (demandidx.pulses == 0 and "  (demand is being ESTIMATED)" or ""))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
 end
@@ -390,12 +393,20 @@ if not load_config() then
     return
 end
 
+-- Installed at load, not on world entry: the pulses start as soon as a camp
+-- exists, and a hook registered late misses every job already running.
+demandidx.install()
+
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Engine wrappers do not survive a world switch, and neither should any
     -- memo built from them.
     api.reset()
     scheduler.forget()
+    demandidx.reset()
     ui.reset()
+    -- Registration is idempotent and cheap; this covers a world load that
+    -- happened before the class existed.
+    demandidx.install()
 
     if cfg.run_on_world_load then
         -- Base camps and their worker slots are not populated the instant

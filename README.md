@@ -15,7 +15,9 @@ else to send it.
 
 Each pass, per base camp:
 
-1. count **demand** — how many pending jobs exist of each work type
+1. count **demand** from the game's own pulses — `PalBaseCampWorkerDirector` fires
+   `OnRequiredAssignWork_ServerInternal` every few seconds for each work still wanting a
+   worker, and a job that stops pulsing is finished
 2. work types whose resource ceiling is met contribute no demand
 3. walk priority levels 1 to 5, fencing each Pal to the first level where it can do something that
    still has demand to spare
@@ -30,6 +32,17 @@ An earlier version pinned one Pal to one work object with
 wander off to a lower-priority job the moment it finished — items sitting waiting to be carried
 while a Pal went watering instead. Fencing is the mechanism that makes a priority order actually
 govern behaviour.
+
+Two simpler sources of demand were tried against this build and both failed, which is worth
+knowing before changing it. Counting every work object in a camp overstates demand enormously —
+a station keeps its work object for as long as it stands, so a base with a handful of ripe bushes
+reported 78 gathering works. Reading `WorkerDirector.RequiredAssignWorks` reads an *empty* array
+almost every time, because a work sits in that list only for the instant it is asking; polling it
+looks exactly like an idle base and stops the mod governing anything.
+
+If the pulse hook ever fails to register, the mod falls back to counting every work object and
+says `demand ESTIMATED` in its summary rather than quietly doing nothing. `!pwp status` reports
+how many pulses have been seen.
 
 **This means the mod continuously writes work-permission flags to your save.** Restoring is
 stateless: a Pal's permissions are always *capable AND not X AND (fenced-in OR unfenced)*, so

@@ -31,6 +31,7 @@ local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
 local store = require("store")
+local demandidx = require("demand")
 
 local M = {}
 
@@ -305,40 +306,6 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
-    -- What the camp actually wants doing.
-    --
-    -- Falling back to every work object overstates demand, so it is reported
-    -- loudly rather than allowed to pass for a working pass. But it is still
-    -- far better than the alternative: with no demand at all NOTHING is
-    -- fenced, every pal reverts to "may do anything it can", and the mod
-    -- silently stops governing anything while still looking healthy.
-    local required, raw_count = api.camp_required_works(camp)
-    local works = required
-
-    if works == nil or (raw_count and raw_count > 0 and #works == 0) then
-        -- Either the list would not read, or it had entries and not one of
-        -- them resolved to a work — which means the entry shape is not
-        -- understood and the count is a lie.
-        if works ~= nil then
-            log.debug(string.format(
-                "required-work list had %d entr(ies), none resolvable — estimating demand",
-                raw_count or 0))
-        end
-
-        local all, work_err = api.camp_works(camp)
-        if work_err then
-            log.debug("camp works unavailable: " .. work_err)
-            api.request_work_replication(camp_id, true)
-            return
-        end
-        works = all
-        stats.demand_estimated = true
-    end
-
-    stats.camps = stats.camps + 1
-    stats.pals = stats.pals + #pals
-    stats.works = stats.works + #works
-
     local totals = {}
     if needs_totals(cfg) then
         local chests
@@ -346,7 +313,47 @@ local function run_camp(cfg, camp, stats)
         stats.chests = stats.chests + (chests or 0)
     end
 
-    local demand = build_demand(cfg, works, totals, stats)
+    -- What the camp actually wants doing, from the game's own pulses.
+    --
+    -- The all-works fallback only runs when no pulse has EVER been heard,
+    -- which means the hook did not take. It overstates demand badly and says
+    -- so in the summary, but that beats the alternative: with no demand at
+    -- all nothing is fenced and the mod silently governs nothing.
+    local camp_key = api.guid_key(camp_id)
+    local demand, live = demandidx.for_camp(camp_key)
+    local counted = live
+
+    if demandidx.pulses == 0 then
+        local all, work_err = api.camp_works(camp)
+        if work_err then
+            log.debug("camp works unavailable: " .. work_err)
+            api.request_work_replication(camp_id, true)
+            return
+        end
+        demand = build_demand(cfg, all, totals, stats)
+        counted = #all
+        stats.demand_estimated = true
+    else
+        -- Ceilings and unconfigured types still have to be honoured, and the
+        -- pulse index knows nothing about either.
+        for value in pairs(demand) do
+            local name = workdefs.name(value)
+            if name == nil then
+                demand[value] = nil
+            elseif cfg.work_priority[name] == nil then
+                stats.unconfigured = stats.unconfigured + 1
+                demand[value] = nil
+            elseif cap_reached(cfg, name, totals) then
+                stats.capped = stats.capped + 1
+                demand[value] = nil
+            end
+        end
+    end
+
+    stats.camps = stats.camps + 1
+    stats.pals = stats.pals + #pals
+    stats.works = stats.works + counted
+
     for _ in pairs(demand) do stats.demand_types = stats.demand_types + 1 end
 
     -- Nothing wanted. That is either a genuinely idle base or a read that
