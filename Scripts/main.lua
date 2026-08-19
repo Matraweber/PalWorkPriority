@@ -216,6 +216,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " cap       cycle max pals per work type")
     log.say("  " .. p .. " stock     print base storage by item id")
     log.say("  " .. p .. " limit     set a stock ceiling for a work type")
+    log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
     log.say("      Alt+F10 mode, Alt+F11 cap")
@@ -241,6 +242,8 @@ COMMANDS.status = function()
             and "  (nothing wants doing, which is normal while pals sleep)" or ""))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
+    log.say("  ceilings measured against: " ..
+        (cfg.storage_scope == "global" and "every loaded base" or "each base on its own"))
 end
 
 COMMANDS.run = function()
@@ -277,6 +280,16 @@ COMMANDS.cap = function()
     log.say("max pals per work type: " ..
         (next_cap and tostring(next_cap) or "no limit"))
     run_pass("cap change", true)
+end
+
+COMMANDS.scope = function()
+    cfg.storage_scope = (cfg.storage_scope == "global") and "camp" or "global"
+    log.say("ceilings measured against: " ..
+        (cfg.storage_scope == "global"
+            and "every loaded base together"
+            or "each base on its own"))
+    log.say("a base you are away from is not loaded and cannot be counted either way")
+    run_pass("scope change", true)
 end
 
 COMMANDS.dry = function()
@@ -441,6 +454,12 @@ end
 -- what a ceiling is up against. The ceilings themselves are still judged one
 -- camp at a time by the scheduler.
 local function stock_across_camps()
+    -- Global scope counts chests the camp filter would drop, so ask for them
+    -- the same way the scheduler does rather than summing per camp.
+    if cfg.storage_scope == "global" then
+        return (api.all_chest_totals())
+    end
+
     local totals = {}
 
     for _, camp in ipairs(api.base_camps()) do

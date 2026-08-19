@@ -79,6 +79,20 @@ return {
     -- rank-3 pal should be doing.
     min_suitability_rank = 1,
 
+    -- Which storage a ceiling is measured against.
+    --
+    --   "camp"   only chests belonging to the base being worked out
+    --   "global" every chest the game currently has loaded, whoever owns it
+    --
+    -- Camp is the default because that is what a per-base ceiling means. Use
+    -- global if you run a mod that pools storage across bases, so a ceiling
+    -- is judged on the shared pile rather than on one base's share of it.
+    --
+    -- Global still cannot see a base that is not loaded. Palworld only keeps
+    -- a camp's chests in memory while you are near it, so there is nothing
+    -- to read for the bases you are away from, whatever this is set to.
+    storage_scope = "camp",
+
     -- Resource ceilings. When a base already holds enough of something, the
     -- work that produces it is suspended for that pass and its pals fall
     -- through to the next priority instead of standing idle.

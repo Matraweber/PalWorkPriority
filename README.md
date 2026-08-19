@@ -215,6 +215,14 @@ to print what is in storage, by id, and write the full list to `Stock.txt`.
 Chests only, `PalMapObjectItemChestModel` and `PalMapObjectGuildChestModel`. A Logging Site or
 a feed box holding stock does not count toward anything.
 
+Ceilings are measured per base by default, so each base is judged on its own storage. If you
+run a mod that pools storage across bases, `!pwp scope` switches to counting every chest the
+game currently has loaded instead, and `storage_scope = "global"` makes that the default.
+
+Neither setting can see a base you are away from. Palworld only keeps a camp's chests in memory
+while it is streamed in, so an unloaded base has no chest objects to read at all. Global means
+"every base loaded right now", not "every base you own".
+
 That is a real limitation rather than a decision, so `!pwp stock` also lists every other object
 on the base that is holding items, under `holding stock but NOT counted by ceilings`. If a
 ceiling is not firing when you think it should, look there first: the resource may simply be
@@ -305,6 +313,7 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp cap` | cycle max Pals per work type |
 | `!pwp stock` | print base storage by item id, and write `Stock.txt` |
 | `!pwp limit` | set, clear or list resource ceilings |
+| `!pwp scope` | measure ceilings per base, or across loaded bases |
 | `!pwp discover` | write `Discovery.txt` with live work probes |
 
 `F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles

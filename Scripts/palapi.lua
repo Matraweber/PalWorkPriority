@@ -695,31 +695,24 @@ M.CHEST_CLASSES = {
     "PalMapObjectGuildChestModel",
 }
 
--- Totals every item held in one camp's chests: { [StaticId] = count }.
+-- Totals the items in every chest `accept` says yes to: { [StaticId] = n }.
 --
 -- Every hop here is a replicated property read rather than an out-param
 -- UFunction call, which is why this also answers on a dedicated-server
--- client. GetBaseCampIdBelongTo is the exception and is a UFunction on
--- concrete models.
+-- client. GetBaseCampIdBelongTo, used by the camp-scoped caller below, is
+-- the exception and is a UFunction on concrete models.
 --
--- A chest whose camp id will not read is skipped rather than counted:
--- crediting someone else's chest to this base would silently inflate the
--- total and suspend work that should still be running. The second return
--- value is how many chests actually answered, so a caller can tell "no
--- wood" apart from "read nothing".
-function M.camp_item_totals(camp_key)
+-- The second return value is how many chests actually answered, so a caller
+-- can tell "no wood" apart from "read nothing".
+local function walk_chests(accept)
     local totals, chests = {}, 0
-    if not camp_key then return totals, 0 end
 
     for _, cls in ipairs(M.CHEST_CLASSES) do
         pcall(function()
             for _, m in ipairs(FindAllOf(cls) or {}) do
                 pcall(function()
                     if not valid(m) then return end
-
-                    local cid
-                    pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
-                    if cid ~= camp_key then return end
+                    if not accept(m) then return end
 
                     local module
                     pcall(function() module = m:GetItemContainerModule() end)
@@ -751,6 +744,30 @@ function M.camp_item_totals(camp_key)
     end
 
     return totals, chests
+end
+
+-- Only the chests belonging to one camp.
+--
+-- A chest whose camp id will not read is skipped rather than counted:
+-- crediting someone else's chest to this base would silently inflate the
+-- total and suspend work that should still be running.
+function M.camp_item_totals(camp_key)
+    if not camp_key then return {}, 0 end
+
+    return walk_chests(function(m)
+        local cid
+        pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
+        return cid == camp_key
+    end)
+end
+
+-- Every chest that answers, whatever camp owns it.
+--
+-- The counterpart to camp_item_totals for storage_scope = "global". It can
+-- only ever cover bases currently streamed in: an unloaded camp has no chest
+-- objects in memory at all, so there is nothing there to add up.
+function M.all_chest_totals()
+    return walk_chests(function() return true end)
 end
 
 -- Every camp-owned map object holding items, whatever its class.
