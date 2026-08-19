@@ -327,6 +327,86 @@ end
 
 -- Sweeps a wider integer range than the mod uses, so the enum's real base
 -- is visible rather than assumed.
+-- Where the full item list lives.
+--
+-- A rule picker has to offer items the base has never held, so it cannot be
+-- built from what is sitting in chests. The names come from the game's own
+-- item data table, and its path is not something to guess at: a wrong
+-- StaticFindObject returns nil, but a wrong property read on the object that
+-- does resolve returns a live looking wrapper and would look like it worked.
+--
+-- So list every DataTable actually loaded, with a few row names from each,
+-- and pick the real one off the output.
+local function probe_item_tables(f)
+    f:write("=== data tables loaded\n")
+    f:write("  looking for the one holding item ids, for the rule picker\n")
+
+    local tables = {}
+    pcall(function()
+        for _, t in ipairs(FindAllOf("DataTable") or {}) do
+            if api.valid(t) then tables[#tables + 1] = t end
+        end
+    end)
+
+    f:write("  " .. #tables .. " table(s)\n")
+    if #tables == 0 then
+        f:write("  none loaded. Data tables may only exist once something has " ..
+            "asked for them, so try this again after opening an inventory.\n")
+        return
+    end
+
+    local rows = {}
+    for _, t in ipairs(tables) do
+        local name = "?"
+        pcall(function()
+            local full = t:GetFullName()
+            if type(full) == "string" then name = full end
+        end)
+        rows[#rows + 1] = { obj = t, name = name }
+    end
+
+    table.sort(rows, function(a, b) return a.name < b.name end)
+
+    -- Row names first through the Blueprint library, which is the documented
+    -- route, then straight off the RowMap if that is not available on this
+    -- build. Whichever answers, the point is to see real ids rather than to
+    -- trust either call.
+    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
+
+    for _, row in ipairs(rows) do
+        local sample, count = {}, 0
+
+        pcall(function()
+            if not lib then return end
+            local names = lib:GetDataTableRowNames(row.obj)
+            if not names then return end
+            names:ForEach(function(_, elem)
+                count = count + 1
+                if #sample < 6 then
+                    local v = elem:get()
+                    sample[#sample + 1] = tostring(v and v:ToString() or v)
+                end
+            end)
+        end)
+
+        if count == 0 then
+            pcall(function()
+                local map = row.obj.RowMap
+                if map == nil then return end
+                map:ForEach(function(k)
+                    count = count + 1
+                    if #sample < 6 then sample[#sample + 1] = tostring(k) end
+                end)
+            end)
+        end
+
+        f:write(string.format("  %-70s %d row(s)\n", row.name, count))
+        if #sample > 0 then
+            f:write("      " .. table.concat(sample, ", ") .. "\n")
+        end
+    end
+end
+
 local function probe_ranks(f)
     f:write("=== suitability rank sweep\n")
     f:write("offset currently assumed: " .. workdefs.enum_offset .. "\n")
@@ -410,6 +490,8 @@ function M.run(out_path)
     pcall(function() probe_readiness(f) end)
     f:write("\n")
     pcall(function() probe_works(f) end)
+    f:write("\n")
+    pcall(function() probe_item_tables(f) end)
     f:write("\n")
     for _, c in ipairs(CLASSES) do
         pcall(function() dump_schema(f, c) end)
