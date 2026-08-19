@@ -261,6 +261,10 @@ local function run_camp(cfg, camp, stats)
             prio = bucket.prio,
             pal = pal.name,
             rank = rank,
+            -- identity and suitability value, so the stand UI can find the
+            -- exact cell this decision belongs to
+            key = pal.key,
+            value = bucket.value,
         }
 
         local wkey = work_key(w)

@@ -100,6 +100,31 @@ function M.guid_key(g)
     return nil
 end
 
+-- Identity key for an FPalInstanceID (the shape GetIndividualID returns):
+-- PlayerUId and InstanceId are each an FGuid, so the key is built from all
+-- eight ints. The int32 fields come back sign-extended; masking to unsigned
+-- keeps the same pal producing the same key every time. This must stay the
+-- one key both the scheduler and the stand UI use, or a row on the stand can
+-- never find its pal's assignment.
+function M.instance_key(id)
+    if id == nil then return nil end
+    local parts = {}
+    local ok = pcall(function()
+        for _, guid_name in ipairs({ "PlayerUId", "InstanceId" }) do
+            local g = id[guid_name]
+            for _, field in ipairs({ "A", "B", "C", "D" }) do
+                local n = as_int(g[field])
+                if n == nil then return end
+                parts[#parts + 1] = string.format("%08X", n % 0x100000000)
+            end
+        end
+    end)
+    if ok and #parts == 8 then
+        return table.concat(parts)
+    end
+    return nil
+end
+
 M.prop = prop
 M.as_int = as_int
 
@@ -252,10 +277,14 @@ function M.camp_pals(camp)
                         name = M.pal_name(param),
                         species = M.pal_species(param),
                         slot_index = i,
-                        -- Identity that survives the roster being reordered.
-                        -- Slot position only stands in when the guid will
-                        -- not read.
-                        key = M.guid_key(id) or ("slot" .. i),
+                        -- Identity that survives the roster being reordered,
+                        -- and that the stand UI can rebuild from a row's own
+                        -- GetIndividualID. The fallbacks only stand in when
+                        -- the guids will not read; a pal on one of them still
+                        -- schedules correctly, it just cannot be matched to a
+                        -- row, so its cell shows the priority without the
+                        -- green assigned marker.
+                        key = M.instance_key(id) or M.guid_key(id) or ("slot" .. i),
                     }
                 end
             end

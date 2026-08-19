@@ -171,7 +171,11 @@ local ui_running = false
 
 local function ui_tick()
     if not ui_running then return end
-    if cfg and cfg.enabled then
+    -- Runs even when the mod is disabled: compose() renders an OFF state, and
+    -- gating here instead would freeze the panel showing DRY RUN or LIVE for
+    -- the rest of the session after '!pwp off'. refresh() costs nothing while
+    -- the stand is shut.
+    if cfg then
         ExecuteInGameThread(function()
             pcall(function() ui.refresh(cfg, scheduler.last_report) end)
         end)

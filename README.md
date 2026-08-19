@@ -142,6 +142,37 @@ keeps running — overshooting a ceiling is a far milder failure than suspending
 because a container did not reply. Storage is only read at all when at least one ceiling is
 configured.
 
+## The Monitoring Stand display
+
+Everything the mod decides is shown on the vanilla work-suitability screen, read-only:
+
+- **A number in each grid cell** — the priority in force for that Pal and work type, drawn over
+  the vanilla checkbox. Gold is policy; a red **X** means never assign.
+- **Green** marks the cell the last pass actually assigned. Gold is what you asked for, green is
+  what happened.
+- **A status strip** along the bottom: mode, cap, dry/live, and the last pass summary.
+
+Numbers reflect `pal_overrides` too, resolved nickname-first then species exactly as the
+scheduler resolves them — so what the grid shows and what the scheduler does cannot drift apart.
+
+Nothing here is editable yet, and nothing can eat a click: the text is hit-test-invisible, so the
+vanilla checkboxes keep working normally underneath.
+
+### How it attaches
+
+Pal identity comes from hooking the row's `BindFromSlot`, captured as a hook argument. Two crash
+findings from PalPriority's UI mod are load-bearing and worth restating if you extend this:
+
+- `pcall` **cannot** catch the native access violation from calling a method on a stale wrapper.
+  Every member call needs an affirmative `IsValid() == true` first.
+- **Never read a row's `bindedSlot`** — the property read itself crashes natively, before Lua
+  sees anything.
+
+Each number is a `TextBlock` injected as a sibling of the cell's checkbox with its slot geometry
+copied, so placement is exact by construction rather than inferred. Rows recycle on scroll rather
+than being destroyed, so the injected widgets are cached across rebinds; re-injecting on every
+bind would stack duplicate glyphs on each scroll.
+
 ## Chat commands
 
 | Command | Effect |
