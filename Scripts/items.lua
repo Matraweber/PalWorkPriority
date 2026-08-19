@@ -1,0 +1,133 @@
+-- The game's full item list, for the rule picker.
+--
+-- A rule can target something the base has never held, so the list cannot be
+-- built from chest contents. It comes from DT_ItemDataTable, which carries
+-- 2466 rows on game revision 82182.
+--
+-- Getting at those rows took a live probe rather than a guess, and the two
+-- results worth keeping are:
+--
+--   RowMap is NOT readable. It reads back as a TrivialObject, the same
+--   live-looking wrapper UE4SS hands out for any name at all, and calling
+--   ForEach on it fails. It is not a property on this build.
+--
+--   GetDataTableRowNames takes the destination as its SECOND argument and
+--   fills it. Called with one argument it raises "UFunction expected 2
+--   parameters, received 1", and its return value is not the list.
+--
+-- The filled entries are RemoteUnrealParam wrappers around FNames, so each
+-- one needs :get() and then :ToString() before it is a string.
+
+local log = require("log")
+local api = require("palapi")
+
+local M = {}
+
+local ITEM_TABLE = "/Game/Pal/DataTable/Item/DT_ItemDataTable.DT_ItemDataTable"
+
+M.ids = nil        -- sorted list of item ids
+M.lower = nil      -- parallel list, lowercased once for searching
+
+local function read_rows()
+    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
+    if not lib then
+        log.warn("DataTableFunctionLibrary unavailable, so no item list")
+        return nil
+    end
+
+    local tbl
+    pcall(function() tbl = StaticFindObject(ITEM_TABLE) end)
+    if not api.valid(tbl) then
+        log.warn("item data table not found at " .. ITEM_TABLE)
+        return nil
+    end
+
+    local raw = {}
+    local ok, err = pcall(function() lib:GetDataTableRowNames(tbl, raw) end)
+    if not ok then
+        log.warn("could not read item rows: " .. tostring(err))
+        return nil
+    end
+
+    local ids = {}
+    for _, entry in ipairs(raw) do
+        local name
+        pcall(function()
+            local fname = entry:get()
+            if fname then name = fname:ToString() end
+        end)
+        if type(name) == "string" and name ~= "" and name ~= "None" then
+            ids[#ids + 1] = name
+        end
+    end
+
+    return ids
+end
+
+-- Built once and kept. Reading 2466 rows is not free, and the item list does
+-- not change while the game is running.
+function M.load()
+    if M.ids then return M.ids end
+
+    local ids = read_rows()
+    if ids == nil or #ids == 0 then
+        -- Cache the failure as an empty list rather than nil, so a picker
+        -- retries once per world rather than once per keystroke.
+        M.ids, M.lower = {}, {}
+        return M.ids
+    end
+
+    table.sort(ids)
+
+    local lower = {}
+    for i, id in ipairs(ids) do lower[i] = id:lower() end
+
+    M.ids, M.lower = ids, lower
+    log.debug("item list: " .. #ids .. " id(s)")
+    return M.ids
+end
+
+-- Dropped on a world switch along with everything else, since the table
+-- object behind it is an engine wrapper.
+function M.reset()
+    M.ids = nil
+    M.lower = nil
+end
+
+-- Substring match, case insensitive, capped so a single letter cannot try to
+-- draw two thousand rows. Exact and prefix matches come first: typing "wood"
+-- should offer Wood before Wood_Refined.
+function M.search(text, limit)
+    M.load()
+    limit = limit or 40
+
+    if type(text) ~= "string" or text == "" then
+        local out = {}
+        for i = 1, math.min(limit, #M.ids) do out[i] = M.ids[i] end
+        return out
+    end
+
+    local want = text:lower()
+    local exact, prefix, rest = {}, {}, {}
+
+    for i, id in ipairs(M.lower) do
+        if id == want then
+            exact[#exact + 1] = M.ids[i]
+        elseif id:sub(1, #want) == want then
+            prefix[#prefix + 1] = M.ids[i]
+        elseif id:find(want, 1, true) then
+            rest[#rest + 1] = M.ids[i]
+        end
+    end
+
+    local out = {}
+    for _, group in ipairs({ exact, prefix, rest }) do
+        for _, id in ipairs(group) do
+            if #out >= limit then return out end
+            out[#out + 1] = id
+        end
+    end
+    return out
+end
+
+return M

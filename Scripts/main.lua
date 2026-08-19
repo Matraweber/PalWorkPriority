@@ -17,6 +17,7 @@ local discover = require("discover")
 local ui = require("ui")
 local store = require("store")
 local caps = require("caps")
+local items = require("items")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -666,6 +667,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     scheduler.forget()
     demandidx.reset()
     ui.reset()
+    items.reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()

@@ -15,6 +15,7 @@ local api = require("palapi")
 local workdefs = require("workdefs")
 local ui = require("ui")
 local demandidx = require("demand")
+local items = require("items")
 
 local M = {}
 
@@ -332,142 +333,35 @@ end
 
 -- Sweeps a wider integer range than the mod uses, so the enum's real base
 -- is visible rather than assumed.
--- Where the full item list lives.
+-- Confirms the item list the rule picker is built on.
 --
--- A rule picker has to offer items the base has never held, so it cannot be
--- built from what is sitting in chests. The names come from the game's own
--- item data table.
---
--- The first attempt found 391 tables and read zero rows out of every one of
--- them, so the table is not the problem, the reading is. Rather than guess
--- again, this tries each plausible route against one known table and says
--- which of them actually returned anything.
-local ITEM_TABLE = "/Game/Pal/DataTable/Item/DT_ItemDataTable.DT_ItemDataTable"
-
-local function try_route(f, label, fn)
-    local names = {}
-    local ok, err = pcall(fn, names)
-
-    if not ok then
-        f:write(string.format("  %-42s error: %s\n", label, tostring(err)))
-        return nil
-    end
-    if #names == 0 then
-        f:write(string.format("  %-42s no rows\n", label))
-        return nil
-    end
-
-    local sample = {}
-    for i = 1, math.min(8, #names) do sample[i] = tostring(names[i]) end
-    f:write(string.format("  %-42s %d row(s): %s\n",
-        label, #names, table.concat(sample, ", ")))
-    return names
-end
-
+-- The route was settled by probing: GetDataTableRowNames takes its
+-- destination as the SECOND argument, RowMap is not readable at all, and the
+-- entries come back as wrappers needing :get() then :ToString(). All of that
+-- now lives in items.lua, so this only checks the result.
 local function probe_item_tables(f)
-    f:write("=== item table access\n")
-    f:write("  target: " .. ITEM_TABLE .. "\n")
+    f:write("=== item list\n")
 
-    local tbl
-    pcall(function() tbl = StaticFindObject(ITEM_TABLE) end)
-    if not api.valid(tbl) then
-        f:write("  table did not resolve at all\n")
+    items.reset()
+    local ids = items.load()
+
+    f:write("  " .. #ids .. " item id(s)\n")
+    if #ids == 0 then
+        f:write("  EMPTY. The picker has nothing to offer, see the warnings " ..
+            "in priority.log\n")
         return
     end
 
-    local cls = "?"
-    pcall(function() cls = tbl:GetClass():GetFName():ToString() end)
-    f:write("  resolved, class " .. cls .. "\n")
+    local sample = {}
+    for i = 1, math.min(12, #ids) do sample[i] = ids[i] end
+    f:write("  first: " .. table.concat(sample, ", ") .. "\n")
 
-    -- What the object actually carries. A CompositeDataTable builds its rows
-    -- from parent tables, so the row store may not be where it is on a plain
-    -- DataTable, and this says which properties really exist.
-    f:write("  properties:\n")
-    pcall(function()
-        tbl:GetClass():ForEachProperty(function(prop)
-            local n = "?"
-            pcall(function() n = prop:GetFullName() end)
-            f:write("    " .. n .. "\n")
-        end)
-    end)
-
-    f:write("  functions:\n")
-    pcall(function()
-        tbl:GetClass():ForEachFunction(function(fn)
-            local n = "?"
-            pcall(function() n = fn:GetFName():ToString() end)
-            f:write("    " .. n .. "\n")
-        end)
-    end)
-
-    f:write("  routes:\n")
-
-    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
-    f:write("  DataTableFunctionLibrary CDO: " .. tostring(lib ~= nil) .. "\n")
-
-    -- 1. the documented call, return value
-    try_route(f, "lib:GetDataTableRowNames(t) return", function(out)
-        local ret = lib:GetDataTableRowNames(tbl)
-        if ret == nil then return end
-        ret:ForEach(function(_, elem)
-            local v = elem:get()
-            out[#out + 1] = v and v:ToString() or tostring(v)
-        end)
-    end)
-
-    -- 2. the same call with an out parameter, which is how UE4SS usually
-    --    surfaces an engine out-param
-    try_route(f, "lib:GetDataTableRowNames(t, {}) out", function(out)
-        local holder = {}
-        lib:GetDataTableRowNames(tbl, holder)
-        for _, v in ipairs(holder) do
-            out[#out + 1] = type(v) == "table" and tostring(v) or tostring(v)
-        end
-    end)
-
-    -- 3. straight off the row store
-    try_route(f, "t.RowMap ForEach(key)", function(out)
-        tbl.RowMap:ForEach(function(k)
-            out[#out + 1] = tostring(k)
-        end)
-    end)
-
-    try_route(f, "t.RowMap ForEach(key, value)", function(out)
-        tbl.RowMap:ForEach(function(k, _)
-            local key = k
-            pcall(function() key = k:get() end)
-            pcall(function() key = key:ToString() end)
-            out[#out + 1] = tostring(key)
-        end)
-    end)
-
-    -- 4. a method on the table itself, if this build has one
-    try_route(f, "t:GetRowNames()", function(out)
-        local ret = tbl:GetRowNames()
-        ret:ForEach(function(_, elem)
-            local v = elem:get()
-            out[#out + 1] = v and v:ToString() or tostring(v)
-        end)
-    end)
-
-    -- 5. a composite table keeps its sources in ParentTables, so if the
-    --    composite reads empty the parents may not
-    f:write("  parent tables:\n")
-    local parents = 0
-    pcall(function()
-        tbl.ParentTables:ForEach(function(_, elem)
-            parents = parents + 1
-            local pt = elem:get()
-            local name = "?"
-            pcall(function() name = pt:GetFullName() end)
-
-            local rows = 0
-            pcall(function() pt.RowMap:ForEach(function() rows = rows + 1 end) end)
-            f:write(string.format("    %-60s %d row(s)\n", name, rows))
-        end)
-    end)
-    if parents == 0 then
-        f:write("    none readable\n")
+    -- Searches the picker will actually run, so a broken match shows up here
+    -- rather than as an empty list in the panel.
+    for _, term in ipairs({ "wood", "stone", "berr", "ingot", "wool" }) do
+        local hits = items.search(term, 8)
+        f:write(string.format("  search %-8s %d hit(s): %s\n",
+            term, #hits, table.concat(hits, ", ")))
     end
 end
 
