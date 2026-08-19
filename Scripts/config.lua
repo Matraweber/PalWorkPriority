@@ -44,6 +44,7 @@ return {
         Mining = 4,              -- Mining
         OilExtraction = 4,       -- Oil Extraction
         MonsterFarm = 5,         -- Farming
+        Anyone = 3,              -- work needing no particular skill
     },
 
     -- A pal needs at least this suitability rank to be considered. 1 means

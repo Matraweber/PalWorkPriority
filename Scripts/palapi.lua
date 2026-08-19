@@ -13,9 +13,16 @@
 --   PalUtility:GetWorkProgressManager, BaseCampModel.WorkCollection.WorkIds,
 --   WorkProgressManager:GetWork and Work:GetWorkId come from BreedingHelper.
 --
--- The one thing no shipped mod reads is which suitability a given work
--- REQUIRES. work_suitability() probes a candidate list at runtime, caches
--- whichever answers, and logs the winner so it can be hard-coded later.
+-- Confirmed by a live schema dump on that same revision:
+--   PalIndividualCharacterParameter exposes GetNickname and GetCharacterID
+--     as UFUNCTIONS, not properties.
+--   PalWorkBase has NO work-suitability field. It carries AssignDefineDataId,
+--     OverrideWorkType and GetWorkName; the requirement itself lives in an
+--     assign-define data row the work only references by name.
+--
+-- Beware of probing UE4SS by property name: it returns a live-looking
+-- TrivialObject for ANY name, including ones that do not exist, so a
+-- non-nil read proves nothing about whether a field is real.
 
 local log = require("log")
 
@@ -96,7 +103,7 @@ local cdo_cache = {}
 
 function M.reset()
     cdo_cache = {}
-    M._suitability_probe = nil
+    M._suitability_source = nil
     M._suitability_warned = false
 end
 
@@ -160,32 +167,35 @@ end
 -- Pals in a base
 -- ---------------------------------------------------------------------------
 
-function M.pal_name(param)
-    local nick
+-- Nickname and species are UFUNCTIONS on PalIndividualCharacterParameter,
+-- not properties. Reading them as properties returns a TrivialObject that
+-- looks valid and stringifies to nothing, which is how every pal came back
+-- as <unnamed> on the first field run.
+--
+-- Note the capitalisation: GetNickname, but GetCharacterID.
+local function name_text(param, fn)
+    local out
     pcall(function()
-        local n = param.NickName
-        if n and n.ToString then nick = n:ToString() end
+        local v = param[fn](param)
+        if v == nil then return end
+        if type(v) == "string" then
+            out = v
+        elseif v.ToString then
+            out = v:ToString()
+        end
     end)
-    if type(nick) == "string" and nick ~= "" then return nick end
-
-    local species
-    pcall(function()
-        local c = param.CharacterID
-        if c and c.ToString then species = c:ToString() end
-    end)
-    if type(species) == "string" and species ~= "" then return species end
-
-    return "<unnamed>"
+    if type(out) == "string" and out ~= "" and out ~= "None" then return out end
+    return nil
 end
 
 function M.pal_species(param)
-    local species
-    pcall(function()
-        local c = param.CharacterID
-        if c and c.ToString then species = c:ToString() end
-    end)
-    if type(species) == "string" and species ~= "" then return species end
-    return nil
+    return name_text(param, "GetCharacterID")
+end
+
+function M.pal_name(param)
+    return name_text(param, "GetNickname")
+        or M.pal_species(param)
+        or "<unnamed>"
 end
 
 -- Returns a list of { id, param, name, species, slot_index }.
@@ -317,55 +327,107 @@ function M.work_full_name(w)
     return "<unknown work>"
 end
 
--- Candidate reads for "which suitability does this work need". Tried in
--- order on the first work seen; the winner is cached for the session.
--- discover.lua dumps the real PalWorkBase schema so this list can be
--- collapsed to the single correct entry once confirmed on a live build.
-M.SUITABILITY_PROBES = {
-    { kind = "func", name = "GetWorkSuitability" },
-    { kind = "func", name = "GetRequiredWorkSuitability" },
-    { kind = "func", name = "GetWorkSuitabilityType" },
-    { kind = "prop", name = "WorkSuitability" },
-    { kind = "prop", name = "RequiredWorkSuitability" },
-    { kind = "prop", name = "WorkSuitabilityType" },
-    { kind = "prop", name = "RequiredWorkSuitabilityType" },
+-- Which suitability a work needs.
+--
+-- PalWorkBase carries no such field. The live schema on revision 82182 has
+-- AssignDefineDataId, OverrideWorkType and GetWorkName, and the requirement
+-- is not stored on the work object at all — it lives in an assign-define
+-- data row the work only references by name.
+--
+-- What the work does expose is text that names the job:
+-- PalWorkDeforestFoliage, PalWorkTransportItemInBaseCamp. So the type is
+-- read out of that text, trying the most specific source first.
+--
+-- A warning about probing by property name: UE4SS returns a live-looking
+-- TrivialObject for ANY property name, including ones that do not exist. A
+-- non-nil read proves nothing, which is exactly how the first four
+-- candidates all appeared to answer while meaning nothing. Only text that
+-- resolves to a known work type is accepted here.
+-- first_token trims a full object name down to its leading class token
+-- before matching. GetFullName returns the whole path, and a map or level
+-- name that happens to contain "cool" or "farm" would otherwise classify a
+-- work by its address rather than its job.
+M.SUITABILITY_SOURCES = {
+    { kind = "prop", name = "AssignDefineDataId" },
+    { kind = "func", name = "GetWorkName" },
+    { kind = "func", name = "GetFullName", first_token = true },
 }
 
-M._suitability_probe = nil
+M._suitability_source = nil
 M._suitability_warned = false
 
-local function try_probe(w, probe)
+local function source_text(w, source)
     local raw
-    if probe.kind == "func" then
-        local ok = pcall(function() raw = w[probe.name](w) end)
+    if source.kind == "func" then
+        local ok = pcall(function() raw = w[source.name](w) end)
         if not ok then return nil end
     else
-        raw = prop(w, probe.name)
+        raw = prop(w, source.name)
     end
-    return as_int(raw)
+
+    local text
+    if raw == nil then
+        return nil
+    elseif type(raw) == "string" then
+        text = raw
+    else
+        pcall(function()
+            if raw.ToString then text = raw:ToString() end
+        end)
+    end
+
+    if type(text) ~= "string" or text == "" or text == "None" then return nil end
+    if source.first_token then text = text:match("^(%S+)") or text end
+    return text
 end
 
--- Returns the integer suitability this work needs, or nil if no probe
--- answered. Warns exactly once per session rather than per work.
+-- Returns the integer suitability this work needs, or nil when the work
+-- cannot be classified. Warns once per session rather than once per work.
 function M.work_suitability(w)
-    if M._suitability_probe then
-        return try_probe(w, M._suitability_probe)
+    local workdefs = require("workdefs")
+
+    -- OverrideWorkType wins when it is set to something meaningful: it is an
+    -- explicit statement on the work, where the text below is inference.
+    -- Validated against the known range, because a bogus enum read would
+    -- otherwise file the work under whatever integer happened to come back.
+    local override = as_int(prop(w, "OverrideWorkType"))
+    if override and workdefs.name(override) then
+        return override
     end
 
-    for _, probe in ipairs(M.SUITABILITY_PROBES) do
-        local v = try_probe(w, probe)
-        if v ~= nil then
-            M._suitability_probe = probe
-            log.info(string.format(
-                "resolved work suitability via %s '%s'", probe.kind, probe.name))
-            return v
+    local ordered = M.SUITABILITY_SOURCES
+    if M._suitability_source then
+        ordered = { M._suitability_source }
+    end
+
+    for _, source in ipairs(ordered) do
+        local text = source_text(w, source)
+        local name = text and workdefs.from_text(text) or nil
+        if name then
+            if M._suitability_source == nil then
+                M._suitability_source = source
+                log.info(string.format("reading work type from %s '%s'",
+                    source.kind, source.name))
+            end
+            return workdefs.value(name)
+        end
+    end
+
+    -- The cached source failed on this particular work. Fall back to the
+    -- full list for it rather than reporting it unreadable, since works of
+    -- different classes do not all name themselves the same way.
+    if M._suitability_source then
+        for _, source in ipairs(M.SUITABILITY_SOURCES) do
+            local text = source_text(w, source)
+            local name = text and workdefs.from_text(text) or nil
+            if name then return workdefs.value(name) end
         end
     end
 
     if not M._suitability_warned then
         M._suitability_warned = true
-        log.warn("no probe in SUITABILITY_PROBES answered on this build — " ..
-            "run '!pwp discover' and send Discovery.txt so the right name can be added")
+        log.warn("could not read a work type from any source on this build — " ..
+            "run '!pwp discover' and check the live work probes section")
     end
     return nil
 end

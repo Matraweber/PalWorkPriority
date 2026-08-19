@@ -67,41 +67,96 @@ local function dump_schema(f, class_path)
     if not walked then f:write("  schema walk unavailable\n") end
 end
 
--- Tries every probe against real work objects and reports which answered.
+-- Reads the fields PalWorkBase actually has, and reports whether each work
+-- could be classified. The tail of this section is the important part: any
+-- work listed as UNRESOLVED is one the scheduler will skip, and its text is
+-- what a new entry in workdefs.KEYWORDS has to match.
+local function text_of(w, kind, name)
+    local raw
+    if kind == "func" then
+        local ok = pcall(function() raw = w[name](w) end)
+        if not ok then return nil end
+    else
+        local ok = pcall(function() raw = w[name] end)
+        if not ok then return nil end
+    end
+    if raw == nil then return nil end
+    if type(raw) == "string" then return raw end
+
+    local out
+    pcall(function()
+        if raw.ToString then out = raw:ToString() end
+    end)
+    if type(out) == "string" and out ~= "" then return out end
+    return nil
+end
+
 local function probe_works(f)
     f:write("=== live work probes\n")
 
     local camps = api.base_camps()
     f:write("camps loaded: " .. #camps .. "\n")
 
-    local sampled = 0
+    local total, resolved = 0, 0
+    local unresolved = {}
+    local by_type = {}
+
     for ci, camp in ipairs(camps) do
         local works, err = api.camp_works(camp)
         f:write(string.format("camp %d: %d work(s)%s\n",
             ci, #works, err and (" (" .. err .. ")") or ""))
 
-        for _, w in ipairs(works) do
-            if sampled >= 12 then break end
-            sampled = sampled + 1
+        for wi, w in ipairs(works) do
+            total = total + 1
 
-            f:write("  work " .. api.work_full_name(w) .. "\n")
-            for _, probe in ipairs(api.SUITABILITY_PROBES) do
-                local raw, ok
-                if probe.kind == "func" then
-                    ok = pcall(function() raw = w[probe.name](w) end)
-                else
-                    ok = pcall(function() raw = w[probe.name] end)
-                end
-                local as_int = api.as_int(raw)
-                if ok and raw ~= nil then
-                    f:write(string.format("    %-4s %-28s -> %s (int %s)\n",
-                        probe.kind, probe.name, tostring(raw), tostring(as_int)))
-                end
+            local assign_id = text_of(w, "prop", "AssignDefineDataId")
+            local work_name = text_of(w, "func", "GetWorkName")
+            local full = api.work_full_name(w)
+            local override = api.as_int(api.prop(w, "OverrideWorkType"))
+
+            local value = api.work_suitability(w)
+            local resolved_name = value and workdefs.name(value) or nil
+
+            if resolved_name then
+                resolved = resolved + 1
+                by_type[resolved_name] = (by_type[resolved_name] or 0) + 1
+            else
+                local key = (assign_id or "?") .. " | " .. (work_name or "?") ..
+                    " | " .. full:gsub("%s.*$", "")
+                unresolved[key] = (unresolved[key] or 0) + 1
+            end
+
+            -- Full detail for a sample only; the summary below covers the rest.
+            if wi <= 8 then
+                f:write("  work " .. full .. "\n")
+                f:write("    AssignDefineDataId = " .. tostring(assign_id) .. "\n")
+                f:write("    GetWorkName        = " .. tostring(work_name) .. "\n")
+                f:write("    OverrideWorkType   = " .. tostring(override) .. "\n")
+                f:write("    resolved as        = " .. tostring(resolved_name) .. "\n")
             end
         end
     end
 
-    if sampled == 0 then
+    f:write(string.format("\n  resolved %d of %d work(s)\n", resolved, total))
+
+    if next(by_type) then
+        f:write("  by work type:\n")
+        local names = {}
+        for name in pairs(by_type) do names[#names + 1] = name end
+        table.sort(names)
+        for _, name in ipairs(names) do
+            f:write(string.format("    %-22s %d\n", name, by_type[name]))
+        end
+    end
+
+    if next(unresolved) then
+        f:write("  UNRESOLVED (AssignDefineDataId | GetWorkName | class):\n")
+        for key, n in pairs(unresolved) do
+            f:write(string.format("    x%-4d %s\n", n, key))
+        end
+    end
+
+    if total == 0 then
         f:write("  no works reachable — load into a world with a base and retry\n")
     end
 end

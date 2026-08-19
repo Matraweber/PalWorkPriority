@@ -158,8 +158,8 @@ COMMANDS.status = function()
     local camps = api.base_camps()
     log.say(string.format("  %d camp(s) loaded", #camps))
 
-    local probe = api._suitability_probe
-    log.say("  work suitability read: " ..
+    local probe = api._suitability_source
+    log.say("  work type read from: " ..
         (probe and (probe.kind .. " " .. probe.name) or "not resolved yet"))
     log.say("  enum offset: " .. workdefs.enum_offset)
 end

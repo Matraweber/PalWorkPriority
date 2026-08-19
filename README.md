@@ -120,26 +120,37 @@ configured.
 | `!pwp on` / `!pwp off` | enable or disable |
 | `!pwp reload` | re-read `config.lua` without restarting |
 | `!pwp stock` | print base storage by item id, and write `Stock.txt` |
-| `!pwp discover` | write `Discovery.txt` (see below) |
+| `!pwp discover` | write `Discovery.txt` with live work probes |
 
 `F10` runs a pass and `F11` writes `Discovery.txt`, for sessions where chat input is not available.
 
-## Two things this build has not confirmed
+## How a work's type is determined
 
-Both are isolated so they can be fixed without touching the rest of the mod. Run
-`!pwp discover` in a loaded world and read `Discovery.txt` next to the mod.
+A live schema dump settled this: `PalWorkBase` has **no** work-suitability field. The
+requirement is not on the work object at all — it lives in an assign-define data row the work
+only references by name through `AssignDefineDataId`.
 
-**Which read gives a work's required suitability.** No published mod reads this, so
-`SUITABILITY_PROBES` in `Scripts/palapi.lua` is a candidate list tried in order at runtime. The
-first one that answers is cached and logged. `Discovery.txt` reports which candidates responded
-on live work objects, and dumps the real `PalWorkBase` schema — once confirmed, collapse the list
-to the single correct entry. If none answer, the mod logs a warning once and assigns nothing.
+What the work does expose is text that names the job. On revision 82182 the classes read
+`PalWorkDeforestFoliage`, `PalWorkTransportItemInBaseCamp`, and so on, so the type is recovered
+from that text via the keyword table in `Scripts/workdefs.lua`. Sources are tried most specific
+first: `AssignDefineDataId`, then `GetWorkName`, then the leading class token of the full object
+name. `OverrideWorkType` wins outright when it is set to something in range, since that is an
+explicit statement rather than inference.
 
-**Whether `EPalWorkSuitability` starts at 0 or 1.** `workdefs.enum_offset` assumes 1, which is
-what `AutoAssignResearchLab` ships and what works on revision 82182. `Discovery.txt` sweeps the
-rank function across a wider range and prints both interpretations side by side; find a Pal whose
-suitabilities you know and see which column lines up. If it is wrong, every Pal gets assigned to
-the wrong job, so check this before going live.
+Generic `PalWorkProgress` objects carry no job in their class name and depend on the first two
+sources. Anything that resolves to nothing is reported as unreadable and skipped rather than
+guessed at — a mis-classified work would put a Pal on the wrong job silently.
+
+`!pwp discover` lists every unresolved work with its three text sources, which is exactly what a
+new `workdefs.KEYWORDS` entry needs to match.
+
+A warning if you extend this: UE4SS returns a live-looking `TrivialObject` for **any** property
+name, including ones that do not exist. A non-nil read proves nothing. Probing by property name
+is how the first four candidate names all appeared to answer while meaning nothing.
+
+The suitability enum is confirmed: `0 = None`, `1 = EmitFlame` … `13 = MonsterFarm`,
+`14 = Anyone`, so `workdefs.enum_offset` stays 1. Work filed under `Anyone` names no skill, so
+suitability rank and `min_suitability_rank` are both bypassed for it and any Pal will do.
 
 ## Multiplayer
 

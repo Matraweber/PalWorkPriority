@@ -75,12 +75,17 @@ end
 local function best_candidate(cfg, pals, claimed, work_name, value)
     local best, best_prio, best_rank = nil, nil, 0
 
+    -- Work filed under Anyone names no skill, so every pal scores 0 on it.
+    -- Ranking and the rank floor are both meaningless there; treating every
+    -- pal as an equal candidate is the only reading that assigns anybody.
+    local unskilled = (work_name == workdefs.ANYONE)
+
     for _, pal in ipairs(pals) do
         if not claimed[pal.key] then
             local prio = priority_for(cfg, pal, work_name)
             if type(prio) == "number" then
-                local rank = api.suitability_rank(pal.param, value)
-                if rank >= cfg.min_suitability_rank then
+                local rank = unskilled and 1 or api.suitability_rank(pal.param, value)
+                if rank >= (unskilled and 1 or cfg.min_suitability_rank) then
                     local wins
                     if best == nil then
                         wins = true
