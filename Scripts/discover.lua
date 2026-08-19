@@ -402,6 +402,8 @@ function M.run(out_path)
     f:write("\n")
     pcall(function() probe_demand(f) end)
     f:write("\n")
+    pcall(function() probe_readiness(f) end)
+    f:write("\n")
     pcall(function() probe_works(f) end)
     f:write("\n")
     for _, c in ipairs(CLASSES) do
