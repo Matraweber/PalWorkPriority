@@ -42,10 +42,27 @@ M.last_report = nil
 -- over a large base, and whatever is skipped is picked up next tick.
 local MAX_TOGGLES_PER_PASS = 40
 
+-- How long a pal may be held on work that no longer announces itself.
+--
+-- The hold exists to stop a fence being released mid-job, which takes
+-- seconds to a minute. It must NOT outlast the job: a workbench keeps its
+-- work object forever, and a pal that has finished crafting still reports
+-- Handiwork as its current work, so an unbounded hold pins it at the bench
+-- with everything else switched off and nothing left to do.
+--
+-- Real demand resets the clock, so a pal that keeps getting genuine work of
+-- that type is never aged out — only one that has run dry.
+local HOLD_SECONDS = 90
+
+-- pal key -> { value, since }. Which work each pal is being held on and when
+-- that hold began.
+local hold_since = {}
+
+-- The fence itself is recomputed from demand every pass and remembers
+-- nothing. The hold timers are the one exception, and a config reload or
+-- world change should drop them.
 function M.forget()
-    -- Nothing is remembered between passes any more: the fence is recomputed
-    -- from demand every time, and the game's own permissions are the only
-    -- persistent state. Kept so callers need not care.
+    hold_since = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -206,8 +223,26 @@ local function plan_fences(cfg, pals, demand, objects, stats)
     -- other work types switched back on mid-swing and wanders off to a lower
     -- priority the moment the tree falls, with the whole logging site still
     -- standing.
+    local now = os.time()
+
     local function keeps(pal, value)
-        return pal.current == value and (objects[value] or 0) > 0
+        if pal.current ~= value then return false end
+        if (objects[value] or 0) == 0 then return false end
+
+        local h = hold_since[pal.key]
+        if h == nil or h.value ~= value then
+            hold_since[pal.key] = { value = value, since = now }
+            return true
+        end
+
+        -- Genuine demand means the hold is not what is keeping the pal here,
+        -- so the clock restarts and a busy pal never ages out.
+        if (demand[value] or 0) > 0 then
+            h.since = now
+            return true
+        end
+
+        return (now - h.since) < HOLD_SECONDS
     end
 
     local laps = spread and math.max(cap or #pals, 1) or 1

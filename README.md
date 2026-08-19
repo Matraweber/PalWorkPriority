@@ -21,7 +21,8 @@ Each pass, per base camp:
 2. work types whose resource ceiling is met contribute no demand
 3. walk priority levels 1 to 5, fencing each Pal to the first level where it can do something that
    still has demand to spare
-4. a Pal already doing a work type keeps it while any work of that type remains
+4. a Pal already doing a work type keeps it while any work of that type remains, for up to 90
+   seconds without fresh demand
 5. a Pal fenced nowhere is left unfenced, keeping everything it may legally do
 6. diff against the game's own permissions and send only the differences
 
@@ -31,6 +32,12 @@ that type still exists. Without it, a fence is released the instant a job is ass
 assigned job stops asking for anyone, so by demand alone it looks finished the moment it truly
 starts. The Pal gets its other work types switched back on mid-swing and wanders off to a lower
 priority the moment the tree falls, with the whole logging site still standing.
+
+The hold is time-bounded because it only has to outlast a job, not persist forever. A workbench
+keeps its work object permanently and a Pal that has *finished* crafting still reports Handiwork
+as its current work, so an unbounded hold pins it at the bench with everything else switched off
+and nothing to do. Genuine demand resets the clock, so a Pal that keeps getting real work of that
+type is never aged out — only one that has run dry.
 
 Permissions go through `RequestChangeWorkSuitability_ToServer` — the same flag the vanilla
 checkboxes write. No game files are patched.
