@@ -36,6 +36,10 @@ local M = {}
 M.FRESH_SECONDS = 25
 
 M.pulses = 0                -- total ever seen
+-- Pulses per work type, never pruned. This distinguishes "that work type
+-- announced itself once at world load and never again" from "it re-announces
+-- constantly" — which decides whether standing work can be seen at all.
+M.pulses_by_value = {}
 -- Whether the hook is in place. This, NOT the pulse count, is what says
 -- demand can be trusted: a base whose pals are all asleep produces no pulses
 -- at all, and treating that as a broken hook would fall back to counting
@@ -89,6 +93,10 @@ function M.install()
                         work = w,
                     }
                     M.pulses = M.pulses + 1
+                    local v = jobs[key].value
+                    if v then
+                        M.pulses_by_value[v] = (M.pulses_by_value[v] or 0) + 1
+                    end
                 end)
             end)
     end)

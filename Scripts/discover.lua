@@ -14,6 +14,7 @@ local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
 local ui = require("ui")
+local demandidx = require("demand")
 
 local M = {}
 
@@ -155,6 +156,71 @@ local function probe_demand(f)
                 f:write(string.format("    %-22s %d\n", n, by_type[n]))
             end
         end
+    end
+end
+
+-- Per work type: how many exist, how many still have a free slot, how many
+-- have nobody on them, and every CurrentState seen. Plus how many pulses that
+-- type has ever produced.
+--
+-- The question this answers: what distinguishes a tree waiting to be chopped
+-- from a campfire with nothing to burn? Both exist as work objects, and using
+-- the wrong predicate either idles pals at cold stations or hides real work.
+local function probe_readiness(f)
+    f:write("=== work readiness by type
+")
+    f:write("  pulses column counts every announcement ever seen this session
+")
+
+    local agg = {}
+    for _, camp in ipairs(api.base_camps()) do
+        for _, w in ipairs(api.camp_works(camp)) do
+            local value = api.work_suitability(w)
+            local name = (value and workdefs.name(value)) or "?"
+
+            local e = agg[name]
+            if not e then
+                e = { n = 0, slot = 0, unmanned = 0, states = {}, value = value }
+                agg[name] = e
+            end
+            e.n = e.n + 1
+
+            local free
+            pcall(function() free = w:IsExistAssignableSlot() end)
+            if free == true then e.slot = e.slot + 1 end
+
+            local assigned
+            pcall(function()
+                local list = w:GetAssignedCharacters()
+                local n = 0
+                if list then list:ForEach(function() n = n + 1 end) end
+                assigned = n
+            end)
+            if assigned == 0 then e.unmanned = e.unmanned + 1 end
+
+            local st = api.as_int(api.prop(w, "CurrentState"))
+            if st then e.states[st] = (e.states[st] or 0) + 1 end
+        end
+    end
+
+    local names = {}
+    for name in pairs(agg) do names[#names + 1] = name end
+    table.sort(names)
+
+    f:write(string.format("  %-22s %5s %6s %9s %8s  %s
+",
+        "type", "works", "free", "unmanned", "pulses", "CurrentState counts"))
+    for _, name in ipairs(names) do
+        local e = agg[name]
+        local states = {}
+        for st, c in pairs(e.states) do states[#states + 1] = st .. "x" .. c end
+        table.sort(states)
+
+        f:write(string.format("  %-22s %5d %6d %9d %8s  %s
+",
+            name, e.n, e.slot, e.unmanned,
+            tostring(e.value and demandidx.pulses_by_value[e.value] or 0),
+            table.concat(states, " ")))
     end
 end
 
