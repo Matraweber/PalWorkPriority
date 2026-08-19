@@ -353,10 +353,53 @@ end
 -- is EPalWorkType, and that it has to outrank the class name, are both
 -- credited to PalPriority (see README).
 --
--- WORKTYPE_TO_SUIT stays empty until discover.lua dumps EPalWorkType from
--- the running build. An unmapped value falls through to the text sources
--- rather than being guessed at, and is logged so it can be filled in.
-M.WORKTYPE_TO_SUIT = {}
+-- Built from a UEnum reflection dump of EPalWorkType on revision 82182. The
+-- name on the right of each line is the enum's own name for that value, so
+-- these are readable against a fresh dump rather than taken on trust.
+--
+-- Values are deliberately absent where the enum name does not imply a work
+-- suitability. An unmapped value falls through to the text sources below and
+-- is logged once; a WRONG entry is far worse, because it fences pals onto
+-- work that does not need them and away from work that does.
+M.WORKTYPE_TO_SUIT = {
+    [3]  = "Handcraft",           -- Architecture
+    [4]  = "Handcraft",           -- RepairBuildObject
+    [5]  = "Collection",          -- FarmHarvest
+    [6]  = "Collection",          -- HarvestLevelObject
+    [7]  = "Transport",           -- TransportFoodItemInBaseCamp
+    [8]  = "Seeding",             -- Seeding
+    [9]  = "Watering",            -- Watering
+    [10] = "EmitFlame",           -- Cooking
+    [11] = "Transport",           -- TransportDisposableItemInBaseCamp
+    [12] = "Handcraft",           -- ConvertItem
+    [13] = "Handcraft",           -- ProductItem
+    [14] = "EmitFlame",           -- Smelting
+    [15] = "ProductMedicine",     -- ProductMedicine
+    [16] = "Transport",           -- TransportItemInBaseCamp
+    [17] = "Collection",          -- CollectResourcePickable
+    [18] = "Deforest",            -- ProductResource_Deforest
+    [19] = "Mining",              -- ProductResource_Mining
+    [20] = "Deforest",            -- ProductResource_Deforest_OnFacility
+    [21] = "Mining",              -- ProductResource_Mining_OnFacility
+    [22] = "GenerateElectricity", -- GenerateEnergy
+    [23] = "EmitFlame",           -- Ignition
+    [26] = "MonsterFarm",         -- MonsterFarm
+    [28] = "Cool",                -- Cool
+    [29] = "Watering",            -- Watering_Farm
+    [44] = "Transport",           -- CollectItemToStorage
+    [45] = "Transport",           -- TransportItem
+    [46] = "Collection",          -- CollectResource
+
+    -- Read from the enum name alone, never yet seen on a live base. If one of
+    -- these turns out wrong it will show as pals sent to the wrong station.
+    [27] = "Watering",            -- ExtinguishBurn
+    [40] = "Handcraft",           -- LabResearch
+
+    -- Left out on purpose: 1 CommonTemp, 2 ReviveCharacter, 24 Defense,
+    -- 25 BreedFarm, 30-39 DedicatedWork01-10, 41 FishPond,
+    -- 42 AncientBreedFarm, 43 Attack, 47 GrowupPromotion. Either not gated on
+    -- work suitability, or not understood well enough to map.
+}
 
 -- Stations whose job reports OverrideWorkType = 0 under the generic
 -- PalWorkProgress class, where AssignDefineDataId is the only thing that
