@@ -3,7 +3,7 @@
 -- The rest of the mod talks in plain Lua tables. When a game update renames
 -- something, this is the only file that needs touching.
 --
--- Symbol provenance — all of these are taken from mods that run on game
+-- Symbol provenance. All of these are taken from mods that run on game
 -- revision 82182, not guessed:
 --   BaseCampModel.WorkerDirector, GetCharacterHandleSlots, IsEmpty,
 --   Handle:GetIndividualID, Handle:TryGetIndividualParameter,
@@ -70,13 +70,13 @@ end
 
 -- A stable string key for an FGuid. Used to remember what was assigned
 -- where, so a repeat pass does not re-issue an assignment a pal is already
--- carrying out — re-assigning every cycle would make workers drop their job
+-- carrying out. Re-assigning every cycle would make workers drop their job
 -- and re-path constantly. Returns nil when the guid cannot be read, and the
 -- caller falls back to the work's full name.
 -- Each component must come back as a real NUMBER. tostring() is not good
 -- enough: on a value that is not actually an FGuid, UE4SS answers every
 -- field with a TrivialObject wrapper, and those stringify to a reused
--- address — so all four parts match, and so does every other object's key.
+-- address, so all four parts match, and so does every other object's key.
 -- That silently collapses distinct pals onto one identity, and a claim set
 -- keyed on it accepts exactly one pal per pass.
 function M.guid_key(g)
@@ -398,7 +398,7 @@ function M.camp_required_works(camp)
     local out, ok, seen = {}, false, 0
 
     -- An entry may be the work itself, the work's id, or a struct carrying
-    -- the id. IsValid() cannot tell them apart — it answers true for a plain
+    -- the id. IsValid() cannot tell them apart, since it answers true for a plain
     -- struct wrapper too, which is how a list of ids was accepted as a list
     -- of works and every one of them came back untyped.
     --
@@ -463,7 +463,7 @@ end
 -- One class carries several of them: the transport class was observed
 -- reporting 7, 11, 16 and 17. Reading the class name first therefore files
 -- every pickable-collection job under Transport and hides it from pals set
--- to Collection — on this save that was 26 of 79 works. That OverrideWorkType
+-- to Collection. On this save that was 26 of 79 works. That OverrideWorkType
 -- is EPalWorkType, and that it has to outrank the class name, are both
 -- credited to PalPriority (see README).
 --
@@ -471,7 +471,7 @@ end
 -- name on the right of each line is the enum's own name for that value, so
 -- these are readable against a fresh dump rather than taken on trust.
 --
--- Values are deliberately absent where the enum name does not imply a work
+-- Values are absent where the enum name does not imply a work
 -- suitability. An unmapped value falls through to the text sources below and
 -- is logged once; a WRONG entry is far worse, because it fences pals onto
 -- work that does not need them and away from work that does.
@@ -574,7 +574,7 @@ function M.work_suitability(w)
         if not M._unknown_worktype[wt] then
             M._unknown_worktype[wt] = true
             log.debug("unmapped EPalWorkType " .. tostring(wt) ..
-                " — run '!pwp discover' to dump the enum")
+                ". Run '!pwp discover' to dump the enum")
         end
     end
 
@@ -604,7 +604,7 @@ function M.work_suitability(w)
 
     if not M._suitability_warned then
         M._suitability_warned = true
-        log.warn("some work could not be typed — run '!pwp discover' and read " ..
+        log.warn("some work could not be typed. Run '!pwp discover' and read " ..
             "the UNRESOLVED list")
     end
     return nil
@@ -653,7 +653,7 @@ end
 
 -- Turns one work type on or off for one pal, which is what the vanilla
 -- checkbox does. This is the game's OWN permission flag, and it is the only
--- thing that actually stops Palworld's AI handing a pal that job — declining
+-- thing that actually stops the AI handing a pal that job. Declining
 -- to fixed-assign them ourselves does nothing about it.
 --
 -- raw_id carries the unmasked guid ints straight from GetIndividualID; the
@@ -689,7 +689,7 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Chest concrete-model classes. A class that does not resolve on a build is
--- normal; the list is deliberately wider than any one version needs.
+-- normal; the list is wider than any one version needs.
 M.CHEST_CLASSES = {
     "PalMapObjectItemChestModel",
     "PalMapObjectGuildChestModel",

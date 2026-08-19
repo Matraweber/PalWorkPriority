@@ -14,7 +14,7 @@
 --   a method on a null/stale wrapper causes. Every member call on anything
 --   received from the engine must be behind an affirmative IsValid() == true.
 --
---   CRASH RULE 2: never READ a row's bindedSlot property — the read itself
+--   CRASH RULE 2: never READ a row's bindedSlot property. The read itself
 --   crashes natively inside UE4SS before Lua sees anything. Pal identity is
 --   captured by hooking the row's BindFromSlot function instead, where the
 --   slot arrives as a safe hook argument.
@@ -144,7 +144,7 @@ local function make_ftext(str)
         return ft
     end
 
-    warn_once("ftext", "no working FText path on this build — the stand UI cannot render")
+    warn_once("ftext", "no working FText path on this build, so the stand UI cannot render")
     return nil
 end
 
@@ -188,7 +188,7 @@ local function try_hook_bind()
                     -- Ranks are captured here too. A pal with no aptitude
                     -- for a work type must keep its vanilla dash: writing a
                     -- priority into that cell claims the pal will do work it
-                    -- is simply incapable of.
+                    -- is not capable of.
                     local name, species
                     local ranks = {}
                     pcall(function()
@@ -395,7 +395,7 @@ local function ensure_cell_text(cell, cell_name)
 
     if not inject_at_checkbox(cell, tb) then
         if not inject_fallback(cell, tb) then
-            warn_once("cellinject", "cell injection failed — grid numbers unavailable")
+            warn_once("cellinject", "cell injection failed, grid numbers unavailable")
             return nil
         end
     end
@@ -453,7 +453,7 @@ local function restore_checkbox(cell, cell_name)
     cell_cb[cell_name] = nil
 end
 
--- The grid deliberately does not mark which job a pal is on right now. Three
+-- The grid does not mark which job a pal is on right now. Three
 -- attempts all made it worse, and the game already answers that in its own
 -- info panel. This is an editor: it shows what you set.
 local function set_cell(tb, cell_name, glyph, colour_key)
@@ -692,7 +692,7 @@ function M.bind_mouse(cfg_ref)
         pcall(function() key = Key[key_name] end)
         if key == nil then
             warn_once("mouse" .. key_name,
-                key_name .. " not available in this UE4SS build — " ..
+                key_name .. " not available in this UE4SS build, " ..
                 "click editing disabled for that button")
             return
         end

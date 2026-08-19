@@ -242,7 +242,7 @@ local function plan_fences(cfg, pals, demand, objects, stats)
                                 fence[value] = true
 
                                 -- A type with room pulls the pal here. So does
-                                -- the job it is already doing — but that one
+                                -- the job it is already doing, but that one
                                 -- claims no allocation, since the pal is
                                 -- staying put rather than being handed out.
                                 -- Strictly greater, so the first of equal
@@ -429,7 +429,7 @@ local function run_camp(cfg, camp, stats)
 
     -- Nothing wanted. That is either a genuinely idle base or a read that
     -- came back empty for a moment, and the two are indistinguishable from
-    -- here — a live pass was seen reporting 0 works between passes reporting
+    -- here. A live pass was seen reporting 0 works between passes reporting
     -- 200. Unfencing the whole base on it costs a dozen toggles and another
     -- dozen to put back, so the existing fences are left exactly as they are.
     -- An idle base loses nothing by staying fenced; there is no work either

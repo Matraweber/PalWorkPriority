@@ -316,7 +316,7 @@ local function probe_works(f)
     end
 
     if total == 0 then
-        f:write("  no works reachable — load into a world with a base and retry\n")
+        f:write("  no works reachable. Load into a world with a base and retry\n")
     end
 end
 
@@ -352,7 +352,7 @@ local function probe_ranks(f)
     end
 
     if shown == 0 then
-        f:write("  no base pals reachable — load into a world with a staffed base\n")
+        f:write("  no base pals reachable. Load into a world with a staffed base\n")
     end
 end
 
@@ -375,7 +375,7 @@ local function dump_enum(f, path, upto)
 end
 
 -- EPalWorkType is the enum behind a work's OverrideWorkType, and it is NOT
--- EPalWorkSuitability — the two are different sets with overlapping small
+-- EPalWorkSuitability. The two are different sets with overlapping small
 -- integers, which is exactly how a wrong reading gets filed as plausible.
 -- Its names are what WORKTYPE_TO_SUIT in palapi.lua has to be built from.
 local function enum_names(f)

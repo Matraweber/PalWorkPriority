@@ -33,7 +33,7 @@ M.FRESH_SECONDS = 180
 M.pulses = 0                -- total ever seen
 -- Pulses per work type, never pruned. This distinguishes "that work type
 -- announced itself once at world load and never again" from "it re-announces
--- constantly" — which decides whether standing work can be seen at all.
+-- constantly", which decides whether standing work can be seen at all.
 M.pulses_by_value = {}
 -- Whether the hook is in place. This, NOT the pulse count, is what says
 -- demand can be trusted: a base whose pals are all asleep produces no pulses
@@ -100,7 +100,7 @@ function M.install()
         M.hooked = true
         log.debug("required-work pulse hook installed")
     else
-        log.warn("could not hook OnRequiredAssignWork_ServerInternal — " ..
+        log.warn("could not hook OnRequiredAssignWork_ServerInternal, " ..
             "demand will fall back to counting every work object")
     end
     return M.hooked

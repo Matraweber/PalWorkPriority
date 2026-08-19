@@ -4,7 +4,7 @@ Discovery.txt
 Stock.txt
 priorities.txt
 
-# Workshop upload state — publishedfileid is per-publisher
+# Workshop upload state; publishedfileid is per-publisher
 .workshop.json
 
 *.zip

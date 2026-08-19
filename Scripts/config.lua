@@ -1,4 +1,4 @@
--- Pal Work Priority — user configuration.
+-- Pal Work Priority, user configuration.
 --
 -- Edit this file and either restart the game or run the !pwp reload chat
 -- command. Nothing here is written back automatically, so your settings
@@ -11,8 +11,8 @@ return {
     -- true  = work out every assignment and log it, send nothing to the server
     -- false = actually assign pals
     --
-    -- Ships as true on purpose. Run one pass, read the log, confirm the
-    -- assignments look sane on your build, then set this to false.
+    -- Set this to true to watch a session before letting the mod touch a
+    -- base. Every pass then logs what it would change and sends nothing.
     dry_run = false,
 
     -- Seconds between automatic passes.

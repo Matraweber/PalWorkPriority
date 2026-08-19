@@ -1,8 +1,8 @@
 -- Per-pal, per-work-type priority edits made from the Monitoring Stand.
 --
 -- config.lua remains the policy layer: it decides what a pal gets when
--- nobody has said otherwise. This is the exception layer — one entry per
--- cell actually clicked — and it outranks everything in config.
+-- nobody has said otherwise. This is the exception layer, one entry per
+-- cell actually clicked, and it outranks everything in config.
 --
 -- It also owns the single effective-priority function. The scheduler and the
 -- stand UI both call it, because when they each had their own the two
@@ -27,7 +27,8 @@ local SAVE_DEBOUNCE = 2.0   -- one file write per burst of clicks
 -- ---------------------------------------------------------------------------
 
 -- One record per line: palkey|workvalue|priority, priority being 1..MAX or X.
--- A flat text format on purpose — it is written from a click handler, and a
+-- Flat text rather than a Lua table because it is written from a click
+-- handler, and a
 -- half-written Lua table would fail to load on next start where a truncated
 -- line just drops one cell.
 local function parse_line(line)

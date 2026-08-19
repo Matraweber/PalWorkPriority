@@ -3,7 +3,7 @@
 Numeric work priorities for base Pals in Palworld. You decide that Transporting gets staffed
 before Mining, and the mod hands each job to the best-suited Pal that is still free.
 
-Vanilla only lets you tick a work type on or off per Pal. This adds an ordering on top: priority
+Vanilla only lets you tick a work type on or off per Pal. This adds an ordering on top. Priority
 1 work is filled first from the whole roster, priority 5 gets whatever is left over.
 
 ## How it works
@@ -15,7 +15,7 @@ else to send it.
 
 Each pass, per base camp:
 
-1. count **demand** from the game's own pulses — `PalBaseCampWorkerDirector` fires
+1. count **demand** from the game's own pulses, `PalBaseCampWorkerDirector` fires
    `OnRequiredAssignWork_ServerInternal` every few seconds for each work still wanting a
    worker, and a job that stops pulsing is finished
 2. work types whose resource ceiling is met contribute no demand
@@ -28,7 +28,7 @@ Each pass, per base camp:
 
 Step 4 is an asymmetry worth understanding. To **pull** a Pal to a work type takes a real pulse,
 so nobody is sent to a cold station. To **keep** a Pal where it already is takes only that work of
-that type still exists. Without it, a fence is released the instant a job is assigned — an
+that type still exists. Without it, a fence is released the instant a job is assigned, an
 assigned job stops asking for anyone, so by demand alone it looks finished the moment it truly
 starts. The Pal gets its other work types switched back on mid-swing and wanders off to a lower
 priority the moment the tree falls, with the whole logging site still standing.
@@ -37,20 +37,20 @@ The hold is time-bounded because it only has to outlast a job, not persist forev
 keeps its work object permanently and a Pal that has *finished* crafting still reports Handiwork
 as its current work, so an unbounded hold pins it at the bench with everything else switched off
 and nothing to do. Genuine demand resets the clock, so a Pal that keeps getting real work of that
-type is never aged out — only one that has run dry.
+type is never aged out, only one that has run dry.
 
-Permissions go through `RequestChangeWorkSuitability_ToServer` — the same flag the vanilla
+Permissions go through `RequestChangeWorkSuitability_ToServer`, the same flag the vanilla
 checkboxes write. No game files are patched.
 
 An earlier version pinned one Pal to one work object with
 `RequestFixedAssignWorkInBaseCamp_ToServer` and left the AI otherwise free, so a Pal could still
-wander off to a lower-priority job the moment it finished — items sitting waiting to be carried
+wander off to a lower-priority job the moment it finished, items sitting waiting to be carried
 while a Pal went watering instead. Fencing is the mechanism that makes a priority order actually
 govern behaviour.
 
 Two simpler sources of demand were tried against this build and both failed, which is worth
-knowing before changing it. Counting every work object in a camp overstates demand enormously —
-a station keeps its work object for as long as it stands, so a base with a handful of ripe bushes
+knowing before changing it. Counting every work object in a camp overstates demand enormously. A
+station keeps its work object for as long as it stands, so a base with a handful of ripe bushes
 reported 78 gathering works. Reading `WorkerDirector.RequiredAssignWorks` reads an *empty* array
 almost every time, because a work sits in that list only for the instant it is asking; polling it
 looks exactly like an idle base and stops the mod governing anything.
@@ -64,13 +64,13 @@ night work that does not exist. `!pwp status` reports both.
 **This means the mod continuously writes work-permission flags to your save.** Restoring is
 stateless: a Pal's permissions are always *capable AND not X AND (fenced-in OR unfenced)*, so
 switching the mod off puts back *capable AND not X* without needing a record of what came before.
-The cost is that a work type you unchecked by hand in vanilla gets switched back on — **X is how
+The cost is that a work type you unchecked by hand in vanilla gets switched back on, **X is how
 you say "never" to this mod.**
 
 ## Requirements
 
 - Palworld, game revision 82182 or newer
-- UE4SS — the [Experimental Palworld build](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587) is what this was developed against
+- UE4SS, the [Experimental Palworld build](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587) is what this was developed against
 
 ## Installing for development
 
@@ -133,7 +133,7 @@ priority. `false` removes the Pal from that work type entirely.
 
 Priority alone is not enough. A base with 46 pending transport jobs and priority 1 on
 Transporting will hand every carrier in the roster to hauling and leave Mining and Handiwork with
-nobody — including three rank-6 Anubis pinned to carrying boxes.
+nobody, including three rank-6 Anubis pinned to carrying boxes.
 
 Two dials control that, and they combine:
 
@@ -144,8 +144,8 @@ max_pals_per_work_type = 3,     -- or false for no limit
 
 **`spread`** walks the priority list giving each work type one Pal, then walks it again for
 seconds, and again for thirds. Everything gets covered before anything gets doubled.
-**`fill`** lets a work type take every Pal it can before the next type is considered at all —
-the strict reading of priority, if that is what you want.
+**`fill`** lets a work type take every Pal it can before the next type is considered at all.
+That is the strict reading of priority, if it is the one you want.
 
 **`max_pals_per_work_type`** caps either mode. Spread with a cap of 3 means one each, then
 seconds, then thirds, and no more.
@@ -174,14 +174,14 @@ work_caps = {
 ```
 
 With several items listed, the work type is suspended only when *every* one is at or above its
-ceiling — mining keeps running while either stone or ore is still short.
+ceiling, mining keeps running while either stone or ore is still short.
 
 The keys are internal item ids, not display names, and a misspelled id produces a ceiling that
 silently never fires. Run `!pwp stock` while standing in your base to print exactly what is in
 storage, by id, and write the full list to `Stock.txt`.
 
 Storage is read by walking the base's chests. If no chest answers, totals read as zero and work
-keeps running — overshooting a ceiling is a far milder failure than suspending a work type
+keeps running, overshooting a ceiling is a far milder failure than suspending a work type
 because a container did not reply. Storage is only read at all when at least one ceiling is
 configured.
 
@@ -189,21 +189,21 @@ configured.
 
 Everything the mod decides is shown on the vanilla work-suitability screen, read-only:
 
-- **A number in each grid cell** — the priority in force for that Pal and work type, replacing
+- **A number in each grid cell**, the priority in force for that Pal and work type, replacing
   the vanilla checkbox. Coloured on RimWorld's work-tab scale: **1 green, 2 yellow, 3 orange,
   4 red, 5 grey**. A dim **X** means never assign.
 
 Colour means priority and nothing else, so the same number is always the same colour.
 
 The grid deliberately does not mark which job a Pal is on right now. Three attempts all made it
-worse — tinting broke colour consistency, a coloured drop shadow rendered as a duplicate digit
+worse, tinting broke colour consistency, a coloured drop shadow rendered as a duplicate digit
 (a shadow *is* a second copy of the glyph), and an enlarged glyph just looked wrong. The game
 already answers that in its own info panel. The grid is an editor: it shows what you set.
 - **Work a Pal cannot do keeps its vanilla dash.** A number there would claim the Pal will do
   something it is incapable of, so those cells are left alone entirely.
 
 Numbers reflect `pal_overrides` too, resolved nickname-first then species exactly as the
-scheduler resolves them — so what the grid shows and what the scheduler does cannot drift apart.
+scheduler resolves them, so what the grid shows and what the scheduler does cannot drift apart.
 
 ### Clicking to change a priority
 
@@ -217,16 +217,16 @@ scheduler resolves them — so what the grid shows and what the scheduler does c
 Both ends clamp rather than wrap. Wrapping means one click too many on a priority-1 cell silently
 excludes the Pal from that work, with nothing in the number to show it happened.
 
-Clicks only land on cells the mod owns — a Pal that cannot do a work type keeps its vanilla dash
+Clicks only land on cells the mod owns, a Pal that cannot do a work type keeps its vanilla dash
 and ignores clicks there, so an invisible edit can never end up hiding under one.
 
-A click changes **policy only** — it never writes the game's permission flags itself. The fence is
+A click changes **policy only**, it never writes the game's permission flags itself. The fence is
 the sole writer of those, and a click schedules a pass so the change lands within a second.
 
 That matters because the vanilla left-click still fires underneath and toggles the same flag. An
-earlier version had the click handler re-assert the flag too, which gave one click three
-authorities — vanilla toggling it, the handler re-asserting it, the next pass overriding both —
-and showed up as the checkbox flicking between tick and cross beneath the number. Now the vanilla
+earlier version had the click handler re-assert the flag too. That gave one click three
+authorities: vanilla toggling it, the handler re-asserting it, and the next pass overriding both.
+It showed up as the checkbox flicking between tick and cross beneath the number. Now the vanilla
 toggle is simply left for the next pass to correct, which it does by diffing against the game's
 real state.
 
@@ -234,7 +234,7 @@ Edits are per Pal and per work type, and they outrank everything in `config.lua`
 `priorities.txt` next to the mod, written a couple of seconds after a burst of clicks settles
 rather than once per click.
 
-The resolution order is: **a click you made** → `pal_overrides` → `work_priority`. One function in
+The resolution order is: **a click you made** then `pal_overrides` then `work_priority`. One function in
 `store.lua` decides it, called by both the scheduler and the grid, because when they each had
 their own copy the two silently disagreed.
 
@@ -245,7 +245,7 @@ findings from PalPriority's UI mod are load-bearing and worth restating if you e
 
 - `pcall` **cannot** catch the native access violation from calling a method on a stale wrapper.
   Every member call needs an affirmative `IsValid() == true` first.
-- **Never read a row's `bindedSlot`** — the property read itself crashes natively, before Lua
+- **Never read a row's `bindedSlot`**, the property read itself crashes natively, before Lua
   sees anything.
 
 Each number is a `TextBlock` injected as a sibling of the cell's checkbox with its slot geometry
@@ -268,18 +268,18 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp discover` | write `Discovery.txt` with live work probes |
 
 `F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles
-spread/fill and `Alt+F11` cycles the cap — for sessions where chat input is not available.
+spread/fill and `Alt+F11` cycles the cap, for sessions where chat input is not available.
 
 ## How a work's type is determined
 
 A live schema dump settled this: `PalWorkBase` has **no** work-suitability field. The
-requirement is not on the work object at all — it lives in an assign-define data row the work
+requirement is not on the work object at all, it lives in an assign-define data row the work
 only references by name through `AssignDefineDataId`.
 
 What a work does expose is `OverrideWorkType` plus some text, and the order they are consulted
 in matters more than any one of them:
 
-1. **`OverrideWorkType`**, the job's own declaration. This is `EPalWorkType` — a *different* enum
+1. **`OverrideWorkType`**, the job's own declaration. This is `EPalWorkType`, a *different* enum
    from `EPalWorkSuitability`, mapped through `WORKTYPE_TO_SUIT` in `Scripts/palapi.lua`.
 2. **`GetWorkName`**, the game's display name. For several jobs this string is literally the
    suitability label, and it is right precisely where the class name misleads.
@@ -291,7 +291,7 @@ Class name has to come last. The transport class reports `OverrideWorkType` 7, 1
 depending on the job; reading its name first files every pickable-collection job under Transport
 and hides it from Pals set to Collection. On one test base that was 26 of 79 works.
 
-Anything that resolves to nothing is reported as unreadable and skipped rather than guessed at —
+Anything that resolves to nothing is reported as unreadable and skipped rather than guessed at,
 a mis-classified work puts a Pal on the wrong job silently.
 
 `!pwp discover` lists every unresolved work with its three text sources, which is exactly what a
@@ -301,7 +301,7 @@ A warning if you extend this: UE4SS returns a live-looking `TrivialObject` for *
 name, including ones that do not exist. A non-nil read proves nothing. Probing by property name
 is how the first four candidate names all appeared to answer while meaning nothing.
 
-The suitability enum is confirmed: `0 = None`, `1 = EmitFlame` … `13 = MonsterFarm`,
+The suitability enum is confirmed: `0 = None`, `1 = EmitFlame` ... `13 = MonsterFarm`,
 `14 = Anyone`, so `workdefs.enum_offset` stays 1. Work filed under `Anyone` names no skill, so
 suitability rank and `min_suitability_rank` are both bypassed for it and any Pal will do.
 
@@ -325,29 +325,29 @@ the following pass usually succeeds. Hosting or singleplayer needs none of this.
 - add a `thumbnail.png`
 
 Then upload with Pocketpair's [PalworldModUploader](https://github.com/pocketpairjp/PalworldModUploader).
-Bump `Version` on every update — the loader compares it as a plain string and only reinstalls
+Bump `Version` on every update, the loader compares it as a plain string and only reinstalls
 when it changes.
 
 ## Credits
 
 The game-side symbols were learned by reading mods that already run on this build, not guessed:
 
-- **AutoAssignResearchLab** by Wol4ara896 — the worker director walk, `GetWorkSuitabilityRank`,
+- **AutoAssignResearchLab** by Wol4ara896, the worker director walk, `GetWorkSuitabilityRank`,
   and `RequestFixedAssignWorkInBaseCamp_ToServer`
-- **BreedingHelper** — `GetWorkProgressManager`, the `WorkCollection.WorkIds` sweep, the
+- **BreedingHelper**, `GetWorkProgressManager`, the `WorkCollection.WorkIds` sweep, the
   reflection walk that `discover.lua` reuses, and the storage chain behind resource ceilings
   (chest model classes, `GetItemContainerModule().TargetContainer.ItemSlotArray`,
   `ItemId.StaticId` and `StackCount`)
 
-- **PalPriority** ([Nexus 3830](https://www.nexusmods.com/palworld/mods/3830)) — for establishing
+- **PalPriority** ([Nexus 3830](https://www.nexusmods.com/palworld/mods/3830)), for establishing
   that a work's `OverrideWorkType` is `EPalWorkType` rather than `EPalWorkSuitability`, that it
   has to outrank the class name, and for `GetWorkSuitabilityRankWithCharacterRank`
 
 This is an independent implementation and shares no code with PalPriority. The two take different
 approaches: PalPriority flips the vanilla per-Pal work toggles through
 `RequestChangeWorkSuitability_ToServer`, while this drives fixed assignments through
-`RequestFixedAssignWorkInBaseCamp_ToServer`. What was taken from it is factual — which engine
-symbol means what — not implementation. `WORKTYPE_TO_SUIT` is built from a `EPalWorkType` dump of
+`RequestFixedAssignWorkInBaseCamp_ToServer`. What was taken from it is factual, which engine
+symbol means what, not implementation. `WORKTYPE_TO_SUIT` is built from a `EPalWorkType` dump of
 the running build rather than copied.
 
 ## License

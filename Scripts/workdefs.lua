@@ -49,7 +49,7 @@ M.LABEL = {
 }
 
 -- Reverse of LABEL. GetWorkName returns the game's own display name for a
--- work, and for some works that string IS the suitability label — a job
+-- work, and for some works that string IS the suitability label. A job
 -- reporting "Gathering" is Collection work whatever its class is called.
 M.BY_LABEL = {}
 for name, label in pairs(M.LABEL) do
@@ -85,7 +85,7 @@ end
 
 -- Work objects carry no suitability field. What they do carry is an
 -- AssignDefineDataId, a work name and a class name, and on this build those
--- read like PalWorkDeforestFoliage or PalWorkTransportItemInBaseCamp — the
+-- read like PalWorkDeforestFoliage or PalWorkTransportItemInBaseCamp, so the
 -- work type is in the text. This table turns that text into a suitability.
 --
 -- Ordered, not a hash: the first pattern that matches wins, so narrower

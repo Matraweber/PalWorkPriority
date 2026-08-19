@@ -6,8 +6,8 @@
 --
 -- The mod does not hand pals jobs. It decides which work types each pal may
 -- do right now and switches the rest off through
--- RequestChangeWorkSuitability_ToServer — the same flag the vanilla
--- checkboxes write — leaving Palworld's own AI to choose within that fence.
+-- RequestChangeWorkSuitability_ToServer, the same flag the vanilla
+-- checkboxes write, leaving the game's own AI to choose within that fence.
 
 local log = require("log")
 local api = require("palapi")
@@ -48,21 +48,21 @@ local timer_running = false
 
 local function validate(c)
     if type(c.work_priority) ~= "table" then
-        log.error("config.work_priority is not a table — using an empty one")
+        log.error("config.work_priority is not a table, using an empty one")
         c.work_priority = {}
     end
 
     for name, prio in pairs(c.work_priority) do
         if not workdefs.is_known(name) then
             log.warn("config.work_priority has unknown work type '" .. tostring(name) ..
-                "' — check the spelling against workdefs.lua")
+                "', check the spelling against workdefs.lua")
         elseif prio ~= false and (type(prio) ~= "number" or prio < 1) then
             log.warn("config.work_priority['" .. name .. "'] should be a number >= 1 or false")
         end
     end
 
     -- A ceiling on a work type that does not exist, or one whose value is
-    -- not a number, would simply never fire. Say so rather than let someone
+    -- not a number, would never fire. Say so rather than let someone
     -- believe a cap is in force.
     c.work_caps = c.work_caps or {}
     for name, caps in pairs(c.work_caps) do
@@ -83,7 +83,7 @@ local function validate(c)
     if c.assignment_mode ~= "spread" and c.assignment_mode ~= "fill" then
         if c.assignment_mode ~= nil then
             log.warn("config.assignment_mode should be \"spread\" or \"fill\", got '" ..
-                tostring(c.assignment_mode) .. "' — using spread")
+                tostring(c.assignment_mode) .. "', using spread")
         end
         c.assignment_mode = "spread"
     end
@@ -93,7 +93,7 @@ local function validate(c)
         local n = tonumber(c.max_pals_per_work_type)
         if not n or n < 1 then
             log.warn("config.max_pals_per_work_type should be a number >= 1 or false" ..
-                " — treating as no limit")
+                ", treating as no limit")
             c.max_pals_per_work_type = false
         else
             c.max_pals_per_work_type = math.floor(n)
@@ -132,7 +132,7 @@ local function run_pass(reason, explicit)
 
     if not cfg.enabled then
         if explicit then
-            log.say(reason .. ": disabled — '" .. cfg.chat_prefix .. " on' to enable")
+            log.say(reason .. ": disabled. Use '" .. cfg.chat_prefix .. " on' to enable")
         end
         return
     end
@@ -235,7 +235,7 @@ COMMANDS.status = function()
     log.say("  demand hook: " .. (demandidx.hooked and "installed" or "NOT INSTALLED") ..
         ", " .. demandidx.pulses .. " pulse(s) seen" ..
         (demandidx.hooked and demandidx.pulses == 0
-            and "  (nothing wants doing — normal while pals sleep)" or ""))
+            and "  (nothing wants doing, which is normal while pals sleep)" or ""))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
 end
@@ -278,13 +278,13 @@ end
 
 COMMANDS.dry = function()
     cfg.dry_run = true
-    log.say("dry run on — assignments will be logged, not sent")
+    log.say("dry run on, changes are logged and nothing is sent")
 end
 
 COMMANDS.live = function()
     cfg.dry_run = false
     scheduler.forget()
-    log.say("live — assignments will be sent to the server")
+    log.say("live, changes are sent to the server")
 end
 
 COMMANDS.on = function()
@@ -320,7 +320,7 @@ COMMANDS.stock = function()
     ExecuteInGameThread(function()
         local camps = api.base_camps()
         if #camps == 0 then
-            log.say("no camps loaded — stand in your base and try again")
+            log.say("no camps loaded. Stand in your base and try again")
             return
         end
 
@@ -353,7 +353,7 @@ COMMANDS.stock = function()
                 log.say(string.format("  ... and %d more, full list in Stock.txt", #rows - 15))
             end
             if chests == 0 then
-                log.say("  no chests answered — ceilings would read as unmet")
+                log.say("  no chests answered, so ceilings would read as unmet")
             end
         end
 
@@ -376,7 +376,7 @@ local function handle_command(text)
         local ok, err = pcall(fn)
         if not ok then log.error("command '" .. verb .. "' failed: " .. tostring(err)) end
     else
-        log.say("unknown command '" .. verb .. "' — try " .. prefix .. " help")
+        log.say("unknown command '" .. verb .. "', try " .. prefix .. " help")
     end
     return true
 end
@@ -407,7 +407,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
 
     if cfg.run_on_world_load then
         -- Base camps and their worker slots are not populated the instant
-        -- the controller restarts, so the first look is deliberately late.
+        -- the controller restarts, so the first look is late on purpose.
         ExecuteWithDelay(15000, function() run_pass("world load") end)
     end
     start_timer()
@@ -443,7 +443,7 @@ bind(Key.F10, "F10 (run pass)", function()
     run_pass("keybind", true)
 end)
 
-log.say(string.format("%s %s loaded — %s, %s. Type '%s help' in chat.",
+log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
     MOD_NAME, VERSION,
     cfg.enabled and "enabled" or "disabled",
     cfg.dry_run and "dry run" or "live",
@@ -469,14 +469,14 @@ end)
 do
     local n = ui.bind_mouse(function() return cfg end)
     if n < 2 then
-        log.warn("only " .. n .. " of 2 mouse buttons bound — " ..
+        log.warn("only " .. n .. " of 2 mouse buttons bound, " ..
             "priority clicking will be partly unavailable")
     end
 end
 
 -- Toggles on modifiers rather than fresh F-keys: the plain ones are getting
 -- crowded, and Alt+F10/F11 are clear of every keybind the other installed
--- mods claim. Ctrl is deliberately avoided near UE4SS's own Ctrl+H.
+-- mods claim. Ctrl is avoided because UE4SS uses Ctrl+H itself.
 bind(Key.F10, "Alt+F10 (mode)", function()
     COMMANDS.mode()
 end, { ModifierKey.ALT })
