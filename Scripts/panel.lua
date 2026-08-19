@@ -529,6 +529,57 @@ end
 -- IsHovered is the whole of the hit testing, so the cursor comes on with the
 -- panel and goes back as it was on close.
 local cursor_was = nil
+local input_route = nil
+
+-- Showing a cursor is not enough on its own.
+--
+-- bShowMouseCursor only draws the pointer. Slate routes mouse events to
+-- widgets only when the input mode is UI or Game and UI; in plain game mode
+-- the cursor is visible while every click still goes to the player
+-- controller, so IsHovered never becomes true and nothing in the panel can be
+-- pressed. That is why the first version looked clickable and was not.
+--
+-- The argument list for these differs between engine versions, so each shape
+-- is tried and the one that takes is remembered and logged.
+local function set_input_mode(on)
+    local pc = api.player_controller()
+    if not alive(pc) then return end
+
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not lib then
+        warn_once("noinputlib",
+            "WidgetBlueprintLibrary not found, so the panel may not take clicks")
+        return
+    end
+
+    if not on then
+        pcall(function() lib:SetInputMode_GameOnly(pc) end)
+        return
+    end
+
+    -- EMouseLockMode 0 is DoNotLock, which leaves the camera usable.
+    local shapes = {
+        { "GameAndUI(pc, nil, 0, false)",
+          function() lib:SetInputMode_GameAndUI(pc, nil, 0, false) end },
+        { "GameAndUI(pc, nil, 0)",
+          function() lib:SetInputMode_GameAndUI(pc, nil, 0) end },
+        { "GameAndUI(pc)",
+          function() lib:SetInputMode_GameAndUI(pc) end },
+    }
+
+    for _, shape in ipairs(shapes) do
+        if pcall(shape[2]) then
+            if input_route ~= shape[1] then
+                input_route = shape[1]
+                log.debug("input mode set via " .. shape[1])
+            end
+            return
+        end
+    end
+
+    warn_once("noinputmode",
+        "could not switch to Game and UI input, so clicks may not reach the panel")
+end
 
 local function set_cursor(on)
     local pc = api.player_controller()
@@ -543,6 +594,8 @@ local function set_cursor(on)
             cursor_was = nil
         end
     end)
+
+    set_input_mode(on)
 end
 
 function M.toggle()
