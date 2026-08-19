@@ -419,8 +419,8 @@ end
 -- pure primaries, which read harshly against this darker UI.
 --
 -- Colour carries the PRIORITY, so "assigned" cannot also be green. It gets
--- white instead — unmistakable against the whole scale, and it reads as
--- "this is the one live right now".
+-- cyan, which sits outside the whole green-to-red scale and stays legible
+-- next to the grey of priority 5.
 local COLOUR = {
     p1       = { R = 0.25, G = 1.00, B = 0.25, A = 1.0 },
     p2       = { R = 1.00, G = 1.00, B = 0.15, A = 1.0 },
@@ -428,7 +428,10 @@ local COLOUR = {
     p4       = { R = 1.00, G = 0.25, B = 0.18, A = 1.0 },
     p5       = { R = 0.62, G = 0.62, B = 0.62, A = 1.0 },
     off      = { R = 0.42, G = 0.42, B = 0.45, A = 0.9 },
-    assigned = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
+    -- Cyan, not white: white against grey p5 was too close to read, and a
+    -- priority-5 cell that happens to be assigned is exactly the case where
+    -- the difference matters most.
+    assigned = { R = 0.35, G = 0.90, B = 1.00, A = 1.0 },
     blank    = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
 }
 
@@ -599,16 +602,19 @@ end
 -- Status strip
 -- ---------------------------------------------------------------------------
 
+-- Deliberately terse. The log summary is around 120 characters and ran off
+-- the side of the screen; the strip has roughly 50 to work with.
 function M.compose(cfg, report)
     local head = string.format("PWP  %s  %s  cap %s",
         cfg.enabled and (cfg.dry_run and "DRY RUN" or "LIVE") or "OFF",
         cfg.assignment_mode,
         cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "-")
 
-    if report and report.summary and report.summary ~= "" then
-        return head .. "  |  " .. report.summary
-    end
-    return head .. "  |  no pass has run yet"
+    if not report then return head .. "   no pass yet" end
+    if (report.camps or 0) == 0 then return head .. "   no base camp" end
+
+    return string.format("%s   %d/%d pals   %d queued",
+        head, report.placed or 0, report.pals or 0, report.queued or 0)
 end
 
 local function attach_strip(menu, tree, root)
@@ -630,14 +636,14 @@ local function attach_strip(menu, tree, root)
     if pcall(function() slot = root:AddChildToCanvas(tb) end) and slot then
         pcall(function()
             slot:SetAutoSize(true)
-            -- Anchored to the bottom-left of the canvas and lifted clear of
-            -- the hotbar and the game's own toast line, which the first
-            -- attempt sat directly on top of. X lines it up with the menu
-            -- panel's left edge rather than the screen's.
-            slot:SetAnchors({ Minimum = { X = 0.0, Y = 1.0 },
-                              Maximum = { X = 0.0, Y = 1.0 } })
-            slot:SetAlignment({ X = 0.0, Y = 1.0 })
-            slot:SetPosition({ X = 160.0, Y = -155.0 })
+            -- The menu's own title bar, to the right of "Monitoring Stand".
+            -- It is the one wide empty run on this screen: the bottom of the
+            -- canvas put the strip over the hotbar, and lifting it only moved
+            -- it onto the panel border and the pal info card.
+            slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 },
+                              Maximum = { X = 0.0, Y = 0.0 } })
+            slot:SetAlignment({ X = 0.0, Y = 0.5 })
+            slot:SetPosition({ X = 410.0, Y = 176.0 })
         end)
         placed = true
     elseif pcall(function() slot = root:AddChildToOverlay(tb) end) and slot then

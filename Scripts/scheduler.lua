@@ -368,9 +368,16 @@ function M.run_pass(cfg)
 
     -- Held for the stand panel, which renders between passes and has no other
     -- way to know what the last one concluded.
+    -- The counts the stand strip needs, kept apart from the log summary:
+    -- the strip has roughly fifty characters of room and the log line runs to
+    -- a hundred and twenty.
     M.last_report = {
         lines = stats.lines,
         summary = (stats.camps > 0) and M.format_stats(cfg, stats) or "no base camp loaded",
+        camps = stats.camps,
+        pals = stats.pals,
+        placed = (cfg.dry_run and stats.would_assign or stats.assigned) + stats.unchanged,
+        queued = stats.queued,
     }
 
     return stats

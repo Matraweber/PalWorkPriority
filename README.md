@@ -149,8 +149,9 @@ Everything the mod decides is shown on the vanilla work-suitability screen, read
 - **A number in each grid cell** — the priority in force for that Pal and work type, replacing
   the vanilla checkbox. Coloured on RimWorld's work-tab scale: **1 green, 2 yellow, 3 orange,
   4 red, 5 grey**. A dim **X** means never assign.
-- **White** marks the cell the last pass actually assigned. Colour is what you asked for, white is
-  what happened.
+- **Cyan** marks the cell the last pass actually assigned. Colour is what you asked for, cyan is
+  what happened. It sits outside the green-to-red scale on purpose — white was tried first and
+  was too close to the grey of priority 5, which is exactly where the distinction matters.
 - **Work a Pal cannot do keeps its vanilla dash.** A number there would claim the Pal will do
   something it is incapable of, so those cells are left alone entirely.
 - **A status strip** along the bottom: mode, cap, dry/live, and the last pass summary.
