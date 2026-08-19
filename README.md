@@ -82,16 +82,18 @@ This copies `Scripts/` into `<Palworld>/Mods/NativeMods/UE4SS/Mods/PalWorkPriori
 mod to `mods.txt`, keeping the built-in `Keybinds` entry last as UE4SS requires. Pass
 `-GamePath` if Palworld is not at the default Steam location, and `-Remove` to uninstall.
 
-It also writes a `Mods/ManagedMods/PalWorkPriority` record and an `ActiveModList` line in
-`PalModSettings.ini`, which is what puts the mod in the in-game list under **Options > Mod
-Management** so it can be toggled there like a subscribed one. Palworld's manager may reconcile
-that list against real Steam subscriptions and drop a package it cannot find, so treat the
-in-game toggle as a convenience rather than something to rely on. `PalModSettings.ini` is backed
-up to `.bak-pwp` before it is first touched, and `-Remove` puts both files back.
+A mod installed this way does **not** appear under **Options > Mod Management**. That list comes
+from Palworld's own manager, which only knows mods it deployed from a Steam subscription. Writing
+a `Mods/ManagedMods` record and an `ActiveModList` line by hand was tried and does not work: the
+game deletes both on the next launch, because it reconciles that list against real subscriptions
+and drops anything it cannot match.
 
-Every file written goes out as UTF-8 without a byte-order mark, because that is how Palworld and
-UE4SS write theirs. Windows PowerShell adds one by default, and a BOM in `PalModSettings.ini`
-risks the game failing to parse its own mod list.
+To get the in-game toggle, upload the mod to the Steam Workshop and subscribe to it. The Workshop
+item can be set to **private** visibility, so only you can see it, which gives full integration
+without publishing anything publicly.
+
+Files are written as UTF-8 without a byte-order mark, matching how UE4SS writes `mods.txt`
+itself. Windows PowerShell adds one by default.
 
 Palworld's own mod loader rewrites `mods.txt` from its active mod list on launch. If the mod
 stops loading after a game update or a Workshop subscription change, re-run the script.

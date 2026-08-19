@@ -39,10 +39,9 @@ if (-not (Test-Path $ModsRoot)) {
     throw "UE4SS mods folder not found at $ModsRoot. Check -GamePath, or install UE4SS first."
 }
 
-# Windows PowerShell's -Encoding UTF8 writes a byte-order mark. None of the
-# files touched here have one: Palworld writes its own JSON and INI without,
-# and UE4SS's mods.txt likewise. A BOM in PalModSettings.ini risks the game
-# failing to parse its own mod list, so every write goes through here.
+# Windows PowerShell's -Encoding UTF8 writes a byte-order mark, and mods.txt
+# has none of its own. UE4SS tolerated the one we were adding, but matching
+# how the file is actually written costs nothing.
 function Write-Utf8NoBom {
     param([string]$Path, [string[]]$Lines)
     $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -76,60 +75,6 @@ function Set-ModsTxtEntry {
     Write-Utf8NoBom -Path $ModsTxt -Lines $lines
 }
 
-# Palworld's own mod manager (Options > Mod Management) only lists mods it
-# deployed itself. It records each one under Mods/ManagedMods/<PackageName>
-# and enables it with an ActiveModList line in PalModSettings.ini.
-#
-# Writing those by hand makes a locally installed mod appear in that list, so
-# it can be toggled in game like a subscribed one. Whether the entry survives
-# is up to the manager: it may reconcile against actual Steam subscriptions
-# and drop a package it cannot find. Uninstall puts everything back either
-# way, and the settings file is backed up before being touched.
-$ManagedDir = Join-Path $GamePath "Mods\ManagedMods\$ModName"
-$SettingsIni = Join-Path $GamePath 'Mods\PalModSettings.ini'
-
-function Set-ManagedEntry {
-    param([bool]$Enabled)
-
-    if ($Enabled) {
-        New-Item -ItemType Directory -Force -Path $ManagedDir | Out-Null
-        Copy-Item -Force -Path (Join-Path $Source 'Info.json') -Destination $ManagedDir
-
-        $files = Get-ChildItem -Recurse -File (Join-Path $Target 'Scripts') |
-            ForEach-Object {
-                "Mods/NativeMods/UE4SS/Mods/$ModName/Scripts/" + $_.Name
-            }
-        $files += "Mods/ManagedMods/$ModName/Info.json"
-
-        # WorkshopId 0 marks this as a local install rather than a subscription.
-        $manifest = [ordered]@{
-            Files = $files
-            Dirs  = @("Mods/NativeMods/UE4SS/Mods/$ModName/Scripts",
-                      "Mods/ManagedMods/$ModName")
-            Backups = @()
-            WorkshopId = 0
-            LastInstallTimeUtc = (Get-Date).ToUniversalTime().ToString('o')
-        }
-        Write-Utf8NoBom -Path (Join-Path $ManagedDir 'InstallManifest.json') `
-            -Lines ($manifest | ConvertTo-Json -Depth 4)
-    } elseif (Test-Path $ManagedDir) {
-        Remove-Item -Recurse -Force $ManagedDir
-    }
-
-    if (-not (Test-Path $SettingsIni)) {
-        Write-Warning "PalModSettings.ini not found; in-game toggle unavailable."
-        return
-    }
-
-    $backup = "$SettingsIni.bak-pwp"
-    if (-not (Test-Path $backup)) { Copy-Item $SettingsIni $backup }
-
-    $lines = @(Get-Content $SettingsIni)
-    $lines = @($lines | Where-Object { $_ -ne "ActiveModList=$ModName" })
-    if ($Enabled) { $lines += "ActiveModList=$ModName" }
-    Write-Utf8NoBom -Path $SettingsIni -Lines $lines
-}
-
 if ($Remove) {
     if (Test-Path $Target) {
         Remove-Item -Recurse -Force $Target
@@ -138,7 +83,6 @@ if ($Remove) {
         Write-Host "nothing to remove at $Target"
     }
     Set-ModsTxtEntry -Enabled $false
-    Set-ManagedEntry -Enabled $false
     Write-Host "unregistered $ModName"
     return
 }
@@ -153,10 +97,11 @@ Copy-Item -Recurse -Path (Join-Path $Source 'Scripts') -Destination $ScriptsTarg
 Copy-Item -Force -Path (Join-Path $Source 'Info.json') -Destination $Target
 
 Set-ModsTxtEntry -Enabled $true
-Set-ManagedEntry -Enabled $true
 
 Write-Host "deployed to $Target"
-Write-Host "registered $ModName in mods.txt and ManagedMods"
+Write-Host "registered $ModName in mods.txt"
 Write-Host ""
-Write-Host "Launch Palworld. The mod should appear under Options > Mod Management,"
-Write-Host "and F10 runs a pass once you are in a base."
+Write-Host ""
+Write-Host "Launch Palworld and press F10 inside a base."
+Write-Host "This install does NOT appear under Options > Mod Management: that list is"
+Write-Host "built from Steam subscriptions, and Palworld deletes entries it cannot match."
