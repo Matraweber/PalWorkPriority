@@ -231,56 +231,96 @@ local function run_camp(cfg, camp, stats)
     end
 
     local buckets = build_buckets(cfg, works, totals, stats)
-    local claimed = {}
-    local claimed_count = 0
-    local exhausted = false
 
-    for _, bucket in ipairs(buckets) do
-        for _, w in ipairs(bucket.works) do
-            -- Once every pal is busy there is nothing left to decide. The
-            -- remaining work is not a failure to staff, it is simply more
-            -- work than pals, so it is counted apart from unstaffed.
-            if exhausted then
-                stats.queued = stats.queued + 1
-                goto continue_work
-            end
+    local claimed, claimed_count = {}, 0
+    local taken = {}                  -- work type -> pals placed on it this pass
+    local cursor = {}                 -- per bucket, the next work to consider
+    for i = 1, #buckets do cursor[i] = 1 end
 
-            local pal, rank = best_candidate(cfg, pals, claimed, bucket.name, bucket.value)
+    local spread = (cfg.assignment_mode ~= "fill")
+    local cap = tonumber(cfg.max_pals_per_work_type)
 
-            if pal then
-                claimed[pal.key] = true
-                claimed_count = claimed_count + 1
-                if claimed_count >= #pals then exhausted = true end
-
-                local wkey = work_key(w)
-                if last_assignment[wkey] == pal.key then
-                    stats.unchanged = stats.unchanged + 1
-                else
-                    local line = string.format(
-                        "%s (p%d) -> %s rank %d",
-                        workdefs.label(bucket.name), bucket.prio, pal.name, rank)
-
-                    if cfg.dry_run then
-                        stats.would_assign = stats.would_assign + 1
-                        log.info("[dry run] " .. line)
-                    else
-                        local ok, err = api.assign(camp_id, api.work_id(w), pal.id)
-                        if ok then
-                            last_assignment[wkey] = pal.key
-                            stats.assigned = stats.assigned + 1
-                            log.info(line)
-                        else
-                            stats.failed = stats.failed + 1
-                            log.warn("assign failed for " .. line .. ": " .. tostring(err))
-                        end
-                    end
-                end
-            else
-                stats.unstaffed = stats.unstaffed + 1
-            end
-
-            ::continue_work::
+    -- Places one pal on one work. Returns the pal, or nil when nothing
+    -- qualified — in which case the work is spent and counted unstaffed.
+    local function place(bucket, w)
+        local pal, rank = best_candidate(cfg, pals, claimed, bucket.name, bucket.value)
+        if not pal then
+            stats.unstaffed = stats.unstaffed + 1
+            return nil
         end
+
+        claimed[pal.key] = true
+
+        local wkey = work_key(w)
+        if last_assignment[wkey] == pal.key then
+            stats.unchanged = stats.unchanged + 1
+            return pal
+        end
+
+        local line = string.format("%s (p%d) -> %s rank %d",
+            workdefs.label(bucket.name), bucket.prio, pal.name, rank)
+
+        if cfg.dry_run then
+            stats.would_assign = stats.would_assign + 1
+            log.info("[dry run] " .. line)
+        else
+            local ok, err = api.assign(camp_id, api.work_id(w), pal.id)
+            if ok then
+                last_assignment[wkey] = pal.key
+                stats.assigned = stats.assigned + 1
+                log.info(line)
+            else
+                stats.failed = stats.failed + 1
+                log.warn("assign failed for " .. line .. ": " .. tostring(err))
+            end
+        end
+        return pal
+    end
+
+    -- Buckets are walked in priority order, repeatedly.
+    --
+    -- In spread mode each visit places at most ONE pal, so every work type
+    -- gets somebody before any of them gets a second — a base with 46
+    -- pending transport jobs no longer swallows the whole roster before
+    -- mining is even considered. In fill mode a visit places as many as it
+    -- can, which is the older "priority 1 first, completely" reading.
+    --
+    -- Either way a work type stops accepting pals once it holds cap of them.
+    -- Laps end when one produces no assignment at all, or when every pal is
+    -- busy.
+    local lap_progress = true
+    while lap_progress and claimed_count < #pals do
+        lap_progress = false
+
+        for bi, bucket in ipairs(buckets) do
+            if claimed_count >= #pals then break end
+
+            local quota = spread and 1 or #bucket.works
+            local placed = 0
+
+            while placed < quota
+                and cursor[bi] <= #bucket.works
+                and claimed_count < #pals
+                and not (cap and (taken[bucket.name] or 0) >= cap) do
+
+                local w = bucket.works[cursor[bi]]
+                cursor[bi] = cursor[bi] + 1
+
+                if place(bucket, w) then
+                    claimed_count = claimed_count + 1
+                    taken[bucket.name] = (taken[bucket.name] or 0) + 1
+                    placed = placed + 1
+                    lap_progress = true
+                end
+            end
+        end
+    end
+
+    -- Work never reached: the roster ran out, or its work type hit the cap.
+    -- Not a failure to staff, just more work than there are pals to do it.
+    for bi, bucket in ipairs(buckets) do
+        local left = #bucket.works - (cursor[bi] - 1)
+        if left > 0 then stats.queued = stats.queued + left end
     end
 end
 
@@ -324,7 +364,7 @@ function M.format_stats(cfg, stats)
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
     if stats.failed > 0 then parts[#parts + 1] = stats.failed .. " failed" end
     if stats.unstaffed > 0 then parts[#parts + 1] = stats.unstaffed .. " unstaffed" end
-    if stats.queued > 0 then parts[#parts + 1] = stats.queued .. " queued (all pals busy)" end
+    if stats.queued > 0 then parts[#parts + 1] = stats.queued .. " queued" end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " unreadable" end
     if stats.unconfigured > 0 then parts[#parts + 1] = stats.unconfigured .. " unconfigured" end
     if stats.disabled_work > 0 then parts[#parts + 1] = stats.disabled_work .. " off" end

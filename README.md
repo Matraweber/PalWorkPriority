@@ -16,8 +16,9 @@ Each pass, per base camp:
 
 1. every pending work is bucketed by the suitability it needs
 2. buckets whose resource ceiling is already met are dropped
-3. surviving buckets are visited in your configured priority order
-4. inside a bucket, each work takes the highest-ranked Pal not already claimed this pass
+3. surviving buckets are visited in your configured priority order, repeatedly
+4. each visit places one Pal (spread) or as many as it can (fill), up to the cap
+5. within a work type, the highest-ranked Pal not already claimed takes the job
 
 A Pal is claimed at most once per pass. That single rule is what makes priority mean something:
 priority 1 picks from everyone, priority 5 picks from the leftovers.
@@ -85,6 +86,37 @@ priority. `false` removes the Pal from that work type entirely.
 
 `min_suitability_rank` stops low-rank Pals from occupying jobs a specialist should be doing.
 
+## Spread or fill
+
+Priority alone is not enough. A base with 46 pending transport jobs and priority 1 on
+Transporting will hand every carrier in the roster to hauling and leave Mining and Handiwork with
+nobody — including three rank-6 Anubis pinned to carrying boxes.
+
+Two dials control that, and they combine:
+
+```lua
+assignment_mode = "spread",     -- or "fill"
+max_pals_per_work_type = 3,     -- or false for no limit
+```
+
+**`spread`** walks the priority list giving each work type one Pal, then walks it again for
+seconds, and again for thirds. Everything gets covered before anything gets doubled.
+**`fill`** lets a work type take every Pal it can before the next type is considered at all —
+the strict reading of priority, if that is what you want.
+
+**`max_pals_per_work_type`** caps either mode. Spread with a cap of 3 means one each, then
+seconds, then thirds, and no more.
+
+| Mode | Cap | Behaviour |
+| --- | --- | --- |
+| `fill` | `false` | Priority 1 absorbs the whole roster |
+| `fill` | `2` | Each type takes at most 2, in strict priority order |
+| `spread` | `false` | One each, then seconds, until Pals run out |
+| `spread` | `3` | One each, then seconds, then thirds, then stop |
+
+Both are togglable in game without a restart: `!pwp mode` and `!pwp cap`, or **Alt+F10** and
+**Alt+F11**. Each toggle runs a fresh pass immediately so you can see the result.
+
 ## Resource ceilings
 
 A work type can be suspended once the base already holds enough of what it produces. The Pals
@@ -119,10 +151,13 @@ configured.
 | `!pwp dry` / `!pwp live` | log-only, or actually assign |
 | `!pwp on` / `!pwp off` | enable or disable |
 | `!pwp reload` | re-read `config.lua` without restarting |
+| `!pwp mode` | toggle spread / fill |
+| `!pwp cap` | cycle max Pals per work type |
 | `!pwp stock` | print base storage by item id, and write `Stock.txt` |
 | `!pwp discover` | write `Discovery.txt` with live work probes |
 
-`F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage — for sessions where chat input is not available.
+`F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles
+spread/fill and `Alt+F11` cycles the cap — for sessions where chat input is not available.
 
 ## How a work's type is determined
 

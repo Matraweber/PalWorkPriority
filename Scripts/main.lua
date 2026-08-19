@@ -76,6 +76,26 @@ local function validate(c)
         end
     end
 
+    if c.assignment_mode ~= "spread" and c.assignment_mode ~= "fill" then
+        if c.assignment_mode ~= nil then
+            log.warn("config.assignment_mode should be \"spread\" or \"fill\", got '" ..
+                tostring(c.assignment_mode) .. "' — using spread")
+        end
+        c.assignment_mode = "spread"
+    end
+
+    -- false and nil both mean no limit; anything else has to be a count.
+    if c.max_pals_per_work_type ~= nil and c.max_pals_per_work_type ~= false then
+        local n = tonumber(c.max_pals_per_work_type)
+        if not n or n < 1 then
+            log.warn("config.max_pals_per_work_type should be a number >= 1 or false" ..
+                " — treating as no limit")
+            c.max_pals_per_work_type = false
+        else
+            c.max_pals_per_work_type = math.floor(n)
+        end
+    end
+
     c.pal_overrides = c.pal_overrides or {}
     c.min_suitability_rank = c.min_suitability_rank or 1
     c.interval_seconds = math.max(5, tonumber(c.interval_seconds) or 30)
@@ -157,9 +177,12 @@ COMMANDS.help = function()
     log.say("  " .. p .. " live      actually assign pals")
     log.say("  " .. p .. " on / off  enable or disable")
     log.say("  " .. p .. " reload    re-read config.lua")
+    log.say("  " .. p .. " mode      spread <-> fill")
+    log.say("  " .. p .. " cap       cycle max pals per work type")
     log.say("  " .. p .. " stock     print base storage by item id")
     log.say("  " .. p .. " discover  write Discovery.txt")
-    log.say("keys: F10 pass, F11 Discovery.txt, F12 stock")
+    log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
+    log.say("      Alt+F10 mode, Alt+F11 cap")
 end
 
 COMMANDS.status = function()
@@ -176,10 +199,44 @@ COMMANDS.status = function()
     log.say("  work type read from: " ..
         (probe and (probe.kind .. " " .. probe.name) or "not resolved yet"))
     log.say("  enum offset: " .. workdefs.enum_offset)
+    log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
+        (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
 end
 
 COMMANDS.run = function()
     run_pass("manual", true)
+end
+
+-- Both toggles forget the assignment memo. Changing how pals are spread
+-- makes every remembered placement stale, and without the reset the next
+-- pass would skip re-issuing the ones that happen to match.
+COMMANDS.mode = function()
+    cfg.assignment_mode = (cfg.assignment_mode == "fill") and "spread" or "fill"
+    scheduler.forget()
+    log.say("assignment mode: " .. cfg.assignment_mode ..
+        (cfg.assignment_mode == "spread"
+            and " (one pal each, then seconds)"
+            or " (priority 1 takes everyone it can)"))
+    run_pass("mode change", true)
+end
+
+-- off -> 1 -> 2 -> 3 -> 4 -> off
+COMMANDS.cap = function()
+    local current = tonumber(cfg.max_pals_per_work_type)
+    local next_cap
+    if current == nil then
+        next_cap = 1
+    elseif current >= 4 then
+        next_cap = false
+    else
+        next_cap = current + 1
+    end
+
+    cfg.max_pals_per_work_type = next_cap
+    scheduler.forget()
+    log.say("max pals per work type: " ..
+        (next_cap and tostring(next_cap) or "no limit"))
+    run_pass("cap change", true)
 end
 
 COMMANDS.dry = function()
@@ -320,8 +377,14 @@ end)
 
 -- A keybind that fails to register does so silently, which then reads as
 -- "the mod is broken" the first time a key does nothing. Report it.
-local function bind(key, label, fn)
-    local ok, err = pcall(function() RegisterKeyBind(key, fn) end)
+local function bind(key, label, fn, modifiers)
+    local ok, err = pcall(function()
+        if modifiers then
+            RegisterKeyBind(key, modifiers, fn)
+        else
+            RegisterKeyBind(key, fn)
+        end
+    end)
     if not ok then
         log.warn("could not bind " .. label .. ": " .. tostring(err))
     end
@@ -352,3 +415,14 @@ end)
 bind(Key.F12, "F12 (stock)", function()
     COMMANDS.stock()
 end)
+
+-- Toggles on modifiers rather than fresh F-keys: the plain ones are getting
+-- crowded, and Alt+F10/F11 are clear of every keybind the other installed
+-- mods claim. Ctrl is deliberately avoided near UE4SS's own Ctrl+H.
+bind(Key.F10, "Alt+F10 (mode)", function()
+    COMMANDS.mode()
+end, { ModifierKey.ALT })
+
+bind(Key.F11, "Alt+F11 (cap)", function()
+    COMMANDS.cap()
+end, { ModifierKey.ALT })

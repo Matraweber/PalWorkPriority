@@ -47,6 +47,25 @@ return {
         Anyone = 3,              -- work needing no particular skill
     },
 
+
+    -- How pals are spread across work types.
+    --
+    --   "spread" every work type gets one pal in priority order, then the
+    --            list is walked again for seconds, and again for thirds
+    --   "fill"   a work type takes every pal it can before the next type is
+    --            considered at all
+    --
+    -- Spread is the default because a base with dozens of pending transport
+    -- jobs will otherwise put every carrier on hauling and leave mining and
+    -- handiwork with nobody. Fill is the stricter reading of "priority" if
+    -- that is what you actually want.
+    assignment_mode = "spread",
+
+    -- Never put more than this many pals on one work type in a single pass.
+    -- Set to false for no limit. Combines with either mode: spread with a
+    -- cap of 3 means one each, then seconds, then thirds, and no more.
+    max_pals_per_work_type = 3,
+
     -- A pal needs at least this suitability rank to be considered. 1 means
     -- "has the skill at all"; raise it to stop rank-1 pals clogging jobs a
     -- rank-3 pal should be doing.
