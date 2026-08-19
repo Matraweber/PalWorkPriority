@@ -13,8 +13,9 @@ PalPriority ships as **two mods**, not one:
     PalPriority       ue4ss/Mods/PalPriority/       server side, 1768 lines
     PalPriorityUI     ue4ss/Mods/PalPriorityUI/     client side, 1296 lines
 
-That split is the whole answer. The scheduler needs authority, the interface
-needs a screen, and a dedicated server has one and not the other.
+That split names the real problem, even if we will not copy it. The scheduler
+needs authority, the interface needs a screen, and a dedicated server has one
+and not the other.
 
 ### The transport
 
@@ -48,24 +49,52 @@ worth taking on trust rather than rediscovering:
   component belongs to a real modded player, so it becomes the push target and
   evicts anything found by a boot-time `FindFirstOf` whose writes no-op.
 
+## One mod, two roles
+
+PalPriority ships two mods, and its own source gives no technical reason for
+it. The UI half even falls back to reading the engine's `priorities.lua`
+straight off disk when the two are on the same machine, which is a workaround
+a single mod would never need.
+
+**One mod that works out its own role is simpler, and it is what a server
+owner and their players should be asked to install.** The same file, the same
+version, everywhere.
+
+Two questions decide the role, and both can be answered at runtime:
+
+    am I the authority?    api.has_authority(), already written.
+                           PalGameMode exists only where the world is run.
+
+    do I have a screen?    the UI already answers this by finding, or failing
+                           to find, WBP_PalOverallUILayout_C.
+
+That gives four cases from two checks:
+
+| | Authority | Screen | Runs |
+| --- | --- | --- | --- |
+| Single player | yes | yes | both, no networking at all |
+| Listen server host | yes | yes | both, and serves remote clients |
+| Dedicated server | yes | no | scheduler only, headless |
+| Any client | no | yes | interface only, edits sent to the server |
+
+The host case is where a single mod is plainly better. Scheduler and panel are
+in the same Lua state, so an edit is a function call. There is no RPC to make
+work, and nothing to keep in step. PalPriority reaches for the filesystem here
+precisely because its two halves cannot call each other.
+
 ## Target shape
 
-    PalWorkPriority          server: the decision and the writes
-      config.lua               policy, read from disk on the server
-      caps.txt                 the rules, owned by the server
-      priorities.txt           per-pal priorities, owned by the server
-      palapi, workdefs, demand, scheduler, store, caps, log
-      net_server.lua           NEW: receive commands, push state
+    PalWorkPriority/Scripts/
+      palapi, workdefs, demand, scheduler, store, caps, log    unchanged
+      config.lua, caps.txt, priorities.txt   on whichever machine has authority
+      ui.lua, panel.lua, items.lua                             unchanged
+      net.lua      NEW: one module, both directions, role-aware
 
-    PalWorkPriorityUI        client: the screens
-      palapi (read-only parts), workdefs, log
-      ui.lua                   the grid on the Monitoring Stand
-      panel.lua                the rules panel
-      items.lua                the item list for the picker
-      net_client.lua           NEW: send commands, receive state
+`net.lua` is the only new file. It sends when there is no authority, receives
+when there is, and does neither when both roles sit in the same process.
 
 Nothing in `scheduler.lua`, `caps.lua`, `workdefs.lua` or `items.lua` changes.
-They are already pure enough to move. The work is in what talks to them.
+They are already pure enough. The work is all in what talks to them.
 
 ## Phase 0: prove the transport
 
@@ -85,23 +114,25 @@ Gate: if `Request_Server_int32` does not cross on a real dedicated server, or
 the server rejects it, every phase below is void and the answer is a
 server-side mod with no interface at all.
 
-## Phase 1: split Core and UI
+## Phase 1: separate the roles
 
-Mechanical, and safe to do before Phase 0 pays off, because both halves still
-work standalone in single player.
+No files move. The change is that each half asks whether it should be doing
+anything, instead of assuming it should.
 
-1. Core refuses to run a pass unless `api.has_authority()`. That check already
-   exists and already gates the demand fallback.
-2. UI never runs a pass, never writes a permission flag, never touches
-   `caps.txt`. It renders what it is told and sends what was clicked.
-3. Shared modules get copied into both packages. Two copies of `workdefs.lua`
-   is worse than one, but a shared folder that only exists when both mods are
-   installed is worse still.
-4. `tools/deploy.ps1` learns to deploy both, and `tools/luacheck.py` runs over
-   both trees.
+1. The scheduler runs only when `api.has_authority()`. Today it runs anywhere
+   and falls back to estimating demand, which is right for a client that
+   cannot see the pulses but wrong now that a client should not be deciding
+   anything at all.
+2. The panel and the grid keep self-gating on finding the UI layout. On a
+   dedicated server they find nothing, warn once, and stop polling. No new
+   check is needed for headless; not finding a screen is the check.
+3. `store` and `caps` become server-owned. On a client they hold whatever the
+   server last sent, and edits become requests rather than local writes.
+4. An edit calls `net.submit(change)`. With authority that applies it directly;
+   without, it goes out over the transport. One call site either way.
 
-At the end of this phase the mod behaves exactly as it does today in single
-player, with the code in its final shape.
+At the end of this phase single player behaves exactly as it does today, with
+the code in its final shape and nothing networked yet.
 
 ## Phase 2: authority-routed writes
 
@@ -159,17 +190,12 @@ diverging.
 
 ## Phase 5: packaging
 
-Two Workshop items, following the reference:
+One Workshop item. The server owner installs it, every player installs it, and
+single player installs it. Nothing to explain and nothing to get wrong, which
+is the main thing a split costs.
 
-- **Pal Work Priority** (Core). The server owner installs this. On its own it
-  works headlessly from `config.lua`.
-- **Pal Work Priority UI**. Every player installs this, including the host.
-
-Single player needs both, which is worth saying plainly on both store pages
-because it is the one thing people will get wrong.
-
-`Info.json` gains a `Dependencies` entry on the UI side pointing at the Core's
-`PackageName`, so Palworld's own loader enforces the pairing.
+`Info.json` needs no change beyond the version, and there is no second package
+to keep in step.
 
 ## Risks, in the order they are likely to bite
 
@@ -185,13 +211,14 @@ so those should be batched per pal rather than sent per cell.
 toggle hook synchronously. PalPriority carries an explicit guard flag for
 this. Ours will need the same.
 
-**Version skew.** A Core and UI from different releases will disagree about
-the protocol. Send a version in `PWP_Hello` and have the server say so once
-rather than behaving strangely.
+**A hook fires on the machine that makes the call, not only the one that
+receives it.** A client hooking `Request_Server_int32` sees its own outgoing
+messages. Every receive handler has to open by checking its role and returning
+if it is the wrong one, or a client will happily answer its own requests.
 
-**Two mods, one folder.** Palworld's installer writes the Workshop copy over
-`Scripts/`, which has already bitten this project once. Two packages doubles
-the surface for that.
+**Version skew is gone, and that is worth naming.** With one package a client
+and server cannot be running different protocol versions, because they cannot
+be running different files. That is a real advantage of not splitting.
 
 ## What does not change
 
