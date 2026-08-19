@@ -26,10 +26,14 @@ local log = require("log")
 
 local M = {}
 
--- Pulses arrive every few seconds, so this is deliberately generous: a job
--- wrongly aged out costs a pal until the next pulse, where a job aged out too
--- slowly only briefly overstates demand.
-M.FRESH_SECONDS = 15
+-- How long a job survives without a pulse. This must exceed the worst gap
+-- between re-fires or jobs oscillate in and out of demand and the toggles
+-- flip at pulse frequency; the reference settled on 6 for that reason and
+-- this is deliberately more generous still.
+--
+-- It also has to comfortably exceed the pass interval, or a job can live and
+-- die entirely between two passes and never be seen at all.
+M.FRESH_SECONDS = 25
 
 M.pulses = 0                -- total ever seen
 -- Whether the hook is in place. This, NOT the pulse count, is what says

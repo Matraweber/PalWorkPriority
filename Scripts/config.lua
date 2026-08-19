@@ -15,9 +15,17 @@ return {
     -- assignments look sane on your build, then set this to false.
     dry_run = false,
 
-    -- Seconds between automatic passes. A pass is cheap but not free; below
-    -- about 15 seconds you are just adding hitches.
-    interval_seconds = 30,
+    -- Seconds between automatic passes.
+    --
+    -- Demand is short-lived: a job appears, a pal takes it, and it is gone.
+    -- At 30 seconds the mod was sampling far slower than work arrives and
+    -- could miss a whole job between passes, so a pal was never fenced to
+    -- work that existed only between two samples. The reference reconciles
+    -- every few seconds for exactly this reason.
+    --
+    -- A pass only sends toggles that differ from the game's own state, so a
+    -- steady base costs almost nothing per pass.
+    interval_seconds = 10,
 
     -- "debug" | "info" | "warn" | "error"
     log_level = "info",
