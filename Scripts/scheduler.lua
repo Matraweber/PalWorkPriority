@@ -131,10 +131,19 @@ local function plan_fences(cfg, pals, demand, stats)
     local cap = tonumber(cfg.max_pals_per_work_type)
     local spread = (cfg.assignment_mode ~= "fill")
 
-    -- What a work type can still absorb. Demand is the real limit: three
-    -- pending haul jobs never need a fourth hauler, whatever the priorities
-    -- say. In spread mode lap tightens it further, so every work type gets
-    -- one pal before any gets a second.
+    local function wanted(value)
+        return (demand[value] or 0) > 0
+    end
+
+    -- Whether a work type can still absorb ANOTHER pal. Demand is the real
+    -- limit: three pending haul jobs never need a fourth hauler, whatever the
+    -- priorities say. In spread mode lap tightens it further, so every work
+    -- type gets one pal before any gets a second.
+    --
+    -- This decides only whether a pal is PULLED to a level. It must not
+    -- decide what goes in the fence — doing both meant a pal with two
+    -- priority-1 types lost one of them the moment another pal took the last
+    -- slot on it, and got that work switched off while it was still wanted.
     local function room(value, lap)
         local limit = demand[value] or 0
         if cap and cap < limit then limit = cap end
@@ -157,12 +166,21 @@ local function plan_fences(cfg, pals, demand, stats)
                     for value in pairs(pal.base) do
                         local name = workdefs.name(value)
                         if store.effective(cfg, pal, name, value) == level
-                            and room(value, lap) then
+                            and wanted(value) then
 
                             local rank = api.suitability_rank(pal.param, value)
                             if rank >= cfg.min_suitability_rank then
+                                -- Everything at this level that is wanted goes
+                                -- in the fence, so the pal can move between
+                                -- equally-wanted jobs without a re-plan.
                                 fence[value] = true
-                                if rank > best_rank then best, best_rank = value, rank end
+
+                                -- But only a type with room actually pulls the
+                                -- pal here, and only that counts against the
+                                -- allocation.
+                                if room(value, lap) and rank > best_rank then
+                                    best, best_rank = value, rank
+                                end
                             end
                         end
                     end

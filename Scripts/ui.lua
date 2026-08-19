@@ -113,17 +113,20 @@ local function invalidate_cells()
     cell_row = {}
 end
 
--- The menu is gone or going: unlike a scroll rebind, this really does
--- destroy the cell widgets, so the injected map is cleared here rather than
--- in invalidate_cells.
+-- Lost sight of the menu. Only the lookups are dropped — every reference to
+-- something we injected is kept, and alive() decides whether it is still
+-- usable.
+--
+-- Clearing those maps here was wrong for the same reason it was wrong in
+-- invalidate_cells. detach fires whenever the menu is not found, including
+-- the transient case where it is merely reported invisible for a frame; the
+-- widgets are still very much alive, and dropping the references made the
+-- next tick inject a second copy on top of the first. That is what was
+-- rendering the status strip twice, its two versions overlapping into
+-- unreadable doubled glyphs.
 function M.detach()
-    strip = nil
-    strip_menu = nil
     strip_last = nil
     menu_ref = nil
-    cell_text = {}
-    cell_last = {}
-    cell_cb = {}
     invalidate_cells()
 end
 
@@ -131,6 +134,13 @@ end
 -- (UE4SS hooks are global), so bind_hooked stays.
 function M.reset()
     M.detach()
+    -- A world switch really does destroy everything, so this is where the
+    -- injected references are dropped rather than in detach.
+    strip = nil
+    strip_menu = nil
+    cell_text = {}
+    cell_last = {}
+    cell_cb = {}
     row_pal = {}
     menu_likely_open = false
     ftext_mode = nil
@@ -666,8 +676,6 @@ end
 
 local function refresh_strip(cfg, report, menu, tree, root)
     if strip_menu ~= menu or not alive(strip) then
-        strip = nil
-        strip_menu = nil
         if not attach_strip(menu, tree, root) then return end
     end
 
