@@ -723,7 +723,7 @@ end
 --
 -- Only useful with the stand open. With it shut the menu has no tree.
 local function dump_tree(f, node, depth, budget)
-    if budget.n >= 500 then return end
+    if budget.n >= 1200 then return end
     if not alive(node) then return end
     budget.n = budget.n + 1
 
@@ -733,14 +733,32 @@ local function dump_tree(f, node, depth, budget)
     local geom = ""
     local slot
     pcall(function() slot = node.Slot end)
-    if alive(slot) and class_name(slot) == "CanvasPanelSlot" then
-        pcall(function()
-            local pos = slot:GetPosition()
-            local size = slot:GetSize()
-            geom = string.format("  pos=(%.0f,%.0f) size=(%.0f,%.0f)",
-                pos.X, pos.Y, size.X, size.Y)
-        end)
+    if alive(slot) then
+        local sclass = class_name(slot) or "?"
+        if sclass == "CanvasPanelSlot" then
+            pcall(function()
+                local pos = slot:GetPosition()
+                local size = slot:GetSize()
+                geom = string.format("  pos=(%.0f,%.0f) size=(%.0f,%.0f)",
+                    pos.X, pos.Y, size.X, size.Y)
+            end)
+        else
+            -- The icon row is a HorizontalBox, so its children carry a
+            -- HorizontalBoxSlot with no coordinates at all. Naming the slot
+            -- class is what says which way a ceiling row has to be built.
+            geom = "  slot=" .. sclass
+        end
     end
+
+    -- A SizeBox is what fixes each icon column's width, so its override is
+    -- the column pitch a ceiling row would have to match.
+    pcall(function()
+        if class_name(node) == "SizeBox" then
+            local w = node.WidthOverride
+            local h = node.HeightOverride
+            if w then geom = geom .. string.format("  w=%.0f h=%.0f", w, h or 0) end
+        end
+    end)
 
     -- The suitability a cell is bound to, so a column can be matched to a
     -- work type by something better than its position in the list.
@@ -754,7 +772,7 @@ local function dump_tree(f, node, depth, budget)
     f:write(string.rep("  ", depth) .. (class_name(node) or "?") ..
         " " .. name .. geom .. "\n")
 
-    if depth >= 9 then
+    if depth >= 15 then
         f:write(string.rep("  ", depth + 1) .. "...\n")
         return
     end

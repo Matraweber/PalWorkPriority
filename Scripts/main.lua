@@ -219,7 +219,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
-    log.say("      Alt+F10 mode, Alt+F11 cap")
+    log.say("      Alt+F10 mode, Alt+F11 cap, Alt+F12 storage scope")
 end
 
 COMMANDS.status = function()
@@ -722,4 +722,11 @@ end, { ModifierKey.ALT })
 
 bind(Key.F11, "Alt+F11 (cap)", function()
     COMMANDS.cap()
+end, { ModifierKey.ALT })
+
+-- Single player has no chat box, so every command behind the chat prefix is
+-- unreachable there. Anything that changes what the mod does needs a key as
+-- well, or it may as well not exist for a single player game.
+bind(Key.F12, "Alt+F12 (storage scope)", function()
+    COMMANDS.scope()
 end, { ModifierKey.ALT })
