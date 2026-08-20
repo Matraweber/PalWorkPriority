@@ -26,21 +26,65 @@ Unreal "helpfully" upgrade the project breaks plugins and serialization.
 Palworld reports engine version 5.1 in UE4SS's own boot log, so this is not
 inferred from a wiki.
 
-Wwise is not optional even though we ship no audio. Palworld uses it, so the
-kit will not build without it.
+Wwise is not optional even though we ship no audio. Confirmed against the kit
+rather than taken on trust: `Wwise` is one of the 46 plugins in
+`Pal.uproject`, and `Source/Pal/Pal.Build.cs` lists `AkAudio` as a module
+dependency, with the Ak headers used across the C++. No `Plugins/Wwise`
+folder ships with the kit, so it will not compile until you supply one.
 
-Install in that order. Wwise before opening the project, or the build fails
-on a missing plugin and the error does not say why.
+## Wwise, which is the awkward part
+
+Audiokinetic has delisted old patch versions from their launcher, so
+2021.1.11 may simply not be offered. Two things make that less fatal than it
+sounds.
+
+The kit pins no version anywhere. It asks for `AkAudio` and nothing more.
+Audiokinetic's own position is that a newer minor is compatible with an older
+one inside the same major, so any 2021.1.x is the target, and 2021.1.11 is
+the number the community happens to have written down.
+
+The integration is done by hand from offline files, not by the launcher's
+project integration. The steps are not guessable:
+
+1. In the launcher, install a Wwise 2021.1.x with **SDK (C++)** ticked.
+2. Go to the launcher's **Unreal Engine** tab, press **Download**, and choose
+   **Offline Integration Files**. That produces `Unreal.5.0.tar.xz`.
+3. Unpack it twice. The `.xz` yields a `.tar`, and the `.tar` yields the
+   folder.
+4. Copy the `Wwise` folder into `PalworldModdingKit/Plugins/`.
+5. Make a `ThirdParty` folder inside it and copy `Win32_vc170`, `x64_vc170`
+   and `include` from the SDK into it.
+6. Duplicate both `vc170` folders as `vc160`. The kit builds against the
+   older toolset name.
+7. Edit `Wwise.uplugin` and change `EngineVersion` from `5.0.0` to `5.1`.
+
+Step 7 is the tell that the exact patch version matters less than the docs
+imply: the integration shipped is for Unreal 5.0 and gets hand-edited to 5.1
+regardless.
+
+Install Wwise before opening the project. Opening it first fails on a missing
+plugin with an error that does not explain itself.
 
 ## Already in place here
 
 Checked on this machine, so these are not steps:
 
+- .NET 6.0.36 runtime, installed.
+- Visual Studio 2022 Community 17.14 with the C++ workload and MSVC
+  **14.38.33130**, the toolset the kit asks for. Visual Studio 2026 is also
+  present; harmless, but Unreal 5.1 wants the 2022 one, so that is the first
+  thing to check if the build complains about a compiler.
+- The modding kit, cloned to `Desktop\PalworldModdingKit`. Its `Pal.uproject`
+  reports `EngineAssociation: 5.1`.
+- Epic Games Launcher, already installed.
 - `BPModLoaderMod : 1` and `BPML_GenericFunctions : 1` are enabled in
   `mods.txt`. That is what makes UE4SS load blueprint mods at all.
 - `Pal/Content/Paks/LogicMods/` exists and holds five working paks, so the
   loading path is already proven on this install.
-- 204 GB free. The engine plus the kit wants roughly 100.
+- 203 GB free. The engine plus the kit wants roughly 100.
+
+Outstanding, both because they need an account login: Unreal Engine 5.1
+through the Epic launcher, and Wwise through the Audiokinetic launcher.
 
 ## What gets built
 
