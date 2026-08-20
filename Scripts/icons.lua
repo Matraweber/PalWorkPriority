@@ -221,6 +221,52 @@ function M.report()
     end
 end
 
+-- Does LoadAsset do anything, and if so what does it want?
+--
+-- Stone and CopperOre resolve while Wood and Berries do not, and all four are
+-- the same kind of asset in the same folder. The obvious reading is that the
+-- two that worked were already in memory and the load is achieving nothing,
+-- but that is a guess, and guesses have been expensive here.
+--
+-- So this asks. Manganese ore is the subject because a copper age base will
+-- not have caused its icon to be loaded by anything else, which the items in
+-- storage cannot promise. Three things are separated: the package path, the
+-- full object path, and simply waiting, since a load that is merely slow
+-- looks exactly like a load that never happened.
+function M.load_test()
+    local leaf = "T_itemicon_Material_ManganeseOre"
+    local package = icondex.FOLDER .. leaf
+    local object = package .. "." .. leaf
+
+    local function look(when)
+        local o
+        pcall(function() o = StaticFindObject(object) end)
+
+        local valid = false
+        if o ~= nil then pcall(function() valid = o:IsValid() end) end
+
+        log.say(string.format("  %-26s found=%s", when, tostring(valid)))
+        return valid
+    end
+
+    log.say("load test on " .. leaf)
+    look("before anything")
+
+    ExecuteInGameThread(function()
+        local ok = pcall(function() LoadAsset(package) end)
+        log.say("  LoadAsset(package) raised no error: " .. tostring(ok))
+        look("after package path")
+
+        ok = pcall(function() LoadAsset(object) end)
+        log.say("  LoadAsset(object) raised no error: " .. tostring(ok))
+        look("after object path")
+    end)
+
+    ExecuteWithDelay(3000, function()
+        look("three seconds later")
+    end)
+end
+
 -- Four real ids followed all the way to an object name, to tell a lookup
 -- problem from a drawing one.
 function M.probe()

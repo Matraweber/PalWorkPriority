@@ -482,6 +482,7 @@ local function picture(key, px, py, size, texture, token)
         -- brush functions at all, which is plainly false given one of them
         -- works, so it is not worth reading and not worth running.
         pcall(function() icons.probe() end)
+        pcall(function() icons.load_test() end)
     end
 
     local host = ensure_root()
