@@ -969,11 +969,9 @@ end, { ModifierKey.CONTROL })
 -- The panel draws its boxes but no text, and every input mode call failed.
 -- Both are the API not being shaped as assumed, so this asks it directly
 -- rather than guessing a second time.
-bind(Key.F7, "Ctrl+F7 (overlay diagnostics)", function()
+bind(Key.F7, "Ctrl+F7 (icon probe)", function()
     ExecuteInGameThread(function()
-        pcall(function() overlay.show() end)
-        pcall(function() overlay.input_signature() end)
-        pcall(function() overlay.text_variants() end)
+        pcall(function() overlay.icon_probe() end)
     end)
 end, { ModifierKey.CONTROL })
 

@@ -360,6 +360,78 @@ function M.input_signature()
     end
 end
 
+-- Where item icons live, and what they are called.
+--
+-- The picker should be a grid of icons rather than a list of internal ids,
+-- which is what Creative Menu does and it is far easier to read. That needs
+-- the texture for an item id, and the path convention is not guessable: a
+-- wrong StaticFindObject just returns nil and tells you nothing about what
+-- the right one would have been.
+--
+-- So look at what is actually loaded. Any icon the game has already shown is
+-- in memory under its real name, and one real name gives the pattern for all
+-- of them.
+function M.icon_probe()
+    log.say("icon probe")
+
+    local seen, shown = {}, 0
+    pcall(function()
+        for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
+            if shown >= 25 then break end
+            if alive(tex) then
+                local full
+                pcall(function() full = tex:GetFullName() end)
+                if type(full) == "string" then
+                    local low = full:lower()
+                    if low:find("itemicon") or low:find("item_icon")
+                        or (low:find("icon") and low:find("item")) then
+                        if not seen[full] then
+                            seen[full] = true
+                            shown = shown + 1
+                            log.say("  " .. full)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if shown == 0 then
+        log.say("  no item icon textures loaded right now")
+        log.say("  open your inventory first so the game loads them, then try again")
+    end
+
+    -- The icon table maps an item to its texture, which is the proper source
+    -- rather than a name pattern. Row names alone say whether it is keyed by
+    -- item id, which decides whether a lookup is even possible.
+    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
+    local tbl
+    pcall(function()
+        tbl = StaticFindObject(
+            "/Game/Pal/DataTable/Item/DT_ItemIconDataTable.DT_ItemIconDataTable")
+    end)
+    log.say("  DT_ItemIconDataTable resolves: " .. tostring(alive(tbl)))
+
+    if lib and alive(tbl) then
+        local rows = {}
+        pcall(function() lib:GetDataTableRowNames(tbl, rows) end)
+        log.say("  icon table rows: " .. #rows)
+
+        local sample = {}
+        for i = 1, math.min(8, #rows) do
+            local name
+            pcall(function()
+                local fn = rows[i]:get()
+                if fn then name = fn:ToString() end
+            end)
+            sample[#sample + 1] = tostring(name)
+        end
+        if #sample > 0 then
+            log.say("  first rows: " .. table.concat(sample, ", "))
+        end
+    end
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")
