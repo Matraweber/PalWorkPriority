@@ -17,29 +17,37 @@ In `Mods/NativeMods/UE4SS/UE4SS-settings.ini`:
 
 The original file is kept beside it as `UE4SS-settings.ini.backup-before-devtools`.
 
-## Hot reload, and how to make it usable
+## Hot reload does not work here
 
-Ctrl+R would replace a two minute restart with about a second. Tried plainly,
-it crashed the game, and the log said why: it does not reload the mod being
-worked on, it tears down and reloads **every** Lua mod installed. Twenty seven
-here, most belonging to other people.
+Ctrl+R would have replaced a two minute restart with about a second. It was
+tried twice and crashed the game both times.
 
-There is no way to scope it to one mod. There is a way to be the only mod:
+The first crash came with a full mod list, and the log made it look like a
+mod count problem: Ctrl+R does not reload the mod being worked on, it tears
+down and reloads every Lua mod installed. So the mod list was cut to one with
+`tools/solo.py`. It crashed again in the same place, which rules out the
+explanation the first crash suggested. The problem is this mod, not its
+neighbours.
 
-    python tools/solo.py on      only this mod loads, Ctrl+R works
+Which is fair enough. Hot reload destroys the Lua state while a self
+rescheduling timer is still pending against it, while hooks are registered,
+and while widgets we built are still in the viewport. Surviving that is real
+work with an uncertain payoff, and each attempt costs a game session to find
+out. It stays off.
+
+`tools/solo.py` is still worth running:
+
+    python tools/solo.py on      only this mod loads
     python tools/solo.py off     everything back as it was
 
-`on` records mods.txt and the UE4SS settings before touching either, and `off`
-restores what was recorded rather than guessing at defaults. In solo mode the
-loop is deploy, Ctrl+R, look. Out of it, hot reload stays off, because with a
-full mod list that key is a crash.
+Not for Ctrl+R, but because starting with one mod instead of twenty seven is
+a much shorter restart, which was most of the point.
 
-Use the script rather than switching mods off by hand, and run it from a
-working setup. A blueprint mod is a Lua mod plus a pak in `Paks/LogicMods`,
-and turning off only the Lua half leaves BPModLoaderMod reaching for mod
-actors that are never coming. That state crashes about a minute into a
-session, and the stack is entirely UE4SS with nothing pointing at the mod you
-were working on, so it reads exactly like a bug in your own code. The script
+`on` records mods.txt and the UE4SS settings before touching either, and `off`
+restores what was recorded rather than guessing at defaults. Run it from a
+working setup, and use it rather than switching mods off by hand: a blueprint
+mod is a Lua mod plus a pak in `Paks/LogicMods`, and turning off only the Lua
+half leaves BPModLoaderMod reaching for mod actors that never come. The script
 moves the paks aside along with the mods, and puts them back.
 
 ## The console

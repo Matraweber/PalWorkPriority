@@ -1,14 +1,24 @@
-"""Turn the game into a development environment, and back again.
+"""Cut the game down to this mod alone, and put it back.
 
-UE4SS can hot reload Lua mods with Ctrl+R, which would replace a two minute
-restart with about a second. It was tried and it crashed the game, and the log
-said why: it does not reload one mod, it tears down and reloads every Lua mod
-installed. Twenty seven of them here, most belonging to other people.
-
-There is no way to scope it to one mod. There is a way to be the only mod.
-
-    python tools/solo.py on      only this mod loads, Ctrl+R works
+    python tools/solo.py on      only this mod loads
     python tools/solo.py off     everything back as it was
+
+What this does not do is make Ctrl+R work.
+
+UE4SS hot reload was the reason this script was written. It crashed the game
+with a full mod list, which looked like a mod count problem, so the mods were
+cut down to one. It crashed again, in the same place, tearing everything down.
+That is twice, and the second time rules out the explanation the first one
+suggested: the problem is this mod, not its neighbours.
+
+Which is fair. Hot reload destroys the Lua state while a self rescheduling
+timer is still pending against it, while hooks are still registered, and while
+widgets we built are still in the viewport. Surviving that is real work with
+an uncertain payoff, and every attempt costs a game session to find out.
+
+So hot reload stays off, and this script is still worth running. Starting with
+one mod instead of twenty seven is a much shorter restart, which is most of
+what was wanted from Ctrl+R anyway.
 
 "on" records the current state of mods.txt and the UE4SS settings before
 touching either, and "off" restores exactly what was recorded rather than
@@ -99,17 +109,18 @@ def turn_on():
         os.rename(LOGIC, LOGIC_HELD)
         print("  blueprint mod paks moved aside")
 
+    # Hot reload stays off. See the note at the top of this file.
     settings = read(SETTINGS)
-    settings = set_ini(settings, "EnableHotReloadSystem", "1")
+    settings = set_ini(settings, "EnableHotReloadSystem", "0")
     settings = set_ini(settings, "ConsoleEnabled", "1")
     settings = set_ini(settings, "GuiConsoleEnabled", "1")
     settings = set_ini(settings, "GuiConsoleVisible", "1")
     write(SETTINGS, settings)
-    print("  hot reload and the consoles are on")
+    print("  consoles on, hot reload deliberately left off")
 
     print("")
-    print("Start the game. From then on:")
-    print("  deploy, then Ctrl+R. No restart.")
+    print("Start the game. Restarts are still restarts, but with one mod")
+    print("instead of twenty seven they are much shorter ones.")
     print("Run 'python tools/solo.py off' when you want your mods back.")
     return 0
 
