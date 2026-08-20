@@ -119,6 +119,15 @@ local function pump()
         local path = object_path(name)
         ExecuteInGameThread(function()
             pcall(function() LoadAsset(path) end)
+
+            -- Said out loud, because "the icon did not appear" has covered a
+            -- failed lookup, a load that went nowhere, a texture that would
+            -- not go on a brush and a brush with no size, and telling them
+            -- apart from a screenshot has not been possible once.
+            local landed
+            pcall(function() landed = StaticFindObject(path) end)
+            log.say(string.format("icon load %-28s %s", name,
+                real(landed) and "arrived" or "did not arrive"))
         end)
     end
 
