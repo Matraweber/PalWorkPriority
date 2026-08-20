@@ -453,11 +453,15 @@ end
 -- squares were. Not a missing icon, damage done by the code meant to cope
 -- with a missing icon.
 --
--- This call is the one with evidence behind it: icons drew correctly with it
--- before any of that was added. Where a run cannot be verified, a single
--- honest attempt beats a ladder of guesses that can do harm on the way down.
+-- Matching the size is the part that matters, and it took getting wrong twice
+-- to see why. Without it the brush keeps an image size of nothing, so the
+-- Image has nothing to draw even with a perfectly good texture on it, and the
+-- tile comes out empty rather than obviously broken.
+--
+-- The run where icons actually appeared was the one that matched sizes; the
+-- log said so plainly and I read it as evidence for the opposite call.
 local function apply_texture(img, texture)
-    pcall(function() img:SetBrushFromTexture(texture, false) end)
+    pcall(function() img:SetBrushFromTexture(texture, true) end)
 end
 
 -- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
@@ -879,7 +883,7 @@ local function draw_item_picker(cfg, totals)
         search_text ~= "" and ("matching " .. search_text)
             or (everything and "everything your base can make"
                 or "what your storage holds"),
-        #source, page + 1, pages), "dim")
+        #source, page + 1, pages), "dim", 13)
 
     local top = 4 * LINE
     local from = page * PER_PAGE + 1
