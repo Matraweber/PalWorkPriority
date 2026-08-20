@@ -14,6 +14,16 @@ There is no way to scope it to one mod. There is a way to be the only mod.
 touching either, and "off" restores exactly what was recorded rather than
 guessing at defaults. Running "on" twice will not overwrite the record of what
 normal looks like.
+
+Run it from a working setup. What "off" restores is whatever "on" found, so
+switching mods off by hand first and then running this records the half
+switched off state as normal.
+
+Switching mods off by hand is also what this exists to avoid. A blueprint mod
+is a Lua mod plus a pak, and turning off only the Lua half leaves the loader
+reaching for something that is not coming. That state crashes the game about a
+minute into a session, with a stack that is entirely UE4SS and nothing to do
+with whichever mod you were actually working on.
 """
 
 import io
@@ -30,6 +40,18 @@ SETTINGS = os.path.join(UE4SS, "UE4SS-settings.ini")
 
 MODS_SAVED = MODS + ".solo-backup"
 SETTINGS_SAVED = SETTINGS + ".solo-backup"
+
+# Blueprint mods ship a pak here and are loaded by BPModLoaderMod, which is a
+# Lua mod. Switching the Lua side off while the paks stay mounted leaves the
+# loader trying to load mod actors that are no longer coming, and the game
+# crashed roughly a minute into every session that was left in that state.
+#
+# So the paks move aside with the mods rather than being left behind. Renaming
+# the folder is one operation and undoes in one.
+LOGIC = os.path.join(
+    r"C:\Program Files (x86)\Steam\steamapps\common\Palworld",
+    "Pal", "Content", "Paks", "LogicMods")
+LOGIC_HELD = LOGIC + ".solo-held"
 
 KEEP = "PalWorkPriority"
 
@@ -73,6 +95,10 @@ def turn_on():
     write(MODS, "\n".join(out) + "\n")
     print("  %d other mod(s) switched off, %s left on" % (silenced, KEEP))
 
+    if os.path.isdir(LOGIC) and not os.path.isdir(LOGIC_HELD):
+        os.rename(LOGIC, LOGIC_HELD)
+        print("  blueprint mod paks moved aside")
+
     settings = read(SETTINGS)
     settings = set_ini(settings, "EnableHotReloadSystem", "1")
     settings = set_ini(settings, "ConsoleEnabled", "1")
@@ -97,6 +123,13 @@ def turn_off():
     shutil.copy2(SETTINGS_SAVED, SETTINGS)
     os.remove(MODS_SAVED)
     os.remove(SETTINGS_SAVED)
+
+    if os.path.isdir(LOGIC_HELD):
+        if os.path.isdir(LOGIC):
+            print("  ! %s exists, leaving %s alone" % (LOGIC, LOGIC_HELD))
+        else:
+            os.rename(LOGIC_HELD, LOGIC)
+            print("  blueprint mod paks put back")
 
     print("mods.txt and UE4SS-settings.ini are back as they were")
     print("hot reload is off again, which is how it should be with a full")

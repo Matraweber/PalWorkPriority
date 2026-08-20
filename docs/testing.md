@@ -34,6 +34,14 @@ restores what was recorded rather than guessing at defaults. In solo mode the
 loop is deploy, Ctrl+R, look. Out of it, hot reload stays off, because with a
 full mod list that key is a crash.
 
+Use the script rather than switching mods off by hand, and run it from a
+working setup. A blueprint mod is a Lua mod plus a pak in `Paks/LogicMods`,
+and turning off only the Lua half leaves BPModLoaderMod reaching for mod
+actors that are never coming. That state crashes about a minute into a
+session, and the stack is entirely UE4SS with nothing pointing at the mod you
+were working on, so it reads exactly like a bug in your own code. The script
+moves the paks aside along with the mods, and puts them back.
+
 ## The console
 
 The GUI console has a Lua box. That is the part worth having, because it
