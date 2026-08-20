@@ -11,26 +11,22 @@ UE4SS ships the tools to avoid nearly all of it. They are off by default.
 
 In `Mods/NativeMods/UE4SS/UE4SS-settings.ini`:
 
-    EnableHotReloadSystem = 1     ; Ctrl+R reloads every Lua mod in place
     ConsoleEnabled       = 1      ; a console window with live output
     GuiConsoleEnabled    = 1      ; the in game debug window
     GuiConsoleVisible    = 1      ; ...shown at startup
 
 The original file is kept beside it as `UE4SS-settings.ini.backup-before-devtools`.
 
-## The loop
+## Hot reload is off, deliberately
 
-1. Edit a file under `Scripts/`.
-2. `tools/deploy.ps1` to copy it into the game.
-3. **Ctrl+R** in the game.
+`EnableHotReloadSystem` was tried and turned back off. Ctrl+R does not reload
+the mod you are working on. It tears down and reloads **every** Lua mod
+installed, which on this machine is twenty nine of them, and that crashed the
+game outright.
 
-The mod is torn down and loaded again from disk. No restart, no reloading a
-save, no walking anywhere. `log.say` output appears in the console window as
-it happens rather than having to be read out of `priority.log` afterwards.
-
-Hot reload runs every mod's `reset` path, so anything held across a reload
-has to be rebuilt. That is already true here: a world switch drops every
-widget and wrapper for the same reason.
+It is not a per mod tool and there is no way to scope it to one. With a
+single mod installed it might be worth the risk. Here it is not, and the risk
+falls on a game session rather than on the edit.
 
 ## The console
 
@@ -45,7 +41,11 @@ were all of this shape and all answerable in one line:
 If the window does not appear, `GraphicsAPI` in the same file is the thing to
 change: it is set to `opengl`, and `dx11` is the other option that works.
 
-## What still needs the game
+## What still needs a restart
 
-Anything about how it looks, and anything about a dedicated server. Hot reload
-covers behaviour, not rendering decisions, and not two machines.
+New code. Without hot reload there is no way around that, so the console is
+worth using first: most of what a restart was being spent on was a question
+about the engine, not a change to the mod, and a question can be asked
+directly.
+
+Rendering and anything involving a dedicated server need the game either way.
