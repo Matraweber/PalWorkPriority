@@ -23,6 +23,8 @@
 #include "Components/Button.h"
 
 #include "Factories/BlueprintFactory.h"
+#include "Factories/DataAssetFactory.h"
+#include "Engine/PrimaryAssetLabel.h"
 #include "Engine/Blueprint.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -37,6 +39,11 @@ namespace
 	const TCHAR* UiFolder = TEXT("/Game/Mods/PalWorkPriority/UI");
 	const TCHAR* WidgetName = TEXT("WBP_WorkRules");
 	const TCHAR* ActorName = TEXT("ModActor");
+	const TCHAR* LabelName = TEXT("PalWorkPriority_Label");
+
+	// Any nonzero id will do; zero is the base game's chunk and produces no
+	// separate pak at all, which is the trap this number exists to avoid.
+	const int32 ChunkId = 1001;
 
 	void Say(const FString& Line)
 	{
@@ -124,6 +131,51 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 		Say(SaveAsset(Actor)
 			? TEXT("  ModActor saved")
 			: TEXT("  ModActor could NOT be saved"));
+	}
+
+	// ------------------------------------------------------------------
+	// The chunk label
+	// ------------------------------------------------------------------
+	//
+	// What makes the cook put these assets in a pak of their own rather than
+	// folding them into the base game's. DefaultGame.ini already scans /Game
+	// for labels, so dropping one in this folder is the whole setup.
+	{
+		const FString Path = FString::Printf(TEXT("%s/%s.%s"),
+			ModFolder, LabelName, LabelName);
+
+		UPrimaryAssetLabel* Label = LoadObject<UPrimaryAssetLabel>(nullptr, *Path);
+		if (!Label)
+		{
+			UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
+			Factory->DataAssetClass = UPrimaryAssetLabel::StaticClass();
+
+			Label = Cast<UPrimaryAssetLabel>(AssetTools.CreateAsset(
+				LabelName, ModFolder, UPrimaryAssetLabel::StaticClass(), Factory));
+		}
+
+		if (!Label)
+		{
+			Say(TEXT("FAILED: could not create the chunk label"));
+			return 1;
+		}
+
+		Label->Rules.ChunkId = ChunkId;
+		Label->Rules.Priority = 1;
+		Label->Rules.CookRule = EPrimaryAssetCookRule::AlwaysCook;
+		Label->Rules.bApplyRecursively = true;
+
+		// Everything beside and below it, which is both assets and nothing
+		// else, since this folder holds only the mod.
+		Label->bLabelAssetsInMyDirectory = true;
+
+		// The label is a build time instruction, not something the game
+		// should be carrying around at runtime.
+		Label->bIsRuntimeLabel = false;
+
+		Say(SaveAsset(Label)
+			? FString::Printf(TEXT("  label saved, chunk %d"), ChunkId)
+			: TEXT("  label could NOT be saved"));
 	}
 
 	// ------------------------------------------------------------------
@@ -219,11 +271,11 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 	UHorizontalBox* Actions = Make<UHorizontalBox>(Tree, TEXT("Actions"));
 	Body->AddChild(Actions);
 
-	auto AddButton = [&](const TCHAR* Name, const TCHAR* LabelName,
+	auto AddButton = [&](const TCHAR* Name, const TCHAR* TextName,
 		const TCHAR* Label)
 	{
 		UButton* Button = Make<UButton>(Tree, Name);
-		UTextBlock* Text = Make<UTextBlock>(Tree, LabelName);
+		UTextBlock* Text = Make<UTextBlock>(Tree, TextName);
 		Text->SetText(FText::FromString(Label));
 		Button->AddChild(Text);
 		Actions->AddChild(Button);
