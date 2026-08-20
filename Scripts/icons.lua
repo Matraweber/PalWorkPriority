@@ -210,6 +210,27 @@ function M.report()
     end
 end
 
+-- Four real ids, followed all the way to an object name. Says which of the
+-- three routes answered and what it handed back, so a blank tile can be
+-- blamed on the lookup or cleared of it.
+function M.probe()
+    log.say("icon lookup:")
+
+    -- The ration exists to protect a frame, and this is not one.
+    hard_budget = 99
+
+    for _, id in ipairs({ "Stone", "Wood", "Berries", "PalSphere" }) do
+        local from_table = icondex.NAMES[id:lower()]
+        local tex = M.get(id)
+
+        local full
+        if tex then pcall(function() full = tex:GetFullName() end) end
+
+        log.say(string.format("  %-10s table says %-22s got %s",
+            id, tostring(from_table), tostring(full)))
+    end
+end
+
 function M.count(t)
     local n = 0
     for _ in pairs(t or {}) do n = n + 1 end

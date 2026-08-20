@@ -437,7 +437,76 @@ end
 -- this is the widget that reports whether the pointer is over the tile.
 local brushing = nil
 
+-- Put a texture on an image, and check that it landed.
+--
+-- SetBrushFromTexture reported success and drew nothing. A pcall around a
+-- call on one of these wrappers succeeds whether or not the method exists,
+-- so the only honest test is to read the brush back afterwards and see whose
+-- texture is on it. Each way is tried until one survives that test, and the
+-- winner is logged once.
+local function named(o)
+    local n
+    pcall(function() n = o:GetFullName() end)
+    if type(n) == "string" then return n end
+    return nil
+end
+
+local function stuck(img, texture)
+    local want = named(texture)
+    if want == nil then return false end
+
+    local got
+    pcall(function() got = named(img.Brush.ResourceObject) end)
+    return got == want
+end
+
+local function apply_texture(img, texture)
+    local ways = {
+        { "SetBrushFromTexture matching size",
+          function() img:SetBrushFromTexture(texture, true) end },
+        { "SetBrushFromTexture",
+          function() img:SetBrushFromTexture(texture, false) end },
+        { "SetBrushResourceObject",
+          function() img:SetBrushResourceObject(texture) end },
+        { "Brush.ResourceObject =",
+          function()
+              local brush = img.Brush
+              brush.ResourceObject = texture
+              img:SetBrush(brush)
+          end },
+    }
+
+    for _, way in ipairs(ways) do
+        pcall(way[2])
+        if stuck(img, texture) then
+            if brushing == nil then
+                brushing = way[1]
+                log.say("icon brushes: " .. way[1] .. " is what works here")
+            end
+            return true
+        end
+    end
+
+    if brushing == nil then
+        brushing = false
+        log.say("icon brushes: nothing put a texture on an image, and the " ..
+            "brush reads back empty after every attempt")
+    end
+    return false
+end
+
+-- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
+-- the panel holds the input mode, which is exactly when these questions
+-- matter, so the diagnostics fire themselves the first time a tile is drawn.
+local probed = false
+
 local function picture(key, px, py, size, texture, token)
+    if not probed then
+        probed = true
+        pcall(function() overlay.image_probe() end)
+        pcall(function() icons.probe() end)
+    end
+
     local host = ensure_root()
     if not host then return end
 
@@ -475,18 +544,7 @@ local function picture(key, px, py, size, texture, token)
 
     if drawn["i:" .. key] ~= token then
         if texture then
-            -- Reported once. A blank tile has two possible causes, no texture
-            -- found and a texture that will not go onto a brush, and they
-            -- look identical on screen. This separates them without another
-            -- round of guessing.
-            local ok = pcall(function()
-                img:SetBrushFromTexture(texture, false)
-            end)
-            if brushing == nil then
-                brushing = ok
-                log.say("icon brushes: SetBrushFromTexture " ..
-                    (ok and "took the texture" or "failed"))
-            end
+            apply_texture(img, texture)
             pcall(function() img:SetOpacity(1.0) end)
         else
             -- Kept, not hidden. A hidden widget reports no hover, and the

@@ -439,6 +439,59 @@ function M.icon_probe()
     end
 end
 
+-- What an Image will actually answer to.
+--
+-- SetBrushFromTexture reported success and drew nothing, which is the oldest
+-- trap in this codebase: a pcall around a call on a wrapper succeeds whether
+-- or not the method exists, so "it worked" and "there is no such function"
+-- are the same result. Asking the class what it has is the only answer that
+-- means anything.
+function M.image_probe()
+    log.say("image probe")
+
+    local cdo = api.cdo("/Script/UMG.Image")
+    if not cdo then
+        log.say("  no UMG.Image default object")
+        return
+    end
+
+    local interesting = { "Brush", "Size", "Opacity", "Color", "Texture" }
+    local found = 0
+
+    pcall(function()
+        cdo:GetClass():ForEachFunction(function(fn)
+            local name
+            pcall(function() name = fn:GetFName():ToString() end)
+            if type(name) ~= "string" then return end
+
+            local keep = false
+            for _, word in ipairs(interesting) do
+                if name:find(word, 1, true) then keep = true break end
+            end
+            if not keep then return end
+
+            local params = {}
+            pcall(function()
+                fn:ForEachProperty(function(prop)
+                    local pn, pc = "?", "?"
+                    pcall(function() pn = prop:GetFName():ToString() end)
+                    pcall(function()
+                        pc = prop:GetClass():GetFName():ToString()
+                    end)
+                    params[#params + 1] = pc .. " " .. pn
+                end)
+            end)
+
+            found = found + 1
+            log.say("  " .. name .. "(" .. table.concat(params, ", ") .. ")")
+        end)
+    end)
+
+    if found == 0 then
+        log.say("  the class reports no brush or size functions at all")
+    end
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")
