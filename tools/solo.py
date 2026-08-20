@@ -63,7 +63,17 @@ LOGIC = os.path.join(
     "Pal", "Content", "Paks", "LogicMods")
 LOGIC_HELD = LOGIC + ".solo-held"
 
-KEEP = "PalWorkPriority"
+# What stays on. Not just this mod: a blueprint mod is a pak plus the loader
+# that mounts it, and switching the loader off makes the pak invisible. Solo
+# mode did exactly that, and the widget class went missing in a way that
+# looked like a bad cook rather than a missing neighbour.
+#
+# BPML_GenericFunctions is what BPModLoaderMod itself depends on.
+KEEP = (
+    "PalWorkPriority",
+    "BPModLoaderMod",
+    "BPML_GenericFunctions",
+)
 
 
 def read(path):
@@ -95,7 +105,7 @@ def turn_on():
     out, silenced = [], 0
     for line in read(MODS).splitlines():
         match = re.match(r"^(\s*)([A-Za-z0-9_]+)(\s*:\s*)(\d+)\s*$", line)
-        if match and match.group(2) != KEEP and match.group(4) != "0":
+        if match and match.group(2) not in KEEP and match.group(4) != "0":
             out.append("%s%s%s0" % (match.group(1), match.group(2),
                                     match.group(3)))
             silenced += 1
@@ -103,11 +113,21 @@ def turn_on():
             out.append(line)
 
     write(MODS, "\n".join(out) + "\n")
-    print("  %d other mod(s) switched off, %s left on" % (silenced, KEEP))
+    print("  %d other mod(s) switched off, kept: %s"
+          % (silenced, ", ".join(KEEP)))
 
+    # Other people's blueprint paks move aside; the folder itself stays,
+    # because this mod now ships a pak of its own that has to live in it.
     if os.path.isdir(LOGIC) and not os.path.isdir(LOGIC_HELD):
-        os.rename(LOGIC, LOGIC_HELD)
-        print("  blueprint mod paks moved aside")
+        os.makedirs(LOGIC_HELD)
+        held = 0
+        for name in os.listdir(LOGIC):
+            if name.startswith("PalWorkPriority"):
+                continue
+            shutil.move(os.path.join(LOGIC, name),
+                        os.path.join(LOGIC_HELD, name))
+            held += 1
+        print("  %d blueprint mod pak file(s) moved aside" % held)
 
     # Hot reload stays off. See the note at the top of this file.
     settings = read(SETTINGS)
