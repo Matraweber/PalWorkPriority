@@ -443,64 +443,21 @@ end
 --
 -- Visible rather than hit test invisible, unlike the slab behind it, because
 -- this is the widget that reports whether the pointer is over the tile.
-local brushing = nil
-
--- Put a texture on an image, and check that it landed.
+-- Put a texture on an image.
 --
--- SetBrushFromTexture reported success and drew nothing. A pcall around a
--- call on one of these wrappers succeeds whether or not the method exists,
--- so the only honest test is to read the brush back afterwards and see whose
--- texture is on it. Each way is tried until one survives that test, and the
--- winner is logged once.
-local function named(o)
-    local n
-    pcall(function() n = o:GetFullName() end)
-    if type(n) == "string" then return n end
-    return nil
-end
-
-local function stuck(img, texture)
-    local want = named(texture)
-    if want == nil then return false end
-
-    local got
-    pcall(function() got = named(img.Brush.ResourceObject) end)
-    return got == want
-end
-
+-- One call, deliberately. The previous version tried four ways in turn and
+-- checked each by reading the brush back, which was worse than useless: the
+-- read back is unreliable on this class, so on a run where it failed to
+-- confirm a call that had in fact worked, the chain carried on and the last
+-- way in it wrote a brush by hand and wrecked it. That is what the white
+-- squares were. Not a missing icon, damage done by the code meant to cope
+-- with a missing icon.
+--
+-- This call is the one with evidence behind it: icons drew correctly with it
+-- before any of that was added. Where a run cannot be verified, a single
+-- honest attempt beats a ladder of guesses that can do harm on the way down.
 local function apply_texture(img, texture)
-    local ways = {
-        { "SetBrushFromTexture matching size",
-          function() img:SetBrushFromTexture(texture, true) end },
-        { "SetBrushFromTexture",
-          function() img:SetBrushFromTexture(texture, false) end },
-        { "SetBrushResourceObject",
-          function() img:SetBrushResourceObject(texture) end },
-        { "Brush.ResourceObject =",
-          function()
-              local brush = img.Brush
-              brush.ResourceObject = texture
-              img:SetBrush(brush)
-          end },
-    }
-
-    for _, way in ipairs(ways) do
-        pcall(way[2])
-        if stuck(img, texture) then
-            if brushing == nil then
-                brushing = way[1]
-                log.say("icon brushes: " .. way[1] .. " is what works here")
-            end
-            return true
-        end
-    end
-
-    if brushing == nil then
-        brushing = false
-        log.say("icon brushes: nothing put a texture on an image, and the " ..
-            "brush reads back empty after every attempt")
-    end
-    return false
+    pcall(function() img:SetBrushFromTexture(texture, false) end)
 end
 
 -- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
@@ -511,7 +468,9 @@ local probed = false
 local function picture(key, px, py, size, texture, token)
     if not probed then
         probed = true
-        pcall(function() overlay.image_probe() end)
+        -- Only the lookup. The image probe reported that UMG.Image has no
+        -- brush functions at all, which is plainly false given one of them
+        -- works, so it is not worth reading and not worth running.
         pcall(function() icons.probe() end)
     end
 
