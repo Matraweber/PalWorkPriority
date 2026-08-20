@@ -47,6 +47,13 @@ local hits = {}                 -- key -> what clicking it means
 local order = {}                -- the same keys in draw order, for the arrows
 local used = {}                 -- keys touched this frame, so the rest blank
 local hover_key = nil
+
+-- Last frame's answers. A row is registered as clickable AFTER it is drawn,
+-- so asking about this frame during the draw always returns nothing. One
+-- frame of lag on a marker is invisible; reordering every call site and
+-- trusting nobody ever adds one in the wrong order is not.
+local was_hit = {}
+local was_sel = nil
 local sel = 1                   -- which row the keyboard is on
 
 local ftext_mode = nil
@@ -55,7 +62,7 @@ local warned = {}
 -- LINE has to clear the font, which is about 20 tall at 1440p. At 22 the
 -- rows drew through each other.
 local X, Y = 80, 130
-local W = 640
+local W = 760
 local LINE = 34
 local PAD = 16
 local COL2 = 420
@@ -176,11 +183,15 @@ local function ensure_root()
     local menu, tree, base = ui.host()
 
     if not alive(menu) or not alive(tree) or not alive(base) then
-        -- Dropped without touching them. Whatever they pointed at is gone with
-        -- the screen, and asking a freed widget whether it is valid is the
-        -- crash rather than the check for it.
-        root, root_owner, root_tree, backdrop = nil, nil, nil, nil
-        blocks, drawn = {}, {}
+        -- The stand is shut. Keep every reference exactly as it is.
+        --
+        -- Clearing here was the duplicate: Palworld hides this menu rather
+        -- than destroying it, so the widgets stayed parented in a canvas that
+        -- outlived our pointers to them. Reopening then found no references,
+        -- built a second set, and drew it over the first.
+        --
+        -- Nothing is touched either, only left alone, so a menu that really
+        -- was destroyed cannot be dereferenced from here.
         return nil
     end
 
@@ -188,8 +199,9 @@ local function ensure_root()
         return root
     end
 
-    -- A different menu instance than last time, so nothing kept from the old
-    -- one can be reused.
+    -- Genuinely a different menu object. Whatever we made belonged to the old
+    -- one and died with it, so the references are dropped rather than
+    -- unparented: asking a freed widget anything is the crash, not the check.
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn = {}, {}
 
@@ -278,8 +290,14 @@ local function line(key, row, col, text, colour_key)
         pcall(function() slot:SetPosition({ X = X + col, Y = Y + row * LINE }) end)
     end
 
-    local shown = (key == hover_key or key == order[sel]) and "hover"
-        or colour_key
+    local selected = (key == hover_key or key == was_sel)
+    local shown = selected and "hover" or colour_key
+
+    -- A marker as well as a colour. Colour alone was not enough to see where
+    -- the selection was, least of all on a row that is already blue.
+    if was_hit[key] then
+        text = (selected and "> " or "  ") .. text
+    end
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
@@ -379,7 +397,8 @@ local function draw_list(cfg, totals)
     line("title", row, 0, "WORK RULES", "title")
     row = row + 1
     line("sub", row, 0,
-        "arrows move, enter and backspace change, or use the mouse", "dim")
+        "click the job to change it, the number to adjust it, remove to delete",
+        "dim")
     row = row + 2
 
     if #rules == 0 then
@@ -400,8 +419,11 @@ local function draw_list(cfg, totals)
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
             -- be somewhere to correct the guess.
+            line("del" .. i, row, COL2 + 180, "remove", "dim")
+
             hit(key, { kind = "job", rule = rule })
             hit("amt" .. i, { kind = "rule", rule = rule })
+            hit("del" .. i, { kind = "drop", rule = rule })
             row = row + 1
         end
         row = row + 1
@@ -533,6 +555,7 @@ function M.refresh(cfg)
         end
     end
 
+    was_hit, was_sel = hits, order[sel]
     hits, order, used = {}, {}, {}
     local totals = stock_totals(cfg)
 
@@ -669,7 +692,7 @@ function M.reset()
     totals_cache, totals_at = nil, 0
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
-    hover_key = nil
+    was_hit, was_sel, hover_key = {}, nil, nil
     mode, draft, page, show_all = "list", nil, 0, false
     ftext_mode = nil
     warned = {}
@@ -703,7 +726,14 @@ local function hovered()
         pcall(function()
             if alive(tb) then over = tb:IsHovered() end
         end)
-        if over == true then return what end
+        if over == true then
+            -- Moving the mouse moves the keyboard position with it, so the
+            -- two never disagree about which row is current.
+            for i, k in ipairs(order) do
+                if k == key then sel = i break end
+            end
+            return what
+        end
     end
     return nil
 end
@@ -824,6 +854,14 @@ function M.apply(cfg, what, dir)
             M.wants_pass = true
         end
         mode, draft = "list", nil
+        return true
+    end
+
+    if what.kind == "drop" then
+        caps.clear(what.rule.work, what.rule.item)
+        log.say("rule removed: " .. workdefs.label(what.rule.work) ..
+            " " .. what.rule.item)
+        M.wants_pass = true
         return true
     end
 
