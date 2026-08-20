@@ -51,11 +51,31 @@ local sighted_at = 0
 local SIGHT_TTL = 60          -- seconds before another look around is allowed
 
 -- Frames to keep looking before giving up on a name we believe in. At ten a
--- second this is a few seconds, long enough for a load to finish and short
--- enough that a genuinely missing icon stops costing anything.
-local PATIENCE = 60
+-- second this is fifteen seconds, which is generous, because giving up early
+-- on an icon that would have arrived is the worse mistake: the tile falls
+-- back to a name for the rest of the session and there is nothing to suggest
+-- waiting a little longer would have worked.
+local PATIENCE = 150
 
 local PREFIX = "T_itemicon_"
+
+-- Is this object real?
+--
+-- StaticFindObject does not answer with nil when it fails. It hands back a
+-- wrapper that is not nil and is not an object either, and putting one of
+-- those on a brush is what drew a white square in every tile. Dropping this
+-- check was an overcorrection: the crash came from checking an object kept
+-- since an earlier frame, not from checking one at all.
+--
+-- Asking a freed object whether it is valid is the crash. Asking one the
+-- engine produced a moment ago inside this same call is not, because nothing
+-- has had the chance to collect it in between. The rule is about age, not
+-- about the question.
+local function real(o)
+    if o == nil then return false end
+    local ok, yes = pcall(function() return o:IsValid() end)
+    return ok and yes == true
+end
 
 -- The object for an icon name, if it is in memory. Never stored.
 local function find(name)
@@ -65,7 +85,7 @@ local function find(name)
 
     local found
     pcall(function() found = StaticFindObject(object) end)
-    if found ~= nil then return found end
+    if real(found) then return found end
 
     -- Not in memory yet. LoadAsset starts a load but the object is not there
     -- by the time the call returns, so this asks once and a later frame is
@@ -76,7 +96,7 @@ local function find(name)
         pcall(function() LoadAsset(path) end)
 
         pcall(function() found = StaticFindObject(object) end)
-        if found ~= nil then return found end
+        if real(found) then return found end
     end
 
     return nil
@@ -180,6 +200,10 @@ function M.report()
     log.say("  ids with a name: " .. named)
     log.say("  ids with no icon: " .. absent)
     log.say("  loads asked for: " .. M.count(requested))
+
+    local waiting = 0
+    for _ in pairs(waited) do waiting = waiting + 1 end
+    log.say("  still waiting on a load: " .. waiting)
 
     local seen = sighted and M.count(sighted) or 0
     log.say("  icon textures in memory at last look: " .. seen)
