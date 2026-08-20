@@ -230,9 +230,12 @@ COMMANDS.help = function()
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
-    log.say("keys: F10 pass, F11 Discovery.txt, F12 stock,")
-    log.say("      Alt+F8 transport test, Alt+F9 work rules,")
-    log.say("      Alt+F10 mode, Alt+F11 cap, Alt+F12 storage scope")
+    log.say("keys, Ctrl does a thing:")
+    log.say("  Ctrl+F8 transport test   Ctrl+F9  work rules")
+    log.say("  Ctrl+F10 run a pass      Ctrl+F11 Discovery.txt")
+    log.say("  Ctrl+F12 base storage")
+    log.say("keys, Alt changes a setting:")
+    log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
 end
 
 COMMANDS.status = function()
@@ -750,9 +753,17 @@ local function bind(key, label, fn, modifiers)
     return ok
 end
 
-bind(Key.F10, "F10 (run pass)", function()
+-- Every key here is Ctrl or Alt with a function key, and every one was
+-- checked against the other installed mods with tools/keybind_audit.py rather
+-- than by eye. Two collisions were found that way and both had been missed by
+-- grepping: FreeCam sets its key and its modifier lines apart so Alt+F8 reads
+-- as plain F8, and UltraGraphics registers through a wrapper so its plain F10
+-- never appeared in a search for RegisterKeyBind at all.
+--
+-- Ctrl does a thing, Alt changes a setting.
+bind(Key.F10, "Ctrl+F10 (run pass)", function()
     run_pass("keybind", true)
-end)
+end, { ModifierKey.CONTROL })
 
 log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
     MOD_NAME, VERSION,
@@ -764,16 +775,16 @@ log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
 -- discovery dump gets its own key instead of living only behind a chat
 -- command. F10/F11 were picked because every other Fn key in the low range
 -- is already claimed by another installed mod.
-bind(Key.F11, "F11 (discovery)", function()
+bind(Key.F11, "Ctrl+F11 (discovery)", function()
     COMMANDS.discover()
-end)
+end, { ModifierKey.CONTROL })
 
 -- Base storage on a key too. Ceilings are keyed by internal item id, and
 -- without a way to print those ids outside chat the whole feature is
 -- unreachable in a session where chat input is not available.
-bind(Key.F12, "F12 (stock)", function()
+bind(Key.F12, "Ctrl+F12 (stock)", function()
     COMMANDS.stock()
-end)
+end, { ModifierKey.CONTROL })
 
 -- Left click raises a cell towards priority 1, right click lowers it towards
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
@@ -807,13 +818,13 @@ end, { ModifierKey.ALT })
 
 -- The rules panel. F9 is taken by another installed mod and F8 by two, so
 -- this sits on the modifier alongside the other toggles.
-bind(Key.F9, "Alt+F9 (work rules)", function()
+bind(Key.F9, "Ctrl+F9 (work rules)", function()
     panel.toggle()
-end, { ModifierKey.ALT })
+end, { ModifierKey.CONTROL })
 
 -- The transport test needs a key of its own, because the machine most worth
 -- running it on is a client in single player, where there is no chat box to
--- type a command into.
-bind(Key.F8, "Alt+F8 (transport test)", function()
+-- type a command into. Ctrl rather than Alt: Alt+F8 is FreeCam's toggle.
+bind(Key.F8, "Ctrl+F8 (transport test)", function()
     COMMANDS.net()
-end, { ModifierKey.ALT })
+end, { ModifierKey.CONTROL })
