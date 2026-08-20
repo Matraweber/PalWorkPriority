@@ -260,6 +260,99 @@ end
 -- The panel draws its boxes but no text, so SetText is being handed something
 -- it will not take. And every SetInputMode shape failed, so that function is
 -- not where or what I think it is. Rather than guess twice, ask.
+-- Four TextBlocks, differing by one call each, left on screen to be looked at.
+--
+-- Twice now I have reasoned about why the panel's text does not draw and been
+-- wrong twice, while a nearly identical TextBlock in build() renders fine. So
+-- stop reasoning: put the variants side by side and read the answer off the
+-- screen. Whichever labels appear tell us which call is doing it.
+function M.text_variants()
+    local host, host_tree = M.host()
+    if not alive(host) or not alive(host_tree) then
+        log.say("no overlay host, cannot test text")
+        return
+    end
+
+    local cls = api.cdo("/Script/UMG.TextBlock")
+    if not cls then
+        log.say("no TextBlock class")
+        return
+    end
+
+    local variants = {
+        { label = "A plain, no visibility call",   vis = false, shadow = false, z = 10 },
+        { label = "B with SetVisibility(0)",       vis = true,  shadow = false, z = 10 },
+        { label = "C with ShadowOffset",           vis = false, shadow = true,  z = 10 },
+        { label = "D with ZOrder 9000",            vis = false, shadow = false, z = 9000 },
+    }
+
+    for i, v in ipairs(variants) do
+        local tb
+        pcall(function() tb = StaticConstructObject(cls, host_tree) end)
+        if alive(tb) then
+            local slot
+            pcall(function() slot = host:AddChildToCanvas(tb) end)
+            if alive(slot) then
+                pcall(function() slot:SetAutoSize(true) end)
+                pcall(function()
+                    slot:SetPosition({ X = 300, Y = 240 + i * 40 })
+                end)
+                pcall(function() slot:SetZOrder(v.z) end)
+            end
+
+            if v.vis then pcall(function() tb:SetVisibility(0) end) end
+            if v.shadow then
+                pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
+            end
+
+            local ft
+            pcall(function()
+                local kismet = api.cdo("/Script/Engine.Default__KismetTextLibrary")
+                if kismet then ft = kismet:Conv_StringToText(v.label) end
+            end)
+            if ft then pcall(function() tb:SetText(ft) end) end
+            pcall(function() tb:SetColorAndOpacity({
+                SpecifiedColor = { R = 1, G = 1, B = 0.3, A = 1 },
+                ColorUseRule = 0 }) end)
+        end
+    end
+
+    log.say("four text variants placed, look at the screen and say which appear")
+end
+
+-- What arguments does the input mode function actually want? Every shape has
+-- failed, twice under two different names, so ask the UFunction itself rather
+-- than trying arities until one sticks.
+function M.input_signature()
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not lib then
+        log.say("no WidgetBlueprintLibrary")
+        return
+    end
+
+    for _, want in ipairs({ "SetInputMode_GameAndUIEx", "SetInputMode_UIOnlyEx",
+                            "SetInputMode_GameOnly" }) do
+        pcall(function()
+            lib:GetClass():ForEachFunction(function(fn)
+                local n
+                pcall(function() n = fn:GetFName():ToString() end)
+                if n ~= want then return end
+
+                local params = {}
+                pcall(function()
+                    fn:ForEachProperty(function(prop)
+                        local pn, pc = "?", "?"
+                        pcall(function() pn = prop:GetFName():ToString() end)
+                        pcall(function() pc = prop:GetClass():GetFName():ToString() end)
+                        params[#params + 1] = pc .. " " .. pn
+                    end)
+                end)
+                log.say("  " .. n .. "(" .. table.concat(params, ", ") .. ")")
+            end)
+        end)
+    end
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")

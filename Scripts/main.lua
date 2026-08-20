@@ -950,7 +950,9 @@ end, { ModifierKey.CONTROL })
 -- rather than guessing a second time.
 bind(Key.F7, "Ctrl+F7 (overlay diagnostics)", function()
     ExecuteInGameThread(function()
-        pcall(function() overlay.diagnose() end)
+        pcall(function() overlay.show() end)
+        pcall(function() overlay.input_signature() end)
+        pcall(function() overlay.text_variants() end)
     end)
 end, { ModifierKey.CONTROL })
 
