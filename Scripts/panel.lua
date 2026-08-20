@@ -54,6 +54,11 @@ local hover_key = nil
 -- trusting nobody ever adds one in the wrong order is not.
 local was_hit = {}
 local was_sel = nil
+
+local stripes = {}              -- key -> Border drawn behind a row
+local search_box = nil          -- EditableTextBox, only possible in a widget we own
+local search_text = ""
+local want_focus = false
 local sel = 1                   -- which row the keyboard is on
 
 local ftext_mode = nil
@@ -61,41 +66,35 @@ local warned = {}
 
 -- LINE has to clear the font, which is about 20 tall at 1440p. At 22 the
 -- rows drew through each other.
-local X, Y = 80, 130
-local W = 760
+-- Laid out like Creative Menu: a dark slab, a row of tabs, one boxed row per
+-- entry, a cyan accent on whatever is current. Those are the parts that make
+-- it read as a menu rather than as text over a game.
+local X, Y = 120, 120
+local W = 820
 local LINE = 34
-local PAD = 16
-local COL2 = 420
+local ROW_H = 30
+local PAD = 18
+local COL2 = 470
+local COL3 = 690
+local TAB_H = 34
 local PER_PAGE = 12
 
 local COLOUR = {
     title  = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
-    dim    = { R = 0.58, G = 0.62, B = 0.70, A = 1.00 },
+    dim    = { R = 0.52, G = 0.57, B = 0.64, A = 1.00 },
     item   = { R = 0.86, G = 0.89, B = 0.95, A = 1.00 },
-    met    = { R = 0.30, G = 0.95, B = 0.40, A = 1.00 },
-    unmet  = { R = 1.00, G = 0.70, B = 0.20, A = 1.00 },
-    action = { R = 0.40, G = 0.82, B = 1.00, A = 1.00 },
-    hover  = { R = 0.35, G = 1.00, B = 1.00, A = 1.00 },
+    met    = { R = 0.35, G = 0.92, B = 0.48, A = 1.00 },
+    unmet  = { R = 1.00, G = 0.70, B = 0.24, A = 1.00 },
+    action = { R = 0.42, G = 0.80, B = 1.00, A = 1.00 },
+    hover  = { R = 0.60, G = 1.00, B = 1.00, A = 1.00 },
+    tab_on = { R = 0.55, G = 0.95, B = 1.00, A = 1.00 },
 }
 
--- Amounts run into the thousands, so a step walks a ladder that coarsens as
--- the numbers grow rather than moving by one.
-local LADDER = {
-    100, 250, 500, 1000, 2000, 3000, 5000,
-    7500, 10000, 15000, 20000, 30000, 50000,
-}
-
-local BACKDROP = { R = 0.03, G = 0.05, B = 0.08, A = 0.90 }
-local CLEAR = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
-
--- Registers a row as clickable and, in the same breath, as reachable by the
--- arrow keys. Two lists that could disagree would be a bug waiting, and the
--- mouse turned out to be awkward enough on a moving cursor that the keyboard
--- is not a nicety.
-local function hit(key, what)
-    hits[key] = what
-    order[#order + 1] = key
-end
+local BACKDROP  = { R = 0.035, G = 0.055, B = 0.080, A = 0.94 }
+local ROW_BG    = { R = 0.075, G = 0.100, B = 0.135, A = 0.90 }
+local ROW_HOVER = { R = 0.110, G = 0.200, B = 0.260, A = 0.95 }
+local TAB_BAR   = { R = 0.055, G = 0.080, B = 0.110, A = 0.95 }
+local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -156,7 +155,8 @@ local function ensure_root()
 
     if not alive(host) or not alive(host_tree) then
         root, root_owner, root_tree, backdrop = nil, nil, nil, nil
-        blocks, drawn = {}, {}
+        blocks, drawn, stripes = {}, {}, {}
+        search_box = nil
         return nil
     end
 
@@ -170,7 +170,8 @@ local function ensure_root()
     -- the crash, not the check for it.
     root, root_owner, root_tree = host, host, host_tree
     backdrop = nil
-    blocks, drawn = {}, {}
+    blocks, drawn, stripes = {}, {}, {}
+    search_box = nil
     return root
 end
 
@@ -211,6 +212,48 @@ local function ensure_backdrop(rows)
             slot:SetSize({ X = W + PAD * 2, Y = rows * LINE + PAD * 2 })
         end)
     end
+end
+
+-- The box behind a row. Creative Menu draws every entry as a bordered slab
+-- that lights up under the pointer, and that alone is most of the difference
+-- between a menu and a wall of text.
+local function stripe(key, row, from, width)
+    local host = ensure_root()
+    if not host then return end
+
+    used["s:" .. key] = true
+
+    local border = stripes[key]
+    if not alive(border) then
+        local cls = api.cdo("/Script/UMG.Border")
+        if not cls or not alive(root_tree) then return end
+
+        pcall(function() border = StaticConstructObject(cls, root_tree) end)
+        if not alive(border) then return end
+
+        local slot
+        local ok = pcall(function() slot = host:AddChildToCanvas(border) end)
+        if not ok or not alive(slot) then return end
+
+        pcall(function() slot:SetAutoSize(false) end)
+        pcall(function() slot:SetZOrder(8995) end)
+        -- Hit test invisible: the row's text is what reports hover, and a
+        -- border on top of it would swallow that.
+        pcall(function() border:SetVisibility(3) end)
+        stripes[key] = border
+    end
+
+    local slot
+    pcall(function() slot = border.Slot end)
+    if alive(slot) then
+        pcall(function()
+            slot:SetPosition({ X = X + from - 6, Y = Y + row * LINE - 3 })
+        end)
+        pcall(function() slot:SetSize({ X = width, Y = ROW_H }) end)
+    end
+
+    local on = (key == was_sel) or (key == hover_key)
+    pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
 end
 
 local function line(key, row, col, text, colour_key)
@@ -288,6 +331,89 @@ local function blank_unused()
             end
         end
     end
+
+    -- A stripe with nothing on it is a floating box, so anything not drawn
+    -- this frame goes transparent rather than staying behind.
+    for key, border in pairs(stripes) do
+        if not used["s:" .. key] and alive(border) then
+            pcall(function() border:SetBrushColor(CLEAR) end)
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Search
+-- ---------------------------------------------------------------------------
+
+-- An EditableTextBox the player can actually type into.
+--
+-- This is the thing that was impossible before. A text box injected into a
+-- widget the game owns never receives keystrokes, because focus follows
+-- ownership; that is why the picker paged through items instead of filtering
+-- them. In a widget we construct ourselves the engine will hand it the
+-- keyboard.
+local function ensure_search(row)
+    local host = ensure_root()
+    if not host then return nil end
+
+    used["search"] = true
+
+    if not alive(search_box) then
+        local cls = api.cdo("/Script/UMG.EditableTextBox")
+        if not cls or not alive(root_tree) then return nil end
+
+        pcall(function() search_box = StaticConstructObject(cls, root_tree) end)
+        if not alive(search_box) then
+            warn_once("nosearch", "no EditableTextBox on this build, " ..
+                "so the picker pages instead of filtering")
+            return nil
+        end
+
+        local slot
+        local ok = pcall(function() slot = host:AddChildToCanvas(search_box) end)
+        if not ok or not alive(slot) then
+            search_box = nil
+            return nil
+        end
+
+        pcall(function() slot:SetAutoSize(false) end)
+        pcall(function() slot:SetZOrder(9010) end)
+        pcall(function() search_box:SetVisibility(0) end)
+        pcall(function() search_box:SetHintText(make_ftext("type to filter")) end)
+    end
+
+    local slot
+    pcall(function() slot = search_box.Slot end)
+    if alive(slot) then
+        pcall(function() slot:SetPosition({ X = X + PAD, Y = Y + row * LINE }) end)
+        pcall(function() slot:SetSize({ X = W - PAD * 2, Y = 30 }) end)
+    end
+    pcall(function() search_box:SetVisibility(0) end)
+
+    -- Focus is taken once on entering the picker, not every frame: stealing it
+    -- each tick would fight anything else that wants it and make typing feel
+    -- like it is being interrupted, which it would be.
+    if want_focus then
+        want_focus = false
+        pcall(function() search_box:SetKeyboardFocus() end)
+    end
+
+    local text
+    pcall(function()
+        local ft = search_box:GetText()
+        if ft then text = ft:ToString() end
+    end)
+    if type(text) == "string" then search_text = text end
+
+    return search_box
+end
+
+local function hide_search()
+    if alive(search_box) then
+        -- Collapsed rather than destroyed, so the same box comes back with
+        -- whatever was typed in it.
+        pcall(function() search_box:SetVisibility(1) end)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -335,6 +461,29 @@ end
 -- Screens
 -- ---------------------------------------------------------------------------
 
+-- A tab bar, the first thing Creative Menu shows and the clearest way to say
+-- what screen you are on and what else there is.
+local function draw_tabs(active)
+    stripe("tabbar", 0, 0, W)
+
+    local tabs = {
+        { key = "tab_rules", label = "RULES", mode = "list" },
+        { key = "tab_new",   label = "ADD",   mode = "item" },
+    }
+
+    local x = PAD
+    for _, tab in ipairs(tabs) do
+        local on = (active == tab.mode)
+            or (active == "work" and tab.mode == "item")
+        hit(tab.key, { kind = "tab", mode = tab.mode })
+        line(tab.key, 0, x, tab.label, on and "tab_on" or "dim")
+        x = x + 130
+    end
+
+    hit("tab_close", { kind = "close" })
+    line("tab_close", 0, W - 90, "CLOSE", "dim")
+end
+
 local function rule_list(cfg)
     local out = {}
     for work, by_item in pairs(caps.all(cfg)) do
@@ -351,14 +500,14 @@ end
 
 local function draw_list(cfg, totals)
     local rules = rule_list(cfg)
-    local row = 0
 
-    line("title", row, 0, "WORK RULES", "title")
-    row = row + 1
-    line("sub", row, 0,
-        "click the job to change it, the number to adjust it, remove to delete",
+    draw_tabs("list")
+    local row = 2
+
+    line("sub", row, PAD,
+        "click a job to change it, a number to adjust it, remove to delete",
         "dim")
-    row = row + 2
+    row = row + 1
 
     if #rules == 0 then
         line("empty", row, PAD, "no rules yet, every job runs unlimited", "dim")
@@ -369,6 +518,7 @@ local function draw_list(cfg, totals)
             local met = have >= rule.amount
             local key = "rule" .. i
 
+            stripe(key, row, PAD, W - PAD * 2)
             line(key, row, PAD, workdefs.label(rule.work), "action")
             line("itm" .. i, row, 190, rule.item, "item")
             line("amt" .. i, row, COL2, string.format("%d / %d%s",
@@ -378,7 +528,7 @@ local function draw_list(cfg, totals)
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
             -- be somewhere to correct the guess.
-            line("del" .. i, row, COL2 + 180, "remove", "dim")
+            line("del" .. i, row, COL3, "remove", "dim")
 
             hit(key, { kind = "job", rule = rule })
             hit("amt" .. i, { kind = "rule", rule = rule })
@@ -388,17 +538,20 @@ local function draw_list(cfg, totals)
         row = row + 1
     end
 
-    line("new", row, PAD, "+   new rule", "action")
     hit("new", { kind = "new" })
-    row = row + 1
-
-    line("close", row, PAD, "x   close", "dim")
-    hit("close", { kind = "close" })
+    stripe("new", row, PAD, W - PAD * 2)
+    line("new", row, PAD, "+   add a rule", "action")
 
     return row + 2
 end
 
 local function picker_source(totals)
+    -- Anything typed searches the whole game, because looking for something
+    -- by name means you know it exists whether or not the base holds any.
+    if search_text ~= "" then
+        return items.search(search_text, 200), true
+    end
+
     if show_all then
         return items.load(), true
     end
@@ -421,13 +574,18 @@ local function draw_item_picker(cfg, totals)
     if page >= pages then page = pages - 1 end
     if page < 0 then page = 0 end
 
-    local row = 0
-    line("title", row, 0, "NEW RULE   pick an item", "title")
+    draw_tabs("item")
+    local row = 2
+
+    ensure_search(row)
     row = row + 1
-    line("sub", row, 0, string.format("%s,  %d item(s),  page %d of %d",
-        everything and "every item in the game" or "what your storage holds",
+
+    line("sub", row, PAD, string.format("%s,  %d item(s),  page %d of %d",
+        search_text ~= "" and ("matching " .. search_text)
+            or (everything and "every item in the game"
+                or "what your storage holds"),
         #source, page + 1, pages), "dim")
-    row = row + 2
+    row = row + 1
 
     local from = page * PER_PAGE + 1
     for i = from, math.min(from + PER_PAGE - 1, #source) do
@@ -435,6 +593,7 @@ local function draw_item_picker(cfg, totals)
         local have = totals[id] or 0
         local key = "pick" .. i
 
+        stripe(key, row, PAD, W - PAD * 2)
         line(key, row, PAD, id, "item")
         line("cnt" .. i, row, COL2,
             have > 0 and (have .. " in storage") or "", "dim")
@@ -477,6 +636,7 @@ local function draw_work_picker(cfg)
         if name ~= workdefs.ANYONE then
             i = i + 1
             local key = "job" .. i
+            stripe(key, row, PAD, W - PAD * 2)
             line(key, row, PAD, workdefs.label(name), "item")
             hit(key, { kind = "work", work = name })
             row = row + 1
@@ -522,8 +682,10 @@ function M.refresh(cfg)
     if mode == "item" then
         rows = draw_item_picker(cfg, totals)
     elseif mode == "work" then
+        hide_search()
         rows = draw_work_picker(cfg)
     else
+        hide_search()
         rows = draw_list(cfg, totals)
     end
 
@@ -548,6 +710,12 @@ local function blank_everything()
     if alive(backdrop) then
         pcall(function() backdrop:SetBrushColor(CLEAR) end)
     end
+    for _, border in pairs(stripes) do
+        if alive(border) then
+            pcall(function() border:SetBrushColor(CLEAR) end)
+        end
+    end
+    hide_search()
     hits, hover_key = {}, nil
 end
 
@@ -574,6 +742,7 @@ function M.reset()
     totals_cache, totals_at = nil, 0
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
+    stripes, search_box, search_text, want_focus = {}, nil, "", false
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, draft, page, show_all = "list", nil, 0, false
     ftext_mode = nil
@@ -658,6 +827,13 @@ function M.apply(cfg, what, dir)
 
     if what.kind == "new" then
         mode, page, show_all = "item", 0, false
+        want_focus = true
+        return true
+    end
+
+    if what.kind == "tab" then
+        mode, page = what.mode, 0
+        want_focus = (what.mode == "item")
         return true
     end
 
