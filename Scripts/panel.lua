@@ -22,6 +22,7 @@ local api = require("palapi")
 local caps = require("caps")
 local items = require("items")
 local workdefs = require("workdefs")
+local icons = require("icons")
 local overlay = require("overlay")
 local scheduler = require("scheduler")
 
@@ -56,6 +57,11 @@ local was_sel = nil
 
 local placed = {}               -- key -> where it was last put, to skip no-op moves
 local stripes = {}              -- key -> Border drawn behind a row
+local images = {}               -- key -> Image showing an item icon
+
+-- Where the tiles sit inside "order", so up and down can cross a row of them
+-- instead of stepping to the neighbour.
+local grid_from, grid_count = 0, 0
 local search_box = nil          -- EditableTextBox, only possible in a widget we own
 local search_text = ""
 local want_focus = false
@@ -74,15 +80,28 @@ local warned = {}
 -- centred at any resolution without ever asking how big the viewport is,
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
-local X, Y = -410, -300
+local X = -410
 local W = 820
+
+-- Vertical offset, recomputed from the drawn height so the panel sits in the
+-- middle of the screen whichever screen it is showing. Fixed before, which
+-- was fine for one screen and wrong for the other.
+local Y = -300
 local LINE = 34
 local ROW_H = 30
 local PAD = 18
 local COL2 = 470
 local COL3 = 690
 local TAB_H = 34
-local PER_PAGE = 12
+-- The picker is a grid, and these are what make it one. Eight across is
+-- Creative Menu's shape and it is a good one: wide enough that a page is
+-- worth paging to, narrow enough that a tile stays big enough to recognise.
+local COLS = 8
+local TILE = 76
+local GAP = 8
+local GRID_ROWS = 5
+
+local PER_PAGE = COLS * GRID_ROWS
 
 local COLOUR = {
     title  = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
@@ -230,7 +249,7 @@ end
 -- The box behind a row. Creative Menu draws every entry as a bordered slab
 -- that lights up under the pointer, and that alone is most of the difference
 -- between a menu and a wall of text.
-local function stripe(key, row, from, width)
+local function slab(key, px, py, w, h)
     local host = ensure_root()
     if not host then return end
 
@@ -257,15 +276,13 @@ local function stripe(key, row, from, width)
         stripes[key] = border
     end
 
-    local at = from .. ":" .. row .. ":" .. width
+    local at = px .. ":" .. py .. ":" .. w .. ":" .. h
     if placed["s:" .. key] ~= at then
         local slot
         pcall(function() slot = border.Slot end)
         if alive(slot) then
-            pcall(function()
-                slot:SetPosition({ X = X + from - 6, Y = Y + row * LINE - 3 })
-            end)
-            pcall(function() slot:SetSize({ X = width, Y = ROW_H }) end)
+            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
+            pcall(function() slot:SetSize({ X = w, Y = h }) end)
             placed["s:" .. key] = at
         end
     end
@@ -276,6 +293,11 @@ local function stripe(key, row, from, width)
         pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
         drawn["s:" .. key] = want
     end
+end
+
+-- A full width row, which is what the rules list is made of.
+local function stripe(key, row, from, width)
+    slab(key, from - 6, row * LINE - 3, width, ROW_H)
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -293,7 +315,7 @@ local function set_size(tb, points)
     end)
 end
 
-local function line(key, row, col, text, colour_key, points)
+local function text_at(key, px, py, text, colour_key, points)
     local canvas = ensure_root()
     if not canvas then return end
 
@@ -330,14 +352,12 @@ local function line(key, row, col, text, colour_key, points)
     -- Position every frame, not only at construction: a row moves when the
     -- screen above it changes length.
     -- Ten times a second, so a move that changes nothing is worth skipping.
-    local at = col .. ":" .. row
+    local at = px .. ":" .. py
     if placed[key] ~= at then
         local slot
         pcall(function() slot = tb.Slot end)
         if alive(slot) then
-            pcall(function()
-                slot:SetPosition({ X = X + col, Y = Y + row * LINE })
-            end)
+            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
             placed[key] = at
         end
     end
@@ -371,6 +391,95 @@ local function line(key, row, col, text, colour_key, points)
     end
 end
 
+-- Text on one of the list's rows.
+local function line(key, row, col, text, colour_key, points)
+    text_at(key, col, row * LINE, text, colour_key, points)
+end
+
+-- ---------------------------------------------------------------------------
+-- Tiles
+-- ---------------------------------------------------------------------------
+
+-- The icon itself.
+--
+-- Visible rather than hit test invisible, unlike the slab behind it, because
+-- this is the widget that reports whether the pointer is over the tile.
+local function picture(key, px, py, size, texture, token)
+    local host = ensure_root()
+    if not host then return end
+
+    used["i:" .. key] = true
+
+    local img = images[key]
+    if not alive(img) then
+        local cls = api.cdo("/Script/UMG.Image")
+        if not cls or not alive(root_tree) then return end
+
+        pcall(function() img = StaticConstructObject(cls, root_tree) end)
+        if not alive(img) then return end
+
+        local slot
+        local ok = pcall(function() slot = host:AddChildToCanvas(img) end)
+        if not ok or not alive(slot) then return end
+
+        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAutoSize(false) end)
+        pcall(function() slot:SetZOrder(8998) end)
+        pcall(function() img:SetVisibility(0) end)
+        images[key] = img
+    end
+
+    local at = px .. ":" .. py .. ":" .. size
+    if placed["i:" .. key] ~= at then
+        local slot
+        pcall(function() slot = img.Slot end)
+        if alive(slot) then
+            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
+            pcall(function() slot:SetSize({ X = size, Y = size }) end)
+            placed["i:" .. key] = at
+        end
+    end
+
+    if drawn["i:" .. key] ~= token then
+        if texture then
+            pcall(function() img:SetBrushFromTexture(texture, false) end)
+            pcall(function() img:SetOpacity(1.0) end)
+        else
+            -- Kept, not hidden. A hidden widget reports no hover, and the
+            -- tile still has to be clickable when its picture is missing.
+            pcall(function() img:SetOpacity(0.0) end)
+        end
+        drawn["i:" .. key] = token
+    end
+end
+
+-- One item: a slab, its icon, how many are in storage, and a name when there
+-- is no icon to be had.
+local function tile(key, at, item, have, top)
+    local col = at % COLS
+    local row = math.floor(at / COLS)
+    local px = PAD + col * (TILE + GAP)
+    local py = top + row * (TILE + GAP)
+
+    slab(key, px, py, TILE, TILE)
+
+    local texture = icons.get(item)
+    picture(key, px + 4, py + 4, TILE - 8, texture, item .. (texture and "+" or "-"))
+
+    -- Without an icon the tile would be an anonymous square, so it falls back
+    -- to as much of the name as fits rather than to nothing.
+    if not texture then
+        text_at("n:" .. key, px + 6, py + TILE / 2 - 10,
+            item:sub(1, 9), "item", 10)
+    end
+
+    if have > 0 then
+        local shown = have >= 1000
+            and (math.floor(have / 1000) .. "k") or tostring(have)
+        text_at("q:" .. key, px + 6, py + TILE - 18, shown, "dim", 11)
+    end
+end
+
 -- Anything not drawn this frame is emptied rather than destroyed. A destroyed
 -- widget leaves a dead wrapper behind; an empty one costs nothing. The first
 -- version cleared only keys matching one prefix, which is how an item name
@@ -401,6 +510,14 @@ local function blank_unused()
             and drawn["s:" .. key] ~= "clear" then
             pcall(function() border:SetBrushColor(CLEAR) end)
             drawn["s:" .. key] = "clear"
+        end
+    end
+
+    for key, img in pairs(images) do
+        if not used["i:" .. key] and alive(img)
+            and drawn["i:" .. key] ~= "clear" then
+            pcall(function() img:SetOpacity(0.0) end)
+            drawn["i:" .. key] = "clear"
         end
     end
 end
@@ -670,39 +787,47 @@ local function picker_source(totals)
 end
 
 local function draw_item_picker(cfg, totals)
+    icons.new_frame()
+
     local source, everything = picker_source(totals)
     local pages = math.max(1, math.ceil(#source / PER_PAGE))
     if page >= pages then page = pages - 1 end
     if page < 0 then page = 0 end
 
     draw_tabs("item")
-    local row = 2
 
-    ensure_search(row)
-    row = row + 1
+    -- The name of whatever the pointer is on, spelled out above the grid.
+    -- A grid of pictures is quick to scan and useless for telling Ore from
+    -- Ore, so the name has to be somewhere, and Creative Menu puts it here.
+    local current = hover_key or was_sel
+    local under = current and was_hit[current]
+    line("naming", 1, PAD,
+        (under and under.kind == "item") and under.item or "", "title", 22)
 
-    line("sub", row, PAD, string.format("%s,  %d item(s),  page %d of %d",
+    ensure_search(2)
+
+    line("sub", 3, PAD, string.format("%s,  %d item(s),  page %d of %d",
         search_text ~= "" and ("matching " .. search_text)
             or (everything and "everything your base can make"
                 or "what your storage holds"),
         #source, page + 1, pages), "dim")
-    row = row + 1
 
+    local top = 4 * LINE
     local from = page * PER_PAGE + 1
+
+    grid_from, grid_count = #order + 1, 0
+
     for i = from, math.min(from + PER_PAGE - 1, #source) do
         local id = source[i]
-        local have = totals[id] or 0
-        local key = "pick" .. i
+        local key = "pick" .. (i - from)
 
-        stripe(key, row, PAD, W - PAD * 2)
-        line(key, row, PAD, id, "item")
-        line("cnt" .. i, row, COL2,
-            have > 0 and (have .. " in storage") or "", "dim")
-
+        tile(key, i - from, id, totals[id] or 0, top)
         hit(key, { kind = "item", item = id })
-        row = row + 1
+        grid_count = grid_count + 1
     end
-    row = row + 1
+
+    -- Where the grid ends, rounded up to the row grid everything else uses.
+    local row = 4 + math.ceil((GRID_ROWS * (TILE + GAP)) / LINE) + 1
 
     if pages > 1 then
         line("prev", row, PAD, "<   previous", page > 0 and "action" or "dim")
@@ -739,10 +864,11 @@ function M.refresh(cfg)
     -- screen twice to avoid it is not.
     hover_key = nil
     for key in pairs(hits) do
-        local tb = blocks[key]
+        -- A row reports through its text, a tile through its picture.
+        local w = blocks[key] or images[key]
         local over = false
         pcall(function()
-            if alive(tb) then over = tb:IsHovered() end
+            if alive(w) then over = w:IsHovered() end
         end)
         if over == true then
             hover_key = key
@@ -768,6 +894,17 @@ function M.refresh(cfg)
 
     ensure_backdrop(rows)
     blank_unused()
+
+    -- Centred vertically from what was actually drawn. The row count is only
+    -- known now, so this lands one frame late, which at ten frames a second
+    -- is a tenth of a second on opening and invisible after that.
+    local want = -math.floor((rows * LINE) / 2)
+    if want ~= Y then
+        Y = want
+        -- Every remembered position was measured against the old offset, so
+        -- none of them are true any more.
+        placed = {}
+    end
 end
 
 local function blank_everything()
@@ -787,6 +924,12 @@ local function blank_everything()
         if alive(border) then
             pcall(function() border:SetBrushColor(CLEAR) end)
             drawn["s:" .. key] = "clear"
+        end
+    end
+    for key, img in pairs(images) do
+        if alive(img) then
+            pcall(function() img:SetOpacity(0.0) end)
+            drawn["i:" .. key] = "clear"
         end
     end
     hide_search()
@@ -817,6 +960,8 @@ function M.reset()
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
+    images, grid_from, grid_count = {}, 0, 0
+    icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false
     ftext_mode = nil
@@ -846,10 +991,10 @@ end
 
 local function hovered()
     for key, what in pairs(hits) do
-        local tb = blocks[key]
+        local w = blocks[key] or images[key]
         local over = false
         pcall(function()
-            if alive(tb) then over = tb:IsHovered() end
+            if alive(w) then over = w:IsHovered() end
         end)
         if over == true then
             -- Moving the mouse moves the keyboard position with it, so the
@@ -872,6 +1017,40 @@ function M.move(delta)
     if sel > #order then sel = 1 end
     if sel < 1 then sel = #order end
     return true
+end
+
+-- What an arrow key means depends on which screen is up, so the meaning is
+-- decided here rather than at the keybind. On the rules list up and down walk
+-- the rules while left and right raise and lower the ceiling. In the picker
+-- every arrow moves, because a grid has two dimensions and there is nothing
+-- to raise, and Enter is what picks.
+function M.nav(cfg, what)
+    if not M.open then return false end
+
+    if what == "enter" then return M.activate(cfg, -1) end
+
+    if mode == "item" then
+        if what == "left" then return M.move(-1) end
+        if what == "right" then return M.move(1) end
+
+        -- Up and down cross a whole row of tiles. Only while the selection is
+        -- among them: on the buttons underneath, a row is one step.
+        local at = sel - grid_from
+        if grid_count > 0 and at >= 0 and at < grid_count then
+            local to = at + (what == "up" and -COLS or COLS)
+            if to >= 0 and to < grid_count then
+                sel = grid_from + to
+                return true
+            end
+        end
+        return M.move(what == "up" and -1 or 1)
+    end
+
+    if what == "up" then return M.move(-1) end
+    if what == "down" then return M.move(1) end
+    if what == "right" then return M.activate(cfg, -1) end
+    if what == "left" then return M.activate(cfg, 1) end
+    return false
 end
 
 -- Enter and backspace stand in for left and right click on the selected row.

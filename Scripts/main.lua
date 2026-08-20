@@ -19,6 +19,7 @@ local store = require("store")
 local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
+local icons = require("icons")
 local net = require("net")
 local overlay = require("overlay")
 local demandidx = require("demand")
@@ -972,6 +973,7 @@ end, { ModifierKey.CONTROL })
 bind(Key.F7, "Ctrl+F7 (icon probe)", function()
     ExecuteInGameThread(function()
         pcall(function() overlay.icon_probe() end)
+        pcall(function() icons.report() end)
     end)
 end, { ModifierKey.CONTROL })
 
@@ -983,11 +985,15 @@ end, { ModifierKey.CONTROL })
 -- immediately when our panel is shut, so the two only overlap if both panels
 -- are open at once.
 local function arrows()
+    -- The keys say which way, not what it does. What it does depends on the
+    -- screen: on the rules list left and right change a ceiling, in the
+    -- picker they move across a grid, and only the panel knows which is up.
     local moves = {
-        { "UP_ARROW",    function() return panel.move(-1) end },
-        { "DOWN_ARROW",  function() return panel.move(1) end },
-        { "RIGHT_ARROW", function() return panel.activate(cfg, -1) end },
-        { "LEFT_ARROW",  function() return panel.activate(cfg, 1) end },
+        { "UP_ARROW",    function() return panel.nav(cfg, "up") end },
+        { "DOWN_ARROW",  function() return panel.nav(cfg, "down") end },
+        { "RIGHT_ARROW", function() return panel.nav(cfg, "right") end },
+        { "LEFT_ARROW",  function() return panel.nav(cfg, "left") end },
+        { "RETURN",      function() return panel.nav(cfg, "enter") end },
     }
 
     for _, entry in ipairs(moves) do
