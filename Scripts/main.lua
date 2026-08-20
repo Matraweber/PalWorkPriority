@@ -234,7 +234,7 @@ COMMANDS.help = function()
     log.say("keys, Ctrl does a thing:")
     log.say("  Ctrl+F8 transport test   Ctrl+F9  work rules")
     log.say("  Ctrl+F10 run a pass      Ctrl+F11 Discovery.txt")
-    log.say("  Ctrl+F12 base storage      Ctrl+F7  own widget test")
+    log.say("  Ctrl+F12 base storage")
     log.say("keys, Alt changes a setting:")
     log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
     log.say("in the rules panel: up and down move, right raises, left lowers")
@@ -833,12 +833,8 @@ bind(Key.F8, "Ctrl+F8 (transport test)", function()
     COMMANDS.net()
 end, { ModifierKey.CONTROL })
 
--- Whether a widget we build ourselves can be put on screen. If it can, the
--- panel gets a host nothing else can destroy and no cooked blueprint is
--- needed. Its own key because it has to be tried from inside a live world.
-bind(Key.F7, "Ctrl+F7 (own widget test)", function()
-    overlay.toggle()
-end, { ModifierKey.CONTROL })
+-- The overlay is no longer a separate thing to test. Ctrl+F9 opens the rules
+-- panel, which puts the overlay on screen as its host.
 
 -- Arrow keys for the rules panel.
 --

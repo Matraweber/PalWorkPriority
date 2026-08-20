@@ -1,39 +1,42 @@
--- A widget we own, built entirely from Lua.
+-- A widget we own, built from Lua, and the host every panel draws into.
 --
--- Every problem the rules panel has comes from living in widgets the game
--- owns. Two crashes when the HUD rebuilt underneath it, a duplicate when a
--- menu was hidden rather than destroyed, arrow keys and mouse clicks eaten by
--- an input mode we cannot switch. Guarding harder never helped, because the
--- host was always someone else's.
+-- Everything that went wrong with the old panel came from living in widgets
+-- the game owns. Two crashes when the HUD rebuilt underneath it, a duplicate
+-- when a menu was hidden rather than destroyed, arrow keys and clicks eaten
+-- by an input mode we could not switch. Guarding harder never helped, because
+-- the host was always someone else's.
 --
--- The blueprint route fixes that by giving us a widget of our own, at the cost
--- of an Unreal install and layout work in the editor. This asks whether the
--- same thing can be built at runtime instead:
+-- So we make our own:
 --
 --   1. construct a UserWidget
 --   2. construct a WidgetTree and hand it to that widget
 --   3. construct a CanvasPanel and make it the tree's root
 --   4. AddToViewport
 --
--- If that holds, we own the lifetime outright and no pak is needed. If it does
--- not, the editor spec in docs/widget-spec.md is the answer and this file goes
--- away. Either way the question gets settled by trying rather than by reading.
---
--- Nothing here is wired into the mod. It is a probe with a key on it.
+-- Proven in game before anything was built on it. Nothing in Palworld holds a
+-- reference to this widget, so nothing can free it under us, and a widget we
+-- own is one the engine will give keyboard focus to. That second part is why
+-- a search box is possible at all.
 
 local log = require("log")
 local api = require("palapi")
 
 local M = {}
 
-M.widget = nil
-M.tree = nil
-M.canvas = nil
-M.report = {}
+M.open = false
 
-local function note(line)
-    M.report[#M.report + 1] = line
-    log.say("overlay: " .. line)
+local widget = nil
+local tree = nil
+local canvas = nil
+
+local warned = {}
+local cursor_was = nil
+local input_route = nil
+
+local function warn_once(key, message)
+    if warned[key] then return end
+    warned[key] = true
+    log.warn(message)
 end
 
 local function alive(o)
@@ -42,182 +45,204 @@ local function alive(o)
     return ok and res == true
 end
 
-local function class_of(o)
-    local n
-    pcall(function() n = o:GetClass():GetFName():ToString() end)
-    return n or "?"
-end
-
 -- ---------------------------------------------------------------------------
--- Building it
+-- Building
 -- ---------------------------------------------------------------------------
 
-function M.build()
-    M.report = {}
-    note("attempting a self owned widget")
-
-    -- Outer matters. A UserWidget is normally outered to the player, and the
-    -- transient package is the fallback when there is nothing better. Both are
-    -- tried because which one this build accepts is not knowable from here.
+local function build()
     local pc = api.player_controller()
-    note("player controller: " .. tostring(alive(pc)))
 
     local widget_cls = api.cdo("/Script/UMG.UserWidget")
-    local tree_cls   = api.cdo("/Script/UMG.WidgetTree")
+    local tree_cls = api.cdo("/Script/UMG.WidgetTree")
     local canvas_cls = api.cdo("/Script/UMG.CanvasPanel")
-    local text_cls   = api.cdo("/Script/UMG.TextBlock")
-    local border_cls = api.cdo("/Script/UMG.Border")
-
-    note("classes: UserWidget=" .. tostring(widget_cls ~= nil) ..
-         " WidgetTree=" .. tostring(tree_cls ~= nil) ..
-         " CanvasPanel=" .. tostring(canvas_cls ~= nil))
 
     if not (widget_cls and tree_cls and canvas_cls) then
-        note("a required class did not resolve, stopping")
+        warn_once("cls", "UMG classes did not resolve, so no overlay")
         return false
     end
 
-    -- 1. the widget
-    local outer = alive(pc) and pc or nil
-    local widget
-    for _, candidate in ipairs({ outer, nil }) do
+    -- Outered to the player controller where there is one. A UserWidget with
+    -- no owner still constructs, but the viewport is likelier to take it when
+    -- it knows whose screen it belongs on.
+    local made
+    for _, outer in ipairs({ alive(pc) and pc or false, false }) do
         pcall(function()
-            widget = StaticConstructObject(widget_cls, candidate)
+            made = StaticConstructObject(widget_cls, outer or nil)
         end)
-        if alive(widget) then break end
+        if alive(made) then break end
     end
-
-    if not alive(widget) then
-        note("could not construct a UserWidget at all")
-        return false
-    end
-    note("widget constructed: " .. class_of(widget))
-
-    -- 2. its tree. A UserWidget with no WidgetTree renders nothing and may
-    --    fault when the layout pass reaches it, so this is the step that
-    --    decides whether the whole idea works.
-    local tree
-    pcall(function() tree = StaticConstructObject(tree_cls, widget) end)
-    if not alive(tree) then
-        note("could not construct a WidgetTree")
-        return false
-    end
-    note("tree constructed: " .. class_of(tree))
-
-    local assigned = false
-    pcall(function()
-        widget.WidgetTree = tree
-        assigned = true
-    end)
-    note("tree assigned to widget: " .. tostring(assigned))
-
-    -- 3. a root canvas, owned by the tree
-    local canvas
-    pcall(function() canvas = StaticConstructObject(canvas_cls, tree) end)
-    if not alive(canvas) then
-        note("could not construct a CanvasPanel")
+    if not alive(made) then
+        warn_once("widget", "could not construct the overlay widget")
         return false
     end
 
-    local rooted = false
-    pcall(function()
-        tree.RootWidget = canvas
-        rooted = true
-    end)
-    note("canvas set as root: " .. tostring(rooted))
-
-    -- something visible, so success is obvious rather than inferred
-    if border_cls then
-        local border
-        pcall(function() border = StaticConstructObject(border_cls, tree) end)
-        if alive(border) then
-            local slot
-            pcall(function() slot = canvas:AddChildToCanvas(border) end)
-            if alive(slot) then
-                pcall(function() slot:SetAutoSize(false) end)
-                pcall(function() slot:SetPosition({ X = 200, Y = 200 }) end)
-                pcall(function() slot:SetSize({ X = 700, Y = 420 }) end)
-                pcall(function() border:SetBrushColor(
-                    { R = 0.05, G = 0.07, B = 0.11, A = 0.94 }) end)
-            end
-        end
+    -- A UserWidget with no WidgetTree renders nothing and can fault when the
+    -- layout pass reaches it, so this is the step the whole idea rests on.
+    local made_tree
+    pcall(function() made_tree = StaticConstructObject(tree_cls, made) end)
+    if not alive(made_tree) then
+        warn_once("tree", "could not construct the overlay widget tree")
+        return false
     end
+    pcall(function() made.WidgetTree = made_tree end)
 
-    if text_cls then
-        local tb
-        pcall(function() tb = StaticConstructObject(text_cls, tree) end)
-        if alive(tb) then
-            local slot
-            pcall(function() slot = canvas:AddChildToCanvas(tb) end)
-            if alive(slot) then
-                pcall(function() slot:SetAutoSize(true) end)
-                pcall(function() slot:SetPosition({ X = 230, Y = 230 }) end)
-                pcall(function() slot:SetZOrder(10) end)
-            end
-            pcall(function()
-                local kismet = api.cdo("/Script/Engine.Default__KismetTextLibrary")
-                local ft
-                if kismet then
-                    ft = kismet:Conv_StringToText("PAL WORK PRIORITY, own widget")
-                else
-                    ft = FText("PAL WORK PRIORITY, own widget")
-                end
-                if ft then tb:SetText(ft) end
-            end)
-            pcall(function() tb:SetColorAndOpacity({
-                SpecifiedColor = { R = 0.4, G = 0.9, B = 1.0, A = 1.0 },
-                ColorUseRule = 0 }) end)
-        end
+    local made_canvas
+    pcall(function() made_canvas = StaticConstructObject(canvas_cls, made_tree) end)
+    if not alive(made_canvas) then
+        warn_once("canvas", "could not construct the overlay canvas")
+        return false
     end
+    pcall(function() made_tree.RootWidget = made_canvas end)
 
-    -- 4. onto the screen
+    -- Focusable, or the engine will not hand it the keyboard however hard the
+    -- input mode is set.
+    pcall(function() made:SetIsFocusable(true) end)
+
     local shown = false
     pcall(function()
-        widget:AddToViewport(9000)
+        made:AddToViewport(9000)
         shown = true
     end)
-    note("AddToViewport: " .. tostring(shown))
 
-    if not shown then
-        -- Some builds want the owning player set before the viewport accepts
-        -- the widget, which is worth one retry rather than a conclusion.
-        pcall(function() widget:SetOwningPlayer(pc) end)
+    if not shown and alive(pc) then
+        -- Some builds want the owning player before the viewport accepts it.
+        pcall(function() made:SetOwningPlayer(pc) end)
         pcall(function()
-            widget:AddToViewport(9000)
+            made:AddToViewport(9000)
             shown = true
         end)
-        note("AddToViewport after SetOwningPlayer: " .. tostring(shown))
     end
 
-    M.widget, M.tree, M.canvas = widget, tree, canvas
-
-    if shown then
-        note("SUCCESS, look for a dark panel with cyan text")
-        note("if nothing is on screen the call worked but the layout did not")
+    if not shown then
+        warn_once("viewport", "the overlay would not go on the viewport")
+        return false
     end
-    return shown
+
+    widget, tree, canvas = made, made_tree, made_canvas
+    return true
 end
 
-function M.destroy()
-    if alive(M.widget) then
-        pcall(function() M.widget:RemoveFromParent() end)
-        note("removed from viewport")
+-- The canvas panels draw into, and the tree that must own anything they
+-- construct. Builds on first use.
+function M.host()
+    if alive(widget) and alive(tree) and alive(canvas) then
+        return canvas, tree, widget
     end
-    M.widget, M.tree, M.canvas = nil, nil, nil
+
+    -- Dropped without touching them. Whatever they pointed at is gone, and
+    -- asking a freed widget whether it is valid is the crash rather than the
+    -- check for it.
+    widget, tree, canvas = nil, nil, nil
+
+    if not build() then return nil end
+    return canvas, tree, widget
+end
+
+-- ---------------------------------------------------------------------------
+-- Input
+-- ---------------------------------------------------------------------------
+
+-- Showing a cursor was never enough on its own. Slate routes mouse events to
+-- widgets only in a UI input mode; in game mode the pointer is drawn and every
+-- click still goes to the player controller. That is why the old panel looked
+-- clickable and was not.
+--
+-- It failed before because the mode wants a widget to focus and we had none of
+-- our own to give it. Now we do.
+local function set_input(on)
+    local pc = api.player_controller()
+    if not alive(pc) then return end
+
+    pcall(function()
+        if on then
+            if cursor_was == nil then cursor_was = pc.bShowMouseCursor end
+            pc.bShowMouseCursor = true
+        elseif cursor_was ~= nil then
+            pc.bShowMouseCursor = cursor_was
+            cursor_was = nil
+        end
+    end)
+
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not lib then
+        warn_once("inputlib", "WidgetBlueprintLibrary missing, overlay input " ..
+            "will not capture")
+        return
+    end
+
+    if not on then
+        pcall(function() lib:SetInputMode_GameOnly(pc) end)
+        return
+    end
+
+    -- Game and UI rather than UI only: the camera stays usable, which is what
+    -- the Creative Menu does and what makes an overlay feel like part of the
+    -- game rather than a modal dialog over it. Argument counts differ between
+    -- engine versions, so each shape is tried and the one that takes is kept.
+    local shapes = {
+        { "GameAndUI(pc, widget, 0, false)",
+          function() lib:SetInputMode_GameAndUI(pc, widget, 0, false) end },
+        { "GameAndUI(pc, widget, 0)",
+          function() lib:SetInputMode_GameAndUI(pc, widget, 0) end },
+        { "GameAndUI(pc, widget)",
+          function() lib:SetInputMode_GameAndUI(pc, widget) end },
+        { "GameAndUI(pc)",
+          function() lib:SetInputMode_GameAndUI(pc) end },
+    }
+
+    for _, shape in ipairs(shapes) do
+        if pcall(shape[2]) then
+            if input_route ~= shape[1] then
+                input_route = shape[1]
+                log.debug("overlay input mode via " .. shape[1])
+            end
+            return
+        end
+    end
+
+    warn_once("inputmode", "could not switch input mode, so the overlay may " ..
+        "not take clicks")
+end
+
+-- ---------------------------------------------------------------------------
+-- Showing
+-- ---------------------------------------------------------------------------
+
+function M.show()
+    if M.host() == nil then return false end
+
+    pcall(function() widget:SetVisibility(0) end)
+    set_input(true)
+
+    -- Focus after the mode switch, or the mode switch takes it back.
+    pcall(function() widget:SetKeyboardFocus() end)
+
+    M.open = true
+    return true
+end
+
+function M.hide()
+    if alive(widget) then
+        -- Collapsed rather than removed. Removing would drop the whole tree
+        -- and everything panels have built into it, and building it again on
+        -- every open is how the old panel ended up with two of everything.
+        pcall(function() widget:SetVisibility(1) end)
+    end
+    set_input(false)
+    M.open = false
 end
 
 function M.toggle()
-    if alive(M.widget) then
-        M.destroy()
-    else
-        M.build()
-    end
+    if M.open then M.hide() else M.show() end
+    return M.open
 end
 
+-- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
-    -- A world switch takes every wrapper with it. Dropped without touching
-    -- them, because asking a freed widget anything is the crash itself.
-    M.widget, M.tree, M.canvas = nil, nil, nil
+    widget, tree, canvas = nil, nil, nil
+    cursor_was, input_route = nil, nil
+    M.open = false
+    warned = {}
 end
 
 return M

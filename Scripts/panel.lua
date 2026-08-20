@@ -22,7 +22,7 @@ local api = require("palapi")
 local caps = require("caps")
 local items = require("items")
 local workdefs = require("workdefs")
-local ui = require("ui")
+local overlay = require("overlay")
 
 local M = {}
 
@@ -140,78 +140,37 @@ end
 -- Attaching to the game's UI
 -- ---------------------------------------------------------------------------
 
--- Depth-first search for the first CanvasPanel, which is what a widget can be
--- added to by coordinates.
-local function first_canvas(node, budget)
-    budget = budget or { n = 0 }
-    if budget.n > 400 or not alive(node) then return nil end
-    budget.n = budget.n + 1
-
-    if class_name(node) == "CanvasPanel" then return node end
-
-    local count = 0
-    pcall(function() count = node:GetChildrenCount() end)
-    if type(count) == "number" then
-        for i = 0, count - 1 do
-            local child
-            pcall(function() child = node:GetChildAt(i) end)
-            local found = first_canvas(child, budget)
-            if found then return found end
-        end
-    end
-    return nil
-end
-
--- The panel lives on the Monitoring Stand's own menu.
+-- The panel draws into the overlay, a widget the mod constructs and owns.
 --
--- It used to hang off WBP_PalOverallUILayout_C, the persistent HUD, so it
--- could be opened anywhere. That cost two crashes, both inside UE4SS and both
--- within seconds of the panel being opened, and the reason is that the HUD is
--- rebuilt as its own state changes. When it is, every widget we parented into
--- it is destroyed, and the next refresh reaches a freed object. alive() is no
--- defence there, because IsValid is itself a call on the dead wrapper and a
--- call on a freed object is exactly what pcall cannot catch.
+-- It used to live in the Monitoring Stand's menu, and before that in the HUD.
+-- Both belong to the game, which is the root of everything that went wrong:
+-- the HUD rebuilt itself and freed our widgets mid-frame, twice, and the stand
+-- menu turned out to be hidden rather than destroyed, so closing it orphaned
+-- our rows and reopening drew a second set over them.
 --
--- A menu is the opposite kind of host: built when the stand opens, torn down
--- when it closes, and nothing rebuilds it underneath while it is up. The
--- priority grid has injected into it for weeks without incident, and
--- PalPriorityUI injects only there too rather than into the HUD.
---
--- The cost is that rules are set at a Monitoring Stand rather than anywhere.
--- Rules are per base, so that is close to where they belong anyway.
+-- Nothing in Palworld holds a reference to the overlay, so nothing can free it
+-- or hide it behind our back. It also means the panel is no longer tied to a
+-- Monitoring Stand, which was a real loss when it was hosted there.
 local function ensure_root()
-    local menu, tree, base = ui.host()
+    local host, host_tree = overlay.host()
 
-    if not alive(menu) or not alive(tree) or not alive(base) then
-        -- The stand is shut. Keep every reference exactly as it is.
-        --
-        -- Clearing here was the duplicate: Palworld hides this menu rather
-        -- than destroying it, so the widgets stayed parented in a canvas that
-        -- outlived our pointers to them. Reopening then found no references,
-        -- built a second set, and drew it over the first.
-        --
-        -- Nothing is touched either, only left alone, so a menu that really
-        -- was destroyed cannot be dereferenced from here.
+    if not alive(host) or not alive(host_tree) then
+        root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+        blocks, drawn = {}, {}
         return nil
     end
 
-    if root_owner == menu and alive(root) and alive(root_tree) then
+    if root == host and alive(root_tree) then
         return root
     end
 
-    -- Genuinely a different menu object. Whatever we made belonged to the old
-    -- one and died with it, so the references are dropped rather than
-    -- unparented: asking a freed widget anything is the crash, not the check.
-    root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+    -- A different canvas than last time means the overlay was rebuilt, and
+    -- everything we made belonged to the old one and went with it. References
+    -- are dropped rather than unparented: asking a freed widget anything is
+    -- the crash, not the check for it.
+    root, root_owner, root_tree = host, host, host_tree
+    backdrop = nil
     blocks, drawn = {}, {}
-
-    local canvas = first_canvas(base)
-    if not alive(canvas) then
-        warn_once("nocanvas", "no canvas on the stand menu, so no rules panel")
-        return nil
-    end
-
-    root, root_owner, root_tree = canvas, menu, tree
     return root
 end
 
@@ -592,103 +551,26 @@ local function blank_everything()
     hits, hover_key = {}, nil
 end
 
--- Opened on a hotkey, which means it can come up during ordinary play where
--- there is no mouse cursor at all. Nothing can be hovered without one, and
--- IsHovered is the whole of the hit testing, so the cursor comes on with the
--- panel and goes back as it was on close.
-local cursor_was = nil
-local input_route = nil
-
--- Showing a cursor is not enough on its own.
---
--- bShowMouseCursor only draws the pointer. Slate routes mouse events to
--- widgets only when the input mode is UI or Game and UI; in plain game mode
--- the cursor is visible while every click still goes to the player
--- controller, so IsHovered never becomes true and nothing in the panel can be
--- pressed. That is why the first version looked clickable and was not.
---
--- The argument list for these differs between engine versions, so each shape
--- is tried and the one that takes is remembered and logged.
-local function set_input_mode(on)
-    local pc = api.player_controller()
-    if not alive(pc) then return end
-
-    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
-    if not lib then
-        warn_once("noinputlib",
-            "WidgetBlueprintLibrary not found, so the panel may not take clicks")
-        return
-    end
-
-    if not on then
-        pcall(function() lib:SetInputMode_GameOnly(pc) end)
-        return
-    end
-
-    -- EMouseLockMode 0 is DoNotLock, which leaves the camera usable.
-    local shapes = {
-        { "GameAndUI(pc, nil, 0, false)",
-          function() lib:SetInputMode_GameAndUI(pc, nil, 0, false) end },
-        { "GameAndUI(pc, nil, 0)",
-          function() lib:SetInputMode_GameAndUI(pc, nil, 0) end },
-        { "GameAndUI(pc)",
-          function() lib:SetInputMode_GameAndUI(pc) end },
-    }
-
-    for _, shape in ipairs(shapes) do
-        if pcall(shape[2]) then
-            if input_route ~= shape[1] then
-                input_route = shape[1]
-                log.debug("input mode set via " .. shape[1])
-            end
-            return
-        end
-    end
-
-    warn_once("noinputmode",
-        "could not switch to Game and UI input, so clicks may not reach the panel")
-end
-
-local function set_cursor(on)
-    local pc = api.player_controller()
-    if not alive(pc) then return end
-
-    pcall(function()
-        if on then
-            if cursor_was == nil then cursor_was = pc.bShowMouseCursor end
-            pc.bShowMouseCursor = true
-        elseif cursor_was ~= nil then
-            pc.bShowMouseCursor = cursor_was
-            cursor_was = nil
-        end
-    end)
-
-    set_input_mode(on)
-end
-
 function M.toggle()
     M.open = not M.open
 
     if not M.open then
         blank_everything()
-        set_cursor(false)
+        overlay.hide()
         mode, draft, page, show_all = "list", nil, 0, false
         return
     end
 
-    set_cursor(true)
-
-    if ensure_root() == nil then
-        log.say("work rules need the Monitoring Stand open. " ..
-            "Open it and press Ctrl+F9 again")
-    else
-        log.say("work rules open, Ctrl+F9 again to close")
+    if not overlay.show() then
+        M.open = false
+        log.say("could not put the overlay on screen, see priority.log")
+        return
     end
+    log.say("work rules open, Ctrl+F9 again to close")
 end
 
 function M.reset()
     M.open = false
-    cursor_was = nil
     totals_cache, totals_at = nil, 0
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
