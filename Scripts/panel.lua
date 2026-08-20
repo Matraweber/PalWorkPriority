@@ -43,8 +43,10 @@ local backdrop = nil
 local blocks = {}               -- key -> TextBlock
 local drawn = {}                -- key -> last token drawn
 local hits = {}                 -- key -> what clicking it means
+local order = {}                -- the same keys in draw order, for the arrows
 local used = {}                 -- keys touched this frame, so the rest blank
 local hover_key = nil
+local sel = 1                   -- which row the keyboard is on
 
 local ftext_mode = nil
 local warned = {}
@@ -68,8 +70,24 @@ local COLOUR = {
     hover  = { R = 0.35, G = 1.00, B = 1.00, A = 1.00 },
 }
 
+-- Amounts run into the thousands, so a step walks a ladder that coarsens as
+-- the numbers grow rather than moving by one.
+local LADDER = {
+    100, 250, 500, 1000, 2000, 3000, 5000,
+    7500, 10000, 15000, 20000, 30000, 50000,
+}
+
 local BACKDROP = { R = 0.03, G = 0.05, B = 0.08, A = 0.90 }
 local CLEAR = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
+
+-- Registers a row as clickable and, in the same breath, as reachable by the
+-- arrow keys. Two lists that could disagree would be a bug waiting, and the
+-- mouse turned out to be awkward enough on a moving cursor that the keyboard
+-- is not a nicety.
+local function hit(key, what)
+    hits[key] = what
+    order[#order + 1] = key
+end
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -242,7 +260,8 @@ local function line(key, row, col, text, colour_key)
         pcall(function() slot:SetPosition({ X = X + col, Y = Y + row * LINE }) end)
     end
 
-    local shown = (key == hover_key) and "hover" or colour_key
+    local shown = (key == hover_key or key == order[sel]) and "hover"
+        or colour_key
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
@@ -342,7 +361,7 @@ local function draw_list(cfg, totals)
     line("title", row, 0, "WORK RULES", "title")
     row = row + 1
     line("sub", row, 0,
-        "left click raises, right click lowers, past the lowest removes", "dim")
+        "arrows move, enter and backspace change, or use the mouse", "dim")
     row = row + 2
 
     if #rules == 0 then
@@ -354,24 +373,28 @@ local function draw_list(cfg, totals)
             local met = have >= rule.amount
             local key = "rule" .. i
 
-            line(key, row, PAD,
-                workdefs.label(rule.work) .. "   " .. rule.item, "item")
+            line(key, row, PAD, workdefs.label(rule.work), "action")
+            line("itm" .. i, row, 190, rule.item, "item")
             line("amt" .. i, row, COL2, string.format("%d / %d%s",
                 have, rule.amount, met and "   done" or ""),
                 met and "met" or "unmet")
 
-            hits[key] = { kind = "rule", rule = rule }
+            -- The job is clickable separately from the amount. Rules no
+            -- longer ask which job makes a thing, they guess, so there has to
+            -- be somewhere to correct the guess.
+            hit(key, { kind = "job", rule = rule })
+            hit("amt" .. i, { kind = "rule", rule = rule })
             row = row + 1
         end
         row = row + 1
     end
 
     line("new", row, PAD, "+   new rule", "action")
-    hits["new"] = { kind = "new" }
+    hit("new", { kind = "new" })
     row = row + 1
 
     line("close", row, PAD, "x   close", "dim")
-    hits["close"] = { kind = "close" }
+    hit("close", { kind = "close" })
 
     return row + 2
 end
@@ -417,7 +440,7 @@ local function draw_item_picker(cfg, totals)
         line("cnt" .. i, row, COL2,
             have > 0 and (have .. " in storage") or "", "dim")
 
-        hits[key] = { kind = "item", item = id }
+        hit(key, { kind = "item", item = id })
         row = row + 1
     end
     row = row + 1
@@ -426,19 +449,19 @@ local function draw_item_picker(cfg, totals)
         line("prev", row, PAD, "<   previous", page > 0 and "action" or "dim")
         line("next", row, 220, "next   >",
             page < pages - 1 and "action" or "dim")
-        if page > 0 then hits["prev"] = { kind = "page", by = -1 } end
-        if page < pages - 1 then hits["next"] = { kind = "page", by = 1 } end
+        if page > 0 then hit("prev", { kind = "page", by = -1 }) end
+        if page < pages - 1 then hit("next", { kind = "page", by = 1 }) end
         row = row + 1
     end
 
     line("all", row, PAD,
         everything and "show only what I have" or "show every item in the game",
         "action")
-    hits["all"] = { kind = "toggle_all" }
+    hit("all", { kind = "toggle_all" })
     row = row + 1
 
     line("back", row, PAD, "<   back", "action")
-    hits["back"] = { kind = "back" }
+    hit("back", { kind = "back" })
 
     return row + 2
 end
@@ -456,14 +479,14 @@ local function draw_work_picker(cfg)
             i = i + 1
             local key = "job" .. i
             line(key, row, PAD, workdefs.label(name), "item")
-            hits[key] = { kind = "work", work = name }
+            hit(key, { kind = "work", work = name })
             row = row + 1
         end
     end
     row = row + 1
 
     line("back", row, PAD, "<   back", "action")
-    hits["back"] = { kind = "back" }
+    hit("back", { kind = "back" })
 
     return row + 2
 end
@@ -492,7 +515,7 @@ function M.refresh(cfg)
         end
     end
 
-    hits, used = {}, {}
+    hits, order, used = {}, {}, {}
     local totals = stock_totals(cfg)
 
     local rows
@@ -503,6 +526,10 @@ function M.refresh(cfg)
     else
         rows = draw_list(cfg, totals)
     end
+
+    -- Clamped after the draw, since the row count is only known then.
+    if sel > #order then sel = #order end
+    if sel < 1 then sel = 1 end
 
     ensure_backdrop(rows)
     blank_unused()
@@ -628,13 +655,6 @@ end
 -- Clicking
 -- ---------------------------------------------------------------------------
 
--- Amounts run into the thousands, so a click walks a ladder that coarsens as
--- the numbers grow rather than stepping by one.
-local LADDER = {
-    100, 250, 500, 1000, 2000, 3000, 5000,
-    7500, 10000, 15000, 20000, 30000, 50000,
-}
-
 local function step(current, dir)
     if dir < 0 then
         if current == nil then return LADDER[1] end
@@ -664,13 +684,37 @@ local function hovered()
     return nil
 end
 
+-- Arrow keys. The mouse works, but the cursor sits over a live game world and
+-- the rows are thin, so this is the reliable way in.
+function M.move(delta)
+    if not M.open or #order == 0 then return false end
+
+    sel = sel + delta
+    if sel > #order then sel = 1 end
+    if sel < 1 then sel = #order end
+    return true
+end
+
+-- Enter and backspace stand in for left and right click on the selected row.
+function M.activate(cfg, dir)
+    if not M.open then return false end
+
+    local what = hits[order[sel] or ""]
+    if what == nil then return false end
+    return M.apply(cfg, what, dir)
+end
+
 -- Returns true when the click was ours, so the caller leaves the grid alone.
 function M.handle_click(cfg, dir)
     if not M.open then return false end
 
     local what = hovered()
     if what == nil then return false end
+    return M.apply(cfg, what, dir)
+end
 
+-- What a row does, whichever way it was reached.
+function M.apply(cfg, what, dir)
     if what.kind == "close" then
         M.toggle()
         return true
@@ -702,8 +746,46 @@ function M.handle_click(cfg, dir)
     end
 
     if what.kind == "item" then
-        draft = { item = what.item }
-        mode = "work"
+        -- Guess the job from the item rather than asking. Thirteen choices for
+        -- a question that usually has one obvious answer is a screen nobody
+        -- wants, and a wrong guess shows on the rule and is one click to fix.
+        local guess = workdefs.work_for_item(what.item)
+
+        if guess then
+            caps.set(guess, what.item, LADDER[1])
+            log.say(string.format("rule added: %s until %d %s",
+                workdefs.label(guess), LADDER[1], what.item))
+            M.wants_pass = true
+            mode, draft, sel = "list", nil, 1
+        else
+            draft = { item = what.item }
+            mode, sel = "work", 1
+        end
+        return true
+    end
+
+    -- Correcting a guess. Walks the work types in order rather than opening
+    -- another screen for it.
+    if what.kind == "job" then
+        local rule = what.rule
+        local at = 1
+        for i, name in ipairs(workdefs.ORDER) do
+            if name == rule.work then at = i break end
+        end
+
+        local step = (dir < 0) and 1 or -1
+        for _ = 1, #workdefs.ORDER do
+            at = at + step
+            if at > #workdefs.ORDER then at = 1 end
+            if at < 1 then at = #workdefs.ORDER end
+            if workdefs.ORDER[at] ~= workdefs.ANYONE then break end
+        end
+
+        local moved = workdefs.ORDER[at]
+        caps.clear(rule.work, rule.item)
+        caps.set(moved, rule.item, rule.amount)
+        log.say(rule.item .. " is now made by " .. workdefs.label(moved))
+        M.wants_pass = true
         return true
     end
 

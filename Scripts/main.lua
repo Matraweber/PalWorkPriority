@@ -236,6 +236,7 @@ COMMANDS.help = function()
     log.say("  Ctrl+F12 base storage")
     log.say("keys, Alt changes a setting:")
     log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
+    log.say("in the rules panel: up and down move, right raises, left lowers")
 end
 
 COMMANDS.status = function()
@@ -694,17 +695,6 @@ demandidx.install()
 -- registered late misses everything that happened before it.
 net.install()
 
--- A client connected to a dedicated server can read the base and can ask the
--- server to change work suitability, but it never sees the work pulses: the
--- hook behind them is on a _ServerInternal function. Say so once at startup,
--- because the failure it used to cause was silence, and silence is the
--- hardest thing to diagnose from the outside.
-if not api.has_authority() then
-    log.warn("no authority here, so this looks like a client on a dedicated " ..
-        "server. Work demand will be estimated from the camp's own work " ..
-        "objects rather than read from the server's pulses, which is coarser.")
-end
-
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Engine wrappers do not survive a world switch, and neither should any
     -- memo built from them.
@@ -718,6 +708,18 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
+
+    -- Checked here rather than at load. There is no world when a mod starts,
+    -- so PalGameMode does not exist yet and every single player session
+    -- reported itself as a client on a dedicated server.
+    ExecuteWithDelay(20000, function()
+        if not api.has_authority() then
+            log.warn("no authority here, so this looks like a client on a " ..
+                "dedicated server. Work demand will be estimated from the " ..
+                "camp's own work objects rather than read from the server's " ..
+                "pulses, which is coarser.")
+        end
+    end)
 
     if cfg.run_on_world_load then
         -- Base camps and their worker slots are not populated the instant
@@ -828,3 +830,33 @@ end, { ModifierKey.CONTROL })
 bind(Key.F8, "Ctrl+F8 (transport test)", function()
     COMMANDS.net()
 end, { ModifierKey.CONTROL })
+
+-- Arrow keys for the rules panel.
+--
+-- The mouse works, but the cursor sits over a live game world and the rows
+-- are thin, so aiming is fiddly. ShinyPals solves the same problem the same
+-- way and these are deliberately the same keys: every handler here returns
+-- immediately when our panel is shut, so the two only overlap if both panels
+-- are open at once.
+local function arrows()
+    local moves = {
+        { "UP_ARROW",    function() return panel.move(-1) end },
+        { "DOWN_ARROW",  function() return panel.move(1) end },
+        { "RIGHT_ARROW", function() return panel.activate(cfg, -1) end },
+        { "LEFT_ARROW",  function() return panel.activate(cfg, 1) end },
+    }
+
+    for _, entry in ipairs(moves) do
+        local key
+        pcall(function() key = Key[entry[1]] end)
+        if key == nil then
+            log.warn("no " .. entry[1] .. " on this UE4SS build, " ..
+                "so the rules panel is mouse only")
+        else
+            bind(key, entry[1] .. " (rules panel)", function()
+                pcall(entry[2])
+            end)
+        end
+    end
+end
+arrows()

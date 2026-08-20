@@ -140,4 +140,90 @@ function M.from_text(text)
     return nil
 end
 
+-- Which job produces an item.
+--
+-- So that setting a rule does not have to ask. Picking the work type was a
+-- second screen and thirteen choices for a question that usually has one
+-- obvious answer, and being wrong is visible on the rule itself and fixable
+-- by clicking it.
+--
+-- Ordered, first match wins, so narrower patterns come before the ones that
+-- would swallow them. These are matched against the internal item id, which
+-- F12 prints.
+M.ITEM_WORK = {
+    -- smelting and cooking are both the furnace, which is Kindling work
+    { "ingot",        "EmitFlame" },
+    { "baked",        "EmitFlame" },
+    { "grilled",      "EmitFlame" },
+    { "cooked",       "EmitFlame" },
+    { "roasted",      "EmitFlame" },
+    { "pizza",        "EmitFlame" },
+    { "quiche",       "EmitFlame" },
+    { "soup",         "EmitFlame" },
+    { "stew",         "EmitFlame" },
+    { "charcoal",     "EmitFlame" },
+    { "cement",       "EmitFlame" },
+    { "brick",        "EmitFlame" },
+    { "glass",        "EmitFlame" },
+
+    -- the ranch
+    { "wool",         "MonsterFarm" },
+    { "milk",         "MonsterFarm" },
+    { "egg",          "MonsterFarm" },
+    { "honey",        "MonsterFarm" },
+    { "palfluids",    "MonsterFarm" },
+    { "leather",      "MonsterFarm" },
+    { "horn",         "MonsterFarm" },
+    { "bone",         "MonsterFarm" },
+
+    -- the plantation. seeds before the crops they grow into, or BerrySeeds
+    -- matches Berries and lands on the wrong job.
+    { "seed",         "Seeding" },
+    { "berries",      "Seeding" },
+    { "wheat",        "Seeding" },
+    { "lettuce",      "Seeding" },
+    { "tomato",       "Seeding" },
+    { "carrot",       "Seeding" },
+    { "onion",        "Seeding" },
+
+    -- the mine
+    { "ore",          "Mining" },
+    { "stone",        "Mining" },
+    { "coal",         "Mining" },
+    { "sulfur",       "Mining" },
+    { "quartz",       "Mining" },
+    { "crystal",      "Mining" },
+    { "sand",         "Mining" },
+
+    -- oil before anything that could swallow it
+    { "oil",          "OilExtraction" },
+    { "medicine",     "ProductMedicine" },
+
+    -- the logging site. processed wood is a workbench product, so the plain
+    -- wood entry comes after it.
+    { "processed_wood", "Handcraft" },
+    { "lumber",       "Deforest" },
+    { "wood",         "Deforest" },
+    { "fiber",        "Deforest" },
+
+    -- workbench
+    { "cloth",        "Handcraft" },
+    { "sphere",       "Handcraft" },
+    { "nail",         "Handcraft" },
+    { "ammo",         "Handcraft" },
+    { "circuit",      "Handcraft" },
+}
+
+-- The work type that most likely produces this item, or nil when nothing in
+-- the table matches and the question has to be asked after all.
+function M.work_for_item(item_id)
+    if type(item_id) ~= "string" or item_id == "" then return nil end
+    local hay = item_id:lower()
+
+    for _, entry in ipairs(M.ITEM_WORK) do
+        if hay:find(entry[1], 1, true) then return entry[2] end
+    end
+    return nil
+end
+
 return M
