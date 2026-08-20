@@ -60,9 +60,38 @@ requires an engine newer than the one Palworld uses:
 
 Palworld is 5.1 and cannot be moved off it, since the kit's own instructions
 are that the project must not be upgraded. Anthropic's connector registry has
-nothing for Unreal either. So there is no route to driving this editor
-programmatically, and the Python API cannot fill a widget tree, which between
-them is why the runtime widget was worth trying.
+nothing for Unreal either.
+
+### On making Python able to fill a widget tree
+
+Also asked, also checked. There is no plugin that does this. The marketplace
+UMG Templates plugin is about palette categories, not scripting, and GraphDeck
+is a separate authoring tool rather than an API.
+
+There is a documented way, and it is writing one ourselves. `UWidgetTree`
+does expose what is needed, to C++ rather than to Python:
+
+    // Build.cs, editor only
+    if (Target.bBuildEditor)
+    {
+        PrivateDependencyModuleNames.AddRange(
+            new string[] { "UMGEditor", "UnrealEd" });
+    }
+
+    // then, inside #if WITH_EDITOR
+    WidgetTree->ConstructWidget<UTextBlock>(...)
+    WidgetTree->FindWidget(...)
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint)
+
+Wrapping those in a UBlueprintFunctionLibrary marked
+`UFUNCTION(BlueprintCallable, meta=(ScriptMethod))` would hand Python exactly
+the capability it lacks. Perhaps a hundred and fifty lines, and the toolchain
+to build it is already working here.
+
+It is not being done, because it would let us script an asset we no longer
+need. The runtime widget removed the requirement for a cooked blueprint
+entirely. Written down because it is the answer if that ever changes, and
+because "no plugin exists" on its own is a misleading way to leave it.
 
 ## Wwise, which is the awkward part
 
