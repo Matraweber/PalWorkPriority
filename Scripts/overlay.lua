@@ -175,19 +175,26 @@ local function set_input(on)
         return
     end
 
-    -- Game and UI rather than UI only: the camera stays usable, which is what
-    -- the Creative Menu does and what makes an overlay feel like part of the
-    -- game rather than a modal dialog over it. Argument counts differ between
-    -- engine versions, so each shape is tried and the one that takes is kept.
+    -- The function is SetInputMode_GameAndUIEx. Not GameAndUI, which is what
+    -- every previous attempt called and which simply does not exist here, so
+    -- all four arities failed identically and looked like an argument problem.
+    -- The names came from asking the CDO what functions it has rather than
+    -- from remembering what the engine usually offers.
+    --
+    -- Game and UI rather than UI only, so the camera stays usable. That is
+    -- what Creative Menu does, and it is the difference between an overlay
+    -- and a modal box bolted over the game.
     local shapes = {
-        { "GameAndUI(pc, widget, 0, false)",
-          function() lib:SetInputMode_GameAndUI(pc, widget, 0, false) end },
-        { "GameAndUI(pc, widget, 0)",
-          function() lib:SetInputMode_GameAndUI(pc, widget, 0) end },
-        { "GameAndUI(pc, widget)",
-          function() lib:SetInputMode_GameAndUI(pc, widget) end },
-        { "GameAndUI(pc)",
-          function() lib:SetInputMode_GameAndUI(pc) end },
+        { "GameAndUIEx(pc, widget, 0, false)",
+          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false) end },
+        { "GameAndUIEx(pc, widget, 0)",
+          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0) end },
+        { "GameAndUIEx(pc, widget)",
+          function() lib:SetInputMode_GameAndUIEx(pc, widget) end },
+        { "GameAndUIEx(pc)",
+          function() lib:SetInputMode_GameAndUIEx(pc) end },
+        { "UIOnlyEx(pc, widget)",
+          function() lib:SetInputMode_UIOnlyEx(pc, widget) end },
     }
 
     for _, shape in ipairs(shapes) do

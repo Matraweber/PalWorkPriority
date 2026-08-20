@@ -274,8 +274,12 @@ local function line(key, row, col, text, colour_key)
         local ok = pcall(function() slot = canvas:AddChildToCanvas(tb) end)
         if not ok or not alive(slot) then return end
 
-        pcall(function() slot:SetAutoSize(false) end)
-        pcall(function() slot:SetSize({ X = W - col, Y = LINE }) end)
+        -- Auto sized, because that is what demonstrably renders here.
+        -- Sizing the slot explicitly, which is what this did, produced widgets
+        -- that were positioned correctly and drew nothing at all, while the
+        -- identically constructed text in overlay.lua's probe showed fine. The
+        -- only difference between them was this call.
+        pcall(function() slot:SetAutoSize(true) end)
         pcall(function() slot:SetZOrder(9000) end)
         pcall(function() tb:SetVisibility(0) end)
         pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
