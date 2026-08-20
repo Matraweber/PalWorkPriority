@@ -945,8 +945,14 @@ bind(Key.F8, "Ctrl+F8 (transport test)", function()
     COMMANDS.net()
 end, { ModifierKey.CONTROL })
 
--- The overlay is no longer a separate thing to test. Ctrl+F9 opens the rules
--- panel, which puts the overlay on screen as its host.
+-- The panel draws its boxes but no text, and every input mode call failed.
+-- Both are the API not being shaped as assumed, so this asks it directly
+-- rather than guessing a second time.
+bind(Key.F7, "Ctrl+F7 (overlay diagnostics)", function()
+    ExecuteInGameThread(function()
+        pcall(function() overlay.diagnose() end)
+    end)
+end, { ModifierKey.CONTROL })
 
 -- Arrow keys for the rules panel.
 --

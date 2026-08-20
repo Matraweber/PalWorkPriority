@@ -245,4 +245,96 @@ function M.reset()
     warned = {}
 end
 
+-- ---------------------------------------------------------------------------
+-- Diagnostics
+-- ---------------------------------------------------------------------------
+
+-- Two things are wrong and both are "the API is not shaped how I assumed".
+-- The panel draws its boxes but no text, so SetText is being handed something
+-- it will not take. And every SetInputMode shape failed, so that function is
+-- not where or what I think it is. Rather than guess twice, ask.
+function M.diagnose()
+    local host, host_tree = M.host()
+    log.say("overlay diagnostics")
+    log.say("  host canvas: " .. tostring(host ~= nil))
+
+    -- 1. what does each FText route actually produce
+    local direct, kismet
+    local ok_direct = pcall(function() direct = FText("probe") end)
+    log.say(string.format("  FText('probe')            ok=%s type=%s",
+        tostring(ok_direct), type(direct)))
+
+    local lib_text = api.cdo("/Script/Engine.Default__KismetTextLibrary")
+    log.say("  KismetTextLibrary CDO     " .. tostring(lib_text ~= nil))
+    if lib_text then
+        local ok_k = pcall(function()
+            kismet = lib_text:Conv_StringToText("probe")
+        end)
+        log.say(string.format("  Conv_StringToText         ok=%s type=%s",
+            tostring(ok_k), type(kismet)))
+    end
+
+    -- 2. does SetText actually take either of them
+    if alive(host_tree) and alive(host) then
+        local cls = api.cdo("/Script/UMG.TextBlock")
+        local tb
+        if cls then pcall(function() tb = StaticConstructObject(cls, host_tree) end) end
+
+        if alive(tb) then
+            pcall(function() host:AddChildToCanvas(tb) end)
+            for name, ft in pairs({ direct = direct, kismet = kismet }) do
+                if ft ~= nil then
+                    local ok = pcall(function() tb:SetText(ft) end)
+                    local back
+                    pcall(function()
+                        local got = tb:GetText()
+                        if got then back = got:ToString() end
+                    end)
+                    log.say(string.format("  SetText via %-8s      ok=%s reads back %s",
+                        name, tostring(ok), tostring(back)))
+                end
+            end
+            pcall(function() tb:RemoveFromParent() end)
+        else
+            log.say("  could not construct a TextBlock to test with")
+        end
+    end
+
+    -- 3. where does input mode actually live
+    local ui_lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    log.say("  WidgetBlueprintLibrary    " .. tostring(ui_lib ~= nil))
+    if ui_lib then
+        local found = {}
+        pcall(function()
+            ui_lib:GetClass():ForEachFunction(function(fn)
+                local n
+                pcall(function() n = fn:GetFName():ToString() end)
+                if type(n) == "string" and n:find("Input") then
+                    found[#found + 1] = n
+                end
+            end)
+        end)
+        log.say("  functions mentioning Input: " ..
+            (#found > 0 and table.concat(found, ", ") or "none"))
+    end
+
+    local pc = api.player_controller()
+    if alive(pc) then
+        local found = {}
+        pcall(function()
+            pc:GetClass():ForEachFunction(function(fn)
+                local n
+                pcall(function() n = fn:GetFName():ToString() end)
+                if type(n) == "string" and
+                    (n:find("InputMode") or n:find("ShowMouse") or
+                     n:find("IgnoreLook") or n:find("SetInput")) then
+                    found[#found + 1] = n
+                end
+            end)
+        end)
+        log.say("  controller input functions: " ..
+            (#found > 0 and table.concat(found, ", ") or "none"))
+    end
+end
+
 return M
