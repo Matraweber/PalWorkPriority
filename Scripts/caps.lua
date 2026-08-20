@@ -55,6 +55,7 @@ end
 -- bursts and batch nicely; a ceiling is one typed command at a time, and
 -- the debounce only buys a lost write if the game closes first.
 function M.save()
+    if M.submit then return false end   -- a client owns no rules file
     if not M.path then return false end
 
     local f, err = io.open(M.path, "wb")
@@ -85,13 +86,31 @@ function M.save()
     return true
 end
 
+-- Set by main.lua on a client. When present, an edit is a request sent to
+-- whoever owns the world rather than a local write, so two players cannot
+-- drift apart and a client cannot invent rules the server never agreed to.
+M.submit = nil
+
 function M.set(work_name, item, ceiling)
+    if M.submit then return M.submit("set", work_name, item, ceiling) end
+    M.apply_set(work_name, item, ceiling)
+end
+
+function M.clear(work_name, item)
+    if M.submit then return M.submit("clear", work_name, item, 0) end
+    return M.apply_clear(work_name, item)
+end
+
+-- The write itself, with no opinion about who asked for it. The authority
+-- calls these directly; a client only ever reaches them through a message
+-- coming back down.
+function M.apply_set(work_name, item, ceiling)
     M.data[work_name] = M.data[work_name] or {}
     M.data[work_name][item] = ceiling
     M.save()
 end
 
-function M.clear(work_name, item)
+function M.apply_clear(work_name, item)
     local by_work = M.data[work_name]
     if by_work == nil or by_work[item] == nil then return false end
 
@@ -99,6 +118,18 @@ function M.clear(work_name, item)
     if next(by_work) == nil then M.data[work_name] = nil end
     M.save()
     return true
+end
+
+-- Replaces everything, for a client receiving a full state push. Never
+-- written to disk on a client: the file belongs to the machine with
+-- authority, and a client keeping its own copy is how the two versions of
+-- the truth start.
+function M.replace_all(rows)
+    M.data = {}
+    for _, row in ipairs(rows or {}) do
+        M.data[row.work] = M.data[row.work] or {}
+        M.data[row.work][row.item] = row.amount
+    end
 end
 
 -- ---------------------------------------------------------------------------

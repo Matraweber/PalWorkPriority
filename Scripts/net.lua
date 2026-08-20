@@ -225,6 +225,60 @@ function M.reset()
 end
 
 -- ---------------------------------------------------------------------------
+-- The rule protocol
+-- ---------------------------------------------------------------------------
+--
+-- Everything rides in the FName, pipe separated, because that is the only
+-- payload channel these two RPCs have.
+--
+--   up    PWP_Hello                          announce, ask for everything
+--         PWP_Set|<work>|<item>|<amount>     set a rule
+--         PWP_Clear|<work>|<item>            remove one
+--
+--   down  PWP_Reset                          forget everything, a batch follows
+--         PWP_Rule|<work>|<item>|<amount>    one rule
+--         PWP_Done                           end of batch
+--
+-- The batch is bracketed rather than counted. A count would have to be right,
+-- and a client that missed one message would wait for a total that never
+-- arrives; brackets just mean the list ends when it ends.
+
+local function split(text)
+    local out = {}
+    for part in tostring(text):gmatch("([^|]+)") do out[#out + 1] = part end
+    return out
+end
+
+-- Called on the authority to push every rule to one client, or to all of
+-- them when comp is nil.
+function M.push_rules(caps, cfg, comp)
+    local all = caps.all(cfg)
+
+    local send = function(msg)
+        if comp then return M.to_client(comp, msg) end
+        return M.broadcast(msg) > 0
+    end
+
+    send(PREFIX .. "Reset")
+    for work, items in pairs(all) do
+        for item, amount in pairs(items) do
+            send(string.format("%sRule|%s|%s|%d", PREFIX, work, item, amount))
+        end
+    end
+    send(PREFIX .. "Done")
+end
+
+-- Called on a client to ask the server for a rule change. Returns false when
+-- there is nothing to send through, which is normal before a world settles.
+function M.request(kind, work, item, amount)
+    if kind == "clear" then
+        return M.to_server(string.format("%sClear|%s|%s", PREFIX, work, item), 0)
+    end
+    return M.to_server(
+        string.format("%sSet|%s|%s|%d", PREFIX, work, item, amount or 0), 0)
+end
+
+-- ---------------------------------------------------------------------------
 -- Phase 0 self test
 -- ---------------------------------------------------------------------------
 
@@ -278,5 +332,8 @@ function M.report()
             "the server, or the reply does not reach here.")
     end
 end
+
+M.PREFIX = PREFIX
+M.split = split
 
 return M

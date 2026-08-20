@@ -136,6 +136,18 @@ end
 local function run_pass(reason, explicit)
     if not cfg then return end
 
+    -- Only the machine running the world decides anything. A client can see
+    -- the base and could technically send work suitability changes, but two
+    -- machines fencing the same pals would fight every pass, and the client
+    -- cannot see the work pulses that make the decision good.
+    if not api.has_authority() then
+        if explicit then
+            log.say(reason .. ": this is a client, the server decides " ..
+                "assignments. Your rules are sent to it.")
+        end
+        return
+    end
+
     if not cfg.enabled then
         if explicit then
             log.say(reason .. ": disabled. Use '" .. cfg.chat_prefix .. " on' to enable")
@@ -696,6 +708,95 @@ demandidx.install()
 -- registered late misses everything that happened before it.
 net.install()
 
+-- ---------------------------------------------------------------------------
+-- Which machine decides
+-- ---------------------------------------------------------------------------
+--
+-- One mod, two roles, worked out at runtime rather than shipped as two
+-- packages. Authority means this machine runs the world and owns the rules.
+-- A screen means there is somebody here to show them to. Single player and a
+-- listen server host are both, a dedicated server is the first only, and a
+-- client is the second only.
+--
+-- Everything below follows from that and nothing else needs configuring.
+
+-- Server side. A client asked for a change; apply it and tell everyone.
+net.on_command = function(command, _, comp)
+    local parts = net.split(command)
+    local verb = parts[1]
+
+    if verb == net.PREFIX .. "Hello" then
+        -- A modded client announced itself, so send it the world as it
+        -- stands. Its own component, not a broadcast: an unmodded client
+        -- must receive nothing at all.
+        net.push_rules(caps, cfg, comp)
+        log.debug("a modded client said hello, sent it the rules")
+        return
+    end
+
+    if verb == net.PREFIX .. "Set" and #parts >= 4 then
+        caps.apply_set(parts[2], parts[3], tonumber(parts[4]) or 0)
+        log.say(string.format("%s set %s to %s by a player",
+            parts[2], parts[3], parts[4]))
+        net.push_rules(caps, cfg, nil)
+        run_pass("rule change")
+        return
+    end
+
+    if verb == net.PREFIX .. "Clear" and #parts >= 3 then
+        caps.apply_clear(parts[2], parts[3])
+        log.say(string.format("%s %s cleared by a player", parts[2], parts[3]))
+        net.push_rules(caps, cfg, nil)
+        run_pass("rule change")
+        return
+    end
+end
+
+-- Client side. The server sent state; take it as the truth.
+local incoming = nil
+
+net.on_state = function(message)
+    local parts = net.split(message)
+    local verb = parts[1]
+
+    if verb == net.PREFIX .. "Reset" then
+        incoming = {}
+        return
+    end
+
+    if verb == net.PREFIX .. "Rule" and #parts >= 4 and incoming then
+        incoming[#incoming + 1] = {
+            work = parts[2], item = parts[3], amount = tonumber(parts[4]) or 0,
+        }
+        return
+    end
+
+    if verb == net.PREFIX .. "Done" then
+        -- Swapped in whole, only once the batch has ended. Applying each rule
+        -- as it lands would leave the panel showing a half built list every
+        -- time the server pushed.
+        if incoming then
+            caps.replace_all(incoming)
+            log.debug("rules updated from the server, " .. #incoming .. " of them")
+            incoming = nil
+        end
+        return
+    end
+end
+
+-- A client's edits are requests, not writes. Setting this is what makes
+-- caps.set send rather than save, so there is one place that decides and
+-- every caller is unaware of which machine it is on.
+if not api.has_authority() then
+    caps.submit = function(kind, work, item, amount)
+        if not net.request(kind, work, item, amount) then
+            log.say("could not reach the server, that change was not made")
+            return false
+        end
+        return true
+    end
+end
+
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Engine wrappers do not survive a world switch, and neither should any
     -- memo built from them.
@@ -710,6 +811,17 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
+
+    -- A client announces itself so the server knows to push rules to it, and
+    -- gets the current set back in reply. Delayed with everything else,
+    -- because the network component does not exist the instant a world loads.
+    ExecuteWithDelay(18000, function()
+        if not api.has_authority() then
+            if net.to_server(net.PREFIX .. "Hello", 1) then
+                log.debug("announced to the server, waiting for the rules")
+            end
+        end
+    end)
 
     -- Checked here rather than at load. There is no world when a mod starts,
     -- so PalGameMode does not exist yet and every single player session
