@@ -33,15 +33,36 @@ rather than taken on trust: `Wwise` is one of the 46 plugins in
 dependency, with the Ak headers used across the C++. No `Plugins/Wwise`
 folder ships with the kit, so it will not compile until you supply one.
 
-## The blank project route, no longer needed
+## Resolved: the widget is built from Lua, not cooked
 
-There was a plan here to test whether a blank Unreal project could cook a
-LogicMod, so as to skip the kit, the C++ build and Wwise entirely. It existed
-only to dodge a toolchain that looked painful.
+The overlay does not need a pak. A UserWidget constructed at runtime, given a
+WidgetTree and a CanvasPanel root and added to the viewport, appears on screen
+and is ours. Proven in game, not argued: `Scripts/overlay.lua`, Ctrl+F7.
 
-The toolchain works, so the question is moot. Kept as a note because it is
-probably still true, and worth knowing if anyone hits a wall setting this up
-on another machine.
+That is the whole of what the blueprint route was for. We own the lifetime, so
+nothing rebuilds it underneath us, which is what caused both crashes. And a
+widget we own can hold keyboard focus, which is what search needs.
+
+The editor work is therefore not required, and neither is any of what follows
+in this file. It is kept because it is all true, it cost a day to establish,
+and it is the fallback if the runtime widget turns out to have a limit we have
+not hit yet.
+
+### On driving the editor directly
+
+Asked and answered properly rather than assumed. Every Unreal MCP server
+requires an engine newer than the one Palworld uses:
+
+    official Unreal MCP        UE 5.8+
+    chongdashu/unreal-mcp      UE 5.5+, states 5.1 unsupported
+    UEBlueprintMCP             UE 5.7+
+    unreal-blueprint-mcp       UE 5.4
+
+Palworld is 5.1 and cannot be moved off it, since the kit's own instructions
+are that the project must not be upgraded. Anthropic's connector registry has
+nothing for Unreal either. So there is no route to driving this editor
+programmatically, and the Python API cannot fill a widget tree, which between
+them is why the runtime widget was worth trying.
 
 ## Wwise, which is the awkward part
 
