@@ -46,6 +46,16 @@ local HOLD_SECONDS = 90
 -- that hold began.
 local hold_since = {}
 
+-- What the bases were holding at the last pass, merged across camps.
+--
+-- Published because the panel needs the same numbers and was scanning every
+-- container itself to get them, which is the most expensive thing this mod
+-- does and it was doing it every three seconds on the game thread. The pass
+-- already has the answer; it was throwing it away.
+M.last_totals = {}
+M.totals_at = 0
+local pass_totals = nil
+
 -- The fence itself is recomputed from demand every pass and remembers
 -- nothing. The hold timers are the one exception, and a config reload or
 -- world change should drop them.
@@ -395,12 +405,20 @@ local function run_camp(cfg, camp, stats)
             include = cfg.counted_containers,
             exclude = cfg.uncounted_containers,
         }
+
+        -- collected for the panel, which must not scan this itself
         if cfg.storage_scope == "global" then
             totals, chests = api.all_chest_totals(opts)
         else
             totals, chests = api.camp_item_totals(api.guid_key(camp_id), opts)
         end
         stats.chests = stats.chests + (chests or 0)
+
+        if pass_totals then
+            for id, n in pairs(totals) do
+                pass_totals[id] = (pass_totals[id] or 0) + n
+            end
+        end
     end
 
     -- What the camp actually wants doing, from the game's own pulses.
@@ -533,12 +551,23 @@ function M.run_pass(cfg)
         return stats
     end
 
+    pass_totals = {}
+
     for _, camp in ipairs(camps) do
         local ok, err = pcall(function() run_camp(cfg, camp, stats) end)
         if not ok then
             log.warn("pass threw on a camp: " .. tostring(err))
         end
     end
+
+    -- Only published when the pass actually read storage. A pass with no
+    -- ceilings does not scan containers at all, and overwriting good totals
+    -- with an empty table would make the panel show every rule at zero.
+    if next(pass_totals) ~= nil then
+        M.last_totals = pass_totals
+        M.totals_at = os.clock()
+    end
+    pass_totals = nil
 
     if #stats.lines > 0 then
         local who = {}

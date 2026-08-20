@@ -23,6 +23,7 @@ local caps = require("caps")
 local items = require("items")
 local workdefs = require("workdefs")
 local overlay = require("overlay")
+local scheduler = require("scheduler")
 
 local M = {}
 
@@ -456,16 +457,30 @@ end
 -- Stock
 -- ---------------------------------------------------------------------------
 
--- Cached: the panel redraws every second, and reading every container on
--- every loaded base is the most expensive thing this mod does.
-local totals_cache = nil
-local totals_at = 0
-local TOTALS_TTL = 3.0
+-- What the bases hold, taken from the last scheduler pass.
+--
+-- The panel used to work this out itself, scanning every container on every
+-- loaded camp. That is the most expensive thing this mod does and it was
+-- happening every three seconds on the game thread for as long as the panel
+-- was open, which is what made it lag.
+--
+-- The pass already computes these numbers every ten seconds. Reading them
+-- costs nothing, and being up to ten seconds stale is invisible for a stock
+-- count that moves by a handful at a time.
+--
+-- The scan below is a fallback for the first seconds after a world loads,
+-- before any pass has published, and it is throttled hard.
+local scanned_once = nil
+local scanned_at = 0
 
 local function stock_totals(cfg)
+    if next(scheduler.last_totals or {}) ~= nil then
+        return scheduler.last_totals
+    end
+
     local now = os.clock()
-    if totals_cache and (now - totals_at) < TOTALS_TTL then
-        return totals_cache
+    if scanned_once and (now - scanned_at) < 15.0 then
+        return scanned_once
     end
 
     local opts = {
@@ -489,7 +504,7 @@ local function stock_totals(cfg)
         end
     end
 
-    totals_cache, totals_at = totals, now
+    scanned_once, scanned_at = totals, now
     return totals
 end
 
@@ -775,7 +790,7 @@ end
 
 function M.reset()
     M.open = false
-    totals_cache, totals_at = nil, 0
+    scanned_once, scanned_at = nil, 0
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, search_box, search_text, want_focus = {}, nil, "", false
@@ -864,6 +879,8 @@ function M.apply(cfg, what, dir)
     if what.kind == "new" then
         mode, page, show_all = "item", 0, false
         want_focus = true
+        sel = 1
+        log.say("picking an item, type to filter or click one")
         return true
     end
 
