@@ -96,6 +96,13 @@ local ROW_HOVER = { R = 0.110, G = 0.200, B = 0.260, A = 0.95 }
 local TAB_BAR   = { R = 0.055, G = 0.080, B = 0.110, A = 0.95 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
+-- Registers a row as clickable and, in the same breath, as reachable by the
+-- arrow keys. Two lists that could disagree would be a bug waiting.
+local function hit(key, what)
+    hits[key] = what
+    order[#order + 1] = key
+end
+
 local function warn_once(key, message)
     if warned[key] then return end
     warned[key] = true
