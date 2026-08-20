@@ -22,6 +22,7 @@ local api = require("palapi")
 local caps = require("caps")
 local items = require("items")
 local workdefs = require("workdefs")
+local ui = require("ui")
 
 local M = {}
 
@@ -132,8 +133,8 @@ end
 -- Attaching to the game's UI
 -- ---------------------------------------------------------------------------
 
--- Opened on a hotkey, so it cannot hang off the Monitoring Stand the way the
--- grid does. It goes on the overall UI layout, which outlives any one screen.
+-- Depth-first search for the first CanvasPanel, which is what a widget can be
+-- added to by coordinates.
 local function first_canvas(node, budget)
     budget = budget or { n = 0 }
     if budget.n > 400 or not alive(node) then return nil end
@@ -154,34 +155,51 @@ local function first_canvas(node, budget)
     return nil
 end
 
+-- The panel lives on the Monitoring Stand's own menu.
+--
+-- It used to hang off WBP_PalOverallUILayout_C, the persistent HUD, so it
+-- could be opened anywhere. That cost two crashes, both inside UE4SS and both
+-- within seconds of the panel being opened, and the reason is that the HUD is
+-- rebuilt as its own state changes. When it is, every widget we parented into
+-- it is destroyed, and the next refresh reaches a freed object. alive() is no
+-- defence there, because IsValid is itself a call on the dead wrapper and a
+-- call on a freed object is exactly what pcall cannot catch.
+--
+-- A menu is the opposite kind of host: built when the stand opens, torn down
+-- when it closes, and nothing rebuilds it underneath while it is up. The
+-- priority grid has injected into it for weeks without incident, and
+-- PalPriorityUI injects only there too rather than into the HUD.
+--
+-- The cost is that rules are set at a Monitoring Stand rather than anywhere.
+-- Rules are per base, so that is close to where they belong anyway.
 local function ensure_root()
-    if alive(root) and alive(root_owner) and alive(root_tree) then return root end
+    local menu, tree, base = ui.host()
 
+    if not alive(menu) or not alive(tree) or not alive(base) then
+        -- Dropped without touching them. Whatever they pointed at is gone with
+        -- the screen, and asking a freed widget whether it is valid is the
+        -- crash rather than the check for it.
+        root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+        blocks, drawn = {}, {}
+        return nil
+    end
+
+    if root_owner == menu and alive(root) and alive(root_tree) then
+        return root
+    end
+
+    -- A different menu instance than last time, so nothing kept from the old
+    -- one can be reused.
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn = {}, {}
 
-    local layout
-    pcall(function() layout = FindFirstOf("WBP_PalOverallUILayout_C") end)
-    if not alive(layout) then
-        warn_once("nolayout", "overall UI layout not found, so no rules panel")
-        return nil
-    end
-
-    local tree
-    pcall(function() tree = layout.WidgetTree end)
-    if not alive(tree) then return nil end
-
-    local base
-    pcall(function() base = tree.RootWidget end)
-    if not alive(base) then return nil end
-
     local canvas = first_canvas(base)
     if not alive(canvas) then
-        warn_once("nocanvas", "no canvas on the UI layout, so no rules panel")
+        warn_once("nocanvas", "no canvas on the stand menu, so no rules panel")
         return nil
     end
 
-    root, root_owner, root_tree = canvas, layout, tree
+    root, root_owner, root_tree = canvas, menu, tree
     return root
 end
 
@@ -636,7 +654,13 @@ function M.toggle()
     end
 
     set_cursor(true)
-    log.say("work rules open, Alt+F9 again to close")
+
+    if ensure_root() == nil then
+        log.say("work rules need the Monitoring Stand open. " ..
+            "Open it and press Ctrl+F9 again")
+    else
+        log.say("work rules open, Ctrl+F9 again to close")
+    end
 end
 
 function M.reset()

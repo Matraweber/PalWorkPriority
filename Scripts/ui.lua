@@ -582,6 +582,16 @@ end
 -- Entry point, once per UI tick
 -- ---------------------------------------------------------------------------
 
+-- The stand menu, its tree and its root, or nil when the stand is shut.
+--
+-- Exposed so the rules panel can hang off the same host. That host is a
+-- screen: it is built when the stand opens and torn down when it closes, and
+-- nothing rebuilds it underneath while it is up. The HUD is the opposite, and
+-- putting the panel there cost two crashes.
+function M.host()
+    return live_menu()
+end
+
 function M.refresh(cfg)
     try_hook_bind()
 
