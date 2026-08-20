@@ -20,6 +20,7 @@ local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
 local net = require("net")
+local overlay = require("overlay")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -233,7 +234,7 @@ COMMANDS.help = function()
     log.say("keys, Ctrl does a thing:")
     log.say("  Ctrl+F8 transport test   Ctrl+F9  work rules")
     log.say("  Ctrl+F10 run a pass      Ctrl+F11 Discovery.txt")
-    log.say("  Ctrl+F12 base storage")
+    log.say("  Ctrl+F12 base storage      Ctrl+F7  own widget test")
     log.say("keys, Alt changes a setting:")
     log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
     log.say("in the rules panel: up and down move, right raises, left lowers")
@@ -705,6 +706,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     items.reset()
     panel.reset()
     net.reset()
+    overlay.reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
@@ -829,6 +831,13 @@ end, { ModifierKey.CONTROL })
 -- type a command into. Ctrl rather than Alt: Alt+F8 is FreeCam's toggle.
 bind(Key.F8, "Ctrl+F8 (transport test)", function()
     COMMANDS.net()
+end, { ModifierKey.CONTROL })
+
+-- Whether a widget we build ourselves can be put on screen. If it can, the
+-- panel gets a host nothing else can destroy and no cooked blueprint is
+-- needed. Its own key because it has to be tried from inside a live world.
+bind(Key.F7, "Ctrl+F7 (own widget test)", function()
+    overlay.toggle()
 end, { ModifierKey.CONTROL })
 
 -- Arrow keys for the rules panel.
