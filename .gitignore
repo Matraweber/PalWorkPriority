@@ -1,10 +1,10 @@
+
 # Runtime output written next to the deployed mod
-priority.log
+# Workshop upload state; publishedfileid is per-publisher
+*.zip
+.workshop.json
 Discovery.txt
 Stock.txt
+build/
 priorities.txt
-
-# Workshop upload state; publishedfileid is per-publisher
-.workshop.json
-
-*.zip
+priority.log
