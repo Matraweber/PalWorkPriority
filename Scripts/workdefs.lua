@@ -206,16 +206,64 @@ M.ITEM_WORK = {
     { "wood",         "Deforest" },
     { "fiber",        "Deforest" },
 
-    -- workbench
+    -- workbench and the production lines
     { "cloth",        "Handcraft" },
     { "sphere",       "Handcraft" },
     { "nail",         "Handcraft" },
     { "ammo",         "Handcraft" },
     { "circuit",      "Handcraft" },
+    { "arrow",        "Handcraft" },
+    { "bullet",       "Handcraft" },
+    { "shell",        "Handcraft" },
+    { "gunpowder",    "Handcraft" },
+    { "explosive",    "Handcraft" },
+    { "polymer",      "Handcraft" },
+    { "carbon",       "Handcraft" },
+    { "plate",        "Handcraft" },
+    { "rope",         "Handcraft" },
+    { "flour",        "Handcraft" },
+    { "rifle",        "Handcraft" },
+    { "handgun",      "Handcraft" },
+    { "shotgun",      "Handcraft" },
+    { "crossbow",     "Handcraft" },
+    { "launcher",     "Handcraft" },
+    { "furnitur",     "Handcraft" },
+
+    -- more of the cooking pot
+    { "cake",         "EmitFlame" },
+    { "pie",          "EmitFlame" },
+    { "salad",        "EmitFlame" },
+    { "juice",        "EmitFlame" },
+    { "jam",          "EmitFlame" },
+    { "curry",        "EmitFlame" },
+    { "sauteed",      "EmitFlame" },
+    { "steamed",      "EmitFlame" },
+    { "fried",        "EmitFlame" },
+    { "bread",        "EmitFlame" },
+
+    -- more of the plantation
+    { "cotton",       "Seeding" },
+    { "pumpkin",      "Seeding" },
+    { "bamboo",       "Deforest" },
+
+    -- more of the mine
+    { "paldium",      "Mining" },
+    { "fragment",     "Mining" },
+    { "ingot_ore",    "Mining" },
 }
 
+-- Where an item lands when the table cannot name its job. Unreachable while
+-- the picker only offers items the table knows, and here so that an id which
+-- slips through becomes a rule that can be corrected in place rather than a
+-- dead end asking a question with no good answer.
+M.DEFAULT_WORK = "Handcraft"
+
 -- The work type that most likely produces this item, or nil when nothing in
--- the table matches and the question has to be asked after all.
+-- the table matches.
+--
+-- nil now means "the base does not make this", because the picker uses this
+-- to decide what to show at all. Pal drops and world loot match nothing here
+-- and that is exactly what keeps them out of a menu about base production.
 function M.work_for_item(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
     local hay = item_id:lower()

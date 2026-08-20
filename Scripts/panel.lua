@@ -32,9 +32,7 @@ M.wants_pass = false
 
 -- "list"  the rules themselves
 -- "item"  choosing what a new rule is about
--- "work"  choosing which job that rule gates
 local mode = "list"
-local draft = nil               -- { item = string } while a rule is being made
 local page = 0
 local show_all = false          -- the picker starts on what the base holds
 
@@ -390,9 +388,19 @@ local function blank_unused()
 
     -- A stripe with nothing on it is a floating box, so anything not drawn
     -- this frame goes transparent rather than staying behind.
+    --
+    -- Recorded in the cache, not merely done. The cache exists to skip
+    -- redundant work by remembering what is on screen, so anything that
+    -- changes the screen behind its back makes it lie. Clearing without
+    -- recording is exactly how rows came back invisible: the stripe was
+    -- transparent, the cache still said "off", and the recolour that would
+    -- have fixed it was skipped as redundant. Switching tabs reuses these
+    -- keys, which is why it took a couple of presses to show up.
     for key, border in pairs(stripes) do
-        if not used["s:" .. key] and alive(border) then
+        if not used["s:" .. key] and alive(border)
+            and drawn["s:" .. key] ~= "clear" then
             pcall(function() border:SetBrushColor(CLEAR) end)
+            drawn["s:" .. key] = "clear"
         end
     end
 end
@@ -545,7 +553,6 @@ local function draw_tabs(active)
     local x = PAD
     for _, tab in ipairs(tabs) do
         local on = (active == tab.mode)
-            or (active == "work" and tab.mode == "item")
         hit(tab.key, { kind = "tab", mode = tab.mode })
         line(tab.key, 0, x, tab.label, on and "tab_on" or "dim", 20)
         x = x + 130
@@ -616,22 +623,45 @@ local function draw_list(cfg, totals)
     return row + 2
 end
 
+-- A rule caps what a base produces, so an item the base cannot produce has
+-- nothing to cap and does not belong in the picker at all. FireOrgan is the
+-- case that showed it: a pal drop, sitting in storage, and picking it led to
+-- a screen asking which job makes it, a question with no honest answer.
+--
+-- Producible is defined as "we can name the job that makes it", which is the
+-- same question a rule has to answer anyway. That is what removes the job
+-- screen rather than merely hiding it: everything reaching the picker already
+-- knows its job, so there is nothing left to ask.
+local function producible(id)
+    return workdefs.work_for_item(id) ~= nil
+end
+
+local function only_producible(list)
+    local out = {}
+    for _, id in ipairs(list or {}) do
+        if producible(id) then out[#out + 1] = id end
+    end
+    return out
+end
+
 local function picker_source(totals)
-    -- Anything typed searches the whole game, because looking for something
-    -- by name means you know it exists whether or not the base holds any.
+    -- Searching casts wider than the base holds, but still only over things
+    -- the base could make. Asked for more rows than before, because the
+    -- filter takes most of them away again.
     if search_text ~= "" then
-        return items.search(search_text, 200), true
+        return only_producible(items.search(search_text, 400)), true
     end
 
     if show_all then
-        return items.load(), true
+        return only_producible(items.load()), true
     end
 
-    -- What the base actually holds: a dozen or so rather than 2466, and what
-    -- a rule is nearly always about. Sorted by quantity, so the things worth
-    -- capping are at the top.
+    -- What the base holds, minus what it cannot make. Sorted by quantity, so
+    -- the things worth capping are at the top.
     local out = {}
-    for id in pairs(totals) do out[#out + 1] = id end
+    for id in pairs(totals) do
+        if producible(id) then out[#out + 1] = id end
+    end
     table.sort(out, function(a, b)
         if totals[a] ~= totals[b] then return totals[a] > totals[b] end
         return a < b
@@ -653,7 +683,7 @@ local function draw_item_picker(cfg, totals)
 
     line("sub", row, PAD, string.format("%s,  %d item(s),  page %d of %d",
         search_text ~= "" and ("matching " .. search_text)
-            or (everything and "every item in the game"
+            or (everything and "everything your base can make"
                 or "what your storage holds"),
         #source, page + 1, pages), "dim")
     row = row + 1
@@ -684,35 +714,10 @@ local function draw_item_picker(cfg, totals)
     end
 
     line("all", row, PAD,
-        everything and "show only what I have" or "show every item in the game",
+        everything and "show only what I have"
+            or "show everything your base can make",
         "action")
     hit("all", { kind = "toggle_all" })
-    row = row + 1
-
-    line("back", row, PAD, "<   back", "action")
-    hit("back", { kind = "back" })
-
-    return row + 2
-end
-
-local function draw_work_picker(cfg)
-    local row = 0
-    line("title", row, 0, "NEW RULE   which job makes it", "title")
-    row = row + 1
-    line("sub", row, 0, draft and draft.item or "", "dim")
-    row = row + 2
-
-    local i = 0
-    for _, name in ipairs(workdefs.ORDER) do
-        if name ~= workdefs.ANYONE then
-            i = i + 1
-            local key = "job" .. i
-            stripe(key, row, PAD, W - PAD * 2)
-            line(key, row, PAD, workdefs.label(name), "item")
-            hit(key, { kind = "work", work = name })
-            row = row + 1
-        end
-    end
     row = row + 1
 
     line("back", row, PAD, "<   back", "action")
@@ -752,9 +757,6 @@ function M.refresh(cfg)
     local rows
     if mode == "item" then
         rows = draw_item_picker(cfg, totals)
-    elseif mode == "work" then
-        hide_search()
-        rows = draw_work_picker(cfg)
     else
         hide_search()
         rows = draw_list(cfg, totals)
@@ -781,9 +783,10 @@ local function blank_everything()
     if alive(backdrop) then
         pcall(function() backdrop:SetBrushColor(CLEAR) end)
     end
-    for _, border in pairs(stripes) do
+    for key, border in pairs(stripes) do
         if alive(border) then
             pcall(function() border:SetBrushColor(CLEAR) end)
+            drawn["s:" .. key] = "clear"
         end
     end
     hide_search()
@@ -796,7 +799,7 @@ function M.toggle()
     if not M.open then
         blank_everything()
         overlay.hide()
-        mode, draft, page, show_all = "list", nil, 0, false
+        mode, page, show_all = "list", 0, false
         return
     end
 
@@ -815,7 +818,7 @@ function M.reset()
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     was_hit, was_sel, hover_key = {}, nil, nil
-    mode, draft, page, show_all = "list", nil, 0, false
+    mode, page, show_all = "list", 0, false
     ftext_mode = nil
     warned = {}
 end
@@ -922,30 +925,22 @@ function M.apply(cfg, what, dir)
     end
 
     if what.kind == "back" then
-        if mode == "work" then
-            mode, draft = "item", nil
-        else
-            mode, page = "list", 0
-        end
+        mode, page = "list", 0
         return true
     end
 
     if what.kind == "item" then
-        -- Guess the job from the item rather than asking. Thirteen choices for
-        -- a question that usually has one obvious answer is a screen nobody
-        -- wants, and a wrong guess shows on the rule and is one click to fix.
-        local guess = workdefs.work_for_item(what.item)
+        -- The job is never asked for. Only items with a known job reach the
+        -- picker, so this fallback is for an id the filter let through rather
+        -- than a real choice, and it lands on a rule that can be corrected in
+        -- place instead of on a dead end.
+        local work = workdefs.work_for_item(what.item) or workdefs.DEFAULT_WORK
 
-        if guess then
-            caps.set(guess, what.item, LADDER[1])
-            log.say(string.format("rule added: %s until %d %s",
-                workdefs.label(guess), LADDER[1], what.item))
-            M.wants_pass = true
-            mode, draft, sel = "list", nil, 1
-        else
-            draft = { item = what.item }
-            mode, sel = "work", 1
-        end
+        caps.set(work, what.item, LADDER[1])
+        log.say(string.format("rule added: %s until %d %s",
+            workdefs.label(work), LADDER[1], what.item))
+        M.wants_pass = true
+        mode, sel = "list", 1
         return true
     end
 
@@ -971,20 +966,6 @@ function M.apply(cfg, what, dir)
         caps.set(moved, rule.item, rule.amount)
         log.say(rule.item .. " is now made by " .. workdefs.label(moved))
         M.wants_pass = true
-        return true
-    end
-
-    if what.kind == "work" then
-        if draft and draft.item then
-            -- A new rule starts at the bottom of the ladder. Starting it at
-            -- current stock would read as already satisfied and do nothing,
-            -- which looks like the rule not working.
-            caps.set(what.work, draft.item, LADDER[1])
-            log.say(string.format("rule added: %s until %d %s",
-                workdefs.label(what.work), LADDER[1], draft.item))
-            M.wants_pass = true
-        end
-        mode, draft = "list", nil
         return true
     end
 

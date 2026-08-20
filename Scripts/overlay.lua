@@ -362,73 +362,80 @@ end
 
 -- Where item icons live, and what they are called.
 --
--- The picker should be a grid of icons rather than a list of internal ids,
--- which is what Creative Menu does and it is far easier to read. That needs
--- the texture for an item id, and the path convention is not guessable: a
--- wrong StaticFindObject just returns nil and tells you nothing about what
--- the right one would have been.
+-- The picker should be a grid of icons rather than a column of internal ids,
+-- which is what Creative Menu does and is most of the difference between
+-- reading a menu and parsing one. That needs a texture for an item id.
 --
--- So look at what is actually loaded. Any icon the game has already shown is
--- in memory under its real name, and one real name gives the pattern for all
--- of them.
+-- The path is not guessable and grepping the pak does not answer it either:
+-- its index is compressed, so only the handful of paths embedded in
+-- uncompressed asset data show up, and the item icons are not among them.
+--
+-- So ask the running game. Every icon it has drawn is in memory under its
+-- real name, and the folder those names share is the convention. Open your
+-- inventory first, which is what makes the game load them.
 function M.icon_probe()
     log.say("icon probe")
 
-    local seen, shown = {}, 0
-    pcall(function()
-        for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
-            if shown >= 25 then break end
-            if alive(tex) then
-                local full
-                pcall(function() full = tex:GetFullName() end)
-                if type(full) == "string" then
-                    local low = full:lower()
-                    if low:find("itemicon") or low:find("item_icon")
-                        or (low:find("icon") and low:find("item")) then
-                        if not seen[full] then
-                            seen[full] = true
-                            shown = shown + 1
-                            log.say("  " .. full)
-                        end
+    -- Can Lua load an asset that is not in memory yet, and can an Image take
+    -- one. Without both, knowing the path would not be enough to use it.
+    log.say("  LoadAsset is a " .. type(LoadAsset))
+    log.say("  UMG.Image resolves: " ..
+        tostring(api.cdo("/Script/UMG.Image") ~= nil))
+
+    local textures = FindAllOf("Texture2D") or {}
+    log.say("  textures in memory: " .. #textures)
+
+    -- Real ids from a real base, so a hit is proof rather than a guess about
+    -- what the name might contain.
+    local WANTED = { "Stone", "Wood", "Coal", "Fiber", "PalFluids",
+                     "CopperIngot", "Berries", "Leather" }
+
+    local folders, matched, shown = {}, {}, 0
+
+    for _, tex in ipairs(textures) do
+        if alive(tex) then
+            local full
+            pcall(function() full = tex:GetFullName() end)
+
+            if type(full) == "string" then
+                -- GetFullName is "Class /Path/To/Package.Object", and the
+                -- folder is what every icon will have in common.
+                local path = full:match("%s(/[%w_/]+)/") or ""
+                if path ~= "" then
+                    folders[path] = (folders[path] or 0) + 1
+                end
+
+                for _, id in ipairs(WANTED) do
+                    if full:find(id, 1, true) and not matched[id] then
+                        matched[id] = full
                     end
                 end
             end
         end
-    end)
-
-    if shown == 0 then
-        log.say("  no item icon textures loaded right now")
-        log.say("  open your inventory first so the game loads them, then try again")
     end
 
-    -- The icon table maps an item to its texture, which is the proper source
-    -- rather than a name pattern. Row names alone say whether it is keyed by
-    -- item id, which decides whether a lookup is even possible.
-    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
-    local tbl
-    pcall(function()
-        tbl = StaticFindObject(
-            "/Game/Pal/DataTable/Item/DT_ItemIconDataTable.DT_ItemIconDataTable")
-    end)
-    log.say("  DT_ItemIconDataTable resolves: " .. tostring(alive(tbl)))
-
-    if lib and alive(tbl) then
-        local rows = {}
-        pcall(function() lib:GetDataTableRowNames(tbl, rows) end)
-        log.say("  icon table rows: " .. #rows)
-
-        local sample = {}
-        for i = 1, math.min(8, #rows) do
-            local name
-            pcall(function()
-                local fn = rows[i]:get()
-                if fn then name = fn:ToString() end
-            end)
-            sample[#sample + 1] = tostring(name)
+    log.say("  named after a real item:")
+    for _, id in ipairs(WANTED) do
+        if matched[id] then
+            shown = shown + 1
+            log.say("    " .. id .. "  ->  " .. matched[id])
         end
-        if #sample > 0 then
-            log.say("  first rows: " .. table.concat(sample, ", "))
-        end
+    end
+    if shown == 0 then
+        log.say("    none. Open your inventory, then press this again.")
+    end
+
+    -- Ranked, because the folder holding hundreds of textures is the one the
+    -- icons live in and a single example could be a one off.
+    local ranked = {}
+    for path, count in pairs(folders) do
+        ranked[#ranked + 1] = { path = path, count = count }
+    end
+    table.sort(ranked, function(a, b) return a.count > b.count end)
+
+    log.say("  busiest texture folders:")
+    for i = 1, math.min(12, #ranked) do
+        log.say(string.format("    %5d  %s", ranked[i].count, ranked[i].path))
     end
 end
 
