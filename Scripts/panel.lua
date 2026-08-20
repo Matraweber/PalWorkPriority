@@ -484,6 +484,7 @@ local function picture(key, px, py, size, texture, token)
         -- The load test is answered and stays out of the way. It issued
         -- loads of its own, which is the exact thing now being rationed.
         pcall(function() icons.probe() end)
+        pcall(function() overlay.slot_probe() end)
     end
 
     local host = ensure_root()

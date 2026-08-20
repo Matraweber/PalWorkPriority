@@ -492,6 +492,95 @@ function M.image_probe()
     end
 end
 
+-- Can we use the game's own item slot instead of building one?
+--
+-- Creative Menu is a blueprint mod. Its menus are widget blueprints authored
+-- in the editor, and its item tiles are almost certainly the game's own slot
+-- widgets rather than an Image with a texture hunted down by hand. That is
+-- why it looks like part of the game and why hovering, focus and layout
+-- behave: Slate does them, not arithmetic in Lua at ten frames a second.
+--
+-- The toolchain to ship a widget blueprint was set aside as too heavy. Reusing
+-- a class the game already has needs none of it, if such a class can be
+-- constructed from here and told which item to show. That is two questions
+-- and this asks both.
+function M.slot_probe()
+    log.say("slot probe")
+
+    local wanted = { "ItemSlot", "CommonItemSlot", "ItemIcon" }
+    local classes, shown = {}, 0
+
+    pcall(function()
+        for _, cls in ipairs(FindAllOf("BlueprintGeneratedClass") or {}) do
+            if shown >= 6 then break end
+            if alive(cls) then
+                local full
+                pcall(function() full = cls:GetFullName() end)
+                if type(full) == "string" then
+                    for _, word in ipairs(wanted) do
+                        if full:find(word, 1, true) and not classes[full] then
+                            classes[full] = cls
+                            shown = shown + 1
+                            log.say("  " .. full)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if shown == 0 then
+        log.say("  no item slot class is loaded right now")
+        log.say("  open your inventory once, then reopen this menu")
+        return
+    end
+
+    -- What such a class will answer to. A setter taking an item id is the
+    -- whole point; without one the class is no use to us however pretty it is.
+    for full, cls in pairs(classes) do
+        log.say("  functions on " .. (full:match("([^/.]+)$") or full) .. ":")
+
+        local found = 0
+        pcall(function()
+            cls:ForEachFunction(function(fn)
+                if found >= 14 then return end
+
+                local name
+                pcall(function() name = fn:GetFName():ToString() end)
+                if type(name) ~= "string" then return end
+
+                local low = name:lower()
+                if not (low:find("set") or low:find("item")
+                    or low:find("update") or low:find("init")) then
+                    return
+                end
+
+                local params = {}
+                pcall(function()
+                    fn:ForEachProperty(function(prop)
+                        local pn, pc = "?", "?"
+                        pcall(function() pn = prop:GetFName():ToString() end)
+                        pcall(function()
+                            pc = prop:GetClass():GetFName():ToString()
+                        end)
+                        params[#params + 1] = pc .. " " .. pn
+                    end)
+                end)
+
+                found = found + 1
+                log.say("    " .. name .. "(" ..
+                    table.concat(params, ", ") .. ")")
+            end)
+        end)
+
+        if found == 0 then
+            log.say("    none that look like a setter")
+        end
+        break   -- one class is enough to judge the approach
+    end
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")
