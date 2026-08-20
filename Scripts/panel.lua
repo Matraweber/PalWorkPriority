@@ -227,7 +227,6 @@ local function ensure_backdrop(rows)
 
         pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
-        pcall(function() slot:SetPosition({ X = X - PAD, Y = Y - PAD }) end)
         -- Under the text, over the world.
         pcall(function() slot:SetZOrder(8990) end)
         -- Hit test invisible, so the slab cannot swallow a click meant for a
@@ -240,6 +239,11 @@ local function ensure_backdrop(rows)
     local slot
     pcall(function() slot = backdrop.Slot end)
     if alive(slot) then
+        -- Placed every frame, not once at construction. Y moves when the
+        -- panel is recentred, and a backdrop that was positioned only when it
+        -- was built stayed where the first screen put it while everything
+        -- drawn on it moved away.
+        pcall(function() slot:SetPosition({ X = X - PAD, Y = Y - PAD }) end)
         pcall(function()
             slot:SetSize({ X = W + PAD * 2, Y = rows * LINE + PAD * 2 })
         end)
@@ -932,8 +936,12 @@ local function draw_item_picker(cfg, totals)
         grid_count = grid_count + 1
     end
 
-    -- Where the grid ends, rounded up to the row grid everything else uses.
-    local row = 4 + math.ceil((GRID_ROWS * (TILE + GAP)) / LINE) + 1
+    -- Where the grid ends, measured from the tiles actually drawn rather than
+    -- from the page size. Reserving all five rows for ten items left the
+    -- panel with an empty half and everything below it stranded at the
+    -- bottom of a box nothing filled.
+    local tall = math.max(1, math.ceil(grid_count / COLS))
+    local row = 4 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
 
     if pages > 1 then
         line("prev", row, PAD, "<   previous", page > 0 and "action" or "dim")

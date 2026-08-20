@@ -29,6 +29,19 @@ local M = {}
 -- id (lowercased) -> texture, or false once the search has failed
 local cache = {}
 
+-- icon name -> true once a load has been asked for, so it is asked once
+local requested = {}
+
+-- id (lowercased) -> how many frames it has been waited for, and how far
+-- through the category list it has got
+local waited = {}
+local probing = {}
+
+-- Frames to keep looking before giving up on a name we believe in. At ten a
+-- second this is a few seconds, which is long enough for a load to finish and
+-- short enough that a genuinely missing icon stops costing anything.
+local PATIENCE = 60
+
 -- id (lowercased) -> icon name, built from whatever is loaded right now
 local sighted = nil
 local sighted_at = 0
@@ -78,13 +91,16 @@ local function fetch(tail)
     pcall(function() found = StaticFindObject(object) end)
     if alive(found) then return found end
 
-    -- Not in memory. LoadAsset brings it in, and it is only worth asking for
-    -- something we have reason to believe exists, which is why the callers
-    -- above ration this one.
-    pcall(function() LoadAsset(path) end)
-
-    pcall(function() found = StaticFindObject(object) end)
-    if alive(found) then return found end
+    -- Not in memory yet. LoadAsset starts it, but the object is not there by
+    -- the time the call returns: Stone resolved and Wood did not, and the
+    -- only difference between them was that Stone happened to be loaded
+    -- already. So ask once and let a later frame find it.
+    if not requested[tail] then
+        requested[tail] = true
+        pcall(function() LoadAsset(path) end)
+        pcall(function() found = StaticFindObject(object) end)
+        if alive(found) then return found end
+    end
 
     return nil
 end
@@ -145,48 +161,58 @@ function M.get(item_id)
         cache[key] = nil
     end
 
-    -- 1. the generated table
-    local name = icondex.NAMES[key]
+    -- A name we believe in, either recorded or seen in memory.
+    local name = icondex.NAMES[key] or look_around()[key]
+
     if name then
         local tex = fetch(name)
         if tex then
             cache[key] = tex
             return tex
         end
+
+        -- Waited on rather than searched for. Falling through to the category
+        -- walk here is what cost a second per item: eighteen loads for an
+        -- asset whose name was already known and merely not finished loading.
+        waited[key] = (waited[key] or 0) + 1
+        if waited[key] < PATIENCE then return nil end
+
+        cache[key] = false
+        M.last_missing = item_id .. " (waited on " .. name .. ")"
+        return nil
     end
 
-    -- 2. whatever the game has already drawn
-    local seen = look_around()[key]
-    if seen then
-        local tex = fetch(seen)
-        if tex then
-            cache[key] = tex
-            return tex
-        end
-    end
-
-    -- 3. the slow way, rationed
+    -- No name. Walk the categories, one per frame rather than eighteen at
+    -- once, because each is a load that may not answer immediately anyway and
+    -- doing them together stalls the frame for a second.
     if hard_budget <= 0 then return nil end
     hard_budget = hard_budget - 1
 
-    for _, category in ipairs(CATEGORIES) do
-        local tex = fetch(category .. "_" .. item_id)
-        if tex then
-            cache[key] = tex
-            return tex
-        end
+    local at = (probing[key] or 0) + 1
+    probing[key] = at
+
+    -- Twice through: the first pass asks for each, the second finds whichever
+    -- of them arrived, since fetch only requests a given name once.
+    if at > #CATEGORIES * 2 then
+        cache[key] = false
+        M.last_missing = item_id .. " (no table entry, no category matched)"
+        return nil
     end
 
-    -- Remembered as absent so the attempts above happen once and never
-    -- again for this id.
-    cache[key] = false
-    M.last_missing = item_id .. " (tried " .. (name or "no table entry") .. ")"
+    local category = CATEGORIES[((at - 1) % #CATEGORIES) + 1]
+    local tex = fetch(category .. "_" .. item_id)
+    if tex then
+        cache[key] = tex
+        return tex
+    end
+
     return nil
 end
 
 -- A world switch frees every texture we are holding.
 function M.reset()
     cache = {}
+    requested, waited, probing = {}, {}, {}
     sighted, sighted_at = nil, 0
     hard_budget = 0
 end
