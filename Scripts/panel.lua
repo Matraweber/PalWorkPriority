@@ -311,38 +311,42 @@ end
 -- Tile text came out the same size as a heading, which is what gave the grid
 -- overlapping names. SetFont is the function the engine offers and is tried
 -- first; assigning the property is what this did before and stays as the
--- fallback. Which one worked is logged once, so the next question about text
--- size has an answer already.
-local sizing = nil
+-- fallback.
+--
+-- Reported once per size asked for, with the size before as well as after.
+-- The first version logged only the size afterwards, which proved nothing:
+-- it asked for 20, read back 20, and could not tell a font it had just
+-- changed from one that was 20 all along.
+local sized = {}
 
 local function set_size(tb, points)
-    local worked = nil
+    local before
+    pcall(function() before = tb.Font.Size end)
 
     pcall(function()
         local font = tb.Font
         if font == nil then return end
         font.Size = points
         tb:SetFont(font)
-        worked = "SetFont"
     end)
 
-    if worked == nil then
+    local after
+    pcall(function() after = tb.Font.Size end)
+
+    if after ~= points then
         pcall(function()
             local font = tb.Font
             if font == nil then return end
             font.Size = points
             tb.Font = font
-            worked = "Font ="
         end)
+        pcall(function() after = tb.Font.Size end)
     end
 
-    if sizing == nil then
-        local got
-        pcall(function() got = tb.Font.Size end)
-        sizing = worked or "neither"
-        log.say(string.format(
-            "text sizing: %s, asked for %s and the font now reads %s",
-            sizing, tostring(points), tostring(got)))
+    if not sized[points] then
+        sized[points] = true
+        log.say(string.format("text sizing: asked %s, was %s, now %s",
+            tostring(points), tostring(before), tostring(after)))
     end
 end
 
