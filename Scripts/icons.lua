@@ -42,6 +42,22 @@ local resolved = {}
 -- icon name -> true once a load has been asked for, so it is asked once
 local requested = {}
 
+-- Names waiting their turn, and one flag saying a turn is already scheduled.
+--
+-- Loads go out one at a time, spaced apart, and this is not tidiness. Asking
+-- for one asset works; asking for nine at once, which is what a page of tiles
+-- did the moment the object path started working, killed the game with an
+-- access violation on a garbage pointer. Nothing in a draw loop should be
+-- issuing a blocking package load, let alone nine of them in a frame.
+local queue = {}
+local queued = {}
+local pumping = false
+
+-- Slow enough to be gentle, quick enough that a page fills while you look at
+-- it. A tile shows its name until its icon arrives, so the wait is legible
+-- rather than blank.
+local PUMP_MS = 250
+
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
 
@@ -77,38 +93,64 @@ local function real(o)
     return ok and yes == true
 end
 
--- The object for an icon name, if it is in memory. Never stored.
-local function find(name)
+local function object_path(name)
     local leaf = PREFIX .. name
-    local path = icondex.FOLDER .. leaf
-    local object = path .. "." .. leaf
+    return icondex.FOLDER .. leaf .. "." .. leaf
+end
 
-    local found
-    pcall(function() found = StaticFindObject(object) end)
-    if real(found) then return found end
+-- One load, then wait, then the next.
+local function pump()
+    local name = table.remove(queue, 1)
 
-    -- Not in memory yet. LoadAsset starts a load but the object is not there
-    -- by the time the call returns, so this asks once and a later frame is
-    -- what finds it. Once per name, because repeating it every frame is
-    -- asking the engine to load something it is already loading.
-    if not requested[name] then
+    if name then
+        queued[name] = nil
         requested[name] = true
 
-        -- The object path, not the package path, and this is measured
-        -- rather than assumed. Asked for the package it reports no error and
-        -- loads nothing; asked for the full object path the texture is there
-        -- by the next line. Silent success on the wrong argument is what made
-        -- this look like a threading problem, then a timing problem, then a
+        -- The object path, not the package path, and this is measured rather
+        -- than assumed. Asked for the package it reports no error and loads
+        -- nothing; asked for the full object path the texture is there by the
+        -- next line. Silent success on the wrong argument is what made this
+        -- look like a threading problem, then a timing problem, then a
         -- caching problem.
         --
         -- On the game thread, since the panel's tick is not it. Finding an
         -- object is a lookup and works from anywhere. Loading one is real
         -- engine work and does not.
+        local path = object_path(name)
         ExecuteInGameThread(function()
-            pcall(function() LoadAsset(object) end)
+            pcall(function() LoadAsset(path) end)
         end)
     end
 
+    if #queue > 0 then
+        ExecuteWithDelay(PUMP_MS, pump)
+    else
+        pumping = false
+    end
+end
+
+local function want(name)
+    if requested[name] or queued[name] then return end
+
+    queued[name] = true
+    queue[#queue + 1] = name
+
+    if not pumping then
+        pumping = true
+        ExecuteWithDelay(PUMP_MS, pump)
+    end
+end
+
+-- The object for an icon name, if it is in memory. Never stored.
+--
+-- Only ever a lookup. Wanting something loaded is a separate matter, handled
+-- above at its own pace, and a later frame is what finds it.
+local function find(name)
+    local found
+    pcall(function() found = StaticFindObject(object_path(name)) end)
+    if real(found) then return found end
+
+    want(name)
     return nil
 end
 
@@ -190,6 +232,7 @@ end
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()
     resolved, requested, waited = {}, {}, {}
+    queue, queued = {}, {}
     sighted, sighted_at = nil, 0
 end
 
@@ -210,6 +253,7 @@ function M.report()
     log.say("  ids with a name: " .. named)
     log.say("  ids with no icon: " .. absent)
     log.say("  loads asked for: " .. M.count(requested))
+    log.say("  loads still queued: " .. #queue)
 
     local waiting = 0
     for _ in pairs(waited) do waiting = waiting + 1 end

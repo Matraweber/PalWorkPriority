@@ -481,8 +481,9 @@ local function picture(key, px, py, size, texture, token)
         -- Only the lookup. The image probe reported that UMG.Image has no
         -- brush functions at all, which is plainly false given one of them
         -- works, so it is not worth reading and not worth running.
+        -- The load test is answered and stays out of the way. It issued
+        -- loads of its own, which is the exact thing now being rationed.
         pcall(function() icons.probe() end)
-        pcall(function() icons.load_test() end)
     end
 
     local host = ensure_root()
