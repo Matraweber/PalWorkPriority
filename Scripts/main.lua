@@ -188,15 +188,36 @@ end
 -- menu, and finds nothing while the stand is shut.
 local ui_running = false
 
+-- Milliseconds of grid time owed, so the stand grid keeps its slow cadence
+-- while the panel runs fast.
+local grid_owed = 0
+
 local function ui_tick()
     if not ui_running then return end
+
+    -- A menu that answers once a second is not a menu. The panel redrew on
+    -- this one second tick, so a hover highlight took up to a second to
+    -- follow the pointer, which is what "laggy and unresponsive" was: not
+    -- the cost of a frame, the wait between frames. It also let the mouse
+    -- and the keyboard disagree about the current row long enough for two of
+    -- them to be marked at once.
+    local delay = panel.open and 100 or 1000
+    grid_owed = grid_owed + delay
+
     -- Runs even when disabled, so the grid still reflects edits. It costs
     -- nothing while the stand is shut.
     if cfg then
         ExecuteInGameThread(function()
-            pcall(function() ui.refresh(cfg) end)
-            -- Drawn on the same tick but independently: the panel opens on a
-            -- hotkey and has to keep working with the stand shut.
+            -- The grid stays on its second, because refreshing it means a
+            -- FindAllOf over every cell and it has nothing to gain from ten
+            -- times the rate.
+            if grid_owed >= 1000 then
+                grid_owed = 0
+                pcall(function() ui.refresh(cfg) end)
+            end
+
+            -- Drawn independently: the panel opens on a hotkey and has to
+            -- keep working with the stand shut.
             pcall(function() panel.refresh(cfg) end)
         end)
 
@@ -212,7 +233,7 @@ local function ui_tick()
             run_pass("edit")
         end
     end
-    ExecuteWithDelay(1000, ui_tick)
+    ExecuteWithDelay(delay, ui_tick)
 end
 
 local function start_ui()

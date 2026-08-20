@@ -56,6 +56,7 @@ local hover_key = nil
 local was_hit = {}
 local was_sel = nil
 
+local placed = {}               -- key -> where it was last put, to skip no-op moves
 local stripes = {}              -- key -> Border drawn behind a row
 local search_box = nil          -- EditableTextBox, only possible in a widget we own
 local search_text = ""
@@ -168,7 +169,7 @@ local function ensure_root()
 
     if not alive(host) or not alive(host_tree) then
         root, root_owner, root_tree, backdrop = nil, nil, nil, nil
-        blocks, drawn, stripes = {}, {}, {}
+        blocks, drawn, stripes, placed = {}, {}, {}, {}
         search_box = nil
         return nil
     end
@@ -183,7 +184,7 @@ local function ensure_root()
     -- the crash, not the check for it.
     root, root_owner, root_tree = host, host, host_tree
     backdrop = nil
-    blocks, drawn, stripes = {}, {}, {}
+    blocks, drawn, stripes, placed = {}, {}, {}, {}
     search_box = nil
     return root
 end
@@ -258,17 +259,25 @@ local function stripe(key, row, from, width)
         stripes[key] = border
     end
 
-    local slot
-    pcall(function() slot = border.Slot end)
-    if alive(slot) then
-        pcall(function()
-            slot:SetPosition({ X = X + from - 6, Y = Y + row * LINE - 3 })
-        end)
-        pcall(function() slot:SetSize({ X = width, Y = ROW_H }) end)
+    local at = from .. ":" .. row .. ":" .. width
+    if placed["s:" .. key] ~= at then
+        local slot
+        pcall(function() slot = border.Slot end)
+        if alive(slot) then
+            pcall(function()
+                slot:SetPosition({ X = X + from - 6, Y = Y + row * LINE - 3 })
+            end)
+            pcall(function() slot:SetSize({ X = width, Y = ROW_H }) end)
+            placed["s:" .. key] = at
+        end
     end
 
-    local on = (key == was_sel) or (key == hover_key)
-    pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
+    local on = (key == (hover_key or was_sel))
+    local want = on and "on" or "off"
+    if drawn["s:" .. key] ~= want then
+        pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
+        drawn["s:" .. key] = want
+    end
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -322,13 +331,24 @@ local function line(key, row, col, text, colour_key, points)
 
     -- Position every frame, not only at construction: a row moves when the
     -- screen above it changes length.
-    local slot
-    pcall(function() slot = tb.Slot end)
-    if alive(slot) then
-        pcall(function() slot:SetPosition({ X = X + col, Y = Y + row * LINE }) end)
+    -- Ten times a second, so a move that changes nothing is worth skipping.
+    local at = col .. ":" .. row
+    if placed[key] ~= at then
+        local slot
+        pcall(function() slot = tb.Slot end)
+        if alive(slot) then
+            pcall(function()
+                slot:SetPosition({ X = X + col, Y = Y + row * LINE })
+            end)
+            placed[key] = at
+        end
     end
 
-    local selected = (key == hover_key or key == was_sel)
+    -- Exactly one row is current. The pointer wins when it is over
+    -- something, otherwise the keyboard position stands. Treating both as
+    -- selected marked two rows at once, which the video shows plainly.
+    local current = hover_key or was_sel
+    local selected = (key == current)
     local shown = selected and "hover" or colour_key
 
     -- A marker as well as a colour. Colour alone was not enough to see where
@@ -793,7 +813,7 @@ function M.reset()
     scanned_once, scanned_at = nil, 0
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
-    stripes, search_box, search_text, want_focus = {}, nil, "", false
+    stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, draft, page, show_all = "list", nil, 0, false
     ftext_mode = nil
