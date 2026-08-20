@@ -20,6 +20,7 @@ Unreal "helpfully" upgrade the project breaks plugins and serialization.
 | VS workload | Desktop development with C++ | in the VS installer |
 | VS component | MSVC v143, VS 2022 C++ x64/x86 Build Tools (v14.38-17.8) | Individual Components |
 | .NET | 6 runtime, x64 | dotnet.microsoft.com |
+| .NET Framework | 4.8.1 Developer Pack | winget, `Microsoft.DotNet.Framework.DeveloperPack_4` |
 | Wwise | 2021.1.11, SDK (C++) and the VS 2022 integration | Audiokinetic Launcher, free account |
 | Modding kit | github.com/localcc/PalworldModdingKit | clone it |
 
@@ -32,39 +33,15 @@ rather than taken on trust: `Wwise` is one of the 46 plugins in
 dependency, with the Ak headers used across the C++. No `Plugins/Wwise`
 folder ships with the kit, so it will not compile until you supply one.
 
-## Try the blank project first
+## The blank project route, no longer needed
 
-The modding docs say the kit is required, and give the reason: the ModActor
-needs Palworld's game classes. Their worked example calls `Get Game Setting`
-and `Set Sprint SP`.
+There was a plan here to test whether a blank Unreal project could cook a
+LogicMod, so as to skip the kit, the C++ build and Wwise entirely. It existed
+only to dodge a toolchain that looked painful.
 
-Ours calls neither, and that is worth testing before fighting the toolchain.
-Our overlay is a plain UMG widget, CanvasPanel and ScrollBox and
-EditableTextBox and TextBlock and Image, plus a `ModActor` whose only job is
-to exist so UE4SS spawns something. Every Palworld-specific decision is
-already in Lua and stays there.
-
-If a blank Unreal 5.1 project can cook a working LogicMod, it removes the
-kit, the C++ build and Wwise in one go.
-
-The test, roughly an hour once the engine is installed:
-
-1. Blank UE 5.1 project, no C++.
-2. `Content/Mods/PalWorkPriority/ModActor`, a Blueprint Actor with an empty
-   graph.
-3. One trivial widget beside it with a single TextBlock.
-4. Primary Asset Label, unique nonzero Chunk ID, cook.
-5. Drop the pak in `Pal/Content/Paks/LogicMods/` and see whether UE4SS logs
-   it loading.
-
-Pass and the whole Wwise problem disappears. Fail and we are where we
-already are, having spent an hour and an engine install that was needed
-either way.
-
-The one thing that genuinely wants game content is item icons, since those
-textures live in Palworld's own paks. That does not need the kit either: the
-widget can take a `Texture2D` as a parameter and Lua can load it by path and
-hand it over, which keeps the asset reference out of the project entirely.
+The toolchain works, so the question is moot. Kept as a note because it is
+probably still true, and worth knowing if anyone hits a wall setting this up
+on another machine.
 
 ## Wwise, which is the awkward part
 
@@ -105,6 +82,45 @@ regardless.
 Install Wwise before opening the project. Opening it first fails on a missing
 plugin with an error that does not explain itself.
 
+## Two prerequisites nobody's list mentions
+
+Both stopped the build dead, and neither appears in the kit's docs, the
+modding wiki, or PalMods.
+
+**The .NET Framework Developer Pack.** Not the same thing as the .NET 6
+runtime, which every guide does list. UnrealBuildTool needs `NETFXSDK` for
+its SwarmInterface module and fails before compiling a single file without
+it:
+
+    Unable to instantiate module 'SwarmInterface': Could not find NetFxSDK
+    install dir. Install a version of .NET Framework SDK at 4.6.0 or higher.
+
+`winget install Microsoft.DotNet.Framework.DeveloperPack_4` fixes it. Adding
+the same component through the Visual Studio installer needs an elevated
+shell and refuses with exit 5007 otherwise, so the standalone pack is easier.
+
+**Pinning the compiler when a newer Visual Studio is installed.**
+UnrealBuildTool picks the newest toolchain it can find. With Visual Studio
+2026 also present it chose 14.50, which Unreal 5.1 predates entirely:
+
+    Detected compiler newer than Visual Studio 2022
+    ConcurrentLinearAllocator.h(29): error C4668: '__has_feature' is not
+    defined as a preprocessor macro
+
+Fixed by pinning it, in
+`%APPDATA%\Unreal Engine\UnrealBuildTool\BuildConfiguration.xml`:
+
+    <?xml version="1.0" encoding="utf-8" ?>
+    <Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+      <WindowsPlatform>
+        <Compiler>VisualStudio2022</Compiler>
+        <CompilerVersion>14.38.33130</CompilerVersion>
+      </WindowsPlatform>
+    </Configuration>
+
+With both done the build takes under three minutes, not the long haul the
+docs imply.
+
 ## Already in place here
 
 Checked on this machine, so these are not steps:
@@ -123,8 +139,14 @@ Checked on this machine, so these are not steps:
   loading path is already proven on this install.
 - 203 GB free. The engine plus the kit wants roughly 100.
 
-Outstanding, both because they need an account login: Unreal Engine 5.1
-through the Epic launcher, and Wwise through the Audiokinetic launcher.
+- Unreal Engine 5.1.1 at `D:\Program Files (x86)\Epic Games\UE_5.1`.
+- Wwise 2021.1.11.7933 with the SDK, integrated into the kit and retargeted
+  to engine 5.1.
+- **The kit compiles.** `PalEditor Win64 Development`, 315 of 315 steps,
+  producing `UnrealEditor-Pal.dll`. Full log in
+  `PalworldModdingKit/build-log.txt`.
+
+Nothing is outstanding. The editor can be opened.
 
 ## What gets built
 
