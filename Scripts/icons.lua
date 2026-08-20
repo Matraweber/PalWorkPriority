@@ -93,10 +93,18 @@ local function find(name)
     -- asking the engine to load something it is already loading.
     if not requested[name] then
         requested[name] = true
-        pcall(function() LoadAsset(path) end)
 
-        pcall(function() found = StaticFindObject(object) end)
-        if real(found) then return found end
+        -- On the game thread, which the panel's tick is not. Finding an
+        -- object is a lookup and works from anywhere; loading one is real
+        -- engine work and does not. CopperOre resolving while Stone and Wood
+        -- did not is explained by exactly this: CopperOre was already in
+        -- memory and never needed the load that was quietly going nowhere.
+        --
+        -- Nothing waits for it. The next frame looks again, which is what
+        -- the waiting above is for.
+        ExecuteInGameThread(function()
+            pcall(function() LoadAsset(path) end)
+        end)
     end
 
     return nil

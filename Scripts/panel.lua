@@ -354,7 +354,13 @@ local function set_size(tb, points)
     end
 end
 
-local function text_at(key, px, py, text, colour_key, points)
+-- passthrough makes the text ignore the pointer, which a tile's label has to
+-- do. A row reports hover through its own text, but a tile reports it through
+-- its picture, and a label sitting on top of that picture at a higher ZOrder
+-- swallows the hover before it gets there. That is why nothing in the picker
+-- could be clicked: the tiles were listening, and their own labels were in
+-- the way.
+local function text_at(key, px, py, text, colour_key, points, passthrough)
     local canvas = ensure_root()
     if not canvas then return end
 
@@ -380,7 +386,7 @@ local function text_at(key, px, py, text, colour_key, points)
         pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(true) end)
         pcall(function() slot:SetZOrder(9000) end)
-        pcall(function() tb:SetVisibility(0) end)
+        pcall(function() tb:SetVisibility(passthrough and 3 or 0) end)
         pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
         if points then set_size(tb, points) end
 
@@ -543,13 +549,13 @@ local function tile(key, at, item, have, top)
     -- to as much of the name as fits rather than to nothing.
     if not texture then
         text_at("n:" .. key, px + 6, py + TILE / 2 - 10,
-            item:sub(1, 9), "item", 10)
+            item:sub(1, 9), "item", 10, true)
     end
 
     if have > 0 then
         local shown = have >= 1000
             and (math.floor(have / 1000) .. "k") or tostring(have)
-        text_at("q:" .. key, px + 6, py + TILE - 18, shown, "dim", 11)
+        text_at("q:" .. key, px + 6, py + TILE - 18, shown, "dim", 11, true)
     end
 end
 
