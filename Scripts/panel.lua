@@ -69,7 +69,12 @@ local warned = {}
 -- Laid out like Creative Menu: a dark slab, a row of tabs, one boxed row per
 -- entry, a cyan accent on whatever is current. Those are the parts that make
 -- it read as a menu rather than as text over a game.
-local X, Y = 120, 120
+-- Every slot is anchored to the middle of the screen, so these are offsets
+-- from centre rather than from the top left corner. That keeps the panel
+-- centred at any resolution without ever asking how big the viewport is,
+-- which is a question with an awkward answer in UE4SS.
+local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
+local X, Y = -410, -300
 local W = 820
 local LINE = 34
 local ROW_H = 30
@@ -201,6 +206,7 @@ local function ensure_backdrop(rows)
             return
         end
 
+        pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetPosition({ X = X - PAD, Y = Y - PAD }) end)
         -- Under the text, over the world.
@@ -242,6 +248,7 @@ local function stripe(key, row, from, width)
         local ok = pcall(function() slot = host:AddChildToCanvas(border) end)
         if not ok or not alive(slot) then return end
 
+        pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(8995) end)
         -- Hit test invisible: the row's text is what reports hover, and a
@@ -263,7 +270,22 @@ local function stripe(key, row, from, width)
     pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
 end
 
-local function line(key, row, col, text, colour_key)
+-- Font size, which is what makes a heading read as a heading.
+--
+-- Font is a struct property, so it is read out, changed and written back
+-- rather than poked in place. If this build will not take it the panel simply
+-- stays one size, which is what it looked like before, so there is nothing to
+-- lose by trying.
+local function set_size(tb, points)
+    pcall(function()
+        local font = tb.Font
+        if font == nil then return end
+        font.Size = points
+        tb.Font = font
+    end)
+end
+
+local function line(key, row, col, text, colour_key, points)
     local canvas = ensure_root()
     if not canvas then return end
 
@@ -286,10 +308,12 @@ local function line(key, row, col, text, colour_key)
         -- that were positioned correctly and drew nothing at all, while the
         -- identically constructed text in overlay.lua's probe showed fine. The
         -- only difference between them was this call.
+        pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(true) end)
         pcall(function() slot:SetZOrder(9000) end)
         pcall(function() tb:SetVisibility(0) end)
         pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
+        if points then set_size(tb, points) end
 
         blocks[key] = tb
         drawn[key] = nil
@@ -387,6 +411,7 @@ local function ensure_search(row)
             return nil
         end
 
+        pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(9010) end)
         pcall(function() search_box:SetVisibility(0) end)
@@ -487,12 +512,12 @@ local function draw_tabs(active)
         local on = (active == tab.mode)
             or (active == "work" and tab.mode == "item")
         hit(tab.key, { kind = "tab", mode = tab.mode })
-        line(tab.key, 0, x, tab.label, on and "tab_on" or "dim")
+        line(tab.key, 0, x, tab.label, on and "tab_on" or "dim", 20)
         x = x + 130
     end
 
     hit("tab_close", { kind = "close" })
-    line("tab_close", 0, W - 90, "CLOSE", "dim")
+    line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
 end
 
 local function rule_list(cfg)
@@ -517,7 +542,7 @@ local function draw_list(cfg, totals)
 
     line("sub", row, PAD,
         "click a job to change it, a number to adjust it, remove to delete",
-        "dim")
+        "dim", 13)
     row = row + 1
 
     if #rules == 0 then

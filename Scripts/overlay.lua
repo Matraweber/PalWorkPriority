@@ -171,30 +171,31 @@ local function set_input(on)
     end
 
     if not on then
-        pcall(function() lib:SetInputMode_GameOnly(pc) end)
+        -- Two parameters, not one. The second is bFlushInput.
+        pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
         return
     end
 
-    -- The function is SetInputMode_GameAndUIEx. Not GameAndUI, which is what
-    -- every previous attempt called and which simply does not exist here, so
-    -- all four arities failed identically and looked like an argument problem.
-    -- The names came from asking the CDO what functions it has rather than
-    -- from remembering what the engine usually offers.
+    -- Five parameters:
+    --
+    --   SetInputMode_GameAndUIEx(PlayerController, InWidgetToFocus,
+    --                            InMouseLockMode, bHideCursorDuringCapture,
+    --                            bFlushInput)
+    --
+    -- Every previous attempt tried four, three, two and one, so all of them
+    -- failed and it read as the function being wrong. It was the arity, and
+    -- the arity came from asking the UFunction what it declares rather than
+    -- from trying shapes until one stuck, which is what the last two rounds
+    -- amounted to.
     --
     -- Game and UI rather than UI only, so the camera stays usable. That is
-    -- what Creative Menu does, and it is the difference between an overlay
-    -- and a modal box bolted over the game.
+    -- what Creative Menu does and it is the difference between an overlay and
+    -- a modal box bolted over the game. Mouse lock 0 is DoNotLock.
     local shapes = {
-        { "GameAndUIEx(pc, widget, 0, false)",
-          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false) end },
-        { "GameAndUIEx(pc, widget, 0)",
-          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0) end },
-        { "GameAndUIEx(pc, widget)",
-          function() lib:SetInputMode_GameAndUIEx(pc, widget) end },
-        { "GameAndUIEx(pc)",
-          function() lib:SetInputMode_GameAndUIEx(pc) end },
-        { "UIOnlyEx(pc, widget)",
-          function() lib:SetInputMode_UIOnlyEx(pc, widget) end },
+        { "GameAndUIEx(pc, widget, 0, false, false)",
+          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
+        { "UIOnlyEx(pc, widget, 0, false)",
+          function() lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
     }
 
     for _, shape in ipairs(shapes) do
