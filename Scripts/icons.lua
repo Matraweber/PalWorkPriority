@@ -63,7 +63,14 @@ local function alive(o)
 end
 
 -- "Material_Stone" -> the object, or nil.
-local function fetch(name)
+--
+-- The table stores the tail only, because the T_itemicon_ prefix is on every
+-- one of the eight hundred and it is noise to repeat. Putting it back is this
+-- function's job, and forgetting to was why the first attempt resolved
+-- nothing at all: every path it asked for was missing its first eleven
+-- characters, and a missing asset and a misspelled one look identical.
+local function fetch(tail)
+    local name = PREFIX .. tail
     local path = icondex.FOLDER .. name
     local object = path .. "." .. name
 
@@ -95,14 +102,21 @@ local function look_around()
 
     for _, tex in ipairs(textures) do
         if alive(tex) then
+            -- GetFullName, not GetName. GetName looked like the obvious
+            -- one and quietly returned nothing on this build, so every
+            -- texture was skipped and this whole fallback reported an empty
+            -- room while forty eight icons sat in it.
             local full
-            pcall(function() full = tex:GetName() end)
+            pcall(function() full = tex:GetFullName() end)
 
-            if type(full) == "string" and full:sub(1, #PREFIX) == PREFIX then
-                local rest = full:sub(#PREFIX + 1)
-                local id = rest:match("^[^_]+_(.+)$") or rest
-                local key = id:lower()
-                if found[key] == nil then found[key] = full end
+            if type(full) == "string" then
+                local leaf = full:match("([^/.]+)$") or ""
+                if leaf:sub(1, #PREFIX) == PREFIX then
+                    local rest = leaf:sub(#PREFIX + 1)
+                    local id = rest:match("^[^_]+_(.+)$") or rest
+                    local key = id:lower()
+                    if found[key] == nil then found[key] = rest end
+                end
             end
         end
     end
@@ -163,9 +177,10 @@ function M.get(item_id)
         end
     end
 
-    -- Remembered as absent so the fifteen attempts above happen once and
-    -- never again for this id.
+    -- Remembered as absent so the attempts above happen once and never
+    -- again for this id.
     cache[key] = false
+    M.last_missing = item_id .. " (tried " .. (name or "no table entry") .. ")"
     return nil
 end
 
@@ -189,6 +204,10 @@ function M.report()
 
     local seen = sighted and M.count(sighted) or 0
     log.say("  icon textures in memory at last look: " .. seen)
+
+    if M.last_missing then
+        log.say("  an example that failed: " .. M.last_missing)
+    end
 end
 
 function M.count(t)

@@ -306,13 +306,44 @@ end
 -- rather than poked in place. If this build will not take it the panel simply
 -- stays one size, which is what it looked like before, so there is nothing to
 -- lose by trying.
+-- Two ways to say it, because writing the struct back was not taking.
+--
+-- Tile text came out the same size as a heading, which is what gave the grid
+-- overlapping names. SetFont is the function the engine offers and is tried
+-- first; assigning the property is what this did before and stays as the
+-- fallback. Which one worked is logged once, so the next question about text
+-- size has an answer already.
+local sizing = nil
+
 local function set_size(tb, points)
+    local worked = nil
+
     pcall(function()
         local font = tb.Font
         if font == nil then return end
         font.Size = points
-        tb.Font = font
+        tb:SetFont(font)
+        worked = "SetFont"
     end)
+
+    if worked == nil then
+        pcall(function()
+            local font = tb.Font
+            if font == nil then return end
+            font.Size = points
+            tb.Font = font
+            worked = "Font ="
+        end)
+    end
+
+    if sizing == nil then
+        local got
+        pcall(function() got = tb.Font.Size end)
+        sizing = worked or "neither"
+        log.say(string.format(
+            "text sizing: %s, asked for %s and the font now reads %s",
+            sizing, tostring(points), tostring(got)))
+    end
 end
 
 local function text_at(key, px, py, text, colour_key, points)
@@ -404,6 +435,8 @@ end
 --
 -- Visible rather than hit test invisible, unlike the slab behind it, because
 -- this is the widget that reports whether the pointer is over the tile.
+local brushing = nil
+
 local function picture(key, px, py, size, texture, token)
     local host = ensure_root()
     if not host then return end
@@ -442,7 +475,18 @@ local function picture(key, px, py, size, texture, token)
 
     if drawn["i:" .. key] ~= token then
         if texture then
-            pcall(function() img:SetBrushFromTexture(texture, false) end)
+            -- Reported once. A blank tile has two possible causes, no texture
+            -- found and a texture that will not go onto a brush, and they
+            -- look identical on screen. This separates them without another
+            -- round of guessing.
+            local ok = pcall(function()
+                img:SetBrushFromTexture(texture, false)
+            end)
+            if brushing == nil then
+                brushing = ok
+                log.say("icon brushes: SetBrushFromTexture " ..
+                    (ok and "took the texture" or "failed"))
+            end
             pcall(function() img:SetOpacity(1.0) end)
         else
             -- Kept, not hidden. A hidden widget reports no hover, and the
@@ -855,6 +899,16 @@ end
 -- Drawing
 -- ---------------------------------------------------------------------------
 
+-- One pass of whichever screen is up, returning how many rows tall it came
+-- out. Separated so the frame that changes height can run it twice.
+local function redraw(cfg, totals)
+    if mode == "item" then
+        return draw_item_picker(cfg, totals)
+    end
+    hide_search()
+    return draw_list(cfg, totals)
+end
+
 function M.refresh(cfg)
     if not M.open then return end
     if not ensure_root() then return end
@@ -880,31 +934,31 @@ function M.refresh(cfg)
     hits, order, used = {}, {}, {}
     local totals = stock_totals(cfg)
 
-    local rows
-    if mode == "item" then
-        rows = draw_item_picker(cfg, totals)
-    else
-        hide_search()
-        rows = draw_list(cfg, totals)
-    end
+    local rows = redraw(cfg, totals)
 
     -- Clamped after the draw, since the row count is only known then.
     if sel > #order then sel = #order end
     if sel < 1 then sel = 1 end
 
-    ensure_backdrop(rows)
-    blank_unused()
-
-    -- Centred vertically from what was actually drawn. The row count is only
-    -- known now, so this lands one frame late, which at ten frames a second
-    -- is a tenth of a second on opening and invisible after that.
+    -- Centred vertically from what was actually drawn.
+    --
+    -- The height is only known once the screen has been drawn, so a screen
+    -- that changed height was drawn at the old offset while its backdrop was
+    -- sized for the new one. That is the gap between the panel and its
+    -- contents in the switch from ADD back to RULES. Drawing it again is
+    -- cheaper than living with it, and only happens on the frame the height
+    -- actually changes rather than every frame.
     local want = -math.floor((rows * LINE) / 2)
     if want ~= Y then
         Y = want
-        -- Every remembered position was measured against the old offset, so
-        -- none of them are true any more.
+        -- Every remembered position was measured against the old offset.
         placed = {}
+        hits, order, used = {}, {}, {}
+        rows = redraw(cfg, totals)
     end
+
+    ensure_backdrop(rows)
+    blank_unused()
 end
 
 local function blank_everything()
