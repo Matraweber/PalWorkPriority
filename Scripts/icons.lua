@@ -94,16 +94,18 @@ local function find(name)
     if not requested[name] then
         requested[name] = true
 
-        -- On the game thread, which the panel's tick is not. Finding an
-        -- object is a lookup and works from anywhere; loading one is real
-        -- engine work and does not. CopperOre resolving while Stone and Wood
-        -- did not is explained by exactly this: CopperOre was already in
-        -- memory and never needed the load that was quietly going nowhere.
+        -- The object path, not the package path, and this is measured
+        -- rather than assumed. Asked for the package it reports no error and
+        -- loads nothing; asked for the full object path the texture is there
+        -- by the next line. Silent success on the wrong argument is what made
+        -- this look like a threading problem, then a timing problem, then a
+        -- caching problem.
         --
-        -- Nothing waits for it. The next frame looks again, which is what
-        -- the waiting above is for.
+        -- On the game thread, since the panel's tick is not it. Finding an
+        -- object is a lookup and works from anywhere. Loading one is real
+        -- engine work and does not.
         ExecuteInGameThread(function()
-            pcall(function() LoadAsset(path) end)
+            pcall(function() LoadAsset(object) end)
         end)
     end
 

@@ -17,16 +17,22 @@ In `Mods/NativeMods/UE4SS/UE4SS-settings.ini`:
 
 The original file is kept beside it as `UE4SS-settings.ini.backup-before-devtools`.
 
-## Hot reload is off, deliberately
+## Hot reload, and how to make it usable
 
-`EnableHotReloadSystem` was tried and turned back off. Ctrl+R does not reload
-the mod you are working on. It tears down and reloads **every** Lua mod
-installed, which on this machine is twenty nine of them, and that crashed the
-game outright.
+Ctrl+R would replace a two minute restart with about a second. Tried plainly,
+it crashed the game, and the log said why: it does not reload the mod being
+worked on, it tears down and reloads **every** Lua mod installed. Twenty seven
+here, most belonging to other people.
 
-It is not a per mod tool and there is no way to scope it to one. With a
-single mod installed it might be worth the risk. Here it is not, and the risk
-falls on a game session rather than on the edit.
+There is no way to scope it to one mod. There is a way to be the only mod:
+
+    python tools/solo.py on      only this mod loads, Ctrl+R works
+    python tools/solo.py off     everything back as it was
+
+`on` records mods.txt and the UE4SS settings before touching either, and `off`
+restores what was recorded rather than guessing at defaults. In solo mode the
+loop is deploy, Ctrl+R, look. Out of it, hot reload stays off, because with a
+full mod list that key is a crash.
 
 ## The console
 
@@ -41,11 +47,22 @@ were all of this shape and all answerable in one line:
 If the window does not appear, `GraphicsAPI` in the same file is the thing to
 change: it is set to `opengl`, and `dx11` is the other option that works.
 
+## Ask the engine, do not reason about it
+
+The single most useful change was not a tool. It was writing the question as
+code that logs its own answer, as `icons.load_test` does: try each candidate,
+print what happened, and let one run settle it.
+
+LoadAsset is the example worth keeping. Given a package path it reports
+success and loads nothing; given the full object path the asset is there by
+the next line. That silent success on the wrong argument was read as a
+threading problem, then a timing problem, then a caching problem, and each
+wrong reading cost a restart. A test that asked all three at once cost one.
+
 ## What still needs a restart
 
-New code. Without hot reload there is no way around that, so the console is
-worth using first: most of what a restart was being spent on was a question
-about the engine, not a change to the mod, and a question can be asked
-directly.
+New code, unless in solo mode. The console is worth reaching for first
+either way: most of what restarts were being spent on was a question about
+the engine rather than a change to the mod.
 
 Rendering and anything involving a dedicated server need the game either way.
