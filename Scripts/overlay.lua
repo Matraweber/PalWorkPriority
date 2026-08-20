@@ -581,6 +581,56 @@ function M.slot_probe()
     end
 end
 
+-- Did the cooked pak load, and is the widget class in it reachable?
+--
+-- The spec calls this the empty shell test, and it is the one that decides
+-- whether the whole blueprint route works. Everything up to here happened on
+-- this machine with the editor's cooperation. Whether the game mounts the pak
+-- and hands back the class is a different question, and the only one that
+-- cannot be answered from the build side.
+--
+-- Both path forms are tried because the load takes the full object path and
+-- the package path silently loads nothing, which cost several rounds to learn
+-- with the item icons and is not worth learning twice.
+function M.widget_probe()
+    log.say("widget probe")
+
+    local package = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
+    local object = package .. ".WBP_WorkRules_C"
+
+    local function look(when)
+        local found
+        pcall(function() found = StaticFindObject(object) end)
+
+        local ok = false
+        if found ~= nil then
+            pcall(function() ok = found:IsValid() end)
+        end
+
+        log.say(string.format("  %-22s class found=%s", when, tostring(ok)))
+        return ok
+    end
+
+    if look("before loading") then return end
+
+    ExecuteInGameThread(function()
+        pcall(function() LoadAsset(object) end)
+        if look("after object path") then return end
+
+        pcall(function() LoadAsset(package) end)
+        look("after package path")
+    end)
+
+    ExecuteWithDelay(3000, function()
+        if look("three seconds later") then
+            log.say("  the pak is mounted and the class is ours to construct")
+        else
+            log.say("  not found. Either the pak did not mount, or the " ..
+                "class inside it is not named WBP_WorkRules_C")
+        end
+    end)
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")

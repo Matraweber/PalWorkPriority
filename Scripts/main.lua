@@ -834,6 +834,14 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- happened before the class existed.
     demandidx.install()
 
+    -- Does the blueprint pak load? Asked once, on its own, without needing
+    -- a keypress: UE4SS does not see our keybinds while the panel holds the
+    -- input mode, and this is exactly the sort of question that was costing a
+    -- restart each time it had to be triggered by hand.
+    ExecuteWithDelay(25000, function()
+        pcall(function() overlay.widget_probe() end)
+    end)
+
     -- A client announces itself so the server knows to push rules to it, and
     -- gets the current set back in reply. Delayed with everything else,
     -- because the network component does not exist the instant a world loads.

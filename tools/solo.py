@@ -136,11 +136,29 @@ def turn_off():
     os.remove(SETTINGS_SAVED)
 
     if os.path.isdir(LOGIC_HELD):
-        if os.path.isdir(LOGIC):
-            print("  ! %s exists, leaving %s alone" % (LOGIC, LOGIC_HELD))
-        else:
+        if not os.path.isdir(LOGIC):
             os.rename(LOGIC_HELD, LOGIC)
             print("  blueprint mod paks put back")
+        else:
+            # A LogicMods folder appeared while we were away, which is the
+            # normal case rather than a clash: this mod's own pak is
+            # installed there during development. Merge rather than refuse,
+            # and never overwrite what is already in place.
+            moved, kept = 0, 0
+            for name in os.listdir(LOGIC_HELD):
+                source = os.path.join(LOGIC_HELD, name)
+                target = os.path.join(LOGIC, name)
+                if os.path.exists(target):
+                    kept += 1
+                    continue
+                shutil.move(source, target)
+                moved += 1
+
+            if not os.listdir(LOGIC_HELD):
+                os.rmdir(LOGIC_HELD)
+
+            print("  blueprint mod paks put back (%d moved, %d already there)"
+                  % (moved, kept))
 
     print("mods.txt and UE4SS-settings.ini are back as they were")
     print("hot reload is off again, which is how it should be with a full")
