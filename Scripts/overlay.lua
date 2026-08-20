@@ -188,14 +188,20 @@ local function set_input(on)
     -- from trying shapes until one stuck, which is what the last two rounds
     -- amounted to.
     --
-    -- Game and UI rather than UI only, so the camera stays usable. That is
-    -- what Creative Menu does and it is the difference between an overlay and
-    -- a modal box bolted over the game. Mouse lock 0 is DoNotLock.
+    -- UI only, not Game and UI.
+    --
+    -- Game and UI was a deliberate choice to keep the camera usable, and it
+    -- worked exactly as designed: the panel took clicks and the character
+    -- still ran around behind it. That is not a menu. Creative Menu takes the
+    -- input, and a panel you can walk away from while it is open reads as a
+    -- decal rather than a screen.
+    --
+    -- Mouse lock 0 is DoNotLock, so the pointer is free to leave the window.
     local shapes = {
-        { "GameAndUIEx(pc, widget, 0, false, false)",
-          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
         { "UIOnlyEx(pc, widget, 0, false)",
           function() lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
+        { "GameAndUIEx(pc, widget, 0, false, false)",
+          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
     }
 
     for _, shape in ipairs(shapes) do
