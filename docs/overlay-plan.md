@@ -32,10 +32,50 @@ rather than taken on trust: `Wwise` is one of the 46 plugins in
 dependency, with the Ak headers used across the C++. No `Plugins/Wwise`
 folder ships with the kit, so it will not compile until you supply one.
 
+## Try the blank project first
+
+The modding docs say the kit is required, and give the reason: the ModActor
+needs Palworld's game classes. Their worked example calls `Get Game Setting`
+and `Set Sprint SP`.
+
+Ours calls neither, and that is worth testing before fighting the toolchain.
+Our overlay is a plain UMG widget, CanvasPanel and ScrollBox and
+EditableTextBox and TextBlock and Image, plus a `ModActor` whose only job is
+to exist so UE4SS spawns something. Every Palworld-specific decision is
+already in Lua and stays there.
+
+If a blank Unreal 5.1 project can cook a working LogicMod, it removes the
+kit, the C++ build and Wwise in one go.
+
+The test, roughly an hour once the engine is installed:
+
+1. Blank UE 5.1 project, no C++.
+2. `Content/Mods/PalWorkPriority/ModActor`, a Blueprint Actor with an empty
+   graph.
+3. One trivial widget beside it with a single TextBlock.
+4. Primary Asset Label, unique nonzero Chunk ID, cook.
+5. Drop the pak in `Pal/Content/Paks/LogicMods/` and see whether UE4SS logs
+   it loading.
+
+Pass and the whole Wwise problem disappears. Fail and we are where we
+already are, having spent an hour and an engine install that was needed
+either way.
+
+The one thing that genuinely wants game content is item icons, since those
+textures live in Palworld's own paks. That does not need the kit either: the
+widget can take a `Texture2D` as a parameter and Lua can load it by path and
+hand it over, which keeps the asset reference out of the project entirely.
+
 ## Wwise, which is the awkward part
 
-Audiokinetic has delisted old patch versions from their launcher, so
-2021.1.11 may simply not be offered. Two things make that less fatal than it
+Audiokinetic has delisted old patch versions from their launcher, and on this
+machine it offers nothing in the 2021 line at all.
+
+Sourcing a delisted build of proprietary licensed software from a third party
+mirror is not an option worth taking: it is a licence problem and an
+unverifiable binary at the same time. The legitimate route is an Audiokinetic
+support ticket, which is slow but real. Which is exactly why the blank project
+above is worth trying first. Two things make that less fatal than it
 sounds.
 
 The kit pins no version anywhere. It asks for `AkAudio` and nothing more.
