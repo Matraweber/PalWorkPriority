@@ -320,12 +320,33 @@ function M.camp_pals(camp)
                 trace.done()
 
                 if id ~= nil and param_ok then
-                    trace.at("pals: slot " .. i .. " name and species")
+                    -- One mark each. The last one covered four different
+                    -- calls, which named a line rather than a call and left
+                    -- the same guessing this was meant to end.
+                    --
+                    -- pal_name falls back to the species reader when there is
+                    -- no nickname, so this mark can cover GetCharacterID too.
+                    trace.at("pals: slot " .. i .. " GetNickname")
+                    local pal_nm = M.pal_name(param)
+                    trace.done()
+
+                    trace.at("pals: slot " .. i .. " GetCharacterID")
+                    local pal_sp = M.pal_species(param)
+                    trace.done()
+
+                    -- Reads the guid fields off the id struct, which is a
+                    -- different kind of risk from calling a function on the
+                    -- parameter, and worth telling apart.
+                    trace.at("pals: slot " .. i .. " identity key")
+                    local pal_key = M.instance_key(id) or M.guid_key(id)
+                        or ("slot" .. i)
+                    trace.done()
+
                     out[#out + 1] = {
                         id = id,
                         param = param,
-                        name = M.pal_name(param),
-                        species = M.pal_species(param),
+                        name = pal_nm,
+                        species = pal_sp,
                         slot_index = i,
                         -- Identity that survives the roster being reordered,
                         -- and that the stand UI can rebuild from a row's own
@@ -334,9 +355,8 @@ function M.camp_pals(camp)
                         -- schedules correctly, it just cannot be matched to a
                         -- row, so its cell shows the priority without the
                         -- green assigned marker.
-                        key = M.instance_key(id) or M.guid_key(id) or ("slot" .. i),
+                        key = pal_key,
                     }
-                    trace.done()
                 end
             end
         end

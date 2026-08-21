@@ -190,3 +190,33 @@ Both answers came from reading something else: UE4SS's log for the cause, and
 the other mods on disk for the shape. The mod's own source was the least
 useful thing to stare at, because the bug was never in what it did, only in how
 it asked to be called back.
+
+
+## LoopAsync fixed the hook removal. Something else is still there.
+
+First clean run with the loops registered once: 21:33:20 to 21:39:07, five
+minutes and forty-seven seconds, and **not one** `Ref was not function` in the
+whole log. The two runs before it lost the engine tick after 72 and 85 seconds.
+That bug is fixed, and the reference churn was the cause.
+
+It still crashed, and the second fault is a different animal:
+
+| time     | breadcrumb                          | address              |
+|----------|-------------------------------------|----------------------|
+| 21:18:28 | `pals: slot 5 name and species`     | `0x656c676774a5`     |
+| 21:39:03 | `pals: slot 5 name and species`     | `0x251eba9a7e9`      |
+
+Both at **slot 5**, which is a consistent pal rather than a race that lands
+anywhere. Neither address is a small offset from null the way `0x08` and `0x0c`
+were; these are heap-sized pointers, so this reads as a real object being used
+after it has gone, not a Lua reference that stopped being a function.
+
+The first address decodes to ASCII, which is worth remembering: something read
+a string where a pointer was expected.
+
+### Why that mark was not good enough
+
+It covered four calls: `GetNickname`, `GetCharacterID`, and the two identity
+key readers, which take their fields off the id struct rather than calling
+anything on the parameter. Naming a line instead of a call is the guessing this
+whole apparatus exists to stop. Split into four.
