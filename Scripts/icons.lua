@@ -15,6 +15,7 @@
 
 local log = require("log")
 local icondex = require("icondex")
+local api = require("palapi")
 
 local M = {}
 
@@ -243,6 +244,76 @@ function M.reset()
     resolved, requested, waited = {}, {}, {}
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0
+end
+
+-- Does the game hand out item icons itself?
+--
+-- Creative Menu's pak, extracted and read, never touches a texture path. It
+-- goes through the game's own item data, and the running game names the
+-- chain:
+--
+--   PalUtility::GetItemIDManager(world)           -> the manager
+--   PalItemIDManager::GetStaticItemData(FName)    -> the item's data object
+--   PalUtility::LoadIconToImage(world, path, image, callback)
+--
+-- If that data object carries the icon, then everything else in this file is
+-- unnecessary: the eight hundred entry table scraped out of the pak, the load
+-- queue, the rationing, the patience counter, and the four separate ways a
+-- tile could come up blank.
+--
+-- This only looks. Names and types, never values, because reading a value off
+-- a type that has not been confirmed is how every previous attempt at this
+-- went wrong.
+function M.data_probe()
+    log.say("item data probe")
+
+    local util = api.cdo("/Script/Pal.Default__PalUtility")
+    local world = api.player_controller()
+
+    if not util or not api.valid(world) then
+        log.say("  no PalUtility or no world yet")
+        return
+    end
+
+    local manager
+    pcall(function() manager = util:GetItemIDManager(world) end)
+    if not api.valid(manager) then
+        log.say("  GetItemIDManager gave nothing")
+        return
+    end
+
+    local data
+    pcall(function() data = manager:GetStaticItemData(FName("Stone")) end)
+    if not api.valid(data) then
+        log.say("  GetStaticItemData for Stone gave nothing")
+        return
+    end
+
+    local class
+    pcall(function() class = data:GetClass():GetFName():ToString() end)
+    log.say("  Stone data is a " .. tostring(class))
+
+    local shown = 0
+    pcall(function()
+        data:GetClass():ForEachProperty(function(prop)
+            if shown >= 24 then return end
+
+            local pn, pc = "?", "?"
+            pcall(function() pn = prop:GetFName():ToString() end)
+            pcall(function() pc = prop:GetClass():GetFName():ToString() end)
+
+            local low = pn:lower()
+            if pc:find("Soft", 1, true) or low:find("icon")
+                or low:find("texture") or low:find("image") then
+                shown = shown + 1
+                log.say("    " .. pc .. " " .. pn)
+            end
+        end)
+    end)
+
+    if shown == 0 then
+        log.say("    nothing soft and nothing named like a picture")
+    end
 end
 
 function M.count(t)

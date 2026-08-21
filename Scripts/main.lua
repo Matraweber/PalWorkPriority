@@ -861,6 +861,12 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         -- Base camps and their worker slots are not populated the instant
         -- the controller restarts, so the first look is late on purpose.
         ExecuteWithDelay(15000, function() run_pass("world load") end)
+
+        -- One question, asked once: does the game hand out item icons itself?
+        -- If it does, most of icons.lua stops being necessary.
+        ExecuteWithDelay(25000, function()
+            pcall(function() icons.data_probe() end)
+        end)
     end
     start_timer()
     start_ui()
