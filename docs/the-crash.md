@@ -410,3 +410,56 @@ nested.
 `pwp dry` computes the whole pass and skips only the assignment RPCs. Dry plus
 the stress runs everything except the re-entry. Sixty passes clean would be
 three times the threshold that has failed every time so far.
+
+
+## The assignment RPCs are out, and the real accumulator
+
+`pwp dry` runs the whole pass and sends no assignments. It died anyway, at
+twenty three passes, with an access violation rather than a hook removal. The
+test was sound: eleven of those passes computed toggles and withheld them.
+
+So RPCs are out, hook re-entry is out, and the different symptom at the same
+threshold is more evidence for one fault with two endings, depending on whether
+UE4SS notices before it dereferences.
+
+### What actually accumulates
+
+`demand.lua` stored the work object itself:
+
+```lua
+jobs[key] = { camp = camp, value = ..., seen = os.time(), work = w }
+```
+
+and used it for exactly one thing, later:
+
+```lua
+if not api.valid(e.work) then dead = true end
+```
+
+With `FRESH_SECONDS = 180` and about five hundred and fifty tracked jobs, every
+pass asked up to eleven hundred wrappers whether they were still valid, of
+objects captured up to three minutes earlier, while pals create and destroy
+work objects continuously. `IsValid` on a wrapper whose object has gone does
+not check anything, it dereferences reused memory.
+
+That is the rule already written in this repository: an object the engine
+handed over in this call is safe, one kept since an earlier frame is the crash.
+It was violated eleven hundred times a pass.
+
+It explains every observation. Per pass rather than per second, because the
+count of stale checks scales with passes. Both symptoms. Unmoved by the sweep,
+by closure identity, by RPCs. Clean under `pwp off`, where the pass never runs.
+Clean under `ui_body` alone, which never touches `jobs`.
+
+### Why it was cleared too early
+
+The breadcrumb marked this site and came back `idle`, and that was read as
+exoneration. It was not: `idle` means the fault was not inside that one call at
+that instant, which for a site sampled eleven hundred times a pass says almost
+nothing. A mark clears a rare call. It cannot clear a common one.
+
+### The fix
+
+The wrapper is not stored. Everything wanted from the work object is read while
+the engine has just handed it over. Freshness drops to forty five seconds
+because age is now the only pruning there is, and a finished job stops pulsing.

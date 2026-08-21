@@ -28,7 +28,13 @@ local M = {}
 -- pruned within a pass. This is only the backstop, so it can afford to be
 -- generous: overstating demand costs a fenced pal, understating it stops the
 -- mod governing that work type at all.
-M.FRESH_SECONDS = 180
+-- Shorter now that it is the only pruning there is.
+--
+-- A finished job simply stops pulsing, so age is the honest signal that it is
+-- over. Three minutes was tolerable while a validity check caught the dead
+-- ones sooner; as the sole test it would count finished work as wanted for far
+-- too long and over-assign against it.
+M.FRESH_SECONDS = 45
 
 M.pulses = 0                -- total ever seen
 -- Pulses per work type, never pruned. This distinguishes "that work type
@@ -90,11 +96,24 @@ function M.install()
                         camp = api.guid_key(api.prop(dir, "BaseCampId"))
                     end
 
+                    -- The work object itself is deliberately not kept.
+                    --
+                    -- It was stored for one purpose, asking it later whether
+                    -- it was still valid, and that question is the crash: a
+                    -- wrapper held since an earlier frame points at memory the
+                    -- game has since reused, and IsValid on it dereferences
+                    -- that memory rather than checking anything. With around
+                    -- five hundred and fifty tracked jobs it was asked eleven
+                    -- hundred times a pass, of objects up to three minutes
+                    -- old, which is why the fault counted passes rather than
+                    -- seconds and why it survived every other fix tried.
+                    --
+                    -- Everything read from it is read now, while the engine
+                    -- has just handed it over and it is certainly alive.
                     jobs[key] = {
                         camp = camp,
                         value = api.work_suitability(w),
                         seen = os.time(),
-                        work = w,
                     }
                     M.pulses = M.pulses + 1
                     local v = jobs[key].value
@@ -129,12 +148,6 @@ function M.for_camp(camp_key)
         -- without meaning to: this expects the object to have died, then
         -- asks it whether it is valid. IsValid is a member call, so on a
         -- freed object the question is the crash.
-        -- This was marked while it was a suspect. The breadcrumb cleared
-        -- it, and the mark cost two file writes per job per camp, which at
-        -- 550 jobs was most of the mod's disk traffic and all of it useless.
-        if not dead and e.work ~= nil then
-            if not api.valid(e.work) then dead = true end
-        end
 
         if dead then
             jobs[key] = nil
