@@ -612,61 +612,84 @@ local function helpers()
     return registry
 end
 
--- FindOrAddFName, in the two spellings this build might take. A name that is
--- merely looked up comes back as None when the game has never seen it, and a
--- name from a mod's own pak is exactly the kind the game has never seen.
+-- FindOrAddFName, borrowed rather than reimplemented.
+--
+-- A name merely looked up comes back as None when the game has never seen it,
+-- and a name out of a mod's own pak is exactly the kind it has never seen. My
+-- version guessed at the argument order; this is the one the working loader
+-- uses, and there is no reason to have two.
+local UEHelpers = nil
+pcall(function() UEHelpers = require("UEHelpers") end)
+
 local function name_of(text)
+    if UEHelpers and UEHelpers.FindOrAddFName then
+        local made
+        pcall(function() made = UEHelpers.FindOrAddFName(text) end)
+        if made ~= nil then return made end
+    end
+
     local made
     pcall(function() made = FName(text, EFindName.FNAME_Add) end)
-    if made == nil then
-        pcall(function() made = FName(text) end)
-    end
+    if made == nil then pcall(function() made = FName(text) end) end
     return made
 end
 
-function M.mod_class(package, asset)
-    local reg = helpers()
-    if reg == nil then return nil end
+-- Ask the registry for a class out of a mounted mod pak, on the game thread,
+-- and hand it back through a callback.
+--
+-- On the game thread because the last attempt hung the mod outright. ModActor
+-- came back and the widget never did, and the tick stopped with it: GetAsset
+-- on a package that is not loaded yet does a synchronous load, and a
+-- synchronous load off the game thread waits for a thread that is waiting for
+-- it. ModActor answered instantly only because BPModLoaderMod had loaded it
+-- moments earlier.
+--
+-- A callback rather than a return value, because that is what asking on
+-- another thread costs and pretending otherwise is what caused the hang.
+function M.mod_class(package, asset, done)
+    ExecuteInGameThread(function()
+        local reg = helpers()
+        if reg == nil then return done(nil) end
 
-    local data = {
-        PackageName = name_of(package),
-        AssetName = name_of(asset),
-    }
+        local data = {
+            PackageName = name_of(package),
+            AssetName = name_of(asset),
+        }
 
-    local class
-    pcall(function() class = reg:GetAsset(data) end)
-    if class == nil then return nil end
+        local class
+        pcall(function() class = reg:GetAsset(data) end)
 
-    local ok = false
-    pcall(function() ok = class:IsValid() end)
-    if ok then return class end
-    return nil
+        local ok = false
+        if class ~= nil then pcall(function() ok = class:IsValid() end) end
+
+        done(ok and class or nil)
+    end)
 end
 
 function M.widget_probe()
     log.say("widget probe")
+    log.say("  asset registry helpers: " .. tostring(helpers() ~= nil))
 
-    local reg = helpers()
-    log.say("  asset registry helpers: " .. tostring(reg ~= nil))
-
-    local cases = {
-        { "/Game/Mods/PalWorkPriority/ModActor", "ModActor_C" },
-        { "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules", "WBP_WorkRules_C" },
-    }
-
-    for _, case in ipairs(cases) do
-        local class = M.mod_class(case[1], case[2])
-
-        local full
-        if class ~= nil then pcall(function() full = class:GetFullName() end) end
-
-        log.say(string.format("  %-22s %s", case[2],
-            full or "not found through the registry"))
+    local function try(package, asset)
+        M.mod_class(package, asset, function(class)
+            local full
+            if class ~= nil then
+                pcall(function() full = class:GetFullName() end)
+            end
+            log.say(string.format("  %-22s %s", asset,
+                full or "not found through the registry"))
+        end)
     end
 
-    -- ModActor is the control. If it comes back and the widget does not, the
-    -- difference is in the asset rather than in the route, and that is worth
-    -- knowing before anything else is changed.
+    -- ModActor first as the control, since it is known to resolve.
+    try("/Game/Mods/PalWorkPriority/ModActor", "ModActor_C")
+
+    -- Spaced out rather than fired together, because each of these can be a
+    -- synchronous load and nine at once is what killed the game over the
+    -- icons.
+    ExecuteWithDelay(1500, function()
+        try("/Game/Mods/PalWorkPriority/UI/WBP_WorkRules", "WBP_WorkRules_C")
+    end)
 end
 
 function M.diagnose()
