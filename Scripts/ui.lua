@@ -398,7 +398,10 @@ local function ensure_cell_text(cell, cell_name)
         -- earlier frame. The menu rebuilds itself, and this mod has two
         -- crashes in its history from exactly that.
         trace.at("ui: alive on cached cell " .. tostring(cell_name))
-        if alive(cached) then return cached end
+        local still = alive(cached)
+        trace.done()
+
+        if still then return cached end
         cell_text[cell_name] = nil
         cell_last[cell_name] = nil
     end
@@ -544,10 +547,14 @@ local function handle_cell(cfg, cell)
     local capable = pal.ranks and pal.ranks[t] ~= nil
     if not capable or prio == nil then
         local existing = cell_text[cell_name]
+        local usable = false
         if existing then
             trace.at("ui: alive on blanking cell " .. tostring(cell_name))
+            usable = alive(existing)
+            trace.done()
         end
-        if existing and alive(existing) then
+
+        if usable then
             set_cell(existing, cell_name, "", "blank")
         end
         restore_checkbox(cell, cell_name)

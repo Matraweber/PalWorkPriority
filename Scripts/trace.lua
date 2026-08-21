@@ -17,9 +17,17 @@ local M = {}
 M.path = nil
 M.on = true
 
--- What was being touched, and which one. The name matters as much as the
--- place: "ui cell" narrows it to a loop, "ui cell WBP_Row_3.Cell_2" names the
--- object.
+-- Marks are cleared when the risky call survives, which is the whole design
+-- and was missing from the first version of this file.
+--
+-- Without clearing, the most frequent site is the last breadcrumb whatever
+-- actually crashed, and it proves nothing at all. With clearing, the file
+-- holds a mark only while a call is in flight: a crash during one names it,
+-- and a crash anywhere else leaves "idle" behind, which is just as useful an
+-- answer because it rules all three of them out.
+--
+-- The name matters as much as the place. "ui cell" narrows it to a loop,
+-- "ui cell WBP_Row_3.Cell_2" names the object.
 function M.at(where)
     if not M.on or not M.path then return end
 
@@ -27,6 +35,19 @@ function M.at(where)
         local f = io.open(M.path, "w")
         if f then
             f:write(os.date("%H:%M:%S ") .. where)
+            f:close()
+        end
+    end)
+end
+
+-- Survived. Anything that crashes from here on did not crash in that call.
+function M.done()
+    if not M.on or not M.path then return end
+
+    pcall(function()
+        local f = io.open(M.path, "w")
+        if f then
+            f:write(os.date("%H:%M:%S ") .. "idle")
             f:close()
         end
     end)

@@ -132,12 +132,8 @@ function M.for_camp(camp_key)
         -- freed object the question is the crash.
         if not dead and e.work ~= nil then
             trace.at("demand: IsValid on stored work " .. tostring(key))
-        end
-
-        if not dead and e.work ~= nil and not api.valid(e.work) then
-            -- The work object died, which is the fast path: a finished job
-            -- leaves within a pass instead of aging out.
-            dead = true
+            if not api.valid(e.work) then dead = true end
+            trace.done()
         end
 
         if dead then
