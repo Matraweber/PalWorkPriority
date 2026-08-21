@@ -21,6 +21,7 @@ local items = require("items")
 local panel = require("panel")
 local remote = require("remote")
 local reload = require("reload")
+local clock = require("clock")
 local trace = require("trace")
 local icons = require("icons")
 local net = require("net")
@@ -228,44 +229,29 @@ local function run_pass(reason, explicit)
 
     pass_reason, pass_explicit = reason, explicit
 
-    -- A fresh closure each time, not pass_body itself.
+    -- Called directly: every caller is already on the game thread.
     --
-    -- Hoisting this to a named function was meant to stop reference churn and
-    -- did not: forced at three passes a second the tick was dropped in twelve
-    -- seconds. BreedingHelper hands ExecuteInGameThread a new anonymous
-    -- function about four times a second, which is a higher rate than that,
-    -- and keeps its tick.
-    --
-    -- The difference left is handing UE4SS the same Lua function object over
-    -- and over rather than a new one, so that is what changes here. Under test
-    -- with a twelve second reproducer rather than reasoned about.
-    ExecuteInGameThread(function() pass_body() end)
+    -- The clock drives the tick there, remote commands run inside the
+    -- clock's ui entry, and the chat hook is a game-thread callback. The
+    -- ExecuteInGameThread that used to sit here was one more registry
+    -- registration per pass, which is the currency the crash is paid in,
+    -- bought to move to a thread we are already on.
+    pass_body()
 end
 
--- LoopAsync rather than a chain of ExecuteWithDelay calls.
---
--- Rescheduling from inside the callback registers a new Lua reference every
--- time round, so this loop alone minted one every ten seconds and the UI loop
--- below minted one every second, all session. UE4SS eventually complained
--- that one of them was no longer a function and dropped the engine tick with
--- it. LoopAsync registers once and repeats, so there is a single reference for
--- the lifetime of the mod.
---
--- Every stable mod in this install does it this way. Naming the callbacks was
--- not enough on its own, because the churn was in the scheduling and not in
--- the closures.
---
--- Returning true stops the loop. Neither flag is ever cleared today, so the
--- guards are there for correctness rather than because anything sets them.
-local function tick()
-    if not timer_running then return true end
-    run_pass("tick")
-end
-
+-- Both loops are clock entries now. The comment that used to be here said
+-- LoopAsync registers once and is therefore safe; UE4SS's own maintainers
+-- deprecated it as never having been thread safe at all (PR #1128), and the
+-- stress reproducer agreed, dropping the engine tick within 25 executed
+-- passes whatever shape the callbacks took. The full story is in
+-- docs/research-ue4ss-crash.md; the machinery is in clock.lua.
 local function start_timer()
     if timer_running then return end
     timer_running = true
-    LoopAsync(cfg.interval_seconds * 1000, tick)
+    clock.every("pass", cfg.interval_seconds * 1000, function()
+        run_pass("tick")
+    end)
+    clock.start()
 end
 
 -- The grid needs its own cadence: the stand can be opened at any moment and
@@ -313,8 +299,6 @@ local UI_BEAT = 100
 local body_owed = 0
 
 local function ui_tick()
-    if not ui_running then return true end
-
     grid_owed = grid_owed + UI_BEAT
     body_owed = body_owed + UI_BEAT
 
@@ -323,9 +307,10 @@ local function ui_tick()
     body_owed = 0
 
     -- Runs even when disabled, so the grid still reflects edits. It costs
-    -- nothing while the stand is shut.
+    -- nothing while the stand is shut. Already on the game thread, so the
+    -- body is a call, not a registration.
     if cfg then
-        ExecuteInGameThread(ui_body)
+        ui_body()
 
         if panel.wants_pass then
             panel.wants_pass = false
@@ -344,7 +329,8 @@ end
 local function start_ui()
     if ui_running then return end
     ui_running = true
-    LoopAsync(UI_BEAT, ui_tick)
+    clock.every("ui", UI_BEAT, ui_tick)
+    clock.start()
 end
 
 -- ---------------------------------------------------------------------------
@@ -379,6 +365,9 @@ COMMANDS.help = function()
 end
 
 COMMANDS.status = function()
+    local beat_age = os.clock() - (clock.last_beat or 0)
+    log.say(string.format("  heartbeat: %s (%.1fs since last beat)",
+        beat_age < 1.0 and "alive" or "STALLED", beat_age))
     log.say(string.format("%s %s | %s | %s | every %ds",
         MOD_NAME, VERSION,
         cfg.enabled and "enabled" or "disabled",
@@ -482,6 +471,23 @@ COMMANDS.scope = function()
     run_pass("scope change", true)
 end
 
+-- The breadcrumb costs a file write per mark inside the pass, which is the
+-- mitigation issue #1372 landed on removing. Off by default; a hunt turns it
+-- on for exactly as long as it is needed.
+COMMANDS.trace = function(args)
+    local want = (args or ""):match("^%s*(%S*)")
+    if want == "on" then
+        trace.on = true
+        log.say("trace marks on, " .. tostring(trace.path))
+    elseif want == "off" then
+        trace.on = false
+        log.say("trace marks off")
+    else
+        log.say("trace marks are " .. (trace.on and "on" or "off") ..
+            ". Use '" .. cfg.chat_prefix .. " trace on|off'")
+    end
+end
+
 COMMANDS.dry = function()
     cfg.dry_run = true
     log.say("dry run on, changes are logged and nothing is sent")
@@ -514,16 +520,23 @@ COMMANDS.reload = function()
 end
 
 COMMANDS.discover = function()
-    ExecuteInGameThread(function()
+    run_now(function()
         discover.run(DIR .. "Discovery.txt")
     end)
 end
+
+-- Calls fn immediately. Stands where ExecuteInGameThread used to, in code
+-- that is only ever reached on the game thread already: command handlers run
+-- from the chat hook or from the clock's ui entry, both game-thread contexts.
+-- Every removed registration is one fewer registry write, and registry writes
+-- are the currency this mod's crash was paid in.
+local function run_now(fn) fn() end
 
 -- Prints what the base is actually holding, by internal item id. Those ids
 -- are what work_caps keys on, and guessing their spelling is the easiest way
 -- to write a ceiling that silently never triggers.
 COMMANDS.stock = function()
-    ExecuteInGameThread(function()
+    run_now(function()
         local camps = api.base_camps()
         if #camps == 0 then
             log.say("no camps loaded. Stand in your base and try again")
@@ -717,7 +730,7 @@ local function show_limits()
         return
     end
 
-    ExecuteInGameThread(function()
+    run_now(function()
         local totals = stock_across_camps()
 
         log.say("stock limits:")
@@ -786,7 +799,7 @@ COMMANDS.limit = function(args)
         return
     end
 
-    ExecuteInGameThread(function()
+    run_now(function()
         local totals = stock_across_camps()
 
         if clearing then
@@ -962,6 +975,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Engine wrappers do not survive a world switch, and neither should any
     -- memo built from them.
     api.reset()
+    clock.reset()
     scheduler.forget()
     demandidx.reset()
     ui.reset()
@@ -976,7 +990,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- A client announces itself so the server knows to push rules to it, and
     -- gets the current set back in reply. Delayed with everything else,
     -- because the network component does not exist the instant a world loads.
-    ExecuteWithDelay(18000, function()
+    clock.once(18000, function()
         if not api.has_authority() then
             if net.to_server(net.PREFIX .. "Hello", 1) then
                 log.debug("announced to the server, waiting for the rules")
@@ -987,7 +1001,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- Checked here rather than at load. There is no world when a mod starts,
     -- so PalGameMode does not exist yet and every single player session
     -- reported itself as a client on a dedicated server.
-    ExecuteWithDelay(20000, function()
+    clock.once(20000, function()
         if not api.has_authority() then
             log.warn("no authority here, so this looks like a client on a " ..
                 "dedicated server. Work demand will be estimated from the " ..
@@ -999,17 +1013,27 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     if cfg.run_on_world_load then
         -- Base camps and their worker slots are not populated the instant
         -- the controller restarts, so the first look is late on purpose.
-        ExecuteWithDelay(15000, function() run_pass("world load") end)
+        clock.once(15000, function() run_pass("world load") end)
 
         -- One question, asked once: does the game hand out item icons itself?
         -- If it does, most of icons.lua stops being necessary.
-        ExecuteWithDelay(25000, function()
+        clock.once(25000, function()
             pcall(function() icons.data_probe() end)
         end)
     end
     start_timer()
     start_ui()
 end)
+
+-- Started at load as well, not only on world entry. ClientRestart fires when
+-- a player spawns, and a dedicated server with nobody connected never fires
+-- it, which left the mod loaded but inert on the headless rig: no ticks, no
+-- command channel, nothing. Both loops idle harmlessly while there is no
+-- world, so starting early costs nothing on the client either.
+if cfg and cfg.enabled then
+    start_timer()
+    start_ui()
+end
 
 RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
     local ok, err = pcall(function()
@@ -1116,7 +1140,9 @@ end, { ModifierKey.CONTROL })
 -- Both are the API not being shaped as assumed, so this asks it directly
 -- rather than guessing a second time.
 bind(Key.F7, "Ctrl+F7 (icon probe)", function()
-    ExecuteInGameThread(function()
+    -- A keypress is rare, so riding the next clock beat (at most 100 ms away)
+    -- costs nothing perceptible and no registration at all.
+    clock.once(0, function()
         pcall(function() overlay.icon_probe() end)
         pcall(function() icons.report() end)
     end)

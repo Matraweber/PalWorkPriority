@@ -15,7 +15,12 @@
 local M = {}
 
 M.path = nil
-M.on = true
+
+-- Off unless a hunt is on. Issue #1372's reporter partially mitigated the
+-- same crash class by removing file I/O from hook callbacks, and every mark
+-- here is a file write inside the pass. "pwp trace on" switches it back on
+-- for a session that needs the breadcrumb.
+M.on = false
 
 -- Marks are cleared when the risky call survives, and they NEST.
 --

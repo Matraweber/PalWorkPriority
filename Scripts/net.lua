@@ -135,10 +135,19 @@ function M.broadcast(message)
     local sent = 0
 
     for name, entry in pairs(M.clients) do
-        if (now - entry.at) > CLIENT_TTL or not api.valid(entry.comp) then
+        -- TTL only. The IsValid that used to sit here asked a component
+        -- wrapper stored on an earlier frame whether it was still alive,
+        -- which is the same stored-wrapper dereference that demand.lua was
+        -- purged of; on a busy server clients churn exactly like work
+        -- objects. A dead component makes the send fail, and a failed send
+        -- drops the entry, which is the same outcome without the dangerous
+        -- question.
+        if (now - entry.at) > CLIENT_TTL then
             M.clients[name] = nil
         elseif M.to_client(entry.comp, message) then
             sent = sent + 1
+        else
+            M.clients[name] = nil
         end
     end
     return sent

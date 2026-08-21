@@ -14,6 +14,7 @@
 -- rather than an implementation detail, for the reason set out below.
 
 local log = require("log")
+local clock = require("clock")
 local icondex = require("icondex")
 local api = require("palapi")
 
@@ -118,22 +119,22 @@ local function pump()
         -- object is a lookup and works from anywhere. Loading one is real
         -- engine work and does not.
         local path = object_path(name)
-        ExecuteInGameThread(function()
-            pcall(function() LoadAsset(path) end)
+        -- The pump rides the clock, so this already runs on the game thread
+        -- and the load happens in place, with no registration.
+        pcall(function() LoadAsset(path) end)
 
-            -- Said out loud, because "the icon did not appear" has covered a
-            -- failed lookup, a load that went nowhere, a texture that would
-            -- not go on a brush and a brush with no size, and telling them
-            -- apart from a screenshot has not been possible once.
-            local landed
-            pcall(function() landed = StaticFindObject(path) end)
-            log.say(string.format("icon load %-28s %s", name,
-                real(landed) and "arrived" or "did not arrive"))
-        end)
+        -- Said out loud, because "the icon did not appear" has covered a
+        -- failed lookup, a load that went nowhere, a texture that would
+        -- not go on a brush and a brush with no size, and telling them
+        -- apart from a screenshot has not been possible once.
+        local landed
+        pcall(function() landed = StaticFindObject(path) end)
+        log.say(string.format("icon load %-28s %s", name,
+            real(landed) and "arrived" or "did not arrive"))
     end
 
     if #queue > 0 then
-        ExecuteWithDelay(PUMP_MS, pump)
+        clock.once(PUMP_MS, pump)
     else
         pumping = false
     end
@@ -147,7 +148,7 @@ local function want(name)
 
     if not pumping then
         pumping = true
-        ExecuteWithDelay(PUMP_MS, pump)
+        clock.once(PUMP_MS, pump)
     end
 end
 
@@ -507,7 +508,7 @@ function M.load_test()
     log.say("load test on " .. leaf)
     look("before anything")
 
-    ExecuteInGameThread(function()
+    clock.once(0, function()
         local ok = pcall(function() LoadAsset(package) end)
         log.say("  LoadAsset(package) raised no error: " .. tostring(ok))
         look("after package path")
@@ -517,7 +518,7 @@ function M.load_test()
         look("after object path")
     end)
 
-    ExecuteWithDelay(3000, function()
+    clock.once(3000, function()
         look("three seconds later")
     end)
 end
