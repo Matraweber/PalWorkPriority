@@ -856,11 +856,36 @@ local function walk_chests(opts, accept)
 
                 chests = chests + 1
 
+                -- The count is taken again on every turn of the loop, and
+                -- the slot is asked whether it is still there before anything
+                -- is read off it.
+                --
+                -- Both because this array belongs to a chest that pals are
+                -- depositing into while the loop runs. Reading the length once
+                -- and then indexing against it is a promise the game never
+                -- made: on 21 August at 22:41 the sweep read a field at 0x88
+                -- off a slot that had gone, twenty seven minutes into a
+                -- session, having survived a hundred and fifty nine passes.
+                --
+                -- The validity check has to fail open. If ItemSlotArray holds
+                -- structs rather than objects then IsValid is not callable on
+                -- a slot at all, and treating "cannot ask" as "not valid"
+                -- would count every chest as empty and quietly drop every
+                -- ceiling in the mod. So only a definite no is believed.
                 local n = 0
                 pcall(function() n = #slots end)
                 for i = 1, n do
                     pcall(function()
+                        local live = 0
+                        pcall(function() live = #slots end)
+                        if i > live then return end
+
                         local slot = slots[i]
+                        if slot == nil then return end
+
+                        local asked, alive = pcall(function() return slot:IsValid() end)
+                        if asked and alive == false then return end
+
                         local sid = slot.ItemId.StaticId:ToString()
                         if sid and sid ~= "None" then
                             totals[sid] = (totals[sid] or 0)

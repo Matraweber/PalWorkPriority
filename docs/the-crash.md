@@ -293,7 +293,7 @@ The rate is reduced, not the fault. The real fix is to stop reading
 pals deposit into it, and take each container's slots in one go instead.
 
 
-## Fixed, 22:41
+## Not fixed, 22:41 (see below)
 
 Twenty six minutes and forty four seconds, one hundred and fifty eight passes,
 no crash and no `Ref was not function`, still running when the watch expired.
@@ -331,3 +331,44 @@ guess. Three things worked, and none of them involved staring at the mod:
   else out in eight minutes
 
 The controlled experiment should have been first. It was tenth.
+
+
+## Correction: the sweep crashed at 22:41:55
+
+Twenty seconds after the previous section called it fixed.
+
+```
+breadcrumb  22:41:55  camp: chest sweep, scope camp
+crash       EXCEPTION_ACCESS_VIOLATION reading address 0x88
+session     22:14:51 -> 22:41:55, 159 passes
+ref error   none
+```
+
+What holds and what does not:
+
+- The reference bug **is** gone. Twenty seven minutes and a hundred and fifty
+  nine passes with no `Ref was not function` at all, where every earlier run
+  lost the engine tick inside three minutes. That claim survives.
+- The sweep crash is **not** fixed. Caching made it rarer, from about a minute
+  to twenty seven, which is exactly the difference between reducing exposure
+  and removing a fault. That distinction was written down two commits earlier
+  and then ignored one commit later.
+
+### The actual defect
+
+`walk_chests` read `#slots` once into `n`, then indexed `slots[i]` against that
+number with no bounds recheck and no check on the slot. The array belongs to a
+chest that pals deposit into continuously, so the length taken at the top is a
+promise the game never made. `0x88` is a small offset from null: a field read
+off a slot that had gone.
+
+Now the count is retaken each turn and the slot is asked whether it is still
+there. The validity check fails open on purpose: if `ItemSlotArray` holds
+structs then `IsValid` is not callable on a slot, and reading "cannot ask" as
+"not valid" would count every chest empty and silently drop every ceiling.
+
+### Verification this needs, before any claim
+
+Counts must be unchanged. `pwp stock` should still report Stone and BerrySeeds
+in the thousands. A guard that makes the crash go away by counting nothing
+would look identical in the crash log and be much worse than the bug.
