@@ -1134,21 +1134,24 @@ local bp_grid = nil         -- the UniformGridPanel inside ItemList
 local bp_tiles = {}         -- index -> { size, border, image, name, item }
 local bp_pick_sig = nil
 
--- The soft path for an item's icon, in the shape FSoftObjectPath takes in
--- 5.1: a top level asset path of two names, and an empty subobject string.
-local function soft_icon(item)
-    local name = icons.name_for(item)
-    if name == nil then return nil end
-
-    local leaf = icons.PREFIX .. name
-    return {
-        AssetPath = {
-            PackageName = FName(icons.FOLDER .. leaf),
-            AssetName = FName(leaf),
-        },
-        SubPathString = "",
-    }
-end
+-- Soft textures were tried here and killed the game outright.
+--
+-- SetBrushFromSoftTexture is a real UFUNCTION, checked in the header, and
+-- that was the whole of the checking. The argument is a TSoftObjectPtr around
+-- an FSoftObjectPath around an FTopLevelAssetPath, and its shape was built by
+-- hand from the same header and never verified. A malformed struct handed to
+-- a native function does not fail, it crashes, and it took the session with
+-- it the instant the picker was opened.
+--
+-- The lesson is not "avoid soft textures". It is that confirming a function
+-- is callable says nothing about whether the argument is right, and today
+-- that gap has cost four hangs and two crashes. Soft textures are still the
+-- better answer for loading a page at once, and are worth returning to with
+-- the struct read out of a live object rather than out of a header.
+--
+-- Until then, the route that is known to draw: a texture resolved by
+-- icons.lua and put on with SetBrushFromTexture, which is the exact call the
+-- old grid used successfully.
 
 local function bp_tile(item, have)
     local box = bp_make("/Script/UMG.SizeBox", root_tree)
@@ -1165,21 +1168,53 @@ local function bp_tile(item, have)
 
     local holder = border or box
 
-    local soft = soft_icon(item)
-    if soft then
-        local img = bp_make("/Script/UMG.Image", root_tree)
-        if img then
-            pcall(function() img:SetBrushFromSoftTexture(soft, true) end)
-            pcall(function() holder:AddChild(img) end)
-            return box, img, nil
-        end
+    -- The image goes on empty and is filled in later, as its texture
+    -- arrives. Building the tile and loading its picture are separate jobs,
+    -- and doing them together is what put nine loads in one frame.
+    local img = bp_make("/Script/UMG.Image", root_tree)
+    if img then
+        pcall(function() img:SetOpacity(0.0) end)
+        pcall(function() holder:AddChild(img) end)
     end
 
-    -- No icon known for this id, so its name has to do. Short, because a
-    -- seventy six pixel square is not a caption.
-    local label = bp_label(root_tree, item:sub(1, 8), "item", 10)
+    -- The name shows until the icon does, so a tile is never a blank square
+    -- and the wait reads as filling in rather than as nothing happening.
+    local label = bp_label(root_tree, item:sub(1, 8), "dim", 10)
     if label then pcall(function() holder:AddChild(label) end) end
-    return box, nil, label
+
+    return box, img, label
+end
+
+-- Put icons on the tiles that have gone without, a few at a time.
+--
+-- Rationed because each one may start a load, and a page of them at once is
+-- what killed the game the first time. A handful per frame fills a page in
+-- about a second while never asking for more than the engine is happy to
+-- give at once.
+local FILL_PER_FRAME = 4
+
+local function bp_fill_icons()
+    local budget = FILL_PER_FRAME
+
+    for _, tile in pairs(bp_tiles) do
+        if budget <= 0 then return end
+
+        if not tile.done and alive(tile.image) then
+            local texture = icons.get(tile.item)
+            if texture ~= nil then
+                pcall(function() tile.image:SetBrushFromTexture(texture, true) end)
+                pcall(function() tile.image:SetOpacity(1.0) end)
+
+                -- The name was a placeholder for exactly this moment.
+                if alive(tile.label) then
+                    pcall(function() tile.label:SetVisibility(1) end)
+                end
+
+                tile.done = true
+                budget = budget - 1
+            end
+        end
+    end
 end
 
 local function bp_picker(cfg, totals)
@@ -1206,8 +1241,7 @@ local function bp_picker(cfg, totals)
     end)
     pcall(function() list:AddChild(bp_grid) end)
 
-    local shown = math.min(#source, COLS_BP * 6)
-    local with_icon = 0
+    local shown = math.min(#source, COLS_BP * 5)
 
     for i = 1, shown do
         local item = source[i]
@@ -1218,13 +1252,13 @@ local function bp_picker(cfg, totals)
             local col = (i - 1) % COLS_BP
 
             pcall(function() bp_grid:AddChildToUniformGrid(box, row, col) end)
-            bp_tiles[i] = { box = box, image = img, label = label, item = item }
-            if img then with_icon = with_icon + 1 end
+            bp_tiles[i] = {
+                box = box, image = img, label = label, item = item,
+            }
         end
     end
 
-    log.say(string.format("picker: %d tile(s), %d with an icon, of %d item(s)",
-        shown, with_icon, #source))
+    log.say(string.format("picker: %d tile(s) of %d item(s)", shown, #source))
 end
 
 local function draw_list_bp(cfg, totals)
@@ -1272,6 +1306,7 @@ local function redraw(cfg, totals)
 
         if picking then
             bp_picker(cfg, totals)
+            bp_fill_icons()
         else
             draw_list_bp(cfg, totals)
         end
