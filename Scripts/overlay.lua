@@ -375,13 +375,20 @@ end
 -- one nothing can reach to close: that is where this mod's duplicate panel
 -- came from, and two of its crashes.
 --
--- RemoveFromParent in UE5, RemoveFromViewport before it. Both are tried
--- because which one this build answers to is not worth another round trip to
--- find out, and an extra call on a widget being discarded costs nothing.
+-- One call, RemoveFromParent, which is the UE5 name.
+--
+-- The first version made both calls, "because an extra call on a widget being
+-- discarded costs nothing". That is the same reasoning that produced the
+-- white tiles: a second call on a wrapper whose object has just been detached
+-- is a member access on something that may no longer be there, and an access
+-- violation is not a Lua error, so the pcall around it catches nothing.
+--
+-- The one thing that must not happen here is a crash, because this runs while
+-- swapping code and a crash at that moment looks like the new code being at
+-- fault rather than the teardown before it.
 function M.teardown()
     if alive(widget) then
         pcall(function() widget:RemoveFromParent() end)
-        pcall(function() widget:RemoveFromViewport() end)
     end
 
     set_input(false)

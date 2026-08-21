@@ -75,6 +75,15 @@ function M.now()
     end
 
     if #broken == 0 then
+        -- The fresh overlay has never asked for the blueprint class, and the
+        -- thing that used to ask fires once at world load and has long since
+        -- gone. Without this every reload silently drops the panel back onto
+        -- the hand built canvas, which looks like the blueprint having broken.
+        local fresh = package.loaded["overlay"]
+        if fresh and fresh.prepare then
+            pcall(function() fresh.prepare() end)
+        end
+
         log.say("reloaded " .. table.concat(SWAPPED, " and ") ..
             ", press the panel key to see it")
         return true
