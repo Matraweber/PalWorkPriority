@@ -14,6 +14,7 @@
 -- running total, so a missed event cannot leave a phantom job behind.
 
 local api = require("palapi")
+local trace = require("trace")
 local log = require("log")
 
 local M = {}
@@ -124,6 +125,15 @@ function M.for_camp(camp_key)
 
     for key, e in pairs(jobs) do
         local dead = (now - e.seen) > M.FRESH_SECONDS
+
+        -- The riskiest read in the mod, and the comment below says why
+        -- without meaning to: this expects the object to have died, then
+        -- asks it whether it is valid. IsValid is a member call, so on a
+        -- freed object the question is the crash.
+        if not dead and e.work ~= nil then
+            trace.at("demand: IsValid on stored work " .. tostring(key))
+        end
+
         if not dead and e.work ~= nil and not api.valid(e.work) then
             -- The work object died, which is the fast path: a finished job
             -- leaves within a pass instead of aging out.

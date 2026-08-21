@@ -20,6 +20,7 @@ local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
 local remote = require("remote")
+local trace = require("trace")
 local icons = require("icons")
 local net = require("net")
 local overlay = require("overlay")
@@ -45,6 +46,20 @@ local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
 remote.path = DIR .. "remote.txt"
+trace.path = DIR .. "trace.txt"
+
+-- What was in flight when the last session ended.
+--
+-- The fault being hunted kills the process outright, so nothing reaches the
+-- ordinary log after it. The breadcrumb file survives, and reading it here
+-- means the answer is waiting at the top of the next session rather than
+-- needing to be gone looking for.
+do
+    local was = trace.last()
+    if was then
+        log.warn("last session was in the middle of: " .. was)
+    end
+end
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
