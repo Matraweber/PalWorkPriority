@@ -21,7 +21,6 @@
 
 local log = require("log")
 local api = require("palapi")
-local trace = require("trace")
 local workdefs = require("workdefs")
 local store = require("store")
 local caps = require("caps")
@@ -397,9 +396,7 @@ local function ensure_cell_text(cell, cell_name)
         -- A widget we put into the game's own stand menu, kept since an
         -- earlier frame. The menu rebuilds itself, and this mod has two
         -- crashes in its history from exactly that.
-        trace.at("ui: alive on cached cell " .. tostring(cell_name))
         local still = alive(cached)
-        trace.done()
 
         if still then return cached end
         cell_text[cell_name] = nil
@@ -549,9 +546,7 @@ local function handle_cell(cfg, cell)
         local existing = cell_text[cell_name]
         local usable = false
         if existing then
-            trace.at("ui: alive on blanking cell " .. tostring(cell_name))
             usable = alive(existing)
-            trace.done()
         end
 
         if usable then

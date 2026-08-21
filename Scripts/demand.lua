@@ -14,7 +14,6 @@
 -- running total, so a missed event cannot leave a phantom job behind.
 
 local api = require("palapi")
-local trace = require("trace")
 local log = require("log")
 
 local M = {}
@@ -130,10 +129,11 @@ function M.for_camp(camp_key)
         -- without meaning to: this expects the object to have died, then
         -- asks it whether it is valid. IsValid is a member call, so on a
         -- freed object the question is the crash.
+        -- This was marked while it was a suspect. The breadcrumb cleared
+        -- it, and the mark cost two file writes per job per camp, which at
+        -- 550 jobs was most of the mod's disk traffic and all of it useless.
         if not dead and e.work ~= nil then
-            trace.at("demand: IsValid on stored work " .. tostring(key))
             if not api.valid(e.work) then dead = true end
-            trace.done()
         end
 
         if dead then
