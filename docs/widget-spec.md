@@ -74,12 +74,47 @@ and `ItemList` starts collapsed because the panel opens on the rules.
 Set `Is Variable` on every named widget. Without it the name is not kept in
 the compiled class and `GetWidgetFromName` returns nothing.
 
+## Getting the class, which is not LoadAsset
+
+Proven, and worth writing down exactly, because four wrong answers came first.
+
+    2026-08-21  WBP_WorkRules_C  WidgetBlueprintGeneratedClass
+                /Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C
+
+`LoadAsset` does not reach anything in a mod pak, in any spelling. The route
+is the asset registry, which is what BPModLoaderMod uses on the ModActor in
+this very pak:
+
+    local data = {
+        PackageName = UEHelpers.FindOrAddFName(
+            "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"),
+        AssetName = UEHelpers.FindOrAddFName("WBP_WorkRules_C"),
+    }
+    local class = AssetRegistryHelpers:GetAsset(data)
+
+Three things about that call, each of which cost a session to learn:
+
+**On the game thread.** GetAsset on a package that is not loaded does a
+synchronous load, and a synchronous load off the game thread deadlocks. The
+mod hung outright, ticking stopped, and the game carried on around it.
+
+**Through a callback.** Which follows from the above: the answer is not
+available when the call returns, and writing it as though it were is what
+caused the hang.
+
+**FindOrAddFName, not FName.** A name merely looked up is None when the game
+has never seen it, and a name out of a mod's own pak is exactly that.
+
+`ModActor_C` resolving instantly is not evidence any of this is unnecessary.
+It resolves instantly because BPModLoaderMod loaded it seconds earlier, which
+is why it makes such a good control and such a misleading example.
+
 ## What Lua does with it
 
-Loads the class, constructs one, adds it to the viewport, and from then on
-treats it as the current panel treats the stand menu, except that it owns it.
+Constructs one, adds it to the viewport, and from then on treats it as the
+current panel treats its own overlay.
 
-    LoadAsset("/Game/Mods/PalWorkPriority/UI/WBP_WorkRules")
+    -- overlay.mod_class(package, asset, function(class) ... end)
     -- construct, AddToViewport
     local list = panel:GetWidgetFromName(FName("RuleList"))
     -- construct TextBlocks into `list`, exactly as panel.lua already does
@@ -99,6 +134,17 @@ widget to exist: read `Search`'s text each tick and filter, which is what
 2. Cook, confirm the chunk holds these two assets and nothing else.
 3. Rename the pak to `PalWorkPriority.pak`.
 4. `Pal/Content/Paks/LogicMods/`, alongside the five already there.
+
+## Building it, which is all in code
+
+No UMG designer at any point. Unreal 5.1 does not expose WidgetTree to Python,
+but C++ has no such restriction, so a commandlet builds the tree instead:
+
+    unreal/PalWidgetGen                       the module, see its README
+    Build.bat PalEditor Win64 Development     four seconds
+    UnrealEditor-Cmd.exe -run=BuildWorkRulesWidget
+    UnrealEditor-Cmd.exe -run=Cook -TargetPlatform=Windows -CookDir=...
+    python tools/pak_mod.py                   pak and install
 
 ## Build it empty first
 
