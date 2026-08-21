@@ -90,3 +90,31 @@ either way: most of what restarts were being spent on was a question about
 the engine rather than a change to the mod.
 
 Rendering and anything involving a dedicated server need the game either way.
+
+
+## Auto reload is off again, and why
+
+`EnableAutoReloadingLuaMods = 1` was turned on earlier today as the answer to
+restarting the game for every change. It is not, and the evidence arrived the
+same evening.
+
+At 21:17:11 it restarted **five** mods, not one. That is the Ctrl+R behaviour
+already documented here as unusable, reached by a different door. The claim
+that this setting reloads only the changed mod does not survive contact with
+its own log.
+
+It also destroys the evidence. UE4SS.log is recreated on reload, so the
+`Ref was not function` line that finally named the crash cause was gone from
+the file within five minutes of being written. A diagnostic that erases the
+diagnosis is worse than no diagnostic.
+
+And it silently invalidates tests. The run that was meant to prove the callback
+fix had the fix swapped in underneath it mid-session, twice, so it tested the
+fix plus two mod reloads and could not tell them apart.
+
+So: a full restart for every runtime change, and no deploys while a test run is
+in progress. Slower, and the only way a result means anything.
+
+`tools/remote.py` still avoids restarts for anything that is not a code change:
+opening the panel, switching screens, running any of the mod's own commands
+through `pwp <command>`, and taking screenshots.
