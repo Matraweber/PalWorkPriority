@@ -350,6 +350,43 @@ function M.data_probe()
     pcall(function() class = data:GetClass():GetFName():ToString() end)
     log.say("  Stone data is a " .. tostring(class))
 
+    -- What IconTexture actually is, in Lua's hands.
+    --
+    -- LoadIconToImage will not take three arguments, so the delegate is
+    -- required, and guessing a delegate's shape is the same mistake that
+    -- crashed the game on soft textures. But the path itself is right here on
+    -- the data object, and a path is a string. If it can be read out, it
+    -- replaces the 858 entry table of guesses with the game's own answer and
+    -- feeds the loading route that already works.
+    local icon
+    pcall(function() icon = data.IconTexture end)
+
+    log.say("  IconTexture is a " .. type(icon))
+
+    if icon ~= nil then
+        for _, how in ipairs({ "ToString", "GetAssetName", "GetLongPackageName" }) do
+            local text
+            pcall(function() text = icon[how](icon) end)
+            if type(text) == "string" and text ~= "" then
+                log.say(string.format("    %s -> %s", how, text))
+            end
+        end
+
+        -- Directly, in case it is handed over as a plain table of fields.
+        for _, field in ipairs({ "AssetPathName", "SubPathString", "AssetPath" }) do
+            local value
+            pcall(function() value = icon[field] end)
+            if value ~= nil then
+                local text = value
+                pcall(function() text = value:ToString() end)
+                log.say(string.format("    .%s = %s", field, tostring(text)))
+            end
+        end
+
+        -- And plain tostring, which sometimes says more than any of them.
+        log.say("    tostring -> " .. tostring(icon))
+    end
+
     local shown = 0
     pcall(function()
         data:GetClass():ForEachProperty(function(prop)
