@@ -118,3 +118,42 @@ in progress. Slower, and the only way a result means anything.
 `tools/remote.py` still avoids restarts for anything that is not a code change:
 opening the panel, switching screens, running any of the mod's own commands
 through `pwp <command>`, and taking screenshots.
+
+## The headless rig (22 August)
+
+The dedicated server mirrors the client's mod layout, boots straight into a
+copy of the singleplayer world, and runs the entire mod with authority and
+nobody at a keyboard. Two camps and fourteen pals stream in with zero players
+connected, the demand hook pulses, and the command channel answers.
+
+    python tools/server.py start        boot, wait for the mod to come up
+    python tools/server.py stop
+    python tools/server.py status
+    python tools/server.py freshworld   re-copy the singleplayer world
+
+Every tool takes --server: remote.py, stress.py, watch.py. The world is a
+copy; the real singleplayer save is never written.
+
+The client is only needed for what only it has: the panel, the stand menu,
+and the blueprint UI mods that BPModLoader loads client-side. Panel code
+hot-reloads over the channel, so client sessions are for looking, not for
+restarting.
+
+## What the stress runs established (21-22 August)
+
+| build | environment | result |
+|---|---|---|
+| old (LoopAsync) | client, 6 mods | dead in 20-25 passes, five times |
+| old (LoopAsync) | server, 2 mods | survived 300s, 292 passes |
+| old (LoopAsync) | server + PalSchema + BP frameworks | survived 300s, 280 passes |
+| new (clock)     | server, 2 mods | survived 300s, **750 of 753 passes ran** |
+
+The server does not reproduce the client crash even with the collision mods
+loaded, so the remaining client-only suspects are its UI-side blueprint mods
+and widget hooks. The decisive test of the fix is therefore one client
+session: the old build died there inside thirty seconds of stress, so the
+answer arrives fast either way.
+
+Also worth keeping: the old build only got 292 of 753 forced passes through
+its queue; the clock ran essentially all of them. Same machine, same world,
+2.5 times the completed work.
