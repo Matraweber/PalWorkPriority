@@ -482,12 +482,16 @@ local function run_camp(cfg, camp, stats)
     -- left the mod doing precisely nothing while looking healthy. So the
     -- fallback runs when the hook did not register OR when we are not the
     -- authority that would fire it.
+    trace.at("camp: demand index")
     local camp_key = api.guid_key(camp_id)
     local demand, live = demandidx.for_camp(camp_key)
+    trace.done()
     local counted = live
 
     if not demandidx.live() then
+        trace.at("camp: camp_works fallback")
         local all, work_err = api.camp_works(camp)
+        trace.done()
         if work_err then
             log.debug("camp works unavailable: " .. work_err)
             api.request_work_replication(camp_id, true)
@@ -548,12 +552,19 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
+    trace.at("camp: count_work_objects")
     local objects = count_work_objects(camp)
+    trace.done()
+
+    trace.at("camp: plan_fences")
     local plan = plan_fences(cfg, pals, demand, objects, stats, capped)
+    trace.done()
 
     for _, pal in ipairs(pals) do
         local want = plan[pal.key] or pal.base or {}
+        trace.at("camp: apply " .. tostring(pal.name or pal.key))
         apply_pal(cfg, pal, want, stats)
+        trace.done()
 
         if want ~= pal.base then
             local names = {}

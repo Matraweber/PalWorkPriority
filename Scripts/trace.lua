@@ -17,40 +17,44 @@ local M = {}
 M.path = nil
 M.on = true
 
--- Marks are cleared when the risky call survives, which is the whole design
--- and was missing from the first version of this file.
+-- Marks are cleared when the risky call survives, and they NEST.
 --
--- Without clearing, the most frequent site is the last breadcrumb whatever
--- actually crashed, and it proves nothing at all. With clearing, the file
--- holds a mark only while a call is in flight: a crash during one names it,
--- and a crash anywhere else leaves "idle" behind, which is just as useful an
--- answer because it rules all three of them out.
+-- The first version wrote "idle" on every done(), which made nested marks
+-- lie: an outer mark covering a whole stage was erased the moment any inner
+-- mark cleared, so a crash later in that stage read as "idle" and the stage
+-- looked exonerated. That is exactly how the crash on 21 August at 23:09
+-- hid: it was in the back half of run_camp, after the chest sweep's done(),
+-- and the file swore the mod was idle.
+--
+-- So this is a stack. at() pushes, done() pops, and the file always names
+-- the innermost mark still in flight, or "idle" only when nothing is.
 --
 -- The name matters as much as the place. "ui cell" narrows it to a loop,
 -- "ui cell WBP_Row_3.Cell_2" names the object.
-function M.at(where)
-    if not M.on or not M.path then return end
+local stack = {}
 
+local function write_top()
     pcall(function()
         local f = io.open(M.path, "w")
         if f then
-            f:write(os.date("%H:%M:%S ") .. where)
+            f:write(os.date("%H:%M:%S ") .. (stack[#stack] or "idle"))
             f:close()
         end
     end)
 end
 
--- Survived. Anything that crashes from here on did not crash in that call.
+function M.at(where)
+    if not M.on or not M.path then return end
+    stack[#stack + 1] = where
+    write_top()
+end
+
+-- Survived. The file goes back to naming whatever enclosing call is still
+-- in flight, rather than to "idle" while a stage is mid-run.
 function M.done()
     if not M.on or not M.path then return end
-
-    pcall(function()
-        local f = io.open(M.path, "w")
-        if f then
-            f:write(os.date("%H:%M:%S ") .. "idle")
-            f:close()
-        end
-    end)
+    stack[#stack] = nil
+    write_top()
 end
 
 -- Read back at startup, so a crash announces itself in the ordinary log the
