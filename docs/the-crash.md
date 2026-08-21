@@ -220,3 +220,43 @@ It covered four calls: `GetNickname`, `GetCharacterID`, and the two identity
 key readers, which take their fields off the id struct rather than calling
 anything on the parameter. Naming a line instead of a call is the guessing this
 whole apparatus exists to stop. Split into four.
+
+
+## The pass, proven rather than argued
+
+The first controlled experiment of the investigation, and it should have been
+the first thing done rather than the tenth.
+
+`pwp off` makes `run_pass` return before it schedules its callback, and leaves
+everything else running. Sent over the command channel at 21:58:34:
+
+| condition                          | result                          |
+|------------------------------------|---------------------------------|
+| pass enabled                       | tick lost at 72s, 84s, 96s, 192s |
+| pass disabled, all else running    | **480s, never lost**            |
+
+Checked that the rest really was running rather than quietly dead, which would
+have made the result meaningless: at 22:07:15, ten minutes in, the mod answered
+a status request with two camps loaded, the demand hook installed and 328
+pulses seen, authority held, and the UI loop clearly alive to have answered at
+all. Only the pass was missing.
+
+So the failing callback belongs to the pass. That also retires, on evidence
+rather than argument, the idea that the UI loop's once-a-second scheduling was
+the churn that mattered.
+
+### What changed as a result
+
+`GetCharacterHandleSlots(raw)` hands a Lua table to the engine as an out
+parameter for it to write into. It is the only call of that kind in the pass
+and the most unusual thing this mod asks of UE4SS. PalBaseInfoGrid gets the
+same roster through `WorkerDirector` then `CharacterContainer` then
+`SlotArray`, indexing the array directly, and does not lose its tick.
+
+`camp_pals` now takes the property route, keeping the old call only for a
+build where the property is absent, so an empty base is never reported when
+the roster is simply reached a different way.
+
+Untested as of writing. It is one change, motivated by the one experiment that
+controlled for anything, and the previous four theories were each stated with
+more confidence than a single clean run could carry.

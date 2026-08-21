@@ -266,12 +266,46 @@ function M.camp_pals(camp)
         return out, "camp has no readable WorkerDirector"
     end
 
+    -- The roster by property reads rather than by asking for it.
+    --
+    -- GetCharacterHandleSlots hands a Lua table to the engine as an out
+    -- parameter and lets it fill it in. That is the most unusual thing this
+    -- mod asks of UE4SS and the only call of its kind in the pass, and the
+    -- pass is now the proven half: disabled for eight minutes with every hook
+    -- firing, the UI loop answering, two camps loaded and the player at base,
+    -- the engine tick was never dropped. Enabled, it goes within two or three
+    -- minutes.
+    --
+    -- PalBaseInfoGrid reads WorkerDirector, CharacterContainer, SlotArray and
+    -- indexes the array, and is stable. Same data, nothing handed across the
+    -- boundary for the engine to write into.
     local raw = {}
-    trace.at("pals: GetCharacterHandleSlots")
-    local ok = pcall(function() director:GetCharacterHandleSlots(raw) end)
+    local count = 0
+
+    trace.at("pals: SlotArray by property")
+    local container = prop(director, "CharacterContainer")
+    if valid(container) then
+        local slots = prop(container, "SlotArray")
+        if slots ~= nil then
+            pcall(function() count = #slots end)
+            for i = 1, count do
+                local one
+                pcall(function() one = slots[i] end)
+                raw[i] = one
+            end
+        end
+    end
     trace.done()
-    if not ok then
-        return out, "GetCharacterHandleSlots threw"
+
+    -- Only if the property route found nothing, so a build that does not have
+    -- it still works rather than reporting an empty base.
+    if count == 0 then
+        trace.at("pals: GetCharacterHandleSlots fallback")
+        local ok = pcall(function() director:GetCharacterHandleSlots(raw) end)
+        trace.done()
+        if not ok then
+            return out, "GetCharacterHandleSlots threw"
+        end
     end
 
     for i = 1, #raw do
