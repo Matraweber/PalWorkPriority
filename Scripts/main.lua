@@ -9,54 +9,6 @@
 -- RequestChangeWorkSuitability_ToServer, the same flag the vanilla
 -- checkboxes write, leaving the game's own AI to choose within that fence.
 
--- ---------------------------------------------------------------------------
--- Never let UE4SS hold a callback Lua can collect
--- ---------------------------------------------------------------------------
---
--- This is first in the file on purpose, before anything can schedule.
---
--- UE4SS keeps a Lua registry reference to every function handed to
--- ExecuteInGameThread or ExecuteWithDelay. On this build those references do
--- not keep the function alive, so once Lua collects it the reference stops
--- being a function, and UE4SS does not skip such a callback:
---
---   [Lua::Registry::get_function_ref] Ref was not function, removing hook!
---
--- It removes the hook driving the engine tick, and the mod goes silent until
--- the game is restarted. Five sessions died that way before the line was read
--- properly, and two attempts to fix it treated a symptom: first the module
--- reloading, which turned out to be innocent, then the one closure the tick
--- made per pass, which was the worst offender but not the only one. The hook
--- died again with nothing running but startup.
---
--- So it is fixed once, here, for every call site there is or will be. Holding
--- the function in a table keeps it alive for the life of the session. The
--- table is keyed by the function itself, so handing over the same one twice
--- costs nothing, and the total is a handful of entries.
-do
-    local held = {}
-
-    local in_game_thread = ExecuteInGameThread
-    local with_delay = ExecuteWithDelay
-
-    local function hold(fn)
-        if type(fn) == "function" then held[fn] = true end
-        return fn
-    end
-
-    if type(in_game_thread) == "function" then
-        ExecuteInGameThread = function(fn)
-            return in_game_thread(hold(fn))
-        end
-    end
-
-    if type(with_delay) == "function" then
-        ExecuteWithDelay = function(ms, fn)
-            return with_delay(ms, hold(fn))
-        end
-    end
-end
-
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
@@ -66,18 +18,10 @@ local ui = require("ui")
 local store = require("store")
 local caps = require("caps")
 local items = require("items")
--- panel and overlay are fetched at call time rather than captured here.
---
--- reload.lua replaces them in package.loaded while the game runs, and a local
--- taken at load would go on pointing at the old copy for the rest of the
--- session. require on an already loaded module is a table lookup, so calling
--- these costs nothing worth measuring.
-local function panel() return require("panel") end
-local function overlay() return require("overlay") end
-
-local reload = require("reload")
+local panel = require("panel")
 local icons = require("icons")
 local net = require("net")
+local overlay = require("overlay")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -99,7 +43,6 @@ local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
-reload.path = DIR .. "reload.trigger"
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
@@ -250,47 +193,6 @@ local ui_running = false
 -- while the panel runs fast.
 local grid_owed = 0
 
-local tick_error = nil
-
--- One function, made once, handed to ExecuteInGameThread for ever.
---
--- This used to be an anonymous function written inside the tick, which meant
--- a brand new closure every time round: one a second at rest, ten a second
--- with the panel open. UE4SS keeps a Lua registry reference to every callback
--- it is given, and when Lua collected those closures the references stopped
--- being functions. Its answer is not to skip one, it is to remove the hook
--- driving the engine tick, and the mod goes silent until a restart.
---
---   [Lua::Registry::get_function_ref] Ref was not function, removing hook!
---
--- That is what killed five sessions. It had always been there and was rare,
--- and raising the panel to ten frames a second made it ten times likelier per
--- second, which is why it started landing seven seconds after opening the
--- panel rather than once in an evening.
---
--- Named and stored in a local, so exactly one closure exists and nothing can
--- collect it.
-local function on_game_thread()
-    -- The grid stays on its second, because refreshing it means a FindAllOf
-    -- over every cell and it has nothing to gain from ten times the rate.
-    if grid_owed >= 1000 then
-        grid_owed = 0
-        pcall(function() ui.refresh(cfg) end)
-    end
-
-    -- Drawn independently: the panel opens on a hotkey and has to keep
-    -- working with the stand shut.
-    pcall(function() panel().refresh(cfg) end)
-
-    -- Checked here rather than on a timer of its own, so a reload can never
-    -- land between two halves of a draw.
-    pcall(function() reload.poll() end)
-
-    -- Already on the game thread, which is the point: a console command runs
-    -- directly rather than through a callback UE4SS would have to hold.
-    pcall(function() reload.drain() end)
-end
-
 local function ui_tick()
     if not ui_running then return end
 
@@ -300,52 +202,38 @@ local function ui_tick()
     -- the cost of a frame, the wait between frames. It also let the mouse
     -- and the keyboard disagree about the current row long enough for two of
     -- them to be marked at once.
-    -- Everything below is guarded, and the reschedule at the end is not.
-    --
-    -- That order matters more than it looks. panel() is a require, and a
-    -- require throws when the module it fetches has an error in it. Before
-    -- this, one bad edit reloaded into a dead mod: the accessor threw here,
-    -- the tick never reached its own reschedule, and nothing ran again until
-    -- the game was restarted. A reload loop where a mistake costs a restart
-    -- is not a reload loop.
-    local delay = 1000
+    local delay = panel.open and 100 or 1000
+    grid_owed = grid_owed + delay
 
-    local function body()
-        delay = panel().fast() and 100 or 1000
-        grid_owed = grid_owed + delay
-
-        -- Runs even when disabled, so the grid still reflects edits. It costs
-        -- nothing while the stand is shut.
-        if cfg then
-            ExecuteInGameThread(on_game_thread)
-
-            if panel().wants_pass then
-                panel().wants_pass = false
-                run_pass("rule change")
+    -- Runs even when disabled, so the grid still reflects edits. It costs
+    -- nothing while the stand is shut.
+    if cfg then
+        ExecuteInGameThread(function()
+            -- The grid stays on its second, because refreshing it means a
+            -- FindAllOf over every cell and it has nothing to gain from ten
+            -- times the rate.
+            if grid_owed >= 1000 then
+                grid_owed = 0
+                pcall(function() ui.refresh(cfg) end)
             end
 
-            -- A priority just changed. Re-fence now rather than leaving the edit
-            -- inert until the next tick, which reads as the click doing nothing.
-            if ui.wants_pass then
-                ui.wants_pass = false
-                run_pass("edit")
-            end
+            -- Drawn independently: the panel opens on a hotkey and has to
+            -- keep working with the stand shut.
+            pcall(function() panel.refresh(cfg) end)
+        end)
+
+        if panel.wants_pass then
+            panel.wants_pass = false
+            run_pass("rule change")
+        end
+
+        -- A priority just changed. Re-fence now rather than leaving the edit
+        -- inert until the next tick, which reads as the click doing nothing.
+        if ui.wants_pass then
+            ui.wants_pass = false
+            run_pass("edit")
         end
     end
-
-    local ok, err = pcall(body)
-    if not ok then
-        -- Said once per distinct complaint rather than ten times a second,
-        -- which is what an error in a redraw would otherwise produce.
-        if tick_error ~= tostring(err) then
-            tick_error = tostring(err)
-            log.warn("tick: " .. tick_error)
-        end
-    elseif tick_error then
-        tick_error = nil
-        log.say("tick: recovered")
-    end
-
     ExecuteWithDelay(delay, ui_tick)
 end
 
@@ -939,22 +827,12 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     demandidx.reset()
     ui.reset()
     items.reset()
-    panel().reset()
+    panel.reset()
     net.reset()
-    overlay().reset()
+    overlay.reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
-
-    -- Fetch the blueprint widget's class ahead of anyone wanting it. The
-    -- lookup has to happen on the game thread and answers through a callback,
-    -- so a panel opened while it was still in flight would open on the wrong
-    -- host. Asking at world load means the answer is there long before
-    -- anybody presses anything.
-    ExecuteWithDelay(25000, function()
-        pcall(function() overlay().prepare() end)
-        pcall(function() overlay().icon_api_probe() end)
-    end)
 
     -- A client announces itself so the server knows to push rules to it, and
     -- gets the current set back in reply. Delayed with everything else,
@@ -1050,7 +928,7 @@ end, { ModifierKey.CONTROL })
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
 do
     local n = ui.bind_mouse(function() return cfg end, function(dir)
-        return panel().handle_click(cfg, dir)
+        return panel.handle_click(cfg, dir)
     end)
     if n < 2 then
         log.warn("only " .. n .. " of 2 mouse buttons bound, " ..
@@ -1079,7 +957,7 @@ end, { ModifierKey.ALT })
 -- The rules panel. F9 is taken by another installed mod and F8 by two, so
 -- this sits on the modifier alongside the other toggles.
 bind(Key.F9, "Ctrl+F9 (work rules)", function()
-    panel().toggle()
+    panel.toggle()
 end, { ModifierKey.CONTROL })
 
 -- The transport test needs a key of its own, because the machine most worth
@@ -1094,7 +972,7 @@ end, { ModifierKey.CONTROL })
 -- rather than guessing a second time.
 bind(Key.F7, "Ctrl+F7 (icon probe)", function()
     ExecuteInGameThread(function()
-        pcall(function() overlay().icon_probe() end)
+        pcall(function() overlay.icon_probe() end)
         pcall(function() icons.report() end)
     end)
 end, { ModifierKey.CONTROL })
@@ -1111,11 +989,11 @@ local function arrows()
     -- screen: on the rules list left and right change a ceiling, in the
     -- picker they move across a grid, and only the panel knows which is up.
     local moves = {
-        { "UP_ARROW",    function() return panel().nav(cfg, "up") end },
-        { "DOWN_ARROW",  function() return panel().nav(cfg, "down") end },
-        { "RIGHT_ARROW", function() return panel().nav(cfg, "right") end },
-        { "LEFT_ARROW",  function() return panel().nav(cfg, "left") end },
-        { "RETURN",      function() return panel().nav(cfg, "enter") end },
+        { "UP_ARROW",    function() return panel.nav(cfg, "up") end },
+        { "DOWN_ARROW",  function() return panel.nav(cfg, "down") end },
+        { "RIGHT_ARROW", function() return panel.nav(cfg, "right") end },
+        { "LEFT_ARROW",  function() return panel.nav(cfg, "left") end },
+        { "RETURN",      function() return panel.nav(cfg, "enter") end },
     }
 
     for _, entry in ipairs(moves) do

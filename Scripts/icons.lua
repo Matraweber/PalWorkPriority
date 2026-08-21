@@ -98,33 +98,6 @@ local function object_path(name)
     return icondex.FOLDER .. leaf .. "." .. leaf
 end
 
--- The load itself, as one function made once.
---
--- Not written inline at the call, because an anonymous function there is a
--- fresh closure every quarter second, UE4SS keeps a Lua registry reference to
--- each one, and when Lua collects them its answer is to remove the hook that
--- drives the engine tick. That killed five sessions before the log line
--- naming it was read properly. One function, one reference, nothing to
--- collect.
-local loading_name = nil
-local loading_path = nil
-
-local function do_load()
-    local name, path = loading_name, loading_path
-    if path == nil then return end
-
-    pcall(function() LoadAsset(path) end)
-
-    -- Said out loud, because "the icon did not appear" has covered a failed
-    -- lookup, a load that went nowhere, a texture that would not go on a
-    -- brush and a brush with no size, and telling those apart from a
-    -- screenshot has not been possible once.
-    local landed
-    pcall(function() landed = StaticFindObject(path) end)
-    log.say(string.format("icon load %-28s %s", tostring(name),
-        real(landed) and "arrived" or "did not arrive"))
-end
-
 -- One load, then wait, then the next.
 local function pump()
     local name = table.remove(queue, 1)
@@ -143,9 +116,19 @@ local function pump()
         -- On the game thread, since the panel's tick is not it. Finding an
         -- object is a lookup and works from anywhere. Loading one is real
         -- engine work and does not.
-        loading_name = name
-        loading_path = object_path(name)
-        ExecuteInGameThread(do_load)
+        local path = object_path(name)
+        ExecuteInGameThread(function()
+            pcall(function() LoadAsset(path) end)
+
+            -- Said out loud, because "the icon did not appear" has covered a
+            -- failed lookup, a load that went nowhere, a texture that would
+            -- not go on a brush and a brush with no size, and telling them
+            -- apart from a screenshot has not been possible once.
+            local landed
+            pcall(function() landed = StaticFindObject(path) end)
+            log.say(string.format("icon load %-28s %s", name,
+                real(landed) and "arrived" or "did not arrive"))
+        end)
     end
 
     if #queue > 0 then
@@ -253,35 +236,6 @@ function M.get(item_id)
     end
     return nil
 end
-
--- The icon's name for an id, without loading a thing.
---
--- For the soft texture route, which hands the engine a path and lets it
--- stream the texture on its own schedule. That is how a grid of icons appears
--- whole rather than one every quarter second: the queue below exists because
--- nine LoadAsset calls in a frame killed the game, and a path costs nothing
--- to hand over.
---
--- Deliberately does not look around the running game, since that is a sweep
--- over every texture in memory and this is called once per tile.
-function M.name_for(item_id)
-    if type(item_id) ~= "string" or item_id == "" then return nil end
-
-    local key = item_id:lower()
-    local name = resolved[key]
-
-    if name == false then return nil end
-    if name == nil then
-        name = icondex.NAMES[key]
-        if name == nil then return nil end
-        resolved[key] = name
-    end
-
-    return name
-end
-
-M.FOLDER = icondex.FOLDER
-M.PREFIX = PREFIX
 
 -- A world switch invalidates nothing held here, since nothing is held, but
 -- what is loaded changes and so does what is worth waiting for.

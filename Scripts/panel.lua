@@ -211,10 +211,6 @@ end
 local function ensure_backdrop(rows)
     if not ensure_root() then return end
 
-    -- The blueprint brings its own backdrop, sized and anchored by Slate. Two
-    -- of them would be one too many, and ours is the one drawn by hand.
-    if overlay.parts then return end
-
     if not alive(backdrop) then
         local cls = api.cdo("/Script/UMG.Border")
         if not cls or not alive(root_tree) then return end
@@ -488,7 +484,6 @@ local function picture(key, px, py, size, texture, token)
         -- The load test is answered and stays out of the way. It issued
         -- loads of its own, which is the exact thing now being rationed.
         pcall(function() icons.probe() end)
-        pcall(function() overlay.slot_probe() end)
     end
 
     local host = ensure_root()
@@ -704,30 +699,14 @@ end
 local scanned_once = nil
 local scanned_at = 0
 
--- What storage holds, taken once and then left alone for a while.
---
--- Fresh when the panel opens, because a menu that shows yesterday's numbers
--- is worse than useless, and then at most every few seconds after that. The
--- numbers move slowly; asking ten times a second for a figure that changes
--- once a pass was work nobody could see the result of.
-local stock = nil
-local stock_at = 0
-local STOCK_EVERY = 5.0
-
 local function stock_totals(cfg)
-    local now = os.clock()
-    if stock and (now - stock_at) < STOCK_EVERY then
-        return stock
-    end
-
     if next(scheduler.last_totals or {}) ~= nil then
-        stock, stock_at = scheduler.last_totals, now
-        return stock
+        return scheduler.last_totals
     end
 
+    local now = os.clock()
     if scanned_once and (now - scanned_at) < 15.0 then
-        stock, stock_at = scanned_once, now
-        return stock
+        return scanned_once
     end
 
     local opts = {
@@ -752,7 +731,6 @@ local function stock_totals(cfg)
     end
 
     scanned_once, scanned_at = totals, now
-    stock, stock_at = totals, now
     return totals
 end
 
@@ -959,360 +937,12 @@ local function draw_item_picker(cfg, totals)
 end
 
 -- ---------------------------------------------------------------------------
--- Drawing into the blueprint
--- ---------------------------------------------------------------------------
---
--- The other drawing path puts every widget at a pixel offset on a canvas and
--- does it ten times a second. It works, and it is the reason this menu felt
--- laggy: nothing was moving, but everything was being told where to be.
---
--- Slate does layout. A row added to a ScrollBox stays where it is put, scrolls
--- on its own, and reflows when the window changes, so the work here is to
--- build a row when the rules change and then leave it alone. Only the numbers
--- are touched per frame, because only the numbers change per frame.
-
-local bp_rows = {}          -- index -> { box, job, item, amount, remove }
-local bp_signature = nil    -- what the list was built from, to know when to rebuild
-
-local function bp_make(class_path, outer)
-    local cls = api.cdo(class_path)
-    if not cls or not alive(outer) then return nil end
-
-    local made
-    pcall(function() made = StaticConstructObject(cls, outer) end)
-    if alive(made) then return made end
-    return nil
-end
-
-local function bp_label(tree, text, colour_key, points)
-    local tb = bp_make("/Script/UMG.TextBlock", tree)
-    if not tb then return nil end
-
-    local ft = make_ftext(text)
-    if ft then pcall(function() tb:SetText(ft) end) end
-
-    pcall(function()
-        tb:SetColorAndOpacity({
-            SpecifiedColor = COLOUR[colour_key] or COLOUR.item,
-            ColorUseRule = 0,
-        })
-    end)
-
-    if points then set_size(tb, points) end
-    return tb
-end
-
--- Build the rule rows. Structure only; the numbers are filled in after.
-local function bp_build(rules)
-    local parts = overlay.parts
-    local list = parts and parts.RuleList
-    if not alive(list) or not alive(root_tree) then return false end
-
-    pcall(function() list:ClearChildren() end)
-    bp_rows = {}
-
-    if #rules == 0 then
-        -- Bright rather than dim. An empty list that is also hard to read
-        -- gives no way to tell "there are no rules" from "the list is
-        -- broken", and those needed telling apart exactly once to be worth
-        -- the change.
-        local empty = bp_label(root_tree,
-            "no rules yet, every job runs unlimited", "item", 16)
-
-        local slot
-        if empty then
-            pcall(function() slot = list:AddChild(empty) end)
-        end
-
-        log.say(string.format("rules: none. label made=%s, added=%s",
-            tostring(empty ~= nil), tostring(alive(slot))))
-        return true
-    end
-
-    log.say("rules: building " .. #rules .. " row(s)")
-
-    for i, rule in ipairs(rules) do
-        local row = bp_make("/Script/UMG.HorizontalBox", root_tree)
-        if row then
-            local cells = {
-                job    = bp_label(root_tree, workdefs.label(rule.work), "action", 16),
-                item   = bp_label(root_tree, rule.item, "item", 16),
-                amount = bp_label(root_tree, "", "met", 16),
-                remove = bp_label(root_tree, "remove", "dim", 16),
-            }
-
-            -- Widths chosen once here rather than as pixel offsets per frame.
-            -- Fill weights mean the columns still line up at any panel size,
-            -- which the hand placed version could never manage.
-            local widths = { job = 3, item = 4, amount = 3, remove = 2 }
-
-            for _, name in ipairs({ "job", "item", "amount", "remove" }) do
-                local cell = cells[name]
-                if cell then
-                    local slot
-                    pcall(function() slot = row:AddChild(cell) end)
-                    if alive(slot) then
-                        -- The struct written out, because FSlateChildSize is
-                        -- a C++ constructor and Lua has no way to call one.
-                        -- SizeRule 1 is Fill; Value is the share of the row.
-                        pcall(function()
-                            slot:SetSize({
-                                Value = widths[name],
-                                SizeRule = 1,
-                            })
-                        end)
-                        pcall(function() slot:SetPadding({
-                            Left = 4, Top = 3, Right = 4, Bottom = 3 }) end)
-                    end
-                end
-            end
-
-            local slot
-            pcall(function() slot = list:AddChild(row) end)
-
-            if i == 1 then
-                log.say(string.format("  first row: box=%s slot=%s cells=%s",
-                    tostring(alive(row)), tostring(alive(slot)),
-                    tostring(alive(cells.job))))
-            end
-
-            bp_rows[i] = { box = row, cells = cells, rule = rule }
-        end
-    end
-
-    return true
-end
-
--- Per frame, and deliberately almost nothing: the stock number and whether it
--- has been met. Everything else was settled when the row was built.
-local function bp_refresh(rules, totals)
-    for i, entry in ipairs(bp_rows) do
-        local rule = rules[i]
-        local amount = entry.cells and entry.cells.amount
-
-        if rule and alive(amount) then
-            local have = totals[rule.item] or 0
-            local met = have >= rule.amount
-
-            local token = have .. "/" .. rule.amount
-            if entry.token ~= token then
-                entry.token = token
-
-                local ft = make_ftext(string.format("%d / %d%s",
-                    have, rule.amount, met and "   done" or ""))
-                if ft then pcall(function() amount:SetText(ft) end) end
-
-                pcall(function()
-                    amount:SetColorAndOpacity({
-                        SpecifiedColor = met and COLOUR.met or COLOUR.unmet,
-                        ColorUseRule = 0,
-                    })
-                end)
-            end
-        end
-    end
-end
-
--- ---------------------------------------------------------------------------
--- The picker, as a grid inside the blueprint
--- ---------------------------------------------------------------------------
---
--- A UniformGridPanel built into ItemList, and a tile per item: a SizeBox to
--- fix the square, a Border to sit behind it, an Image on top.
---
--- The icons go on as soft textures rather than loaded ones. A soft texture is
--- a path, and the engine streams it when it needs it, batched and prioritised
--- on its own schedule. The queue in icons.lua exists because nine LoadAsset
--- calls in one frame killed the game; handing over a path costs nothing, so
--- a page can be asked for all at once. That is the difference between a grid
--- that fills in one icon every quarter second and one that is simply there.
-
-local TILE_BP = 76          -- the square, in pixels
-local COLS_BP = 8
-
-local bp_grid = nil         -- the UniformGridPanel inside ItemList
-local bp_tiles = {}         -- index -> { size, border, image, name, item }
-local bp_pick_sig = nil
-
--- Soft textures were tried here and killed the game outright.
---
--- SetBrushFromSoftTexture is a real UFUNCTION, checked in the header, and
--- that was the whole of the checking. The argument is a TSoftObjectPtr around
--- an FSoftObjectPath around an FTopLevelAssetPath, and its shape was built by
--- hand from the same header and never verified. A malformed struct handed to
--- a native function does not fail, it crashes, and it took the session with
--- it the instant the picker was opened.
---
--- The lesson is not "avoid soft textures". It is that confirming a function
--- is callable says nothing about whether the argument is right, and today
--- that gap has cost four hangs and two crashes. Soft textures are still the
--- better answer for loading a page at once, and are worth returning to with
--- the struct read out of a live object rather than out of a header.
---
--- Until then, the route that is known to draw: a texture resolved by
--- icons.lua and put on with SetBrushFromTexture, which is the exact call the
--- old grid used successfully.
-
-local function bp_tile(item, have)
-    local box = bp_make("/Script/UMG.SizeBox", root_tree)
-    if not box then return nil end
-
-    pcall(function() box:SetWidthOverride(TILE_BP) end)
-    pcall(function() box:SetHeightOverride(TILE_BP) end)
-
-    local border = bp_make("/Script/UMG.Border", root_tree)
-    if border then
-        pcall(function() border:SetBrushColor(ROW_BG) end)
-        pcall(function() box:AddChild(border) end)
-    end
-
-    local holder = border or box
-
-    -- The image goes on empty and is filled in later, as its texture
-    -- arrives. Building the tile and loading its picture are separate jobs,
-    -- and doing them together is what put nine loads in one frame.
-    local img = bp_make("/Script/UMG.Image", root_tree)
-    if img then
-        pcall(function() img:SetOpacity(0.0) end)
-        pcall(function() holder:AddChild(img) end)
-    end
-
-    -- The name shows until the icon does, so a tile is never a blank square
-    -- and the wait reads as filling in rather than as nothing happening.
-    local label = bp_label(root_tree, item:sub(1, 8), "dim", 10)
-    if label then pcall(function() holder:AddChild(label) end) end
-
-    return box, img, label
-end
-
--- Put icons on the tiles that have gone without, a few at a time.
---
--- Rationed because each one may start a load, and a page of them at once is
--- what killed the game the first time. A handful per frame fills a page in
--- about a second while never asking for more than the engine is happy to
--- give at once.
-local FILL_PER_FRAME = 4
-
-local function bp_fill_icons()
-    local budget = FILL_PER_FRAME
-
-    for _, tile in pairs(bp_tiles) do
-        if budget <= 0 then return end
-
-        if not tile.done and alive(tile.image) then
-            local texture = icons.get(tile.item)
-            if texture ~= nil then
-                pcall(function() tile.image:SetBrushFromTexture(texture, true) end)
-                pcall(function() tile.image:SetOpacity(1.0) end)
-
-                -- The name was a placeholder for exactly this moment.
-                if alive(tile.label) then
-                    pcall(function() tile.label:SetVisibility(1) end)
-                end
-
-                tile.done = true
-                budget = budget - 1
-            end
-        end
-    end
-end
-
-local function bp_picker(cfg, totals)
-    local parts = overlay.parts
-    local list = parts and parts.ItemList
-    if not alive(list) or not alive(root_tree) then return end
-
-    local source = picker_source(totals)
-
-    -- Rebuilt when the list of items changes, which is rarely. Typing in the
-    -- search box changes it, and that is exactly when a rebuild is wanted.
-    local signature = table.concat(source, ";") .. "|" .. #source
-    if signature == bp_pick_sig then return end
-    bp_pick_sig = signature
-
-    pcall(function() list:ClearChildren() end)
-    bp_tiles = {}
-
-    bp_grid = bp_make("/Script/UMG.UniformGridPanel", root_tree)
-    if not bp_grid then return end
-
-    pcall(function()
-        bp_grid:SetSlotPadding({ Left = 3, Top = 3, Right = 3, Bottom = 3 })
-    end)
-    pcall(function() list:AddChild(bp_grid) end)
-
-    local shown = math.min(#source, COLS_BP * 5)
-
-    for i = 1, shown do
-        local item = source[i]
-        local box, img, label = bp_tile(item, totals[item] or 0)
-
-        if box then
-            local row = math.floor((i - 1) / COLS_BP)
-            local col = (i - 1) % COLS_BP
-
-            pcall(function() bp_grid:AddChildToUniformGrid(box, row, col) end)
-            bp_tiles[i] = {
-                box = box, image = img, label = label, item = item,
-            }
-        end
-    end
-
-    log.say(string.format("picker: %d tile(s) of %d item(s)", shown, #source))
-end
-
-local function draw_list_bp(cfg, totals)
-    local rules = rule_list(cfg)
-
-    -- Rebuilt only when the set of rules changes, not when their numbers do.
-    -- Rebuilding on every stock change would tear the list down five times a
-    -- minute for no visible reason.
-    local bits = {}
-    for _, rule in ipairs(rules) do
-        bits[#bits + 1] = rule.work .. "|" .. rule.item .. "|" .. rule.amount
-    end
-    local signature = table.concat(bits, ";")
-
-    if signature ~= bp_signature then
-        if bp_build(rules) then bp_signature = signature end
-    end
-
-    bp_refresh(rules, totals)
-end
-
--- ---------------------------------------------------------------------------
 -- Drawing
 -- ---------------------------------------------------------------------------
 
 -- One pass of whichever screen is up, returning how many rows tall it came
 -- out. Separated so the frame that changes height can run it twice.
 local function redraw(cfg, totals)
-    -- On the blueprint both screens are Slate's job, and switching between
-    -- them is a visibility flip rather than tearing anything down. That is
-    -- what the two ScrollBoxes in the shell were for.
-    if overlay.parts then
-        local rules = overlay.parts.RuleList
-        local items = overlay.parts.ItemList
-        local picking = (mode == "item")
-
-        -- 0 is Visible and 1 is Collapsed, which takes no space at all
-        -- rather than merely being invisible.
-        if alive(rules) then
-            pcall(function() rules:SetVisibility(picking and 1 or 0) end)
-        end
-        if alive(items) then
-            pcall(function() items:SetVisibility(picking and 0 or 1) end)
-        end
-
-        if picking then
-            bp_picker(cfg, totals)
-            bp_fill_icons()
-        else
-            draw_list_bp(cfg, totals)
-        end
-        return 0
-    end
-
     if mode == "item" then
         return draw_item_picker(cfg, totals)
     end
@@ -1401,28 +1031,6 @@ local function blank_everything()
     hits, hover_key = {}, nil
 end
 
--- Does the panel need a fast tick?
---
--- Only the hand drawn screens do, and only because hover on a widget placed
--- by pixel arithmetic has to be worked out and redrawn by us. On the
--- blueprint, Slate does hover, focus and scrolling itself, and a row that was
--- built once stays where it was put, so ten redraws a second buy nothing at
--- all and cost exactly what the last video showed.
-function M.fast()
-    if not M.open then return false end
-    if overlay.parts and mode ~= "item" then return false end
-    return true
-end
-
--- Switch screens without clicking, for driving the panel from outside while
--- it holds the input mode and no key press reaches us.
-function M.set_mode(name)
-    if name ~= "item" and name ~= "list" then return false end
-    mode, page, sel = name, 0, 1
-    want_focus = (name == "item")
-    return true
-end
-
 function M.toggle()
     M.open = not M.open
 
@@ -1432,10 +1040,6 @@ function M.toggle()
         mode, page, show_all = "list", 0, false
         return
     end
-
-    -- Dropped rather than kept, so opening the panel is what makes the
-    -- numbers current. Everything after that can wait a few seconds.
-    stock, stock_at = nil, 0
 
     if not overlay.show() then
         M.open = false
@@ -1452,8 +1056,6 @@ function M.reset()
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     images, grid_from, grid_count = {}, 0, 0
-    bp_rows, bp_signature = {}, nil
-    bp_grid, bp_tiles, bp_pick_sig = nil, {}, nil
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false
