@@ -364,11 +364,27 @@ function M.data_probe()
     log.say("  IconTexture is a " .. type(icon))
 
     if icon ~= nil then
-        for _, how in ipairs({ "ToString", "GetAssetName", "GetLongPackageName" }) do
-            local text
-            pcall(function() text = icon[how](icon) end)
-            if type(text) == "string" and text ~= "" then
-                log.say(string.format("    %s -> %s", how, text))
+        -- Safe questions first, so that if the last one takes the game down
+        -- their answers are already in the log.
+        --
+        -- A TSoftObjectPtr userdata is the exact type LoadIconToImage wants,
+        -- and it came from the game rather than being built here, so the one
+        -- thing that crashed before cannot happen. What is left is the
+        -- delegate, and whether this wrapper can be resolved without one.
+        for _, how in ipairs({
+            "Get", "LoadSynchronous", "IsValid", "IsNull",
+            "ToSoftObjectPath", "GetAssetName", "GetLongPackageName",
+            "ToString",
+        }) do
+            local value
+            local ok = pcall(function() value = icon[how](icon) end)
+
+            if ok and value ~= nil then
+                local shown = tostring(value)
+                pcall(function()
+                    if type(value) ~= "string" then shown = value:ToString() end
+                end)
+                log.say(string.format("    %-18s -> %s", how, tostring(shown)))
             end
         end
 
@@ -385,6 +401,25 @@ function M.data_probe()
 
         -- And plain tostring, which sometimes says more than any of them.
         log.say("    tostring -> " .. tostring(icon))
+
+        -- Last, because it is the one that might not come back. A Lua
+        -- function passed where a delegate is expected is the natural
+        -- mapping, and it either works or it errors. This is not the same as
+        -- inventing a struct's layout: nothing here is being constructed
+        -- except a function, which Lua knows how to make.
+        local image = api.cdo("/Script/UMG.Image")
+        if image then
+            local made
+            pcall(function() made = StaticConstructObject(image, world) end)
+
+            if made ~= nil then
+                local ok = pcall(function()
+                    util:LoadIconToImage(world, icon, made, function() end)
+                end)
+                log.say("    LoadIconToImage with a Lua function: " ..
+                    (ok and "accepted" or "refused"))
+            end
+        end
     end
 
     local shown = 0
