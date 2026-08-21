@@ -25,6 +25,7 @@
 -- non-nil read proves nothing about whether a field is real.
 
 local log = require("log")
+local trace = require("trace")
 
 local M = {}
 
@@ -257,37 +258,69 @@ end
 function M.camp_pals(camp)
     local out = {}
 
+    trace.at("pals: WorkerDirector")
     local director = prop(camp, "WorkerDirector")
-    if not valid(director) then
+    local director_ok = valid(director)
+    trace.done()
+    if not director_ok then
         return out, "camp has no readable WorkerDirector"
     end
 
     local raw = {}
+    trace.at("pals: GetCharacterHandleSlots")
     local ok = pcall(function() director:GetCharacterHandleSlots(raw) end)
+    trace.done()
     if not ok then
         return out, "GetCharacterHandleSlots threw"
     end
 
     for i = 1, #raw do
+        trace.at("pals: slot " .. i .. "/" .. #raw .. " unwrap")
         local slot = unwrap(raw[i])
-        if valid(slot) then
+        local slot_ok = valid(slot)
+        trace.done()
+
+        if slot_ok then
             local empty = true
+            trace.at("pals: slot " .. i .. " IsEmpty")
             pcall(function() empty = slot:IsEmpty() end)
+            trace.done()
 
             if not empty then
+                trace.at("pals: slot " .. i .. " Handle")
                 local handle = unwrap(prop(slot, "Handle"))
+                local handle_ok = valid(handle)
+                trace.done()
+
                 local id, param
 
-                if valid(handle) then
+                if handle_ok then
+                    trace.at("pals: slot " .. i .. " GetIndividualID")
                     pcall(function() id = handle:GetIndividualID() end)
-                    if id == nil then id = prop(handle, "ID") end
+                    trace.done()
+
+                    if id == nil then
+                        trace.at("pals: slot " .. i .. " ID prop")
+                        id = prop(handle, "ID")
+                        trace.done()
+                    end
+
+                    trace.at("pals: slot " .. i .. " TryGetIndividualParameter")
                     pcall(function() param = handle:TryGetIndividualParameter() end)
+                    trace.done()
                 end
 
+                trace.at("pals: slot " .. i .. " replicated fallbacks")
                 if id == nil then id = prop(slot, "ReplicateHandleID") end
-                if not valid(param) then param = prop(slot, "ReplicateIndividualParameter") end
+                local param_ok = valid(param)
+                if not param_ok then
+                    param = prop(slot, "ReplicateIndividualParameter")
+                    param_ok = valid(param)
+                end
+                trace.done()
 
-                if id ~= nil and valid(param) then
+                if id ~= nil and param_ok then
+                    trace.at("pals: slot " .. i .. " name and species")
                     out[#out + 1] = {
                         id = id,
                         param = param,
@@ -303,6 +336,7 @@ function M.camp_pals(camp)
                         -- green assigned marker.
                         key = M.instance_key(id) or M.guid_key(id) or ("slot" .. i),
                     }
+                    trace.done()
                 end
             end
         end
