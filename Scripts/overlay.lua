@@ -20,6 +20,7 @@
 
 local log = require("log")
 local api = require("palapi")
+local trace = require("trace")
 
 local M = {}
 
@@ -50,6 +51,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function build()
+    trace.at("overlay: build begins")
     local pc = api.player_controller()
 
     local widget_cls = api.cdo("/Script/UMG.UserWidget")
@@ -118,6 +120,7 @@ local function build()
         return false
     end
 
+    trace.at("overlay: build done, widget made")
     widget, tree, canvas = made, made_tree, made_canvas
     return true
 end
@@ -150,6 +153,7 @@ end
 -- It failed before because the mode wants a widget to focus and we had none of
 -- our own to give it. Now we do.
 local function set_input(on)
+    trace.at("overlay: set_input " .. tostring(on))
     local pc = api.player_controller()
     if not alive(pc) then return end
 
@@ -223,7 +227,11 @@ end
 -- ---------------------------------------------------------------------------
 
 function M.show()
-    if M.host() == nil then return false end
+    trace.at("overlay: show, asking for a host")
+    if M.host() == nil then
+        trace.done()
+        return false
+    end
 
     pcall(function() widget:SetVisibility(0) end)
     set_input(true)

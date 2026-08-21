@@ -24,6 +24,7 @@ local items = require("items")
 local workdefs = require("workdefs")
 local icons = require("icons")
 local overlay = require("overlay")
+local trace = require("trace")
 local scheduler = require("scheduler")
 
 local M = {}
@@ -1066,11 +1067,14 @@ function M.toggle()
         return
     end
 
+    trace.at("panel: opening")
     if not overlay.show() then
+        trace.done()
         M.open = false
         log.say("could not put the overlay on screen, see priority.log")
         return
     end
+    trace.done()
     log.say("work rules open, Ctrl+F9 again to close")
 end
 
