@@ -151,6 +151,37 @@ end
 -- explicit marks a pass asked for by hand. Those always report something,
 -- even when there was nothing to do: a keypress with no output at all is
 -- indistinguishable from a mod that failed to load.
+-- Handed to ExecuteInGameThread by name, never as a fresh closure.
+--
+-- UE4SS keeps a Lua registry reference to anything scheduled, and a new
+-- anonymous function every cycle means a new reference every cycle. On
+-- 21 August at 21:12:58 it gave up on one of them: "Ref was not function,
+-- removing hook", and the engine tick went with it. The same reference going
+-- bad without being noticed is the likelier reading of the access violations,
+-- which is why the crash site kept moving between unrelated loops.
+--
+-- One function that lives as long as the mod cannot be collected, so there is
+-- nothing to go stale. The reason and the explicit flag ride on upvalues
+-- because the callback takes no arguments; they are only used for the log
+-- line, so a second pass overwriting a first is a wrong word, not a wrong
+-- decision.
+local pass_reason, pass_explicit
+
+local function pass_body()
+    local ok, err = pcall(function()
+        local stats = scheduler.run_pass(cfg)
+        if stats.camps > 0 then
+            log.info(pass_reason .. ": " .. scheduler.format_stats(cfg, stats))
+        elseif pass_explicit then
+            log.say(pass_reason .. ": no base camp loaded. Camps only exist while " ..
+                "streamed in, so stand inside your base and try again.")
+        end
+    end)
+    if not ok then
+        log.error("pass failed: " .. tostring(err))
+    end
+end
+
 local function run_pass(reason, explicit)
     if not cfg then return end
 
@@ -173,20 +204,8 @@ local function run_pass(reason, explicit)
         return
     end
 
-    ExecuteInGameThread(function()
-        local ok, err = pcall(function()
-            local stats = scheduler.run_pass(cfg)
-            if stats.camps > 0 then
-                log.info(reason .. ": " .. scheduler.format_stats(cfg, stats))
-            elseif explicit then
-                log.say(reason .. ": no base camp loaded. Camps only exist while " ..
-                    "streamed in, so stand inside your base and try again.")
-            end
-        end)
-        if not ok then
-            log.error("pass failed: " .. tostring(err))
-        end
-    end)
+    pass_reason, pass_explicit = reason, explicit
+    ExecuteInGameThread(pass_body)
 end
 
 local function tick()
@@ -210,6 +229,28 @@ local ui_running = false
 -- while the panel runs fast.
 local grid_owed = 0
 
+-- The same rule as pass_body, and this one mattered more: it was scheduled
+-- once a second for the whole session, so it minted a registry reference every
+-- second the game was open.
+local function ui_body()
+    -- The grid stays on its second, because refreshing it means a FindAllOf
+    -- over every cell and it has nothing to gain from ten times the rate.
+    if grid_owed >= 1000 then
+        grid_owed = 0
+        pcall(function() ui.refresh(cfg) end)
+    end
+
+    -- Drawn independently: the panel opens on a hotkey and has to keep
+    -- working with the stand shut.
+    pcall(function() panel.refresh(cfg) end)
+
+    -- Instructions from outside, read and acted on here rather than on a
+    -- timer of their own, so one can never land between two halves of a draw.
+    -- Both are already on the game thread.
+    pcall(function() remote.poll() end)
+    pcall(function() remote.drain() end)
+end
+
 local function ui_tick()
     if not ui_running then return end
 
@@ -225,25 +266,7 @@ local function ui_tick()
     -- Runs even when disabled, so the grid still reflects edits. It costs
     -- nothing while the stand is shut.
     if cfg then
-        ExecuteInGameThread(function()
-            -- The grid stays on its second, because refreshing it means a
-            -- FindAllOf over every cell and it has nothing to gain from ten
-            -- times the rate.
-            if grid_owed >= 1000 then
-                grid_owed = 0
-                pcall(function() ui.refresh(cfg) end)
-            end
-
-            -- Drawn independently: the panel opens on a hotkey and has to
-            -- keep working with the stand shut.
-            pcall(function() panel.refresh(cfg) end)
-
-            -- Instructions from outside, read and acted on here rather than
-            -- on a timer of their own, so one can never land between two
-            -- halves of a draw. Both are already on the game thread.
-            pcall(function() remote.poll() end)
-            pcall(function() remote.drain() end)
-        end)
+        ExecuteInGameThread(ui_body)
 
         if panel.wants_pass then
             panel.wants_pass = false

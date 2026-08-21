@@ -110,3 +110,48 @@ checking. UE4SS's own dumps go back to 10 August and there are 29 mods
 installed. `!pwp off` makes `run_pass` return before both sites while leaving
 everything else running, so one run answers it. Convicts or exonerates, and
 either is worth more than a fourth theory.
+
+## The cause, named by UE4SS itself
+
+```
+21:12:58.7905 [UE4SS.EngineTick.LuaModImpl] Hook threw exception:
+  "[Lua::Registry::get_function_ref] Ref was not function
+   No traceback", removing hook!
+21:13:01.4499 [FCallbackGarbageCollector] Freed invalid callbacks!
+```
+
+One millisecond after a pass completed, UE4SS threw away the engine tick hook
+because a Lua registry reference it was holding was no longer a function. The
+mod went silent without the game dying, which is why the command channel
+stopped answering.
+
+This is one bug with two endings. UE4SS keeps a registry reference to anything
+scheduled. When it notices a reference has gone bad it removes the hook and the
+mod goes quiet. When it does not notice, it calls through the reference and the
+process dies, which is the access violation.
+
+That reading accounts for every fact collected today, including the one that
+made no sense: the crash site kept moving between `camp_pals` and the chest
+sweep because it was never the site. Those are simply the two places the mod
+spends the most time, so they are the most likely to be executing when a
+reference is called. The fault addresses were pointer-sized (`0x08`, `0x0c`,
+`-1`) and the stack recursed inside UE4SS's own Lua layer rather than in
+anything to do with pals or chests.
+
+### The fix
+
+Two callbacks were being minted fresh every cycle: the pass every ten seconds,
+and the UI body every single second for the whole session. Both are now named
+functions defined once, so there is one reference each that lives as long as
+the mod and nothing to collect.
+
+The remaining anonymous callbacks are one-shots, scheduled once at load or on
+world entry. They are a smaller version of the same risk and are worth hoisting
+too if this recurs.
+
+### Two theories to retire
+
+`valid()` was not it, and neither was the container sweep. Both looked strong
+and both were argued from reading rather than from evidence. What actually
+found it was a log message that had been written into UE4SS.log every time this
+happened, in a file already open in front of me.
