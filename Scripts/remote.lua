@@ -7,6 +7,7 @@
 --     mode item / list  which screen it shows
 --     cmd <console>     run a console command
 --     pwp <words>       any of the mod's own commands, as typed in chat
+--     reload            swap the panel's code, no restart
 --
 -- The first line is a nonce, so writing the same instruction twice still
 -- counts as a change.
@@ -29,6 +30,7 @@
 local log = require("log")
 local api = require("palapi")
 local panel = require("panel")
+local reload = require("reload")
 
 local M = {}
 
@@ -56,6 +58,13 @@ local checked_at = 0
 -- is already on the game thread, so passing it a string to run costs no new
 -- callback at all.
 local pending = nil
+
+-- This module is not itself swapped, so its panel is the one from before the
+-- reload unless it is told otherwise. Missing this makes a reload look like it
+-- did nothing at all.
+function M.rewire()
+    panel = require("panel")
+end
 
 local function contents()
     if not M.path then return nil end
@@ -91,6 +100,11 @@ local function run(line)
         else
             log.warn("no such screen: " .. screen)
         end
+        return
+    end
+
+    if line == "reload" then
+        reload.now()
         return
     end
 

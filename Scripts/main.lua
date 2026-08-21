@@ -20,6 +20,7 @@ local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
 local remote = require("remote")
+local reload = require("reload")
 local trace = require("trace")
 local icons = require("icons")
 local net = require("net")
@@ -781,6 +782,15 @@ local function handle_command(text)
         log.say("unknown command '" .. verb .. "', try " .. prefix .. " help")
     end
     return true
+end
+
+-- panel and overlay are held here as locals, so a swap has to hand them back
+-- or this file keeps calling the code that was just discarded. remote holds
+-- one too and is not itself swapped, so it is told at the same time.
+reload.rewire = function()
+    panel = require("panel")
+    overlay = require("overlay")
+    pcall(function() remote.rewire() end)
 end
 
 -- Reachable from outside the game, since singleplayer has no chat box to type
