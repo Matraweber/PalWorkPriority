@@ -736,6 +736,13 @@ local function handle_command(text)
     return true
 end
 
+-- Reachable from outside the game, since singleplayer has no chat box to type
+-- into. Takes the words after the prefix, so remote.txt carries "pwp off" and
+-- this receives "off".
+remote.command = function(words)
+    handle_command(cfg.chat_prefix .. " " .. words)
+end
+
 -- ---------------------------------------------------------------------------
 -- Wiring
 -- ---------------------------------------------------------------------------

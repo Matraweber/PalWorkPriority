@@ -6,6 +6,7 @@
 --     open / close      the panel
 --     mode item / list  which screen it shows
 --     cmd <console>     run a console command
+--     pwp <words>       any of the mod's own commands, as typed in chat
 --
 -- The first line is a nonce, so writing the same instruction twice still
 -- counts as a change.
@@ -33,6 +34,15 @@ local M = {}
 
 -- Set by main.lua, next to priority.log.
 M.path = nil
+
+-- Set by main.lua once its commands exist. A function rather than a require,
+-- because main already requires this file and requiring it back would be a
+-- loop.
+--
+-- Singleplayer has no chat box, so every command the mod documents was
+-- reachable only on a server. That is most of its controls, off and status
+-- and run and scope among them, unreachable in the mode it is developed in.
+M.command = nil
 
 local EVERY = 1.0          -- seconds between looks at the file
 local last = nil
@@ -80,6 +90,16 @@ local function run(line)
             log.say("panel screen: " .. screen)
         else
             log.warn("no such screen: " .. screen)
+        end
+        return
+    end
+
+    local words = line:match("^pwp%s+(.+)$")
+    if words then
+        if M.command then
+            M.command(words)
+        else
+            log.warn("pwp: commands are not wired up yet")
         end
         return
     end
