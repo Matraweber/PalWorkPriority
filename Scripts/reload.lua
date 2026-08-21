@@ -97,6 +97,73 @@ function M.now()
     return false
 end
 
+-- ---------------------------------------------------------------------------
+-- Commands
+-- ---------------------------------------------------------------------------
+--
+-- The trigger file carries more than "something changed". Its first line is a
+-- nonce so that writing the same command twice still counts as a change, and
+-- every line after it is an instruction.
+--
+--     reload            swap panel and overlay
+--     open / close      the panel, without a keybind
+--     cmd <console>     run a console command
+--
+-- open and close are here for the same reason the trigger is a file at all:
+-- while the panel holds the input mode UE4SS never sees a key, so the panel
+-- cannot be opened by the person who most needs to open it. This can.
+--
+-- cmd is what makes the game able to photograph itself. "cmd shot showui"
+-- writes a png next to the save data, which is a far better way to find out
+-- what the panel looks like than asking someone to alt tab and screenshot it.
+
+local api = require("palapi")
+
+local function console(command)
+    local lib = api.cdo("/Script/Engine.Default__KismetSystemLibrary")
+    local pc = api.player_controller()
+
+    if not lib or not api.valid(pc) then
+        log.warn("cmd: no player controller, so no console")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        pcall(function() lib:ExecuteConsoleCommand(pc, command, pc) end)
+        log.say("cmd: " .. command)
+    end)
+end
+
+local function run(line)
+    line = line:match("^%s*(.-)%s*$")
+    if line == "" then return end
+
+    if line == "reload" then
+        M.now()
+        return
+    end
+
+    if line == "open" or line == "close" then
+        local panel = package.loaded["panel"]
+        if not panel then return end
+
+        local wanted = (line == "open")
+        if panel.open ~= wanted then
+            pcall(function() panel.toggle() end)
+        end
+        log.say("panel is now " .. (panel.open and "open" or "closed"))
+        return
+    end
+
+    local command = line:match("^cmd%s+(.+)$")
+    if command then
+        console(command)
+        return
+    end
+
+    log.warn("trigger: do not understand " .. line)
+end
+
 -- Called from the tick. Cheap: one small file read a second.
 function M.poll()
     local now = os.clock()
@@ -106,8 +173,8 @@ function M.poll()
     local text = contents()
     if text == nil then return end
 
-    -- The first look only records. Otherwise every launch would reload
-    -- immediately, which is harmless but noisy and hides real triggers.
+    -- The first look only records. Otherwise every launch would act on
+    -- whatever the file happened to hold from last time.
     if last == nil then
         last = text
         return
@@ -116,8 +183,15 @@ function M.poll()
     if text == last then return end
     last = text
 
-    log.say("reload trigger changed")
-    M.now()
+    -- The first line is the nonce and is not an instruction.
+    local first = true
+    for line in text:gmatch("%C+") do
+        if first then
+            first = false
+        else
+            pcall(function() run(line) end)
+        end
+    end
 end
 
 return M
