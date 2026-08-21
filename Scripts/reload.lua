@@ -37,6 +37,20 @@ local EVERY = 1.0          -- seconds between looks at the file
 local last = nil
 local checked_at = 0
 
+-- Every module ever swapped out, kept for ever on purpose.
+--
+-- UE4SS holds Lua registry references to callbacks it has been given. When a
+-- swapped module became garbage, those references stopped being functions,
+-- and UE4SS's answer to that is not to skip the callback: it removes the hook
+-- driving the engine tick. The mod then goes silent and nothing short of a
+-- restart brings it back, which cost two sessions before the log line naming
+-- it turned up.
+--
+-- Holding the old table keeps its functions alive, and their upvalues with
+-- them. It leaks a few tables per reload, which against a game using several
+-- gigabytes is not worth a moment's thought.
+local kept = {}
+
 local function contents()
     if not M.path then return nil end
 
@@ -63,6 +77,8 @@ function M.now()
     pcall(function() if overlay and overlay.teardown then overlay.teardown() end end)
 
     for _, name in ipairs(SWAPPED) do
+        local old = package.loaded[name]
+        if old ~= nil then kept[#kept + 1] = old end
         package.loaded[name] = nil
     end
 
