@@ -291,3 +291,43 @@ wrong within the hour.
 The rate is reduced, not the fault. The real fix is to stop reading
 `ItemId.StaticId` field by field out of an array the game reallocates while
 pals deposit into it, and take each container's slots in one go instead.
+
+
+## Fixed, 22:41
+
+Twenty six minutes and forty four seconds, one hundred and fifty eight passes,
+no crash and no `Ref was not function`, still running when the watch expired.
+Every failing run before it managed a handful of passes at most, so this is
+roughly twenty five times more work than any of them completed. That is no
+longer one sample.
+
+Two changes did it, and both came from reading other people's mods rather than
+this one:
+
+1. `camp_pals` reads `WorkerDirector`, `CharacterContainer`, `SlotArray` by
+   property instead of handing a Lua table to `GetCharacterHandleSlots` for the
+   engine to fill. PalBaseInfoGrid's route.
+2. Chest counts are held for thirty seconds instead of swept every ten. The
+   sweep walks `ItemSlotArray` while pals deposit into those same arrays, and
+   BreedingHelper does the same read only while its window is open.
+
+### The instrumentation is mostly gone
+
+The per-slot marks cost about five hundred file writes a pass, which was
+justified while they were naming the fault and is not now. What stays is eight
+coarse marks: the stages of the pass, the roster read, the chest sweep. Enough
+to name a stage if this returns, cheap enough to leave on.
+
+### What actually worked, as method
+
+Four theories were argued from reading this mod's source and every one was
+wrong: reloading, the per-tick closure, `valid()`, the container sweep as a
+guess. Three things worked, and none of them involved staring at the mod:
+
+- reading UE4SS's own log, which had been naming the cause every time
+- reading the other twenty eight mods on disk to see what the stable ones do
+  differently
+- one controlled experiment, `pwp off`, which ruled the pass in and everything
+  else out in eight minutes
+
+The controlled experiment should have been first. It was tenth.

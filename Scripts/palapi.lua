@@ -309,72 +309,43 @@ function M.camp_pals(camp)
     end
 
     for i = 1, #raw do
-        trace.at("pals: slot " .. i .. "/" .. #raw .. " unwrap")
         local slot = unwrap(raw[i])
         local slot_ok = valid(slot)
-        trace.done()
 
         if slot_ok then
             local empty = true
-            trace.at("pals: slot " .. i .. " IsEmpty")
             pcall(function() empty = slot:IsEmpty() end)
-            trace.done()
 
             if not empty then
-                trace.at("pals: slot " .. i .. " Handle")
                 local handle = unwrap(prop(slot, "Handle"))
                 local handle_ok = valid(handle)
-                trace.done()
 
                 local id, param
 
                 if handle_ok then
-                    trace.at("pals: slot " .. i .. " GetIndividualID")
                     pcall(function() id = handle:GetIndividualID() end)
-                    trace.done()
 
                     if id == nil then
-                        trace.at("pals: slot " .. i .. " ID prop")
                         id = prop(handle, "ID")
-                        trace.done()
                     end
 
-                    trace.at("pals: slot " .. i .. " TryGetIndividualParameter")
                     pcall(function() param = handle:TryGetIndividualParameter() end)
-                    trace.done()
                 end
 
-                trace.at("pals: slot " .. i .. " replicated fallbacks")
                 if id == nil then id = prop(slot, "ReplicateHandleID") end
                 local param_ok = valid(param)
                 if not param_ok then
                     param = prop(slot, "ReplicateIndividualParameter")
                     param_ok = valid(param)
                 end
-                trace.done()
 
                 if id ~= nil and param_ok then
-                    -- One mark each. The last one covered four different
-                    -- calls, which named a line rather than a call and left
-                    -- the same guessing this was meant to end.
-                    --
-                    -- pal_name falls back to the species reader when there is
-                    -- no nickname, so this mark can cover GetCharacterID too.
-                    trace.at("pals: slot " .. i .. " GetNickname")
                     local pal_nm = M.pal_name(param)
-                    trace.done()
 
-                    trace.at("pals: slot " .. i .. " GetCharacterID")
                     local pal_sp = M.pal_species(param)
-                    trace.done()
 
-                    -- Reads the guid fields off the id struct, which is a
-                    -- different kind of risk from calling a function on the
-                    -- parameter, and worth telling apart.
-                    trace.at("pals: slot " .. i .. " identity key")
                     local pal_key = M.instance_key(id) or M.guid_key(id)
                         or ("slot" .. i)
-                    trace.done()
 
                     out[#out + 1] = {
                         id = id,
