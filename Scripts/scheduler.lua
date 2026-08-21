@@ -77,7 +77,11 @@ local pass_totals = nil
 -- production, not a trigger that has to fire on the instant: the cost of the
 -- delay is at most twenty extra seconds of a work type that was already at
 -- its limit, against a sweep running a third as often.
-local STOCK_TTL = 30
+-- Settable from outside with "pwp sweep <seconds>", because a fault that
+-- takes twenty seven minutes to appear cannot be tested against. Zero makes
+-- every pass sweep, and "pwp run" forces a pass on demand, so the two together
+-- turn a half hour wait into as many sweeps as can be asked for.
+M.stock_ttl = 30
 local stock = {}
 
 function M.forget()
@@ -443,7 +447,7 @@ local function run_camp(cfg, camp, stats)
             or (api.guid_key(camp_id) or "camp")
         local held = stock[scope_key]
 
-        if held and (os.clock() - held.at) < STOCK_TTL then
+        if held and M.stock_ttl > 0 and (os.clock() - held.at) < M.stock_ttl then
             totals, chests = held.totals, held.chests
         else
             trace.at("camp: chest sweep, scope " .. tostring(cfg.storage_scope))

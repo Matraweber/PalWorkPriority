@@ -380,6 +380,25 @@ COMMANDS.run = function()
     run_pass("manual", true)
 end
 
+-- How long a chest count is kept. Zero sweeps on every pass.
+--
+-- Here so the sweep can be driven hard while it is under suspicion. It crashed
+-- once in twenty seven minutes at thirty seconds, which is not a rate anything
+-- can be tested at, and the guard that is meant to have fixed it wants
+-- thousands of sweeps against a chest pals are filling, not a dozen.
+COMMANDS.sweep = function(args)
+    local n = tonumber((args or ""):match("^%s*(%d+)"))
+    if n == nil then
+        log.say("stock sweep interval: " .. tostring(scheduler.stock_ttl) ..
+            "s. Use '" .. cfg.chat_prefix .. " sweep <seconds>', 0 for every pass")
+        return
+    end
+    scheduler.stock_ttl = n
+    scheduler.forget_stock()
+    log.say("stock sweep interval now " .. n .. "s" ..
+        (n == 0 and " (every pass)" or ""))
+end
+
 -- Both toggles forget the assignment memo. Changing how pals are spread
 -- makes every remembered placement stale, and without the reset the next
 -- pass would skip re-issuing the ones that happen to match.
