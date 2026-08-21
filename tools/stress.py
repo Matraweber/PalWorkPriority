@@ -22,14 +22,15 @@ import subprocess
 import sys
 import time
 
-MOD = (r"C:\Program Files (x86)\Steam\steamapps\common\Palworld"
-       r"\Mods\NativeMods\UE4SS\Mods\PalWorkPriority")
-TRIGGER = os.path.join(MOD, "remote.txt")
-LOG = os.path.join(MOD, "priority.log")
-TRACE = os.path.join(MOD, "trace.txt")
-U = (r"C:\Program Files (x86)\Steam\steamapps\common\Palworld"
-     r"\Mods\NativeMods\UE4SS\UE4SS.log")
-CRASHES = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Pal", "Saved", "Crashes")
+from paths import resolve
+
+P, sys.argv[1:] = resolve(sys.argv[1:])
+MOD = P["mod"]
+TRIGGER = P["remote"]
+LOG = P["log"]
+TRACE = P["trace"]
+U = P["ue4ss_log"]
+CRASHES = P["crashes"]
 
 PER_POLL = 3          # passes per write; the mod reads the file once a second
 
@@ -44,7 +45,7 @@ def read(p):
 def up():
     return subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command",
-         "if (Get-Process Palworld* -ErrorAction SilentlyContinue) {'y'} else {'n'}"],
+         "if (Get-Process %s -ErrorAction SilentlyContinue) {'y'} else {'n'}" % P["process"]],
         capture_output=True, text=True).stdout.strip().endswith("y")
 
 

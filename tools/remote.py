@@ -21,13 +21,15 @@ import subprocess
 import sys
 import time
 
+from paths import resolve
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 DEPLOY = os.path.join(HERE, "deploy.ps1")
-MOD = (r"C:\Program Files (x86)\Steam\steamapps\common\Palworld"
-       r"\Mods\NativeMods\UE4SS\Mods\PalWorkPriority")
-TRIGGER = os.path.join(MOD, "remote.txt")
-LOG = os.path.join(MOD, "priority.log")
+P, _ = resolve(sys.argv[1:])
+MOD = P["mod"]
+TRIGGER = P["remote"]
+LOG = P["log"]
 
 SAVED = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Pal", "Saved")
 
@@ -49,6 +51,7 @@ def newest_png(since):
 
 
 def main(argv):
+    argv = [a for a in argv if a != "--server"]
     words = [a for a in argv if a != "--no-deploy"]
     if not words:
         print(__doc__)
@@ -59,9 +62,10 @@ def main(argv):
     wants_snap = any(c == "cmd " + SNAP for c in commands)
 
     if "--no-deploy" not in argv:
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-File", DEPLOY],
-            capture_output=True, text=True)
+        cmd = ["powershell.exe", "-NoProfile", "-File", DEPLOY]
+        if P["server"]:
+            cmd += ["-GamePath", P["root"]]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print("deploy failed:")
             print(result.stdout[-1200:])

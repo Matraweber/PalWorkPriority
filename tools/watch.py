@@ -19,17 +19,19 @@ import subprocess
 import sys
 import time
 
-MOD = (r"C:\Program Files (x86)\Steam\steamapps\common\Palworld"
-       r"\Mods\NativeMods\UE4SS\Mods\PalWorkPriority")
-LOG = os.path.join(MOD, "priority.log")
-TRACE = os.path.join(MOD, "trace.txt")
-CRASHES = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Pal", "Saved", "Crashes")
+from paths import resolve
+
+P, sys.argv[1:] = resolve(sys.argv[1:])
+MOD = P["mod"]
+LOG = P["log"]
+TRACE = P["trace"]
+CRASHES = P["crashes"]
 
 
 def running():
     out = subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command",
-         "if (Get-Process Palworld* -ErrorAction SilentlyContinue) { 'y' } else { 'n' }"],
+         "if (Get-Process %s -ErrorAction SilentlyContinue) { 'y' } else { 'n' }" % P["process"]],
         capture_output=True, text=True).stdout.strip()
     return out.endswith("y")
 
