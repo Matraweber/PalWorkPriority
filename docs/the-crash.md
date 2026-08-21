@@ -260,3 +260,34 @@ the roster is simply reached a different way.
 Untested as of writing. It is one change, motivated by the one experiment that
 controlled for anything, and the previous four theories were each stated with
 more confidence than a single clean run could carry.
+
+
+## Where it stands, 22:26
+
+Longest clean run of the investigation by a wide margin: ten minutes, sixty
+three passes, no crash and no `Ref was not function`, still running when the
+watch expired.
+
+| run                                  | lasted            |
+|--------------------------------------|-------------------|
+| baseline, various                    | 64s to ~6 min     |
+| property route only                  | 64s, died in sweep |
+| property route + cached chest counts | **600s+, alive**  |
+
+### What cannot be claimed from it
+
+Two changes went in together, so this does not attribute the improvement to
+either one. The honest reading of the arithmetic: caching cut the sweeps by
+three, so a purely rate-driven fault should have moved 64s out to roughly 190s.
+It went past 600. That is better than a rate reduction alone predicts, which
+weakly suggests the property route contributed as well, and weakly is the right
+word for one sample.
+
+It is also one sample. The claim made at 21:39 rested on one sample and was
+wrong within the hour.
+
+### If it comes back in the sweep
+
+The rate is reduced, not the fault. The real fix is to stop reading
+`ItemId.StaticId` field by field out of an array the game reallocates while
+pals deposit into it, and take each container's slots in one go instead.
