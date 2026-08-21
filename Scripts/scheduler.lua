@@ -60,8 +60,35 @@ local pass_totals = nil
 -- The fence itself is recomputed from demand every pass and remembers
 -- nothing. The hold timers are the one exception, and a config reload or
 -- world change should drop them.
+-- How long a chest count stays good for.
+--
+-- The sweep is FindAllOf over everything derived from the container base
+-- class, which on a built base is mostly walls, floors and fences, and it
+-- calls GetBaseCampIdBelongTo on every one of them. Then for each real
+-- container it walks ItemSlotArray reading ItemId.StaticId off each slot,
+-- while pals are depositing into those same arrays.
+--
+-- BreedingHelper reads chests by exactly this route and is stable. It does it
+-- when its window is open. This did it every ten seconds for the whole
+-- session, which is both why the panel felt heavy and where the pass was
+-- standing when it died on 21 August at 21:07 and again at 22:11.
+--
+-- Thirty seconds is three passes rather than one. A ceiling is a limit on
+-- production, not a trigger that has to fire on the instant: the cost of the
+-- delay is at most twenty extra seconds of a work type that was already at
+-- its limit, against a sweep running a third as often.
+local STOCK_TTL = 30
+local stock = {}
+
 function M.forget()
     hold_since = {}
+    stock = {}
+end
+
+-- Called when the rules window opens, so what it shows is measured now
+-- rather than up to half a minute old.
+function M.forget_stock()
+    stock = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -412,13 +439,23 @@ local function run_camp(cfg, camp, stats)
         }
 
         -- collected for the panel, which must not scan this itself
-        trace.at("camp: chest sweep, scope " .. tostring(cfg.storage_scope))
-        if cfg.storage_scope == "global" then
-            totals, chests = api.all_chest_totals(opts)
+        local scope_key = (cfg.storage_scope == "global") and "global"
+            or (api.guid_key(camp_id) or "camp")
+        local held = stock[scope_key]
+
+        if held and (os.clock() - held.at) < STOCK_TTL then
+            totals, chests = held.totals, held.chests
         else
-            totals, chests = api.camp_item_totals(api.guid_key(camp_id), opts)
+            trace.at("camp: chest sweep, scope " .. tostring(cfg.storage_scope))
+            if cfg.storage_scope == "global" then
+                totals, chests = api.all_chest_totals(opts)
+            else
+                totals, chests = api.camp_item_totals(api.guid_key(camp_id), opts)
+            end
+            trace.done()
+            stock[scope_key] = { totals = totals, chests = chests, at = os.clock() }
         end
-        trace.done()
+
         stats.chests = stats.chests + (chests or 0)
 
         if pass_totals then

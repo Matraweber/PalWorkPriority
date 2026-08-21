@@ -1130,6 +1130,13 @@ function M.toggle()
         return
     end
     trace.done()
+
+    -- Chest counts are held for half a minute so the pass is not sweeping
+    -- every base object every ten seconds. Opening this window is the one
+    -- moment the numbers are being read by somebody, so they get measured
+    -- now instead of being served up to thirty seconds stale.
+    pcall(function() scheduler.forget_stock() end)
+
     log.say("work rules open, Ctrl+F9 again to close")
 end
 
