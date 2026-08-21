@@ -17,38 +17,46 @@ In `Mods/NativeMods/UE4SS/UE4SS-settings.ini`:
 
 The original file is kept beside it as `UE4SS-settings.ini.backup-before-devtools`.
 
-## Hot reload does not work here
+## Reloading without restarting
 
-Ctrl+R would have replaced a two minute restart with about a second. It was
-tried twice and crashed the game both times.
+UE4SS has two of these and only one is worth using.
 
-The first crash came with a full mod list, and the log made it look like a
-mod count problem: Ctrl+R does not reload the mod being worked on, it tears
-down and reloads every Lua mod installed. So the mod list was cut to one with
-`tools/solo.py`. It crashed again in the same place, which rules out the
-explanation the first crash suggested. The problem is this mod, not its
-neighbours.
+**Ctrl+R reloads every Lua mod installed.** Twenty seven of them here, most
+belonging to other people. It was tried twice and crashed the game both times,
+including with the list cut to three, so it stays off.
 
-Which is fair enough. Hot reload destroys the Lua state while a self
-rescheduling timer is still pending against it, while hooks are registered,
-and while widgets we built are still in the viewport. Surviving that is real
-work with an uncertain payoff, and each attempt costs a game session to find
-out. It stays off.
+**Auto reloading watches one mod's Scripts directory**, which is the one that
+matches how anyone would actually want to work:
 
-`tools/solo.py` is still worth running:
+    EnableAutoReloadingLuaMods = 1
 
-    python tools/solo.py on      only this mod loads
-    python tools/solo.py off     everything back as it was
+    ; The reload triggers when any file is edited or a new file is added
+    ; to the 'Scripts' directory.
 
-Not for Ctrl+R, but because starting with one mod instead of twenty seven is
-a much shorter restart, which was most of the point.
+Deploy a file and the mod reloads itself. No keypress, nothing else torn down.
+This setting was sitting at 0 in the shipped configuration and went unnoticed
+for a long time while restarts were being spent instead, which is worth
+remembering the next time something feels harder than it should be: read the
+settings file before building a way around it.
 
-`on` records mods.txt and the UE4SS settings before touching either, and `off`
-restores what was recorded rather than guessing at defaults. Run it from a
-working setup, and use it rather than switching mods off by hand: a blueprint
-mod is a Lua mod plus a pak in `Paks/LogicMods`, and turning off only the Lua
-half leaves BPModLoaderMod reaching for mod actors that never come. The script
-moves the paks aside along with the mods, and puts them back.
+It uses the same machinery underneath as Ctrl+R, so it is not risk free. What
+it does not do is take twenty six other mods with it.
+
+## Driving the panel from outside
+
+`tools/remote.py` writes instructions to a file the mod reads once a second:
+
+    python tools/remote.py open
+    python tools/remote.py "mode item,snap"
+    python tools/remote.py close
+
+The file matters rather than being an implementation detail: while the panel
+holds the input mode UE4SS never sees a key press, which is exactly when the
+panel is the thing being worked on.
+
+`snap` runs `shot showui`, so the game photographs itself and the png can be
+read straight off disk. That removes the last step that needed a person, since
+alt tabbing to take a screenshot is itself what stops the game ticking.
 
 ## The console
 
