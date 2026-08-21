@@ -9,6 +9,54 @@
 -- RequestChangeWorkSuitability_ToServer, the same flag the vanilla
 -- checkboxes write, leaving the game's own AI to choose within that fence.
 
+-- ---------------------------------------------------------------------------
+-- Never let UE4SS hold a callback Lua can collect
+-- ---------------------------------------------------------------------------
+--
+-- This is first in the file on purpose, before anything can schedule.
+--
+-- UE4SS keeps a Lua registry reference to every function handed to
+-- ExecuteInGameThread or ExecuteWithDelay. On this build those references do
+-- not keep the function alive, so once Lua collects it the reference stops
+-- being a function, and UE4SS does not skip such a callback:
+--
+--   [Lua::Registry::get_function_ref] Ref was not function, removing hook!
+--
+-- It removes the hook driving the engine tick, and the mod goes silent until
+-- the game is restarted. Five sessions died that way before the line was read
+-- properly, and two attempts to fix it treated a symptom: first the module
+-- reloading, which turned out to be innocent, then the one closure the tick
+-- made per pass, which was the worst offender but not the only one. The hook
+-- died again with nothing running but startup.
+--
+-- So it is fixed once, here, for every call site there is or will be. Holding
+-- the function in a table keeps it alive for the life of the session. The
+-- table is keyed by the function itself, so handing over the same one twice
+-- costs nothing, and the total is a handful of entries.
+do
+    local held = {}
+
+    local in_game_thread = ExecuteInGameThread
+    local with_delay = ExecuteWithDelay
+
+    local function hold(fn)
+        if type(fn) == "function" then held[fn] = true end
+        return fn
+    end
+
+    if type(in_game_thread) == "function" then
+        ExecuteInGameThread = function(fn)
+            return in_game_thread(hold(fn))
+        end
+    end
+
+    if type(with_delay) == "function" then
+        ExecuteWithDelay = function(ms, fn)
+            return with_delay(ms, hold(fn))
+        end
+    end
+end
+
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
