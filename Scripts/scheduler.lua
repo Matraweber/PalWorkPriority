@@ -24,6 +24,7 @@ local api = require("palapi")
 local workdefs = require("workdefs")
 local store = require("store")
 local demandidx = require("demand")
+local trace = require("trace")
 
 local M = {}
 
@@ -382,13 +383,17 @@ local function needs_totals(cfg)
 end
 
 local function run_camp(cfg, camp, stats)
+    trace.at("camp: GetId")
     local camp_id = api.camp_id(camp)
+    trace.done()
     if camp_id == nil then
         log.debug("skipping a camp with no readable id")
         return
     end
 
+    trace.at("camp: camp_pals")
     local pals, pal_err = api.camp_pals(camp)
+    trace.done()
     if pal_err then
         log.debug("camp pals unavailable: " .. pal_err)
         return
@@ -407,11 +412,13 @@ local function run_camp(cfg, camp, stats)
         }
 
         -- collected for the panel, which must not scan this itself
+        trace.at("camp: chest sweep, scope " .. tostring(cfg.storage_scope))
         if cfg.storage_scope == "global" then
             totals, chests = api.all_chest_totals(opts)
         else
             totals, chests = api.camp_item_totals(api.guid_key(camp_id), opts)
         end
+        trace.done()
         stats.chests = stats.chests + (chests or 0)
 
         if pass_totals then
@@ -544,7 +551,9 @@ function M.run_pass(cfg)
         lines = {},
     }
 
+    trace.at("pass: base_camps sweep")
     local camps = api.base_camps()
+    trace.done()
     if #camps == 0 then
         log.debug("no base camps loaded")
         M.last_report = nil
@@ -553,8 +562,10 @@ function M.run_pass(cfg)
 
     pass_totals = {}
 
-    for _, camp in ipairs(camps) do
+    for camp_n, camp in ipairs(camps) do
+        trace.at("pass: camp " .. camp_n .. " of " .. #camps)
         local ok, err = pcall(function() run_camp(cfg, camp, stats) end)
+        trace.done()
         if not ok then
             log.warn("pass threw on a camp: " .. tostring(err))
         end
