@@ -33,6 +33,27 @@ local warned = {}
 local cursor_was = nil
 local input_route = nil
 
+-- The widget blueprint out of our own pak, when it is there.
+--
+-- Everything below still works without it. The hand built canvas is what has
+-- been drawing the panel all along and remains the fallback, because a pak
+-- that failed to mount should degrade to the panel we had rather than to no
+-- panel at all.
+local BP_PACKAGE = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
+local BP_ASSET = "WBP_WorkRules_C"
+
+local bp_class = nil
+local bp_state = "unasked"       -- unasked | asking | ready | absent
+
+-- Named widgets from the blueprint, once one is hosted. nil when the panel is
+-- drawing on its own canvas, which is how the panel tells the two apart.
+M.parts = nil
+
+local BP_NAMES = {
+    "Root", "Backdrop", "Body", "Title", "Search",
+    "RuleList", "ItemList", "Actions", "NewRuleButton", "CloseButton",
+}
+
 local function warn_once(key, message)
     if warned[key] then return end
     warned[key] = true
@@ -49,7 +70,97 @@ end
 -- Building
 -- ---------------------------------------------------------------------------
 
-local function build()
+-- Ask for the blueprint class once, early, so that by the time the panel is
+-- opened the answer is already in hand. The lookup is asynchronous because it
+-- has to happen on the game thread, and a panel that opened while waiting for
+-- it would open on the wrong host.
+function M.prepare()
+    if bp_state ~= "unasked" then return end
+    bp_state = "asking"
+
+    M.mod_class(BP_PACKAGE, BP_ASSET, function(class)
+        if class == nil then
+            bp_state = "absent"
+            log.say("overlay: no blueprint widget in the pak, " ..
+                "drawing on our own canvas")
+            return
+        end
+
+        bp_class = class
+        bp_state = "ready"
+        log.say("overlay: the blueprint widget is available")
+    end)
+end
+
+-- Construct the blueprint widget and take its parts.
+--
+-- Create rather than StaticConstructObject, because a UserWidget wants
+-- initialising with a player and an owning world, and one built raw is a
+-- widget that exists without being alive. StaticConstructObject stays as the
+-- fallback since it is what the hand built host uses successfully.
+local function build_blueprint()
+    if bp_class == nil then return false end
+
+    local pc = api.player_controller()
+    if not alive(pc) then return false end
+
+    local made
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if lib then
+        pcall(function() made = lib:Create(pc, bp_class, pc) end)
+    end
+    if not alive(made) then
+        pcall(function() made = StaticConstructObject(bp_class, pc) end)
+    end
+    if not alive(made) then
+        warn_once("bpmake", "the blueprint widget would not construct")
+        return false
+    end
+
+    local made_tree
+    pcall(function() made_tree = made.WidgetTree end)
+    if not alive(made_tree) then
+        warn_once("bptree", "the blueprint widget has no widget tree")
+        return false
+    end
+
+    -- Every name the commandlet gave a widget, collected once. A name that
+    -- comes back nil here is one the cook dropped, and saying so now beats
+    -- finding out when a row fails to appear.
+    local parts, found = {}, 0
+    for _, name in ipairs(BP_NAMES) do
+        local w
+        pcall(function() w = made:GetWidgetFromName(FName(name)) end)
+        if alive(w) then
+            parts[name] = w
+            found = found + 1
+        end
+    end
+
+    if parts.Root == nil then
+        warn_once("bproot", "the blueprint widget has no Root canvas")
+        return false
+    end
+
+    pcall(function() made:SetIsFocusable(true) end)
+    pcall(function() made:AddToViewport(9000) end)
+
+    widget, tree, canvas = made, made_tree, parts.Root
+    M.parts = parts
+
+    log.say(string.format("overlay: hosted on the blueprint, %d of %d " ..
+        "named widgets found", found, #BP_NAMES))
+
+    for _, name in ipairs(BP_NAMES) do
+        if parts[name] == nil then
+            log.warn("  missing from the blueprint: " .. name)
+        end
+    end
+
+    return true
+end
+
+local function build_own()
     local pc = api.player_controller()
 
     local widget_cls = api.cdo("/Script/UMG.UserWidget")
@@ -133,8 +244,14 @@ function M.host()
     -- asking a freed widget whether it is valid is the crash rather than the
     -- check for it.
     widget, tree, canvas = nil, nil, nil
+    M.parts = nil
 
-    if not build() then return nil end
+    -- The blueprint if it is there, our own canvas if it is not.
+    if bp_state == "ready" and build_blueprint() then
+        return canvas, tree, widget
+    end
+
+    if not build_own() then return nil end
     return canvas, tree, widget
 end
 
@@ -254,6 +371,10 @@ end
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
     widget, tree, canvas = nil, nil, nil
+    M.parts = nil
+    -- The class itself survives a world switch, but a widget built from it
+    -- does not, so only the instance is dropped.
+    if bp_state == "asking" then bp_state = "unasked" end
     cursor_was, input_route = nil, nil
     M.open = false
     warned = {}

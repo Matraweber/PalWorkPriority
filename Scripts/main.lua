@@ -834,12 +834,13 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- happened before the class existed.
     demandidx.install()
 
-    -- Does the blueprint pak load? Asked once, on its own, without needing
-    -- a keypress: UE4SS does not see our keybinds while the panel holds the
-    -- input mode, and this is exactly the sort of question that was costing a
-    -- restart each time it had to be triggered by hand.
+    -- Fetch the blueprint widget's class ahead of anyone wanting it. The
+    -- lookup has to happen on the game thread and answers through a callback,
+    -- so a panel opened while it was still in flight would open on the wrong
+    -- host. Asking at world load means the answer is there long before
+    -- anybody presses anything.
     ExecuteWithDelay(25000, function()
-        pcall(function() overlay.widget_probe() end)
+        pcall(function() overlay.prepare() end)
     end)
 
     -- A client announces itself so the server knows to push rules to it, and
