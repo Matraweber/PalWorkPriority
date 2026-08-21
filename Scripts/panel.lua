@@ -58,6 +58,7 @@ local was_sel = nil
 local placed = {}               -- key -> where it was last put, to skip no-op moves
 local stripes = {}              -- key -> Border drawn behind a row
 local images = {}               -- key -> Image showing an item icon
+local item_of = {}              -- key -> which item that Image is for
 
 -- Where the tiles sit inside "order", so up and down can cross a row of them
 -- instead of stepping to the neighbour.
@@ -522,7 +523,20 @@ local function picture(key, px, py, size, texture, token)
     end
 
     if drawn["i:" .. key] ~= token then
-        if texture then
+        -- The game's own loader first. It takes the item id and does the
+        -- rest: finds the icon, streams it, puts it on the Image. When that
+        -- works there is nothing here for the table, the queue or the
+        -- rationing to do.
+        --
+        -- The old route stays underneath while the new one is unproven, and
+        -- comes out in its own change once it is.
+        local done = false
+        if item_of[key] then
+            done = icons.apply(item_of[key], img)
+            if done then pcall(function() img:SetOpacity(1.0) end) end
+        end
+
+        if not done and texture then
             apply_texture(img, texture)
             pcall(function() img:SetOpacity(1.0) end)
         else
@@ -543,6 +557,8 @@ local function tile(key, at, item, have, top)
     local py = top + row * (TILE + GAP)
 
     slab(key, px, py, TILE, TILE)
+
+    item_of[key] = item
 
     local texture = icons.get(item)
     picture(key, px + 4, py + 4, TILE - 8, texture, item .. (texture and "+" or "-"))
@@ -1055,7 +1071,7 @@ function M.reset()
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
-    images, grid_from, grid_count = {}, 0, 0
+    images, item_of, grid_from, grid_count = {}, {}, 0, 0
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false

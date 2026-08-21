@@ -246,6 +246,63 @@ function M.reset()
     sighted, sighted_at = nil, 0
 end
 
+-- Put an item's icon straight onto an Image, the way the game does it.
+--
+-- The whole chain, every step read out of the running game rather than
+-- guessed:
+--
+--   PalUtility::GetItemIDManager(world)         -> the manager
+--   PalItemIDManager::GetStaticItemData(FName)  -> PalStaticItemDataBase
+--   that object has SoftObjectProperty IconTexture
+--   PalUtility::LoadIconToImage(world, path, image, callback)
+--
+-- The important part is that the path is read off the game's own data object
+-- and handed straight back to the game's own loader. Nothing about the soft
+-- reference is constructed here. Building that struct by hand from a header
+-- is what crashed the game, and this never touches its shape at all.
+--
+-- Everything else in this file, the eight hundred entry table scraped out of
+-- the pak, the queue, the rationing, the patience counter, exists because I
+-- never asked whether the game would simply do this.
+local said_once = false
+
+function M.apply(item_id, image)
+    if type(item_id) ~= "string" or item_id == "" then return false end
+    if not api.valid(image) then return false end
+
+    local util = api.cdo("/Script/Pal.Default__PalUtility")
+    local world = api.player_controller()
+    if not util or not api.valid(world) then return false end
+
+    local manager
+    pcall(function() manager = util:GetItemIDManager(world) end)
+    if not api.valid(manager) then return false end
+
+    local data
+    pcall(function() data = manager:GetStaticItemData(FName(item_id)) end)
+    if not api.valid(data) then return false end
+
+    local path
+    pcall(function() path = data.IconTexture end)
+    if path == nil then return false end
+
+    -- Three arguments rather than four. The callback only reports that the
+    -- load finished, and handing a Lua function across as a delegate is one
+    -- more shape to be wrong about. If this build insists on it, the call
+    -- fails here rather than anywhere worse, and says so once.
+    local ok = pcall(function()
+        util:LoadIconToImage(world, path, image)
+    end)
+
+    if not said_once then
+        said_once = true
+        log.say("icons: LoadIconToImage " ..
+            (ok and "accepted three arguments" or "would not take three arguments"))
+    end
+
+    return ok
+end
+
 -- Does the game hand out item icons itself?
 --
 -- Creative Menu's pak, extracted and read, never touches a texture path. It
