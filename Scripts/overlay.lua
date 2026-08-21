@@ -49,9 +49,20 @@ local bp_state = "unasked"       -- unasked | asking | ready | absent
 -- drawing on its own canvas, which is how the panel tells the two apart.
 M.parts = nil
 
+-- Name to class, because finding them means asking the engine for everything
+-- of a class and picking ours out. The commandlet built each of these, so the
+-- pairing is not a guess: it is the same list, read the other way round.
 local BP_NAMES = {
-    "Root", "Backdrop", "Body", "Title", "Search",
-    "RuleList", "ItemList", "Actions", "NewRuleButton", "CloseButton",
+    { "Root",          "CanvasPanel" },
+    { "Backdrop",      "Border" },
+    { "Body",          "VerticalBox" },
+    { "Title",         "TextBlock" },
+    { "Search",        "EditableTextBox" },
+    { "RuleList",      "ScrollBox" },
+    { "ItemList",      "ScrollBox" },
+    { "Actions",       "HorizontalBox" },
+    { "NewRuleButton", "Button" },
+    { "CloseButton",   "Button" },
 }
 
 local function warn_once(key, message)
@@ -124,68 +135,80 @@ local function build_blueprint()
         return false
     end
 
-    -- Read from the tree's own list, not walked and not asked for by name.
+    -- Walked from the root, recursing only into things that are panels.
     --
-    -- Two wrong answers came first. GetWidgetFromName is the obvious call and
-    -- has no UFUNCTION macro on it, so UE4SS cannot make it and every name
-    -- came back empty. Walking with GetChildrenCount then hung the mod
-    -- outright: that one is a UFUNCTION on PanelWidget, but a TextBlock is
-    -- not a panel, and calling it on one is an unreflected call on a wrapper,
-    -- which is the same trap in a third costume.
+    -- Four attempts, and the difference between them is worth keeping.
+    -- GetWidgetFromName has no UFUNCTION macro, so UE4SS cannot call it.
+    -- AllWidgets is a real UPROPERTY but on an instance it holds only the
+    -- root, which the screenshot disproved on its own: the title and both
+    -- buttons were plainly on screen while the list claimed one widget.
+    -- FindAllOf per class froze the game, because six sweeps with a
+    -- GetFullName on every result is tens of thousands of string allocations
+    -- on the thread the engine is waiting for.
     --
-    -- AllWidgets is a UPROPERTY on WidgetTree holding every widget in it. One
-    -- property read, no method calls on anything whose type is not known, and
-    -- nothing to hang on.
-    local parts, found = {}, 0
+    -- Walking works and always did. The first walk guarded on the child
+    -- count, which is the wrong question: GetChildrenCount is a UFUNCTION on
+    -- PanelWidget, and asking a TextBlock is an unreflected call whatever the
+    -- answer looks like. Guard on the type instead and there is nothing to go
+    -- wrong. About a dozen widgets get visited, once.
+    local PANELS = {
+        CanvasPanel = true, VerticalBox = true, HorizontalBox = true,
+        ScrollBox = true, Border = true, Overlay = true,
+        Button = true, SizeBox = true, WidgetSwitcher = true,
+        ScaleBox = true, UniformGridPanel = true, WrapBox = true,
+    }
 
-    local function remember(w)
-        if not alive(w) then return end
+    local parts, found, seen = {}, 0, 0
+
+    local function class_of(w)
+        local name
+        pcall(function() name = w:GetClass():GetFName():ToString() end)
+        if type(name) == "string" then return name end
+        return nil
+    end
+
+    local function walk(w, depth)
+        if depth > 8 or seen > 200 or not alive(w) then return end
+        seen = seen + 1
 
         local full
         pcall(function() full = w:GetFullName() end)
-        if type(full) ~= "string" then return end
-
-        local name = full:match("([^%.]+)$")
-        if name and parts[name] == nil then
-            parts[name] = w
-            found = found + 1
-        end
-    end
-
-    local listed = nil
-    pcall(function() listed = made_tree.AllWidgets end)
-
-    if listed ~= nil then
-        local count = 0
-        pcall(function() count = #listed end)
-
-        if type(count) == "number" and count > 0 and count < 512 then
-            for i = 1, count do
-                local w
-                pcall(function() w = listed[i] end)
-                remember(w)
+        if type(full) == "string" then
+            local name = full:match("([^%.]+)$")
+            if name and parts[name] == nil then
+                parts[name] = w
+                found = found + 1
             end
         end
+
+        local class = class_of(w)
+        if not class or not PANELS[class] then return end
+
+        local count = 0
+        pcall(function() count = w:GetChildrenCount() end)
+        if type(count) ~= "number" or count < 1 or count > 64 then return end
+
+        for i = 0, count - 1 do
+            local child
+            pcall(function() child = w:GetChildAt(i) end)
+            walk(child, depth + 1)
+        end
     end
 
-    -- The root on its own, in case the list is empty on an instance. Better
-    -- a panel hosted on the right canvas with no other parts than no panel.
-    if found == 0 then
-        local root
-        pcall(function() root = made_tree.RootWidget end)
-        remember(root)
-    end
+    local root
+    pcall(function() root = made_tree.RootWidget end)
+    walk(root, 0)
 
     local names = {}
     for name in pairs(parts) do names[#names + 1] = name end
     table.sort(names)
 
-    log.say(string.format("overlay: blueprint tree has %d widget(s): %s",
+    log.say(string.format("overlay: found %d widget(s) in the blueprint: %s",
         found, #names > 0 and table.concat(names, ", ") or "none"))
 
-    for _, name in ipairs(BP_NAMES) do
-        if parts[name] == nil then
-            log.warn("  wanted but not in the tree: " .. name)
+    for _, pair in ipairs(BP_NAMES) do
+        if parts[pair[1]] == nil then
+            log.warn("  not found: " .. pair[1] .. " (" .. pair[2] .. ")")
         end
     end
 
