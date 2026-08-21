@@ -77,9 +77,9 @@ Read from disk tonight, all of them:
 
 Common denominators: **events over polling; latch after bootstrap; work only
 while someone is looking; near-zero async-thread activity; no file I/O in hot
-callbacks.** PalWorkPriority is the only continuously polling mod in the
-install, at 100ms/1s/10s cadences, with file writes inside the pass. The
-outlier status is the exposure.
+callbacks.** PalWorkPriority polls at 100ms/1s/10s cadences with file writes inside the
+pass. (An earlier draft claimed it was the only continuous poller in the
+install; section 8 corrects that and reads the real pollers.)
 
 ## 5. The fix plan this research supports
 
@@ -123,3 +123,71 @@ outlier status is the exposure.
   the real mechanism, and measured so (identical failure thresholds).
 - The chest sweep and camp_pals as causes: they were the most frequent
   victims. The stale-wrapper purge (186 vs 25 passes) still stands on its own.
+
+## 8. Addendum: the continuously-polling mods that survive (asked for and found)
+
+The claim in section 4 that PalWorkPriority is "the only continuously polling
+mod in the install" was **wrong** — a careless grep. A proper sweep found three
+perpetual pollers on this very disk, all published mods, and reading them
+answers exactly how polling is done safely. Also verified online:
+**[issue #1180](https://github.com/UE4SS-RE/RE-UE4SS/issues/1180)**, "Crash in
+process_simple_actions from overlapping ExecuteInGameThread callbacks" — our
+error, minimally reproduced, from overlapping deferred actions "whether through
+ExecuteWithDelay chains, direct scheduling from within callbacks, or multiple
+mods independently queuing work". A lock guard was added, but the crash class
+demonstrably persists (issue #1372, and our own dumps, are against newer
+builds).
+
+### BreedingHelper, sync.lua — a 100 ms ticker with a survival protocol
+
+Its comments cite #1180 by number and a **field incident dated 2026-07-22 in
+which UE4SS dropped the shared EngineTick hook** — our exact silent-stop.
+Verbatim:
+
+> "refs are the registry-corruption vector (one bad ref and UE4SS removes the
+> shared EngineTick hook, killing every queued action mod-wide) — while a
+> zero-ref channel is available the async one stays silent."
+
+The protocol, readable in full in the file:
+
+1. **Single-flight latch** — at most ONE ExecuteInGameThread registration in
+   existence, ever (`tick_inflight`); a generation counter invalidates stale
+   posts.
+2. **Fail closed** — a queued action silent for 5 s is never "recovered" by
+   registering a second one; the whole manager disables itself for the session
+   instead.
+3. **Zero-ref channel preferred** — while their panel's game-thread heartbeat
+   (driven by widget hooks, no registry refs) is pumping, the async ticker
+   stays completely silent.
+4. **Park when idle** — the 100 ms ticker exists only while a job runs, with a
+   two-phase park to close the race on re-arming.
+
+### InfiniteWeightInCamp — a 100 ms poller with zero LoopAsync
+
+The earlier "contradiction" was my grep matching the word LoopAsync inside its
+own comment. Its actual design, verbatim from the header: re-scan cost was
+"FindAllOf, not from the timer itself", so now it **scans once, caches the
+player references, re-scans only when one goes invalid, with back-off**; the
+per-beat work is "a couple of cheap property reads per player, NOT an object
+scan"; maintenance is tiered (boosted players every beat, entry checks every
+3rd). And the chain re-arms **inside ExecuteInGameThread**, so registry writes
+happen on the game thread.
+
+### What the pollers have in common
+
+- Per-beat work is a few property reads on cached references; object scans
+  are bootstrap-only, invalidation-driven, or insurance-rare.
+- Game-thread registrations are minimized, single-flight, and generation
+  guarded; they are the corruption vector, so their count is the budget.
+- When a game-thread-driven channel exists (hooks, widget heartbeats), the
+  async channel is silenced entirely.
+- Loops park when there is nothing to do.
+
+### What this adds to the fix plan in section 5
+
+The delayed-action migration stands, and gains three field-proven rules:
+single-flight for every deferred registration (the pass AND the UI body),
+park-when-idle for both loops, and fail-closed rather than re-register on a
+stuck action. The demand-hook pulse channel we already have is precisely the
+kind of "zero-ref channel" BreedingHelper prefers — pulses arrive on the game
+thread with no deferred registrations at all.
