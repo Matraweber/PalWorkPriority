@@ -206,7 +206,19 @@ local function run_pass(reason, explicit)
     end
 
     pass_reason, pass_explicit = reason, explicit
-    ExecuteInGameThread(pass_body)
+
+    -- A fresh closure each time, not pass_body itself.
+    --
+    -- Hoisting this to a named function was meant to stop reference churn and
+    -- did not: forced at three passes a second the tick was dropped in twelve
+    -- seconds. BreedingHelper hands ExecuteInGameThread a new anonymous
+    -- function about four times a second, which is a higher rate than that,
+    -- and keeps its tick.
+    --
+    -- The difference left is handing UE4SS the same Lua function object over
+    -- and over rather than a new one, so that is what changes here. Under test
+    -- with a twelve second reproducer rather than reasoned about.
+    ExecuteInGameThread(function() pass_body() end)
 end
 
 -- LoopAsync rather than a chain of ExecuteWithDelay calls.
