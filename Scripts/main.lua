@@ -167,6 +167,7 @@ end
 -- line, so a second pass overwriting a first is a wrong word, not a wrong
 -- decision.
 local pass_reason, pass_explicit
+local pass_queued = false
 
 local function pass_body()
     local ok, err = pcall(function()
@@ -178,6 +179,8 @@ local function pass_body()
                 "streamed in, so stand inside your base and try again.")
         end
     end)
+    pass_queued = false
+
     if not ok then
         log.error("pass failed: " .. tostring(err))
     end
@@ -204,6 +207,24 @@ local function run_pass(reason, explicit)
         end
         return
     end
+
+    -- One pass at a time.
+    --
+    -- Nothing stopped a second pass being queued while the first was still
+    -- running, and a pass sweeping chests takes longer than the interval the
+    -- stress drives it at, so they stacked up. Overlapping passes are wrong on
+    -- their own terms as well: two of them read the same camp and both decide
+    -- what to fence, which is how a pal could be assigned twice in a tick.
+    --
+    -- Whether this is also the reference fault is the thing being tested. It
+    -- is worth having either way.
+    if pass_queued then
+        if explicit then
+            log.say(reason .. ": a pass is already running")
+        end
+        return
+    end
+    pass_queued = true
 
     pass_reason, pass_explicit = reason, explicit
 

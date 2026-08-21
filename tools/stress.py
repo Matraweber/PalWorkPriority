@@ -64,15 +64,25 @@ def newest_crash():
 
 
 def main(argv):
+    light = "--light" in argv
+    argv = [a for a in argv if a != "--light"]
     limit = int(argv[0]) if argv else 240
     if not up():
         print("the game is not running")
         return 2
 
     start = time.time()
-    send(["pwp sweep 0"])
+    if light:
+        # Passes without the chest sweep, so each one is cheap and cannot
+        # overlap the next. Tells a fault driven by how often the game thread
+        # is asked for something apart from one driven by how long each ask
+        # takes.
+        send(["pwp sweep 30"])
+    else:
+        send(["pwp sweep 0"])
     time.sleep(2.0)
-    print("sweep interval set to 0; forcing passes for up to %ds" % limit)
+    print("sweep interval %s; forcing passes for up to %ds"
+          % ("left at 30s (light)" if light else "set to 0", limit))
     print("(the mod reads the trigger once a second, so this is roughly "
           "%d passes a second)" % PER_POLL)
     sys.stdout.flush()
