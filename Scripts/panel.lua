@@ -942,12 +942,173 @@ local function draw_item_picker(cfg, totals)
 end
 
 -- ---------------------------------------------------------------------------
+-- Drawing into the blueprint
+-- ---------------------------------------------------------------------------
+--
+-- The other drawing path puts every widget at a pixel offset on a canvas and
+-- does it ten times a second. It works, and it is the reason this menu felt
+-- laggy: nothing was moving, but everything was being told where to be.
+--
+-- Slate does layout. A row added to a ScrollBox stays where it is put, scrolls
+-- on its own, and reflows when the window changes, so the work here is to
+-- build a row when the rules change and then leave it alone. Only the numbers
+-- are touched per frame, because only the numbers change per frame.
+
+local bp_rows = {}          -- index -> { box, job, item, amount, remove }
+local bp_signature = nil    -- what the list was built from, to know when to rebuild
+
+local function bp_make(class_path, outer)
+    local cls = api.cdo(class_path)
+    if not cls or not alive(outer) then return nil end
+
+    local made
+    pcall(function() made = StaticConstructObject(cls, outer) end)
+    if alive(made) then return made end
+    return nil
+end
+
+local function bp_label(tree, text, colour_key, points)
+    local tb = bp_make("/Script/UMG.TextBlock", tree)
+    if not tb then return nil end
+
+    local ft = make_ftext(text)
+    if ft then pcall(function() tb:SetText(ft) end) end
+
+    pcall(function()
+        tb:SetColorAndOpacity({
+            SpecifiedColor = COLOUR[colour_key] or COLOUR.item,
+            ColorUseRule = 0,
+        })
+    end)
+
+    if points then set_size(tb, points) end
+    return tb
+end
+
+-- Build the rule rows. Structure only; the numbers are filled in after.
+local function bp_build(rules)
+    local parts = overlay.parts
+    local list = parts and parts.RuleList
+    if not alive(list) or not alive(root_tree) then return false end
+
+    pcall(function() list:ClearChildren() end)
+    bp_rows = {}
+
+    if #rules == 0 then
+        local empty = bp_label(root_tree,
+            "no rules yet, every job runs unlimited", "dim", 16)
+        if empty then pcall(function() list:AddChild(empty) end) end
+        return true
+    end
+
+    for i, rule in ipairs(rules) do
+        local row = bp_make("/Script/UMG.HorizontalBox", root_tree)
+        if row then
+            local cells = {
+                job    = bp_label(root_tree, workdefs.label(rule.work), "action", 16),
+                item   = bp_label(root_tree, rule.item, "item", 16),
+                amount = bp_label(root_tree, "", "met", 16),
+                remove = bp_label(root_tree, "remove", "dim", 16),
+            }
+
+            -- Widths chosen once here rather than as pixel offsets per frame.
+            -- Fill weights mean the columns still line up at any panel size,
+            -- which the hand placed version could never manage.
+            local widths = { job = 3, item = 4, amount = 3, remove = 2 }
+
+            for _, name in ipairs({ "job", "item", "amount", "remove" }) do
+                local cell = cells[name]
+                if cell then
+                    local slot
+                    pcall(function() slot = row:AddChild(cell) end)
+                    if alive(slot) then
+                        -- The struct written out, because FSlateChildSize is
+                        -- a C++ constructor and Lua has no way to call one.
+                        -- SizeRule 1 is Fill; Value is the share of the row.
+                        pcall(function()
+                            slot:SetSize({
+                                Value = widths[name],
+                                SizeRule = 1,
+                            })
+                        end)
+                        pcall(function() slot:SetPadding({
+                            Left = 4, Top = 3, Right = 4, Bottom = 3 }) end)
+                    end
+                end
+            end
+
+            pcall(function() list:AddChild(row) end)
+            bp_rows[i] = { box = row, cells = cells, rule = rule }
+        end
+    end
+
+    return true
+end
+
+-- Per frame, and deliberately almost nothing: the stock number and whether it
+-- has been met. Everything else was settled when the row was built.
+local function bp_refresh(rules, totals)
+    for i, entry in ipairs(bp_rows) do
+        local rule = rules[i]
+        local amount = entry.cells and entry.cells.amount
+
+        if rule and alive(amount) then
+            local have = totals[rule.item] or 0
+            local met = have >= rule.amount
+
+            local token = have .. "/" .. rule.amount
+            if entry.token ~= token then
+                entry.token = token
+
+                local ft = make_ftext(string.format("%d / %d%s",
+                    have, rule.amount, met and "   done" or ""))
+                if ft then pcall(function() amount:SetText(ft) end) end
+
+                pcall(function()
+                    amount:SetColorAndOpacity({
+                        SpecifiedColor = met and COLOUR.met or COLOUR.unmet,
+                        ColorUseRule = 0,
+                    })
+                end)
+            end
+        end
+    end
+end
+
+local function draw_list_bp(cfg, totals)
+    local rules = rule_list(cfg)
+
+    -- Rebuilt only when the set of rules changes, not when their numbers do.
+    -- Rebuilding on every stock change would tear the list down five times a
+    -- minute for no visible reason.
+    local bits = {}
+    for _, rule in ipairs(rules) do
+        bits[#bits + 1] = rule.work .. "|" .. rule.item .. "|" .. rule.amount
+    end
+    local signature = table.concat(bits, ";")
+
+    if signature ~= bp_signature then
+        if bp_build(rules) then bp_signature = signature end
+    end
+
+    bp_refresh(rules, totals)
+end
+
+-- ---------------------------------------------------------------------------
 -- Drawing
 -- ---------------------------------------------------------------------------
 
 -- One pass of whichever screen is up, returning how many rows tall it came
 -- out. Separated so the frame that changes height can run it twice.
 local function redraw(cfg, totals)
+    -- Hosted on the blueprint, the rules list is Slate's job. The picker is
+    -- still drawn the old way for now, so the two are not swapped over at
+    -- once and a failure has somewhere to fall back to.
+    if overlay.parts and mode ~= "item" then
+        draw_list_bp(cfg, totals)
+        return 0
+    end
+
     if mode == "item" then
         return draw_item_picker(cfg, totals)
     end
@@ -1061,6 +1222,7 @@ function M.reset()
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     images, grid_from, grid_count = {}, 0, 0
+    bp_rows, bp_signature = {}, nil
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false

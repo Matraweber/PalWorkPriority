@@ -202,6 +202,8 @@ local ui_running = false
 -- while the panel runs fast.
 local grid_owed = 0
 
+local tick_error = nil
+
 local function ui_tick()
     if not ui_running then return end
 
@@ -211,42 +213,68 @@ local function ui_tick()
     -- the cost of a frame, the wait between frames. It also let the mouse
     -- and the keyboard disagree about the current row long enough for two of
     -- them to be marked at once.
-    local delay = panel().open and 100 or 1000
-    grid_owed = grid_owed + delay
+    -- Everything below is guarded, and the reschedule at the end is not.
+    --
+    -- That order matters more than it looks. panel() is a require, and a
+    -- require throws when the module it fetches has an error in it. Before
+    -- this, one bad edit reloaded into a dead mod: the accessor threw here,
+    -- the tick never reached its own reschedule, and nothing ran again until
+    -- the game was restarted. A reload loop where a mistake costs a restart
+    -- is not a reload loop.
+    local delay = 1000
 
-    -- Runs even when disabled, so the grid still reflects edits. It costs
-    -- nothing while the stand is shut.
-    if cfg then
-        ExecuteInGameThread(function()
-            -- The grid stays on its second, because refreshing it means a
-            -- FindAllOf over every cell and it has nothing to gain from ten
-            -- times the rate.
-            if grid_owed >= 1000 then
-                grid_owed = 0
-                pcall(function() ui.refresh(cfg) end)
+    local function body()
+        delay = panel().open and 100 or 1000
+        grid_owed = grid_owed + delay
+
+        -- Runs even when disabled, so the grid still reflects edits. It costs
+        -- nothing while the stand is shut.
+        if cfg then
+            ExecuteInGameThread(function()
+                -- The grid stays on its second, because refreshing it means a
+                -- FindAllOf over every cell and it has nothing to gain from ten
+                -- times the rate.
+                if grid_owed >= 1000 then
+                    grid_owed = 0
+                    pcall(function() ui.refresh(cfg) end)
+                end
+
+                -- Drawn independently: the panel opens on a hotkey and has to
+                -- keep working with the stand shut.
+                pcall(function() panel().refresh(cfg) end)
+
+                -- Checked here rather than on a timer of its own, so a reload
+                -- can never land between two halves of a draw.
+                pcall(function() reload.poll() end)
+            end)
+
+            if panel().wants_pass then
+                panel().wants_pass = false
+                run_pass("rule change")
             end
 
-            -- Drawn independently: the panel opens on a hotkey and has to
-            -- keep working with the stand shut.
-            pcall(function() panel().refresh(cfg) end)
-
-            -- Checked here rather than on a timer of its own, so a reload
-            -- can never land between two halves of a draw.
-            pcall(function() reload.poll() end)
-        end)
-
-        if panel().wants_pass then
-            panel().wants_pass = false
-            run_pass("rule change")
-        end
-
-        -- A priority just changed. Re-fence now rather than leaving the edit
-        -- inert until the next tick, which reads as the click doing nothing.
-        if ui.wants_pass then
-            ui.wants_pass = false
-            run_pass("edit")
+            -- A priority just changed. Re-fence now rather than leaving the edit
+            -- inert until the next tick, which reads as the click doing nothing.
+            if ui.wants_pass then
+                ui.wants_pass = false
+                run_pass("edit")
+            end
         end
     end
+
+    local ok, err = pcall(body)
+    if not ok then
+        -- Said once per distinct complaint rather than ten times a second,
+        -- which is what an error in a redraw would otherwise produce.
+        if tick_error ~= tostring(err) then
+            tick_error = tostring(err)
+            log.warn("tick: " .. tick_error)
+        end
+    elseif tick_error then
+        tick_error = nil
+        log.say("tick: recovered")
+    end
+
     ExecuteWithDelay(delay, ui_tick)
 end
 
