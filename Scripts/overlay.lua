@@ -581,113 +581,92 @@ function M.slot_probe()
     end
 end
 
--- Where in the mounted pak is the widget class?
+-- A class out of our own cooked pak.
 --
--- The pak mounts. That is settled: BPModLoaderMod logs "Loading mod:
--- PalWorkPriority" and, unlike every other blueprint mod on this machine,
--- without the "ModClass is not valid" that follows when it cannot find the
--- actor. So the mount point is right and ModActor is reachable.
+-- LoadAsset does not reach it, and that is not a bug in the pak. UnrealPak
+-- lists UI/WBP_WorkRules.uasset inside it at the right mount point, the
+-- cooked package names WBP_WorkRules_C and WidgetBlueprintGeneratedClass
+-- outright, and ModActor sits beside it and loads. Three spellings of
+-- LoadAsset found none of it.
 --
--- What is not settled is the widget's path, and rather than guess at it a
--- fourth time this looks. ModActor is the worked example: whatever shape its
--- class name takes is the shape the widget's takes too.
+-- The route that works is the one BPModLoaderMod uses on our own ModActor,
+-- which is the proof that it works: ask the asset registry, not the loader.
+-- Read out of its source rather than guessed, which is the only reason this
+-- took one attempt instead of five.
+local registry = nil
+
+local function helpers()
+    if registry ~= nil then return registry end
+
+    local found
+    pcall(function()
+        found = StaticFindObject(
+            "/Script/AssetRegistry.Default__AssetRegistryHelpers")
+    end)
+
+    if found ~= nil then
+        local ok = false
+        pcall(function() ok = found:IsValid() end)
+        if ok then registry = found end
+    end
+    return registry
+end
+
+-- FindOrAddFName, in the two spellings this build might take. A name that is
+-- merely looked up comes back as None when the game has never seen it, and a
+-- name from a mod's own pak is exactly the kind the game has never seen.
+local function name_of(text)
+    local made
+    pcall(function() made = FName(text, EFindName.FNAME_Add) end)
+    if made == nil then
+        pcall(function() made = FName(text) end)
+    end
+    return made
+end
+
+function M.mod_class(package, asset)
+    local reg = helpers()
+    if reg == nil then return nil end
+
+    local data = {
+        PackageName = name_of(package),
+        AssetName = name_of(asset),
+    }
+
+    local class
+    pcall(function() class = reg:GetAsset(data) end)
+    if class == nil then return nil end
+
+    local ok = false
+    pcall(function() ok = class:IsValid() end)
+    if ok then return class end
+    return nil
+end
+
 function M.widget_probe()
     log.say("widget probe")
 
-    local base = "/Game/Mods/PalWorkPriority"
+    local reg = helpers()
+    log.say("  asset registry helpers: " .. tostring(reg ~= nil))
 
-    -- Candidates, in the order they are worth believing.
-    local tries = {
-        base .. "/UI/WBP_WorkRules.WBP_WorkRules_C",
-        base .. "/UI/WBP_WorkRules.WBP_WorkRules",
-        base .. "/WBP_WorkRules.WBP_WorkRules_C",
-        base .. "/ModActor.ModActor_C",
+    local cases = {
+        { "/Game/Mods/PalWorkPriority/ModActor", "ModActor_C" },
+        { "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules", "WBP_WorkRules_C" },
     }
 
-    local function here(path)
-        local found
-        pcall(function() found = StaticFindObject(path) end)
-        if found == nil then return false end
+    for _, case in ipairs(cases) do
+        local class = M.mod_class(case[1], case[2])
 
-        local ok = false
-        pcall(function() ok = found:IsValid() end)
-        return ok == true
+        local full
+        if class ~= nil then pcall(function() full = class:GetFullName() end) end
+
+        log.say(string.format("  %-22s %s", case[2],
+            full or "not found through the registry"))
     end
 
-    local function report(path)
-        log.say(string.format("  %-52s %s", path:gsub("^/Game/Mods/", ""),
-            here(path) and "FOUND" or "no"))
-    end
-
-    for _, path in ipairs(tries) do report(path) end
-
-    -- The last probe only looked, and nothing had loaded the widget, so of
-    -- course it was not there. ModActor was found because BPModLoaderMod
-    -- loads it; nobody loads ours.
-    --
-    -- The pak is not in question. UnrealPak lists UI/WBP_WorkRules.uasset in
-    -- it at the right mount point. So this asks for it, in each of the forms
-    -- it might want, and says which one worked.
-    local want = base .. "/UI/WBP_WorkRules.WBP_WorkRules_C"
-
-    local forms = {
-        { "the class itself", want },
-        { "the package", base .. "/UI/WBP_WorkRules" },
-        { "the blueprint object", base .. "/UI/WBP_WorkRules.WBP_WorkRules" },
-    }
-
-    for _, form in ipairs(forms) do
-        if here(want) then break end
-
-        ExecuteInGameThread(function()
-            pcall(function() LoadAsset(form[2]) end)
-        end)
-
-        log.say(string.format("  asked for %-20s -> %s", form[1],
-            here(want) and "class is now here" or "still not here"))
-    end
-
-    -- And what the game actually holds with our name on it, which needs no
-    -- guessing at all. Anything mounted from the pak turns up here.
-    log.say("  objects loaded from the mod package:")
-
-    local shown = {}
-    local count = 0
-
-    for _, kind in ipairs({ "WidgetBlueprintGeneratedClass",
-                            "BlueprintGeneratedClass", "Package" }) do
-        pcall(function()
-            for _, obj in ipairs(FindAllOf(kind) or {}) do
-                if count >= 12 then break end
-                local full
-                pcall(function() full = obj:GetFullName() end)
-                if type(full) == "string"
-                    and full:find("PalWorkPriority", 1, true)
-                    and not shown[full] then
-                    shown[full] = true
-                    count = count + 1
-                    log.say("    " .. full)
-                end
-            end
-        end)
-    end
-
-    if count == 0 then
-        log.say("    none, which would mean the pak mounted but nothing in " ..
-            "it has been loaded yet")
-    end
-
-    -- A load started on the game thread is not finished when the call
-    -- returns, which the icons taught at some cost. Asked again once it has
-    -- had a moment.
-    ExecuteWithDelay(3000, function()
-        if here(want) then
-            log.say("widget probe: the class is here, the route works end to end")
-        else
-            log.say("widget probe: still nothing after loading, so the class " ..
-                "inside the pak is not named WBP_WorkRules_C")
-        end
-    end)
+    -- ModActor is the control. If it comes back and the widget does not, the
+    -- difference is in the asset rather than in the route, and that is worth
+    -- knowing before anything else is changed.
 end
 
 function M.diagnose()
