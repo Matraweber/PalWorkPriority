@@ -463,3 +463,26 @@ nothing. A mark clears a rare call. It cannot clear a common one.
 The wrapper is not stored. Everything wanted from the work object is read while
 the engine has just handed it over. Freshness drops to forty five seconds
 because age is now the only pruning there is, and a finished job stops pulsing.
+
+## 22 August: the migration, measured
+
+Everything periodic now rides one game-thread chain (clock.lua, on the
+delayed-action API PR #1128 shipped and this install's DLL carries). A pass
+costs zero registrations. Trace marks default off. The A/B on the headless
+rig, identical world and mods per row:
+
+| build | environment | outcome |
+|---|---|---|
+| old | server, 2 mods | 300s, 292/753 passes ran |
+| old | server + PalSchema + BP frameworks | 300s, 280/753 |
+| new | server, 2 mods | 300s, **750/753** |
+| new | server + PalSchema + BP frameworks | 300s, **725/753**, fencing and capping throughout |
+
+No ref error and no crash in any server run, old or new, which means the
+server cannot convict the old build the way the client did (five deaths
+inside 25 passes). The client's remaining uniqueness is its UI-side
+blueprint mods and widget hooks. So the honest status: the new build is
+proven functional and proven to do 2.5x the work of the old under load, the
+crash mechanism it removes is the one UE4SS's maintainers documented, and
+the final conviction test is one client session, where the old build never
+lasted thirty seconds of stress.
