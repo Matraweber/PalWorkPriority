@@ -224,7 +224,7 @@ local function ui_tick()
     local delay = 1000
 
     local function body()
-        delay = panel().open and 100 or 1000
+        delay = panel().fast() and 100 or 1000
         grid_owed = grid_owed + delay
 
         -- Runs even when disabled, so the grid still reflects edits. It costs

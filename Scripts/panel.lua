@@ -704,14 +704,30 @@ end
 local scanned_once = nil
 local scanned_at = 0
 
+-- What storage holds, taken once and then left alone for a while.
+--
+-- Fresh when the panel opens, because a menu that shows yesterday's numbers
+-- is worse than useless, and then at most every few seconds after that. The
+-- numbers move slowly; asking ten times a second for a figure that changes
+-- once a pass was work nobody could see the result of.
+local stock = nil
+local stock_at = 0
+local STOCK_EVERY = 5.0
+
 local function stock_totals(cfg)
-    if next(scheduler.last_totals or {}) ~= nil then
-        return scheduler.last_totals
+    local now = os.clock()
+    if stock and (now - stock_at) < STOCK_EVERY then
+        return stock
     end
 
-    local now = os.clock()
+    if next(scheduler.last_totals or {}) ~= nil then
+        stock, stock_at = scheduler.last_totals, now
+        return stock
+    end
+
     if scanned_once and (now - scanned_at) < 15.0 then
-        return scanned_once
+        stock, stock_at = scanned_once, now
+        return stock
     end
 
     local opts = {
@@ -736,6 +752,7 @@ local function stock_totals(cfg)
     end
 
     scanned_once, scanned_at = totals, now
+    stock, stock_at = totals, now
     return totals
 end
 
@@ -1197,6 +1214,19 @@ local function blank_everything()
     hits, hover_key = {}, nil
 end
 
+-- Does the panel need a fast tick?
+--
+-- Only the hand drawn screens do, and only because hover on a widget placed
+-- by pixel arithmetic has to be worked out and redrawn by us. On the
+-- blueprint, Slate does hover, focus and scrolling itself, and a row that was
+-- built once stays where it was put, so ten redraws a second buy nothing at
+-- all and cost exactly what the last video showed.
+function M.fast()
+    if not M.open then return false end
+    if overlay.parts and mode ~= "item" then return false end
+    return true
+end
+
 function M.toggle()
     M.open = not M.open
 
@@ -1206,6 +1236,10 @@ function M.toggle()
         mode, page, show_all = "list", 0, false
         return
     end
+
+    -- Dropped rather than kept, so opening the panel is what makes the
+    -- numbers current. Everything after that can wait a few seconds.
+    stock, stock_at = nil, 0
 
     if not overlay.show() then
         M.open = false
