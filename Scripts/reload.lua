@@ -194,6 +194,17 @@ local function run(line)
         return
     end
 
+    local wanted = line:match("^mode%s+(%a+)$")
+    if wanted then
+        local panel = package.loaded["panel"]
+        if panel and panel.set_mode and panel.set_mode(wanted) then
+            log.say("panel screen: " .. wanted)
+        else
+            log.warn("no such screen: " .. wanted)
+        end
+        return
+    end
+
     local command = line:match("^cmd%s+(.+)$")
     if command then
         console(command)

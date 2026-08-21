@@ -237,6 +237,35 @@ function M.get(item_id)
     return nil
 end
 
+-- The icon's name for an id, without loading a thing.
+--
+-- For the soft texture route, which hands the engine a path and lets it
+-- stream the texture on its own schedule. That is how a grid of icons appears
+-- whole rather than one every quarter second: the queue below exists because
+-- nine LoadAsset calls in a frame killed the game, and a path costs nothing
+-- to hand over.
+--
+-- Deliberately does not look around the running game, since that is a sweep
+-- over every texture in memory and this is called once per tile.
+function M.name_for(item_id)
+    if type(item_id) ~= "string" or item_id == "" then return nil end
+
+    local key = item_id:lower()
+    local name = resolved[key]
+
+    if name == false then return nil end
+    if name == nil then
+        name = icondex.NAMES[key]
+        if name == nil then return nil end
+        resolved[key] = name
+    end
+
+    return name
+end
+
+M.FOLDER = icondex.FOLDER
+M.PREFIX = PREFIX
+
 -- A world switch invalidates nothing held here, since nothing is held, but
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()

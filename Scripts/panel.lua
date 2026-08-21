@@ -1113,6 +1113,120 @@ local function bp_refresh(rules, totals)
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- The picker, as a grid inside the blueprint
+-- ---------------------------------------------------------------------------
+--
+-- A UniformGridPanel built into ItemList, and a tile per item: a SizeBox to
+-- fix the square, a Border to sit behind it, an Image on top.
+--
+-- The icons go on as soft textures rather than loaded ones. A soft texture is
+-- a path, and the engine streams it when it needs it, batched and prioritised
+-- on its own schedule. The queue in icons.lua exists because nine LoadAsset
+-- calls in one frame killed the game; handing over a path costs nothing, so
+-- a page can be asked for all at once. That is the difference between a grid
+-- that fills in one icon every quarter second and one that is simply there.
+
+local TILE_BP = 76          -- the square, in pixels
+local COLS_BP = 8
+
+local bp_grid = nil         -- the UniformGridPanel inside ItemList
+local bp_tiles = {}         -- index -> { size, border, image, name, item }
+local bp_pick_sig = nil
+
+-- The soft path for an item's icon, in the shape FSoftObjectPath takes in
+-- 5.1: a top level asset path of two names, and an empty subobject string.
+local function soft_icon(item)
+    local name = icons.name_for(item)
+    if name == nil then return nil end
+
+    local leaf = icons.PREFIX .. name
+    return {
+        AssetPath = {
+            PackageName = FName(icons.FOLDER .. leaf),
+            AssetName = FName(leaf),
+        },
+        SubPathString = "",
+    }
+end
+
+local function bp_tile(item, have)
+    local box = bp_make("/Script/UMG.SizeBox", root_tree)
+    if not box then return nil end
+
+    pcall(function() box:SetWidthOverride(TILE_BP) end)
+    pcall(function() box:SetHeightOverride(TILE_BP) end)
+
+    local border = bp_make("/Script/UMG.Border", root_tree)
+    if border then
+        pcall(function() border:SetBrushColor(ROW_BG) end)
+        pcall(function() box:AddChild(border) end)
+    end
+
+    local holder = border or box
+
+    local soft = soft_icon(item)
+    if soft then
+        local img = bp_make("/Script/UMG.Image", root_tree)
+        if img then
+            pcall(function() img:SetBrushFromSoftTexture(soft, true) end)
+            pcall(function() holder:AddChild(img) end)
+            return box, img, nil
+        end
+    end
+
+    -- No icon known for this id, so its name has to do. Short, because a
+    -- seventy six pixel square is not a caption.
+    local label = bp_label(root_tree, item:sub(1, 8), "item", 10)
+    if label then pcall(function() holder:AddChild(label) end) end
+    return box, nil, label
+end
+
+local function bp_picker(cfg, totals)
+    local parts = overlay.parts
+    local list = parts and parts.ItemList
+    if not alive(list) or not alive(root_tree) then return end
+
+    local source = picker_source(totals)
+
+    -- Rebuilt when the list of items changes, which is rarely. Typing in the
+    -- search box changes it, and that is exactly when a rebuild is wanted.
+    local signature = table.concat(source, ";") .. "|" .. #source
+    if signature == bp_pick_sig then return end
+    bp_pick_sig = signature
+
+    pcall(function() list:ClearChildren() end)
+    bp_tiles = {}
+
+    bp_grid = bp_make("/Script/UMG.UniformGridPanel", root_tree)
+    if not bp_grid then return end
+
+    pcall(function()
+        bp_grid:SetSlotPadding({ Left = 3, Top = 3, Right = 3, Bottom = 3 })
+    end)
+    pcall(function() list:AddChild(bp_grid) end)
+
+    local shown = math.min(#source, COLS_BP * 6)
+    local with_icon = 0
+
+    for i = 1, shown do
+        local item = source[i]
+        local box, img, label = bp_tile(item, totals[item] or 0)
+
+        if box then
+            local row = math.floor((i - 1) / COLS_BP)
+            local col = (i - 1) % COLS_BP
+
+            pcall(function() bp_grid:AddChildToUniformGrid(box, row, col) end)
+            bp_tiles[i] = { box = box, image = img, label = label, item = item }
+            if img then with_icon = with_icon + 1 end
+        end
+    end
+
+    log.say(string.format("picker: %d tile(s), %d with an icon, of %d item(s)",
+        shown, with_icon, #source))
+end
+
 local function draw_list_bp(cfg, totals)
     local rules = rule_list(cfg)
 
@@ -1139,11 +1253,28 @@ end
 -- One pass of whichever screen is up, returning how many rows tall it came
 -- out. Separated so the frame that changes height can run it twice.
 local function redraw(cfg, totals)
-    -- Hosted on the blueprint, the rules list is Slate's job. The picker is
-    -- still drawn the old way for now, so the two are not swapped over at
-    -- once and a failure has somewhere to fall back to.
-    if overlay.parts and mode ~= "item" then
-        draw_list_bp(cfg, totals)
+    -- On the blueprint both screens are Slate's job, and switching between
+    -- them is a visibility flip rather than tearing anything down. That is
+    -- what the two ScrollBoxes in the shell were for.
+    if overlay.parts then
+        local rules = overlay.parts.RuleList
+        local items = overlay.parts.ItemList
+        local picking = (mode == "item")
+
+        -- 0 is Visible and 1 is Collapsed, which takes no space at all
+        -- rather than merely being invisible.
+        if alive(rules) then
+            pcall(function() rules:SetVisibility(picking and 1 or 0) end)
+        end
+        if alive(items) then
+            pcall(function() items:SetVisibility(picking and 0 or 1) end)
+        end
+
+        if picking then
+            bp_picker(cfg, totals)
+        else
+            draw_list_bp(cfg, totals)
+        end
         return 0
     end
 
@@ -1248,6 +1379,15 @@ function M.fast()
     return true
 end
 
+-- Switch screens without clicking, for driving the panel from outside while
+-- it holds the input mode and no key press reaches us.
+function M.set_mode(name)
+    if name ~= "item" and name ~= "list" then return false end
+    mode, page, sel = name, 0, 1
+    want_focus = (name == "item")
+    return true
+end
+
 function M.toggle()
     M.open = not M.open
 
@@ -1278,6 +1418,7 @@ function M.reset()
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     images, grid_from, grid_count = {}, 0, 0
     bp_rows, bp_signature = {}, nil
+    bp_grid, bp_tiles, bp_pick_sig = nil, {}, nil
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false
