@@ -19,6 +19,7 @@ local store = require("store")
 local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
+local remote = require("remote")
 local icons = require("icons")
 local net = require("net")
 local overlay = require("overlay")
@@ -43,6 +44,7 @@ local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
+remote.path = DIR .. "remote.txt"
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
@@ -220,6 +222,12 @@ local function ui_tick()
             -- Drawn independently: the panel opens on a hotkey and has to
             -- keep working with the stand shut.
             pcall(function() panel.refresh(cfg) end)
+
+            -- Instructions from outside, read and acted on here rather than
+            -- on a timer of their own, so one can never land between two
+            -- halves of a draw. Both are already on the game thread.
+            pcall(function() remote.poll() end)
+            pcall(function() remote.drain() end)
         end)
 
         if panel.wants_pass then

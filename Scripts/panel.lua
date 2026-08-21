@@ -1047,6 +1047,15 @@ local function blank_everything()
     hits, hover_key = {}, nil
 end
 
+-- Switch screens without clicking, for driving the panel from outside while
+-- it holds the input mode and no key press reaches us.
+function M.set_screen(name)
+    if name ~= "item" and name ~= "list" then return false end
+    mode, page, sel = name, 0, 1
+    want_focus = (name == "item")
+    return true
+end
+
 function M.toggle()
     M.open = not M.open
 
