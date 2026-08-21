@@ -155,3 +155,38 @@ too if this recurs.
 and both were argued from reading rather than from evidence. What actually
 found it was a log message that had been written into UE4SS.log every time this
 happened, in a file already open in front of me.
+
+
+## The fix that was not enough, and the one that follows from evidence
+
+Hoisting the two recurring callbacks into named functions did not stop it. A
+clean session with the fix in, no auto reload, one mod start:
+
+```
+21:22:32.18 [UE4SS.EngineTick.LuaModImpl] Hook threw exception:
+  "[Lua::Registry::get_function_ref] Ref was not function", removing hook!
+```
+
+Naming the function stops a closure being allocated. It does not stop the
+reference churn, because `ExecuteWithDelay` registers a new Lua reference on
+every call, named callback or not. Rescheduling from inside the callback means
+one new reference per iteration forever: one a second for the UI loop, one
+every ten seconds for the pass.
+
+`LoopAsync(ms, fn)` registers once and repeats, returning true to stop. One
+reference for the life of the loop. Every stable mod in this install uses it
+for repeating work, and none of them chains `ExecuteWithDelay`. Both loops now
+use it.
+
+The `ExecuteWithDelay` calls that remain are one-shots on world entry, which is
+the shape the stable mods use too. The icon pump does chain, but it stops when
+its queue empties rather than running forever, and it is dormant while the
+panel is shut, which covers the sessions that crashed without it ever opening.
+
+### Method note
+
+Two theories were argued from reading the mod's own code and both were wrong.
+Both answers came from reading something else: UE4SS's log for the cause, and
+the other mods on disk for the shape. The mod's own source was the least
+useful thing to stare at, because the bug was never in what it did, only in how
+it asked to be called back.

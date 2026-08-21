@@ -208,16 +208,30 @@ local function run_pass(reason, explicit)
     ExecuteInGameThread(pass_body)
 end
 
+-- LoopAsync rather than a chain of ExecuteWithDelay calls.
+--
+-- Rescheduling from inside the callback registers a new Lua reference every
+-- time round, so this loop alone minted one every ten seconds and the UI loop
+-- below minted one every second, all session. UE4SS eventually complained
+-- that one of them was no longer a function and dropped the engine tick with
+-- it. LoopAsync registers once and repeats, so there is a single reference for
+-- the lifetime of the mod.
+--
+-- Every stable mod in this install does it this way. Naming the callbacks was
+-- not enough on its own, because the churn was in the scheduling and not in
+-- the closures.
+--
+-- Returning true stops the loop. Neither flag is ever cleared today, so the
+-- guards are there for correctness rather than because anything sets them.
 local function tick()
-    if not timer_running then return end
+    if not timer_running then return true end
     run_pass("tick")
-    ExecuteWithDelay(cfg.interval_seconds * 1000, tick)
 end
 
 local function start_timer()
     if timer_running then return end
     timer_running = true
-    ExecuteWithDelay(cfg.interval_seconds * 1000, tick)
+    LoopAsync(cfg.interval_seconds * 1000, tick)
 end
 
 -- The grid needs its own cadence: the stand can be opened at any moment and
@@ -251,17 +265,28 @@ local function ui_body()
     pcall(function() remote.drain() end)
 end
 
-local function ui_tick()
-    if not ui_running then return end
+-- LoopAsync takes one interval for the life of the loop, so the cadence that
+-- used to live in the delay argument lives here instead. The loop beats at the
+-- fast rate and the body is gated: ten times a second with the panel up, once
+-- a second with it shut.
+--
+-- A menu that answers once a second is not a menu. The panel redrew on the one
+-- second tick, so a hover highlight took up to a second to follow the pointer,
+-- which is what "laggy and unresponsive" was: not the cost of a frame, the
+-- wait between frames. It also let the mouse and the keyboard disagree about
+-- the current row long enough for two of them to be marked at once.
+local UI_BEAT = 100
+local body_owed = 0
 
-    -- A menu that answers once a second is not a menu. The panel redrew on
-    -- this one second tick, so a hover highlight took up to a second to
-    -- follow the pointer, which is what "laggy and unresponsive" was: not
-    -- the cost of a frame, the wait between frames. It also let the mouse
-    -- and the keyboard disagree about the current row long enough for two of
-    -- them to be marked at once.
-    local delay = panel.open and 100 or 1000
-    grid_owed = grid_owed + delay
+local function ui_tick()
+    if not ui_running then return true end
+
+    grid_owed = grid_owed + UI_BEAT
+    body_owed = body_owed + UI_BEAT
+
+    local want = panel.open and UI_BEAT or 1000
+    if body_owed < want then return end
+    body_owed = 0
 
     -- Runs even when disabled, so the grid still reflects edits. It costs
     -- nothing while the stand is shut.
@@ -280,13 +305,12 @@ local function ui_tick()
             run_pass("edit")
         end
     end
-    ExecuteWithDelay(delay, ui_tick)
 end
 
 local function start_ui()
     if ui_running then return end
     ui_running = true
-    ExecuteWithDelay(1000, ui_tick)
+    LoopAsync(UI_BEAT, ui_tick)
 end
 
 -- ---------------------------------------------------------------------------
