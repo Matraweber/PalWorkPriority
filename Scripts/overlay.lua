@@ -604,15 +604,47 @@ function M.widget_probe()
         base .. "/ModActor.ModActor_C",
     }
 
-    for _, path in ipairs(tries) do
+    local function here(path)
         local found
         pcall(function() found = StaticFindObject(path) end)
+        if found == nil then return false end
 
         local ok = false
-        if found ~= nil then pcall(function() ok = found:IsValid() end) end
+        pcall(function() ok = found:IsValid() end)
+        return ok == true
+    end
 
+    local function report(path)
         log.say(string.format("  %-52s %s", path:gsub("^/Game/Mods/", ""),
-            ok and "FOUND" or "no"))
+            here(path) and "FOUND" or "no"))
+    end
+
+    for _, path in ipairs(tries) do report(path) end
+
+    -- The last probe only looked, and nothing had loaded the widget, so of
+    -- course it was not there. ModActor was found because BPModLoaderMod
+    -- loads it; nobody loads ours.
+    --
+    -- The pak is not in question. UnrealPak lists UI/WBP_WorkRules.uasset in
+    -- it at the right mount point. So this asks for it, in each of the forms
+    -- it might want, and says which one worked.
+    local want = base .. "/UI/WBP_WorkRules.WBP_WorkRules_C"
+
+    local forms = {
+        { "the class itself", want },
+        { "the package", base .. "/UI/WBP_WorkRules" },
+        { "the blueprint object", base .. "/UI/WBP_WorkRules.WBP_WorkRules" },
+    }
+
+    for _, form in ipairs(forms) do
+        if here(want) then break end
+
+        ExecuteInGameThread(function()
+            pcall(function() LoadAsset(form[2]) end)
+        end)
+
+        log.say(string.format("  asked for %-20s -> %s", form[1],
+            here(want) and "class is now here" or "still not here"))
     end
 
     -- And what the game actually holds with our name on it, which needs no
@@ -644,6 +676,18 @@ function M.widget_probe()
         log.say("    none, which would mean the pak mounted but nothing in " ..
             "it has been loaded yet")
     end
+
+    -- A load started on the game thread is not finished when the call
+    -- returns, which the icons taught at some cost. Asked again once it has
+    -- had a moment.
+    ExecuteWithDelay(3000, function()
+        if here(want) then
+            log.say("widget probe: the class is here, the route works end to end")
+        else
+            log.say("widget probe: still nothing after loading, so the class " ..
+                "inside the pak is not named WBP_WorkRules_C")
+        end
+    end)
 end
 
 function M.diagnose()
