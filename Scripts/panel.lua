@@ -549,6 +549,56 @@ local function picture(key, px, py, size, texture, token)
     end
 end
 
+-- A readable label for an item with no icon.
+--
+-- The old one took the first nine characters, which is how two tiles both came
+-- to read "PalSphere": everything that tells PalSphere from PalSphere_Gold
+-- lives past the ninth character. Item ids are CamelCase and sometimes carry
+-- an underscore, so they split into words cleanly.
+--
+-- When it still will not fit, the last line is kept rather than the next one
+-- along. What distinguishes these names is nearly always the tail: Gold, Mega,
+-- Seed. Dropping the tail to keep the middle would rebuild the bug.
+local NAME_COLS = 11
+local NAME_LINES = 3
+
+local function name_lines(item)
+    local words = {}
+    for chunk in tostring(item):gmatch("[^_%s]+") do
+        -- BerrySeed becomes Berry Seed. The second pattern keeps runs of
+        -- capitals together, so HPMedicine breaks as HP Medicine rather than
+        -- into single letters.
+        chunk = chunk:gsub("(%l)(%u)", "%1%2"):gsub("(%u)(%u%l)", "%1%2")
+        for w in chunk:gmatch("[^]+") do
+            while #w > NAME_COLS do
+                words[#words + 1] = w:sub(1, NAME_COLS)
+                w = w:sub(NAME_COLS + 1)
+            end
+            if #w > 0 then words[#words + 1] = w end
+        end
+    end
+
+    local lines = {}
+    for _, w in ipairs(words) do
+        local last = lines[#lines]
+        if last and (#last + 1 + #w) <= NAME_COLS then
+            lines[#lines] = last .. " " .. w
+        else
+            lines[#lines + 1] = w
+        end
+    end
+
+    if #lines > NAME_LINES then
+        local kept = {}
+        for n = 1, NAME_LINES - 1 do kept[n] = lines[n] end
+        kept[NAME_LINES] = lines[#lines]
+        lines = kept
+    end
+
+    if #lines == 0 then lines[1] = tostring(item) end
+    return lines
+end
+
 -- One item: a slab, its icon, how many are in storage, and a name when there
 -- is no icon to be had.
 local function tile(key, at, item, have, top)
@@ -567,8 +617,13 @@ local function tile(key, at, item, have, top)
     -- Without an icon the tile would be an anonymous square, so it falls back
     -- to as much of the name as fits rather than to nothing.
     if not texture then
-        text_at("n:" .. key, px + 6, py + TILE / 2 - 10,
-            item:sub(1, 9), "item", 10, true)
+        local lines = name_lines(item)
+        local step = 11
+        local first = py + TILE / 2 - (#lines * step) / 2 - 1
+        for n, line in ipairs(lines) do
+            text_at("n" .. n .. ":" .. key, px + 5, first + (n - 1) * step,
+                line, "item", 9, true)
+        end
     end
 
     if have > 0 then
