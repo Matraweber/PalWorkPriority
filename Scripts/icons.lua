@@ -98,6 +98,33 @@ local function object_path(name)
     return icondex.FOLDER .. leaf .. "." .. leaf
 end
 
+-- The load itself, as one function made once.
+--
+-- Not written inline at the call, because an anonymous function there is a
+-- fresh closure every quarter second, UE4SS keeps a Lua registry reference to
+-- each one, and when Lua collects them its answer is to remove the hook that
+-- drives the engine tick. That killed five sessions before the log line
+-- naming it was read properly. One function, one reference, nothing to
+-- collect.
+local loading_name = nil
+local loading_path = nil
+
+local function do_load()
+    local name, path = loading_name, loading_path
+    if path == nil then return end
+
+    pcall(function() LoadAsset(path) end)
+
+    -- Said out loud, because "the icon did not appear" has covered a failed
+    -- lookup, a load that went nowhere, a texture that would not go on a
+    -- brush and a brush with no size, and telling those apart from a
+    -- screenshot has not been possible once.
+    local landed
+    pcall(function() landed = StaticFindObject(path) end)
+    log.say(string.format("icon load %-28s %s", tostring(name),
+        real(landed) and "arrived" or "did not arrive"))
+end
+
 -- One load, then wait, then the next.
 local function pump()
     local name = table.remove(queue, 1)
@@ -116,19 +143,9 @@ local function pump()
         -- On the game thread, since the panel's tick is not it. Finding an
         -- object is a lookup and works from anywhere. Loading one is real
         -- engine work and does not.
-        local path = object_path(name)
-        ExecuteInGameThread(function()
-            pcall(function() LoadAsset(path) end)
-
-            -- Said out loud, because "the icon did not appear" has covered a
-            -- failed lookup, a load that went nowhere, a texture that would
-            -- not go on a brush and a brush with no size, and telling them
-            -- apart from a screenshot has not been possible once.
-            local landed
-            pcall(function() landed = StaticFindObject(path) end)
-            log.say(string.format("icon load %-28s %s", name,
-                real(landed) and "arrived" or "did not arrive"))
-        end)
+        loading_name = name
+        loading_path = object_path(name)
+        ExecuteInGameThread(do_load)
     end
 
     if #queue > 0 then

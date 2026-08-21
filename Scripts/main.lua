@@ -204,6 +204,45 @@ local grid_owed = 0
 
 local tick_error = nil
 
+-- One function, made once, handed to ExecuteInGameThread for ever.
+--
+-- This used to be an anonymous function written inside the tick, which meant
+-- a brand new closure every time round: one a second at rest, ten a second
+-- with the panel open. UE4SS keeps a Lua registry reference to every callback
+-- it is given, and when Lua collected those closures the references stopped
+-- being functions. Its answer is not to skip one, it is to remove the hook
+-- driving the engine tick, and the mod goes silent until a restart.
+--
+--   [Lua::Registry::get_function_ref] Ref was not function, removing hook!
+--
+-- That is what killed five sessions. It had always been there and was rare,
+-- and raising the panel to ten frames a second made it ten times likelier per
+-- second, which is why it started landing seven seconds after opening the
+-- panel rather than once in an evening.
+--
+-- Named and stored in a local, so exactly one closure exists and nothing can
+-- collect it.
+local function on_game_thread()
+    -- The grid stays on its second, because refreshing it means a FindAllOf
+    -- over every cell and it has nothing to gain from ten times the rate.
+    if grid_owed >= 1000 then
+        grid_owed = 0
+        pcall(function() ui.refresh(cfg) end)
+    end
+
+    -- Drawn independently: the panel opens on a hotkey and has to keep
+    -- working with the stand shut.
+    pcall(function() panel().refresh(cfg) end)
+
+    -- Checked here rather than on a timer of its own, so a reload can never
+    -- land between two halves of a draw.
+    pcall(function() reload.poll() end)
+
+    -- Already on the game thread, which is the point: a console command runs
+    -- directly rather than through a callback UE4SS would have to hold.
+    pcall(function() reload.drain() end)
+end
+
 local function ui_tick()
     if not ui_running then return end
 
@@ -230,28 +269,7 @@ local function ui_tick()
         -- Runs even when disabled, so the grid still reflects edits. It costs
         -- nothing while the stand is shut.
         if cfg then
-            ExecuteInGameThread(function()
-                -- The grid stays on its second, because refreshing it means a
-                -- FindAllOf over every cell and it has nothing to gain from ten
-                -- times the rate.
-                if grid_owed >= 1000 then
-                    grid_owed = 0
-                    pcall(function() ui.refresh(cfg) end)
-                end
-
-                -- Drawn independently: the panel opens on a hotkey and has to
-                -- keep working with the stand shut.
-                pcall(function() panel().refresh(cfg) end)
-
-                -- Checked here rather than on a timer of its own, so a reload
-                -- can never land between two halves of a draw.
-                pcall(function() reload.poll() end)
-
-                -- Already on the game thread here, which is the whole point:
-                -- a console command can be run directly rather than handed to
-                -- a callback that UE4SS would have to keep a reference to.
-                pcall(function() reload.drain() end)
-            end)
+            ExecuteInGameThread(on_game_thread)
 
             if panel().wants_pass then
                 panel().wants_pass = false
