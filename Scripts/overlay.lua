@@ -581,54 +581,69 @@ function M.slot_probe()
     end
 end
 
--- Did the cooked pak load, and is the widget class in it reachable?
+-- Where in the mounted pak is the widget class?
 --
--- The spec calls this the empty shell test, and it is the one that decides
--- whether the whole blueprint route works. Everything up to here happened on
--- this machine with the editor's cooperation. Whether the game mounts the pak
--- and hands back the class is a different question, and the only one that
--- cannot be answered from the build side.
+-- The pak mounts. That is settled: BPModLoaderMod logs "Loading mod:
+-- PalWorkPriority" and, unlike every other blueprint mod on this machine,
+-- without the "ModClass is not valid" that follows when it cannot find the
+-- actor. So the mount point is right and ModActor is reachable.
 --
--- Both path forms are tried because the load takes the full object path and
--- the package path silently loads nothing, which cost several rounds to learn
--- with the item icons and is not worth learning twice.
+-- What is not settled is the widget's path, and rather than guess at it a
+-- fourth time this looks. ModActor is the worked example: whatever shape its
+-- class name takes is the shape the widget's takes too.
 function M.widget_probe()
     log.say("widget probe")
 
-    local package = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
-    local object = package .. ".WBP_WorkRules_C"
+    local base = "/Game/Mods/PalWorkPriority"
 
-    local function look(when)
+    -- Candidates, in the order they are worth believing.
+    local tries = {
+        base .. "/UI/WBP_WorkRules.WBP_WorkRules_C",
+        base .. "/UI/WBP_WorkRules.WBP_WorkRules",
+        base .. "/WBP_WorkRules.WBP_WorkRules_C",
+        base .. "/ModActor.ModActor_C",
+    }
+
+    for _, path in ipairs(tries) do
         local found
-        pcall(function() found = StaticFindObject(object) end)
+        pcall(function() found = StaticFindObject(path) end)
 
         local ok = false
-        if found ~= nil then
-            pcall(function() ok = found:IsValid() end)
-        end
+        if found ~= nil then pcall(function() ok = found:IsValid() end) end
 
-        log.say(string.format("  %-22s class found=%s", when, tostring(ok)))
-        return ok
+        log.say(string.format("  %-52s %s", path:gsub("^/Game/Mods/", ""),
+            ok and "FOUND" or "no"))
     end
 
-    if look("before loading") then return end
+    -- And what the game actually holds with our name on it, which needs no
+    -- guessing at all. Anything mounted from the pak turns up here.
+    log.say("  objects loaded from the mod package:")
 
-    ExecuteInGameThread(function()
-        pcall(function() LoadAsset(object) end)
-        if look("after object path") then return end
+    local shown = {}
+    local count = 0
 
-        pcall(function() LoadAsset(package) end)
-        look("after package path")
-    end)
+    for _, kind in ipairs({ "WidgetBlueprintGeneratedClass",
+                            "BlueprintGeneratedClass", "Package" }) do
+        pcall(function()
+            for _, obj in ipairs(FindAllOf(kind) or {}) do
+                if count >= 12 then break end
+                local full
+                pcall(function() full = obj:GetFullName() end)
+                if type(full) == "string"
+                    and full:find("PalWorkPriority", 1, true)
+                    and not shown[full] then
+                    shown[full] = true
+                    count = count + 1
+                    log.say("    " .. full)
+                end
+            end
+        end)
+    end
 
-    ExecuteWithDelay(3000, function()
-        if look("three seconds later") then
-            log.say("  the pak is mounted and the class is ours to construct")
-        else
-            log.say("  not found. Either the pak did not mount, or the " ..
-                "class inside it is not named WBP_WorkRules_C")
-        end
-    end)
+    if count == 0 then
+        log.say("    none, which would mean the pak mounted but nothing in " ..
+            "it has been loaded yet")
+    end
 end
 
 function M.diagnose()
