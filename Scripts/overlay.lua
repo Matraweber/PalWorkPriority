@@ -124,21 +124,78 @@ local function build_blueprint()
         return false
     end
 
-    -- Every name the commandlet gave a widget, collected once. A name that
-    -- comes back nil here is one the cook dropped, and saying so now beats
-    -- finding out when a row fails to appear.
+    -- Read from the tree's own list, not walked and not asked for by name.
+    --
+    -- Two wrong answers came first. GetWidgetFromName is the obvious call and
+    -- has no UFUNCTION macro on it, so UE4SS cannot make it and every name
+    -- came back empty. Walking with GetChildrenCount then hung the mod
+    -- outright: that one is a UFUNCTION on PanelWidget, but a TextBlock is
+    -- not a panel, and calling it on one is an unreflected call on a wrapper,
+    -- which is the same trap in a third costume.
+    --
+    -- AllWidgets is a UPROPERTY on WidgetTree holding every widget in it. One
+    -- property read, no method calls on anything whose type is not known, and
+    -- nothing to hang on.
     local parts, found = {}, 0
-    for _, name in ipairs(BP_NAMES) do
-        local w
-        pcall(function() w = made:GetWidgetFromName(FName(name)) end)
-        if alive(w) then
+
+    local function remember(w)
+        if not alive(w) then return end
+
+        local full
+        pcall(function() full = w:GetFullName() end)
+        if type(full) ~= "string" then return end
+
+        local name = full:match("([^%.]+)$")
+        if name and parts[name] == nil then
             parts[name] = w
             found = found + 1
         end
     end
 
+    local listed = nil
+    pcall(function() listed = made_tree.AllWidgets end)
+
+    if listed ~= nil then
+        local count = 0
+        pcall(function() count = #listed end)
+
+        if type(count) == "number" and count > 0 and count < 512 then
+            for i = 1, count do
+                local w
+                pcall(function() w = listed[i] end)
+                remember(w)
+            end
+        end
+    end
+
+    -- The root on its own, in case the list is empty on an instance. Better
+    -- a panel hosted on the right canvas with no other parts than no panel.
+    if found == 0 then
+        local root
+        pcall(function() root = made_tree.RootWidget end)
+        remember(root)
+    end
+
+    local names = {}
+    for name in pairs(parts) do names[#names + 1] = name end
+    table.sort(names)
+
+    log.say(string.format("overlay: blueprint tree has %d widget(s): %s",
+        found, #names > 0 and table.concat(names, ", ") or "none"))
+
+    for _, name in ipairs(BP_NAMES) do
+        if parts[name] == nil then
+            log.warn("  wanted but not in the tree: " .. name)
+        end
+    end
+
     if parts.Root == nil then
-        warn_once("bproot", "the blueprint widget has no Root canvas")
+        local names = {}
+        for name in pairs(parts) do names[#names + 1] = name end
+        table.sort(names)
+
+        warn_once("bproot", "no Root in the blueprint widget. Found: " ..
+            (#names > 0 and table.concat(names, ", ") or "nothing at all"))
         return false
     end
 
@@ -148,15 +205,7 @@ local function build_blueprint()
     widget, tree, canvas = made, made_tree, parts.Root
     M.parts = parts
 
-    log.say(string.format("overlay: hosted on the blueprint, %d of %d " ..
-        "named widgets found", found, #BP_NAMES))
-
-    for _, name in ipairs(BP_NAMES) do
-        if parts[name] == nil then
-            log.warn("  missing from the blueprint: " .. name)
-        end
-    end
-
+    log.say("overlay: hosted on the blueprint")
     return true
 end
 
