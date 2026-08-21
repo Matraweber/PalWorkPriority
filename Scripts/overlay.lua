@@ -368,6 +368,26 @@ function M.toggle()
     return M.open
 end
 
+-- Take the overlay off the screen and forget it.
+--
+-- For a reload, not for a world switch. The code that built these widgets is
+-- about to be replaced, and a widget that outlives the module which made it is
+-- one nothing can reach to close: that is where this mod's duplicate panel
+-- came from, and two of its crashes.
+--
+-- RemoveFromParent in UE5, RemoveFromViewport before it. Both are tried
+-- because which one this build answers to is not worth another round trip to
+-- find out, and an extra call on a widget being discarded costs nothing.
+function M.teardown()
+    if alive(widget) then
+        pcall(function() widget:RemoveFromParent() end)
+        pcall(function() widget:RemoveFromViewport() end)
+    end
+
+    set_input(false)
+    M.reset()
+end
+
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
     widget, tree, canvas = nil, nil, nil

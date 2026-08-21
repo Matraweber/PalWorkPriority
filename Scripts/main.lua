@@ -18,10 +18,18 @@ local ui = require("ui")
 local store = require("store")
 local caps = require("caps")
 local items = require("items")
-local panel = require("panel")
+-- panel and overlay are fetched at call time rather than captured here.
+--
+-- reload.lua replaces them in package.loaded while the game runs, and a local
+-- taken at load would go on pointing at the old copy for the rest of the
+-- session. require on an already loaded module is a table lookup, so calling
+-- these costs nothing worth measuring.
+local function panel() return require("panel") end
+local function overlay() return require("overlay") end
+
+local reload = require("reload")
 local icons = require("icons")
 local net = require("net")
-local overlay = require("overlay")
 local demandidx = require("demand")
 
 local MOD_NAME = "Pal Work Priority"
@@ -43,6 +51,7 @@ local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
+reload.path = DIR .. "reload.trigger"
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
@@ -202,7 +211,7 @@ local function ui_tick()
     -- the cost of a frame, the wait between frames. It also let the mouse
     -- and the keyboard disagree about the current row long enough for two of
     -- them to be marked at once.
-    local delay = panel.open and 100 or 1000
+    local delay = panel().open and 100 or 1000
     grid_owed = grid_owed + delay
 
     -- Runs even when disabled, so the grid still reflects edits. It costs
@@ -219,11 +228,15 @@ local function ui_tick()
 
             -- Drawn independently: the panel opens on a hotkey and has to
             -- keep working with the stand shut.
-            pcall(function() panel.refresh(cfg) end)
+            pcall(function() panel().refresh(cfg) end)
+
+            -- Checked here rather than on a timer of its own, so a reload
+            -- can never land between two halves of a draw.
+            pcall(function() reload.poll() end)
         end)
 
-        if panel.wants_pass then
-            panel.wants_pass = false
+        if panel().wants_pass then
+            panel().wants_pass = false
             run_pass("rule change")
         end
 
@@ -827,9 +840,9 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     demandidx.reset()
     ui.reset()
     items.reset()
-    panel.reset()
+    panel().reset()
     net.reset()
-    overlay.reset()
+    overlay().reset()
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
@@ -840,7 +853,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- host. Asking at world load means the answer is there long before
     -- anybody presses anything.
     ExecuteWithDelay(25000, function()
-        pcall(function() overlay.prepare() end)
+        pcall(function() overlay().prepare() end)
     end)
 
     -- A client announces itself so the server knows to push rules to it, and
@@ -937,7 +950,7 @@ end, { ModifierKey.CONTROL })
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
 do
     local n = ui.bind_mouse(function() return cfg end, function(dir)
-        return panel.handle_click(cfg, dir)
+        return panel().handle_click(cfg, dir)
     end)
     if n < 2 then
         log.warn("only " .. n .. " of 2 mouse buttons bound, " ..
@@ -966,7 +979,7 @@ end, { ModifierKey.ALT })
 -- The rules panel. F9 is taken by another installed mod and F8 by two, so
 -- this sits on the modifier alongside the other toggles.
 bind(Key.F9, "Ctrl+F9 (work rules)", function()
-    panel.toggle()
+    panel().toggle()
 end, { ModifierKey.CONTROL })
 
 -- The transport test needs a key of its own, because the machine most worth
@@ -981,7 +994,7 @@ end, { ModifierKey.CONTROL })
 -- rather than guessing a second time.
 bind(Key.F7, "Ctrl+F7 (icon probe)", function()
     ExecuteInGameThread(function()
-        pcall(function() overlay.icon_probe() end)
+        pcall(function() overlay().icon_probe() end)
         pcall(function() icons.report() end)
     end)
 end, { ModifierKey.CONTROL })
@@ -998,11 +1011,11 @@ local function arrows()
     -- screen: on the rules list left and right change a ceiling, in the
     -- picker they move across a grid, and only the panel knows which is up.
     local moves = {
-        { "UP_ARROW",    function() return panel.nav(cfg, "up") end },
-        { "DOWN_ARROW",  function() return panel.nav(cfg, "down") end },
-        { "RIGHT_ARROW", function() return panel.nav(cfg, "right") end },
-        { "LEFT_ARROW",  function() return panel.nav(cfg, "left") end },
-        { "RETURN",      function() return panel.nav(cfg, "enter") end },
+        { "UP_ARROW",    function() return panel().nav(cfg, "up") end },
+        { "DOWN_ARROW",  function() return panel().nav(cfg, "down") end },
+        { "RIGHT_ARROW", function() return panel().nav(cfg, "right") end },
+        { "LEFT_ARROW",  function() return panel().nav(cfg, "left") end },
+        { "RETURN",      function() return panel().nav(cfg, "enter") end },
     }
 
     for _, entry in ipairs(moves) do
