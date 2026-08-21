@@ -135,7 +135,32 @@ end
 
 local api = require("palapi")
 
+-- Queued for the tick rather than scheduled.
+--
+-- ExecuteInGameThread takes an anonymous function and UE4SS keeps a registry
+-- reference to it. Those references have been going bad on this build:
+--
+--   [Lua::Registry::get_function_ref] Ref was not function, removing hook!
+--   [FCallbackGarbageCollector] Freed invalid callbacks!
+--
+-- and UE4SS's answer is to remove the hook that drives the engine tick, which
+-- silences the mod until a restart. Three sessions have died that way.
+--
+-- The tick is already inside an ExecuteInGameThread of its own, and it lives
+-- in main.lua which is never swapped, so handing it a string to run costs no
+-- new callback at all.
+local pending = nil
+
 local function console(command)
+    pending = command
+end
+
+-- Called from the tick, on the game thread, with nothing scheduled.
+function M.drain()
+    local command = pending
+    if command == nil then return end
+    pending = nil
+
     local lib = api.cdo("/Script/Engine.Default__KismetSystemLibrary")
     local pc = api.player_controller()
 
@@ -144,10 +169,8 @@ local function console(command)
         return
     end
 
-    ExecuteInGameThread(function()
-        pcall(function() lib:ExecuteConsoleCommand(pc, command, pc) end)
-        log.say("cmd: " .. command)
-    end)
+    pcall(function() lib:ExecuteConsoleCommand(pc, command, pc) end)
+    log.say("cmd: " .. command)
 end
 
 local function run(line)

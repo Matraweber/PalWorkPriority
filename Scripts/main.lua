@@ -246,6 +246,11 @@ local function ui_tick()
                 -- Checked here rather than on a timer of its own, so a reload
                 -- can never land between two halves of a draw.
                 pcall(function() reload.poll() end)
+
+                -- Already on the game thread here, which is the whole point:
+                -- a console command can be run directly rather than handed to
+                -- a callback that UE4SS would have to keep a reference to.
+                pcall(function() reload.drain() end)
             end)
 
             if panel().wants_pass then

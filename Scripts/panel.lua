@@ -1012,11 +1012,24 @@ local function bp_build(rules)
     bp_rows = {}
 
     if #rules == 0 then
+        -- Bright rather than dim. An empty list that is also hard to read
+        -- gives no way to tell "there are no rules" from "the list is
+        -- broken", and those needed telling apart exactly once to be worth
+        -- the change.
         local empty = bp_label(root_tree,
-            "no rules yet, every job runs unlimited", "dim", 16)
-        if empty then pcall(function() list:AddChild(empty) end) end
+            "no rules yet, every job runs unlimited", "item", 16)
+
+        local slot
+        if empty then
+            pcall(function() slot = list:AddChild(empty) end)
+        end
+
+        log.say(string.format("rules: none. label made=%s, added=%s",
+            tostring(empty ~= nil), tostring(alive(slot))))
         return true
     end
+
+    log.say("rules: building " .. #rules .. " row(s)")
 
     for i, rule in ipairs(rules) do
         local row = bp_make("/Script/UMG.HorizontalBox", root_tree)
@@ -1054,7 +1067,15 @@ local function bp_build(rules)
                 end
             end
 
-            pcall(function() list:AddChild(row) end)
+            local slot
+            pcall(function() slot = list:AddChild(row) end)
+
+            if i == 1 then
+                log.say(string.format("  first row: box=%s slot=%s cells=%s",
+                    tostring(alive(row)), tostring(alive(slot)),
+                    tostring(alive(cells.job))))
+            end
+
             bp_rows[i] = { box = row, cells = cells, rule = rule }
         end
     end
