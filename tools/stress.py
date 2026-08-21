@@ -65,7 +65,8 @@ def newest_crash():
 
 def main(argv):
     light = "--light" in argv
-    argv = [a for a in argv if a != "--light"]
+    dry = "--dry" in argv
+    argv = [a for a in argv if a not in ("--light", "--dry")]
     limit = int(argv[0]) if argv else 240
     if not up():
         print("the game is not running")
@@ -80,9 +81,17 @@ def main(argv):
         send(["pwp sweep 30"])
     else:
         send(["pwp sweep 0"])
+    if dry:
+        # Everything the pass does except the assignment RPCs. Those make the
+        # server run OnRequiredAssignWork_ServerInternal, which this mod hooks,
+        # so each one re-enters Lua from inside the pass's own game thread
+        # callback. This is the only way to run the pass without that.
+        send(["pwp dry"])
+        time.sleep(2.0)
     time.sleep(2.0)
-    print("sweep interval %s; forcing passes for up to %ds"
-          % ("left at 30s (light)" if light else "set to 0", limit))
+    print("sweep interval %s%s; forcing passes for up to %ds"
+          % ("left at 30s (light)" if light else "set to 0",
+             ", dry (no assignment RPCs)" if dry else "", limit))
     print("(the mod reads the trigger once a second, so this is roughly "
           "%d passes a second)" % PER_POLL)
     sys.stdout.flush()

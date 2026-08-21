@@ -372,3 +372,41 @@ structs then `IsValid` is not callable on a slot, and reading "cannot ask" as
 Counts must be unchanged. `pwp stock` should still report Stone and BerrySeeds
 in the thousands. A guard that makes the crash go away by counting nothing
 would look identical in the crash log and be much worse than the bug.
+
+
+## It counts passes, not seconds
+
+Three stress runs, and the number that stays put is not the clock:
+
+| build                          | failed after | passes actually run |
+|--------------------------------|--------------|---------------------|
+| named callback, full sweep     | 12s          | 25                  |
+| fresh closure, full sweep      | 11s          | 24                  |
+| in-flight guard, no sweep      | 27s          | 20                  |
+
+Twenty to twenty five executed passes, whether each one sweeps chests or not,
+whether the callback is a named function or a fresh closure. The sweep is not
+it and closure identity is not it.
+
+`ExecuteInGameThread` churn on its own is not it either, and that was already
+proven earlier without anyone noticing: with `pwp off`, `ui_body` scheduled
+itself about four hundred and eighty times across eight minutes and the tick
+was never dropped. So it is something the pass does, about twenty times.
+
+### The candidate
+
+The pass does not only read. It calls
+`RequestFixedAssignWorkInBaseCamp_ToServer`, and that makes the server run
+`OnRequiredAssignWork_ServerInternal`, which `demand.lua` has hooked. Every
+assignment therefore re-enters Lua from inside the pass's own game thread
+callback.
+
+That also explains the shape of the crash stack recorded at the top of this
+file, the eight frame cycle repeating five deep: Lua into the engine into Lua,
+nested.
+
+### The test, which needs no code change
+
+`pwp dry` computes the whole pass and skips only the assignment RPCs. Dry plus
+the stress runs everything except the re-entry. Sixty passes clean would be
+three times the threshold that has failed every time so far.
