@@ -953,6 +953,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- anybody presses anything.
     ExecuteWithDelay(25000, function()
         pcall(function() overlay().prepare() end)
+        pcall(function() overlay().icon_api_probe() end)
     end)
 
     -- A client announces itself so the server knows to push rules to it, and

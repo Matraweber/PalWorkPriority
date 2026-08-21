@@ -912,6 +912,85 @@ function M.widget_probe()
     end)
 end
 
+-- How does the game itself hand out an item's icon?
+--
+-- Creative Menu's pak, extracted and read, answers most of this already. Its
+-- item grid calls GetBlueprintItemIcon on BP_PalUIFunctionLibrary_C and the
+-- return pin is named IconTexture. It never touches a texture path, which is
+-- what the whole of icondex.lua and the load queue here exist to do.
+--
+-- What the pak does not give is the argument. So this asks the class, the
+-- same way the input mode signature was settled: list the functions and their
+-- declared parameters, and read the answer rather than guess it. Guessing an
+-- argument shape is exactly what crashed the game on soft textures.
+--
+-- The native classes are asked too, since a static one would be simpler to
+-- call than a blueprint library.
+function M.icon_api_probe()
+    log.say("icon api probe")
+
+    local function describe(cdo, label)
+        if cdo == nil then
+            log.say("  " .. label .. ": not reachable")
+            return
+        end
+
+        local found = 0
+        pcall(function()
+            cdo:GetClass():ForEachFunction(function(fn)
+                if found >= 12 then return end
+
+                local name
+                pcall(function() name = fn:GetFName():ToString() end)
+                if type(name) ~= "string" then return end
+                if not name:lower():find("icon") then return end
+
+                local params = {}
+                pcall(function()
+                    fn:ForEachProperty(function(prop)
+                        local pn, pc = "?", "?"
+                        pcall(function() pn = prop:GetFName():ToString() end)
+                        pcall(function()
+                            pc = prop:GetClass():GetFName():ToString()
+                        end)
+                        params[#params + 1] = pc .. " " .. pn
+                    end)
+                end)
+
+                found = found + 1
+                log.say(string.format("  %s: %s(%s)", label, name,
+                    table.concat(params, ", ")))
+            end)
+        end)
+
+        if found == 0 then
+            log.say("  " .. label .. ": no function with icon in its name")
+        end
+    end
+
+    -- The native ones first: a static call needs no asset loading at all.
+    for _, path in ipairs({
+        "/Script/Pal.Default__PalUIUtility",
+        "/Script/Pal.Default__PalUtility",
+        "/Script/Pal.Default__PalItemUtility",
+    }) do
+        describe(api.cdo(path), path:match("([^%.]+)$"))
+    end
+
+    -- Then the blueprint library Creative Menu actually uses.
+    M.mod_class("/Game/Pal/Blueprint/UI/System/BP_PalUIFunctionLibrary",
+        "BP_PalUIFunctionLibrary_C", function(class)
+            if class == nil then
+                log.say("  BP_PalUIFunctionLibrary: did not resolve")
+                return
+            end
+
+            local cdo
+            pcall(function() cdo = class:GetDefaultObject() end)
+            describe(cdo or class, "BP_PalUIFunctionLibrary")
+        end)
+end
+
 function M.diagnose()
     local host, host_tree = M.host()
     log.say("overlay diagnostics")
