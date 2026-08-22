@@ -83,6 +83,10 @@ local search_text = ""
 local want_focus = false
 local sel = 1                   -- which row the keyboard is on
 local tab_hits = 0              -- how many order entries the tab bar owns
+
+-- A Remove waiting for its second click, and when it started.
+local pending_drop = nil
+local pending_at = 0
 local perf_worst, perf_at = 0, 0
 local perf_hover, perf_draw, perf_hits = 0, 0, 0
 local perf_stock, perf_blank = 0, 0
@@ -179,6 +183,11 @@ local COLOUR = {
     -- and readable as different from Working without relying on hue alone
     -- since the words differ too.
     atlimit = { R = 0.56, G = 0.85, B = 0.63, A = 1.00 },
+    -- Destructive, and only ever used for that.
+    danger = { R = 1.00, G = 0.45, B = 0.40, A = 1.00 },
+    -- Quieter than the data it sits beside, so it does not compete, but its
+    -- own colour rather than the one five harmless things share.
+    quiet  = { R = 0.62, G = 0.58, B = 0.60, A = 1.00 },
     working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
 }
 
@@ -207,7 +216,13 @@ local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 -- rather than the other way about. A pale input on a dark panel is a normal
 -- enough thing to look at, and it is unambiguously readable, which is what
 -- was actually being complained about.
-local FIELD_BG    = { R = 0.86, G = 0.89, B = 0.93, A = 1.00 }
+-- Muted, not white.
+--
+-- At 0.86 this was the highest-contrast, largest-area element on the panel,
+-- brighter than the title and every icon: a spotlight aimed at the least
+-- important control. It still has to carry the dark text this build will not
+-- let us recolour, so it stays light enough to read against, and no lighter.
+local FIELD_BG    = { R = 0.66, G = 0.70, B = 0.75, A = 1.00 }
 local FIELD_HINT  = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 }
 
 
@@ -939,13 +954,23 @@ local function ensure_search(row)
         pcall(function() slot:SetPosition({ X = X + PAD, Y = Y + row * LINE }) end)
         -- 30 cut the descenders off its own hint text. A field that clips the
         -- word "type" is not a field anybody trusts to hold what they typed.
-        pcall(function() slot:SetSize({ X = W - PAD * 2, Y = 36 }) end)
+        -- As wide as the grid it filters. It ran the full panel width while
+        -- the tiles stopped well short, so it overhung the thing it acts on.
+        pcall(function()
+            slot:SetSize({ X = COLS * (TILE + GAP) - GAP, Y = 36 })
+        end)
     end
     pcall(function() search_box:SetVisibility(0) end)
 
     -- Focus is taken once on entering the picker, not every frame: stealing it
     -- each tick would fight anything else that wants it and make typing feel
     -- like it is being interrupted, which it would be.
+    -- Focus is taken on request, never on arrival.
+    --
+    -- Opening the picker used to put the keyboard in this box, which is the
+    -- one place arrow keys must not go on a panel driven by arrow keys: they
+    -- moved a text caret instead of the selection, and the grid could not be
+    -- navigated at all until the box was clicked away from.
     if want_focus then
         want_focus = false
         pcall(function() search_box:SetKeyboardFocus() end)
@@ -1350,7 +1375,18 @@ local function draw_list(cfg, totals)
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
             -- be somewhere to correct the guess.
-            line("del" .. i, row, COL3, "Remove", "dim", ROW_PT)
+            -- Asks before it deletes, and looks like it might.
+            --
+            -- Remove shared its exact colour with the inactive tab, CLOSE,
+            -- the purpose line and the tile counts: six unrelated things, one
+            -- of which destroys a rule. It had no confirm step either, so a
+            -- misclick was silent and final.
+            local asking = pending_drop ~= nil
+                and pending_drop.work == rule.work
+                and pending_drop.item == rule.item
+            line("del" .. i, row, COL3,
+                asking and "Sure?" or "Remove",
+                asking and "danger" or "quiet", ROW_PT)
 
             hit(key, { kind = "job", rule = rule })
             hit("amt" .. i, { kind = "rule", rule = rule, row = row })
@@ -1502,7 +1538,8 @@ local function draw_item_picker(cfg, totals)
         caption = caption .. string.format(", page %d of %d", page + 1, pages)
     end
     if search_text == "" then
-        caption = caption .. "   |   Type to filter, click an item to limit it"
+        caption = caption ..
+            "   |   Click the box to search, or click an item to limit it"
     end
     line("sub", 5, PAD, caption, "dim", 13)
 
@@ -1704,7 +1741,9 @@ function M.set_screen(name)
     sel = tab_hits + 1
     if name ~= "item" and name ~= "list" then return false end
     mode, page, sel = name, 0, 1
-    want_focus = (name == "item")
+    -- Same rule through the command channel as through a click: the picker
+    -- does not take the keyboard just because it opened.
+    want_focus = false
     return true
 end
 
@@ -1886,6 +1925,12 @@ function M.command(cfg, args)
             return "applied " .. rest .. " to " .. tostring(what.kind)
         end
         return "use nav up|down|left|right"
+    end
+
+    if verb == "focus" then
+        if not alive(search_box) then return "no filter box on this screen" end
+        want_focus = true
+        return "keyboard moved to the filter box"
     end
 
     if verb == "filter" then
@@ -2070,7 +2115,7 @@ function M.apply(cfg, what, dir, from_mouse)
 
     if what.kind == "new" then
         mode, page, show_all = "item", 0, false
-        want_focus = true
+        want_focus = false
         sel = 1
         log.say("picking an item, type to filter or click one")
         return true
@@ -2078,7 +2123,7 @@ function M.apply(cfg, what, dir, from_mouse)
 
     if what.kind == "tab" then
         mode, page = what.mode, 0
-        want_focus = (what.mode == "item")
+        want_focus = false
         sel = tab_hits + 1
         return true
     end
@@ -2141,6 +2186,22 @@ function M.apply(cfg, what, dir, from_mouse)
     end
 
     if what.kind == "drop" then
+        local rule = what.rule
+
+        -- First click asks, second click inside four seconds does it.
+        if pending_drop == nil
+            or pending_drop.work ~= rule.work
+            or pending_drop.item ~= rule.item
+            or (os.clock() - pending_at) > 4.0
+        then
+            pending_drop = { work = rule.work, item = rule.item }
+            pending_at = os.clock()
+            log.say("Click Remove again to delete the " ..
+                workdefs.label(rule.work) .. " limit on " .. rule.item)
+            return true
+        end
+
+        pending_drop = nil
         caps.clear(what.rule.work, what.rule.item)
         log.say("rule removed: " .. workdefs.label(what.rule.work) ..
             " " .. what.rule.item)
