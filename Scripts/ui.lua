@@ -47,7 +47,6 @@ local ftext_mode = nil          -- "direct" | "kismet"
 
 -- Live menu cache. Multiple instances coexist (seen live: a hidden stale one
 -- alongside the open one), so only a VISIBLE instance may be cached.
-local menu_ref = nil
 
 -- Row -> pal identity, captured at bind time. Rows recycle on scroll, so a
 -- rebind overwrites.
@@ -59,6 +58,8 @@ local menu_likely_open = false
 -- Cells.
 local cell_row = {}             -- cell full name -> row full name
 local cell_text = {}            -- cell full name -> injected TextBlock
+-- Which menu instance those TextBlocks were injected into. See live_menu.
+local menu_name = nil
 local cell_last = {}            -- cell full name -> last style token written
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 
@@ -103,7 +104,6 @@ end
 -- what is still usable: detach fires on a merely-invisible frame too, so
 -- dropping them here would duplicate widgets on the next tick.
 function M.detach()
-    menu_ref = nil
     invalidate_cells()
 end
 
@@ -116,6 +116,7 @@ function M.reset()
     cell_text = {}
     cell_last = {}
     cell_cb = {}
+    menu_name = nil
     row_pal = {}
     menu_likely_open = false
     ftext_mode = nil
@@ -249,17 +250,36 @@ local function is_showing(m)
 end
 
 -- Only a VISIBLE non-CDO instance counts. Returns menu, tree, root.
+-- The full name of the menu instance the injected TextBlocks were put into.
+--
+-- They are deliberately kept across frames - rows recycle rather than die, so
+-- dropping the reference makes the next tick inject a second widget on top of
+-- the one already there - and that is safe only for as long as the menu they
+-- were injected INTO still exists. When the stand is closed and reopened the
+-- game builds a new instance, whose cells carry the SAME generated names
+-- (Row_3.Cell_2 and so on), so a map keyed by cell name silently keeps
+-- pointing at widgets belonging to the destroyed one. Then ensure_cell_text
+-- asks one of them whether it is still valid, which is the crash rather than
+-- a check against it, and this file already records two crashes from exactly
+-- that.
+--
+-- Keying the whole map on the menu instance closes it: same instance, the
+-- widgets are real and worth keeping; different instance, everything from the
+-- old one goes at once, before anything asks it a question. menu_name is
+-- declared with the maps it guards, because M.reset clears it.
+local function forget_injected(why)
+    if next(cell_text) == nil and next(cell_last) == nil then return end
+    log.debug("stand: dropping injected cell text (" .. why .. ")")
+    cell_text, cell_last, cell_cb, cell_row = {}, {}, {}, {}
+end
+
 local function live_menu()
-    if alive(menu_ref) and is_showing(menu_ref) then
-        local t, r
-        pcall(function() t = menu_ref.WidgetTree end)
-        if alive(t) then pcall(function() r = t.RootWidget end) end
-        if alive(t) and alive(r) then return menu_ref, t, r end
-    end
-
-    menu_ref = nil
-    invalidate_cells()
-
+    -- Resolved fresh, never from a kept reference.
+    --
+    -- This used to hold menu_ref between calls and ask alive() on it, which
+    -- is the same stored-wrapper dereference the cells were fixed for one
+    -- function down. It costs one FindAllOf a second, which is what the cell
+    -- sweep beside it already pays.
     local menu, tree, root
     pcall(function()
         for _, m in ipairs(FindAllOf(M.MENU_CLASS) or {}) do
@@ -277,7 +297,15 @@ local function live_menu()
         end
     end)
 
-    if menu then menu_ref = menu end
+    -- A different instance than the one holding our widgets means the old
+    -- ones are gone with it.
+    local now_name = menu and full_name(menu) or nil
+    if now_name ~= menu_name then
+        forget_injected("menu instance changed")
+        menu_name = now_name
+        invalidate_cells()
+    end
+
     return menu, tree, root
 end
 
@@ -637,7 +665,7 @@ function M.refresh(cfg)
 
     local menu = live_menu()
     if not menu then
-        if menu_ref ~= nil then M.detach() end
+        M.detach()
         -- Stand down until a row binds again. Without this the mod runs a
         -- FindAllOf every second for the rest of the session after the stand
         -- is opened once.

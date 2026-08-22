@@ -77,7 +77,29 @@ function M.load()
         return M.ids
     end
 
-    table.sort(ids)
+    -- Sorted the way the list is READ, not the way the ids happen to be
+    -- spelled.
+    --
+    -- A plain table.sort is ASCII ordinal, so every id starting with a
+    -- lowercase letter lands after every id starting with an uppercase one:
+    -- "bone" sorted last of the whole table, after "Yakushima_Ingot001", and
+    -- "Pal_crystal_L" sorted away from the Pal items it belongs beside. A
+    -- player looking for Bone under B never found it, which is a worse
+    -- findability problem than any missing icon.
+    --
+    -- The key lowercases and turns underscores into the spaces the panel
+    -- draws, so the order matches the names on screen. Built once into a
+    -- table rather than computed inside the comparator, which would recompute
+    -- it O(n log n) times for 2466 ids.
+    local key = {}
+    for _, id in ipairs(ids) do
+        key[id] = id:lower():gsub("_", " ")
+    end
+    table.sort(ids, function(a, b)
+        if key[a] ~= key[b] then return key[a] < key[b] end
+        -- Same display key, different ids: keep it deterministic.
+        return a < b
+    end)
 
     local lower = {}
     for i, id in ipairs(ids) do lower[i] = id:lower() end
