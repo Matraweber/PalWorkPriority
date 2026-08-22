@@ -165,10 +165,13 @@ local TAB_H = 34
 -- and could not be told apart, two spheres differed only in hue, and the
 -- filter searched by a name the grid never showed, so it only worked for
 -- somebody who already knew every item id by heart.
-local COLS = 10
+-- Twelve, which is what the footer bars' width actually holds. At ten the
+-- grid ended 176 pixels short of the bars directly beneath it and the gap
+-- read as a rendering fault rather than as margin.
+local COLS = 12
 local TILE = 76          -- width, and the icon's square
 local ICON = 48          -- the picture, in the tile's top band
-local TILE_H = 82        -- the icon, and its count beneath
+local TILE_H = 116       -- the icon, its count, and its name
 local GAP = 8
 local GRID_ROWS = 4
 
@@ -852,13 +855,19 @@ local function tile(key, at, item, have, top, limited)
     -- Without a picture it is the only thing there is, though. Dropping it
     -- outright left rows of blank grey squares for every icon still queued,
     -- which is worse than a clipped word.
-    if not has_icon then
-        local lines = name_lines(item)
-        local first = py + 16
-        for n = 1, math.min(#lines, 3) do
-            text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 12,
-                lines[n], "item", 10, true)
-        end
+    -- Every tile is named, not only the ones still waiting for a picture.
+    --
+    -- Dropping the names made the grid unreadable in the mode the panel
+    -- pushes you towards: searching returns items the base owns none of, so
+    -- they have no count either, and nine of fifteen results were bare
+    -- pictograms with no text at all. Identifying them cost one hover each,
+    -- with the answer appearing at the top of the panel, up to two hundred
+    -- pixels from the pointer.
+    local lines = name_lines(item)
+    local first = py + ICON + (has_icon and 22 or 4)
+    for n = 1, math.min(#lines, 2) do
+        text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 13,
+            lines[n], "item", 11, true)
     end
 
     -- The count, exact. The picker said 8k where the rules list said 8299, so
@@ -1023,8 +1032,11 @@ local function ensure_search(row)
         -- word "type" is not a field anybody trusts to hold what they typed.
         -- As wide as the grid it filters. It ran the full panel width while
         -- the tiles stopped well short, so it overhung the thing it acts on.
+        -- The same width as the bars beneath it. Sized to the grid, it
+        -- stopped 176 pixels short of them and left a dead gutter down the
+        -- right of every picker screen.
         pcall(function()
-            slot:SetSize({ X = COLS * (TILE + GAP) - GAP, Y = 36 })
+            slot:SetSize({ X = W - PAD * 2, Y = 36 })
         end)
     end
     pcall(function() search_box:SetVisibility(0) end)
@@ -1144,19 +1156,39 @@ local function poll_amount(cfg)
     editing = nil
     pcall(function() amount_box:SetVisibility(1) end)
 
-    if want == nil then
-        log.say("no number typed, ceiling left alone")
+    -- Nothing usable typed means leave the rule alone.
+    --
+    -- This commits when the box stops holding the keyboard, which is what
+    -- makes "type it and click away" work, but it also fires on a focus lost
+    -- for any other reason. A real limit of 15000 was overwritten with
+    -- 1505500 and then with 1 inside six seconds that way, which switched
+    -- Mining off entirely and said nothing about it.
+    --
+    -- So an empty or unreadable box now cancels, and zero cancels too rather
+    -- than deleting the rule: deleting is what Remove is for, and Remove asks
+    -- first. An edit should never be able to destroy more than it was aimed
+    -- at.
+    if want == nil or want <= 0 then
+        log.say("nothing typed, the " .. workdefs.label(job) .. " limit on " ..
+            item .. " is unchanged")
         return
     end
-    if want <= 0 then
-        caps.clear(job, item)
-        log.say("rule removed: " .. workdefs.label(job) .. " " .. item)
+
+    caps.set(job, item, want)
+    M.wants_pass = true
+
+    -- Says so when the new limit is already passed, because that stops the
+    -- job the moment it is set and the panel should not let that happen
+    -- quietly.
+    local have = (stock_totals(cfg) or {})[item] or 0
+    if want < have then
+        log.say(string.format(
+            "%s %s limit set to %d, which is below the %d in storage, so %s stops now",
+            workdefs.label(job), item, want, have, workdefs.label(job)))
     else
-        caps.set(job, item, want)
-        log.say(string.format("%s %s ceiling set to %d",
+        log.say(string.format("%s %s limit set to %d",
             workdefs.label(job), item, want))
     end
-    M.wants_pass = true
 end
 
 local function begin_edit(rule, row)
@@ -1467,9 +1499,12 @@ local function draw_list(cfg, totals)
             -- while claiming a precision it did not have. The JOB column is
             -- right there, so this column reads as a sentence about it:
             -- Lumbering ... Stopped.
+            -- Paused, not Stopped. The job starts again by itself once stock
+            -- drops below the limit, and "stopped" reads as final. It also
+            -- pairs grammatically with "Working", which "Stopped" does not.
             local status, tone
             if met then
-                status, tone = "Stopped", "over"
+                status, tone = "Paused", "over"
             else
                 status, tone = "Working", "working"
             end
@@ -1587,7 +1622,12 @@ local function picker_source(totals)
     -- the base could make. Asked for more rows than before, because the
     -- filter takes most of them away again.
     if search_text ~= "" then
-        return only_producible(items.search(search_text, 400)), true
+        -- Searching casts wider than the shelf, but it does not flip the
+        -- toggle. Reporting `true` here made the button relabel itself to
+        -- "Show only what I have" the moment anything was typed, so the user
+        -- appeared to have changed a mode they never touched, and the results
+        -- filled with items they own none of.
+        return only_producible(items.search(search_text, 400)), show_all
     end
 
     if show_all then
@@ -1644,10 +1684,10 @@ local function draw_item_picker(cfg, totals)
     if pages > 1 then
         caption = caption .. string.format(", page %d of %d", page + 1, pages)
     end
-    if search_text == "" then
-        caption = caption ..
-            "   |   Click the box to search, or click an item to limit it"
-    end
+    -- Always, not only on an empty field. This sentence used to disappear
+    -- the moment anything was typed, which is precisely when somebody is
+    -- about to click a tile for the first time.
+    caption = caption .. "   |   Click an item to limit it"
     line("sub", 5, PAD, caption, "dim", 13)
 
     local top = 6 * LINE
