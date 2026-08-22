@@ -963,7 +963,23 @@ end
 -- A client's edits are requests, not writes. Setting this is what makes
 -- caps.set send rather than save, so there is one place that decides and
 -- every caller is unaware of which machine it is on.
-if not api.has_authority() then
+--
+-- Decided after the world loads, never here. There is no world when a mod
+-- starts, so PalGameMode does not exist and has_authority answers no to
+-- everyone, host included. Asked at load, this wired every single player
+-- session up as a client: caps.save opens with "if M.submit then return
+-- false" because a client owns no rules file, so the host quietly refused to
+-- write its own. Every ceiling set in game since has been forgotten at the
+-- next restart, and caps.txt had not been touched in two days.
+--
+-- The same trap is called out twenty lines below for the demand estimate. It
+-- was worth writing down once and then obeying in both places.
+local function decide_write_or_send()
+    if api.has_authority() then
+        caps.submit = nil
+        return
+    end
+
     caps.submit = function(kind, work, item, amount)
         if not net.request(kind, work, item, amount) then
             log.say("could not reach the server, that change was not made")
@@ -1004,6 +1020,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- so PalGameMode does not exist yet and every single player session
     -- reported itself as a client on a dedicated server.
     clock.once(20000, function()
+        decide_write_or_send()
+
         if not api.has_authority() then
             log.warn("no authority here, so this looks like a client on a " ..
                 "dedicated server. Work demand will be estimated from the " ..
