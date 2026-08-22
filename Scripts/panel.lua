@@ -83,7 +83,7 @@ local warned = {}
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
 local X = -410
-local W = 900
+local W = 1010
 
 -- Vertical offset, recomputed from the drawn height so the panel sits in the
 -- middle of the screen whichever screen it is showing. Fixed before, which
@@ -106,8 +106,8 @@ local PAD = 18
 -- collide again the moment a base gets richer.
 local COL_ITEM = 260
 local COL2     = 520
-local COL_DONE = 700
-local COL3     = 800
+local COL_DONE = 800
+local COL3     = 890
 local TAB_H = 34
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
@@ -860,6 +860,19 @@ local function rule_list(cfg)
     return out
 end
 
+-- Six figures in a column sized for four is how "done" ended up printed on
+-- top of the amount: the text grows rightwards with the stock and eventually
+-- reaches whatever sits beside it. Anything past five digits loses the units,
+-- which nobody reads on a ceiling of fifteen thousand anyway, and the string
+-- can then never outgrow its column.
+local function short_amount(n)
+    n = tonumber(n) or 0
+    if n >= 100000 then
+        return string.format("%.0fk", n / 1000)
+    end
+    return tostring(math.floor(n))
+end
+
 local function draw_list(cfg, totals)
     local rules = rule_list(cfg)
 
@@ -884,7 +897,7 @@ local function draw_list(cfg, totals)
             line(key, row, PAD, workdefs.label(rule.work), "action")
             line("itm" .. i, row, COL_ITEM, rule.item, "item")
             line("amt" .. i, row, COL2,
-                string.format("%d / %d", have, rule.amount),
+                short_amount(have) .. " / " .. short_amount(rule.amount),
                 met and "met" or "unmet")
             line("done" .. i, row, COL_DONE, met and "done" or "", "met")
 
