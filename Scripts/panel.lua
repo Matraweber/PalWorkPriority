@@ -168,7 +168,7 @@ local COLOUR = {
     -- Amber for stopped, which is a warning colour rather than a success one,
     -- and readable as different from Working without relying on hue alone
     -- since the words differ too.
-    paused = { R = 1.00, G = 0.72, B = 0.28, A = 1.00 },
+    atlimit = { R = 0.56, G = 0.85, B = 0.63, A = 1.00 },
     working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
 }
 
@@ -1173,7 +1173,10 @@ local function draw_tabs(active)
     -- What this is and what it does, which the panel never said. Opening it
     -- cold gave you two tabs, a caption about clicking things, and numbers
     -- with no stated meaning.
-    line("title", 1, PAD, "Pal Work Priority", "title", 22)
+    -- Not "Pal Work Priority". Palworld already has work suitability and
+    -- priority, which is about which job a Pal picks; nothing on this screen
+    -- ranks anything. The mod keeps its name, the screen says what it does.
+    line("title", 1, PAD, "Production Limits", "title", 22)
     line("why", 2, PAD,
         "Your Pals stop a job once base storage reaches the limit you set.",
         "dim", 14)
@@ -1248,7 +1251,10 @@ local function draw_list(cfg, totals)
     -- Names both numbers. Without this the pair reads as progress towards a
     -- goal, which is the opposite of what it means.
     if #rules > 0 then
-        line("h_job",  row, PAD,      "JOB",        "faint", 12)
+        -- The two leading spaces match the marker slot every hit row
+        -- carries, so JOB sits over Lumbering instead of thirteen pixels
+        -- left of it.
+        line("h_job",  row, PAD,      "  JOB",      "faint", 12)
         line("h_item", row, COL_ITEM, "ITEM",       "faint", 12)
         line("h_have", row, COL2,     "IN STORAGE", "faint", 12)
         line("h_cap",  row, COL_CAP,  "LIMIT",      "faint", 12)
@@ -1284,16 +1290,27 @@ local function draw_list(cfg, totals)
             -- of what it does. Storage is neutral, the limit is its own
             -- column under its own heading, and the status says which of the
             -- two states you are in rather than congratulating you.
+            -- Storage is telemetry, the limit is the thing being set, so the
+            -- limit is the brighter of the two. It was the other way round,
+            -- which put the one number the panel exists to change second in
+            -- the reading order.
             line("amt" .. i, row, COL2,
-                short_amount(have), "title", ROW_PT)
+                short_amount(have), "limit", ROW_PT)
 
             line("cap" .. i, row, COL_CAP,
                 editing_this and "" or short_amount(rule.amount),
-                "limit", ROW_PT)
+                "title", ROW_PT)
 
+            -- AT LIMIT, not PAUSED, and not amber.
+            --
+            -- PAUSED reads as "this rule is switched off" when it means "this
+            -- rule fired". The most likely misreading was the exact opposite
+            -- of the truth. Amber made it worse: it is the caution colour
+            -- everywhere else in games, so two working rules looked like two
+            -- warnings.
             line("done" .. i, row, COL_DONE,
-                met and "PAUSED" or "Working",
-                met and "paused" or "working", ROW_PT)
+                met and "AT LIMIT" or "Working",
+                met and "atlimit" or "working", ROW_PT)
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
@@ -1434,15 +1451,25 @@ local function draw_item_picker(cfg, totals)
 
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
-    line("hint", 4, PAD + 10,
-        search_text == "" and "Type to filter" or "", "hint", 15)
+    -- No in-field placeholder. The field sits at a higher Z order than any
+    -- text this panel draws, so a label placed inside it renders behind it and
+    -- what shows through is the field. The prompt moved to the caption below,
+    -- where it is this panel's own text in this panel's own colour.
 
-    line("sub", 5, PAD, string.format("%s,  %d %s,  page %d of %d",
+    -- One space after a comma, and no page counter on a single page. The
+    -- double spaces were a join artefact and read as broken kerning.
+    local caption = string.format("%s, %d %s",
         search_text ~= "" and ("Matching " .. search_text)
             or (everything and "Every item with a job"
                 or "What your storage holds"),
-        #source, #source == 1 and "item" or "items",
-        page + 1, pages), "dim", 13)
+        #source, #source == 1 and "item" or "items")
+    if pages > 1 then
+        caption = caption .. string.format(", page %d of %d", page + 1, pages)
+    end
+    if search_text == "" then
+        caption = caption .. "   |   Type to filter, click an item to limit it"
+    end
+    line("sub", 5, PAD, caption, "dim", 13)
 
     local top = 6 * LINE
     local from = page * PER_PAGE + 1
