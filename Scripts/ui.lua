@@ -57,7 +57,6 @@ local last_hook_try = -math.huge
 local menu_likely_open = false
 
 -- Cells.
-local cell_cache = nil          -- array of cell widgets, revalidated per use
 local cell_row = {}             -- cell full name -> row full name
 local cell_text = {}            -- cell full name -> injected TextBlock
 local cell_last = {}            -- cell full name -> last style token written
@@ -95,7 +94,8 @@ end
 -- makes the next tick inject a second one on top of it.
 
 local function invalidate_cells()
-    cell_cache = nil
+    -- Only the name-to-name lookup. There is no widget array to drop any
+    -- more; cells are resolved inside the call that uses them.
     cell_row = {}
 end
 
@@ -558,18 +558,33 @@ local function handle_cell(cfg, cell)
     set_cell(tb, cell_name, glyph, colour)
 end
 
-local function refresh_cells(cfg)
-    -- Index the last pass once per refresh, not once per cell.
-    if cell_cache == nil then
-        cell_cache = {}
-        pcall(function()
-            for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
-                cell_cache[#cell_cache + 1] = c
-            end
-        end)
-    end
+-- The cells that exist right now, resolved inside this call.
+--
+-- They used to be found once and kept until something invalidated the cache,
+-- which is the stored-wrapper dereference this codebase is built to avoid.
+-- FindAllOf returns cells from EVERY instance of the menu, and the file
+-- already records that a hidden stale instance coexists with the open one -
+-- so when the stale one is torn down while the live one stays visible, the
+-- kept array is holding freed objects, and alive() on one of those IS the
+-- crash rather than a guard against it.
+--
+-- The sweep is once a second, not once a frame, which is the rate the caller
+-- was built around: main.lua's comment on the grid says it stays on its
+-- second precisely because refreshing means a FindAllOf over every cell.
+local function live_cells()
+    local out = {}
+    pcall(function()
+        for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
+            -- Asked in the same call that produced it, which is the only age
+            -- at which the question is safe.
+            if alive(c) then out[#out + 1] = c end
+        end
+    end)
+    return out
+end
 
-    for _, cell in ipairs(cell_cache) do
+local function refresh_cells(cfg)
+    for _, cell in ipairs(live_cells()) do
         pcall(function() handle_cell(cfg, cell) end)
     end
 end
@@ -621,12 +636,12 @@ M.wants_pass = false
 -- Exactly one cell can be hovered. IsHovered still answers with the checkbox
 -- hidden, since Hidden removes the checkbox from hit testing, not the cell.
 local function hovered_cell()
-    if cell_cache == nil then return nil end
-    for _, cell in ipairs(cell_cache) do
+    -- Resolved here rather than read from a kept array. This runs from the
+    -- mouse keybind, which can fire arbitrarily long after the last refresh,
+    -- so a kept array is at its most stale exactly when this reads it.
+    for _, cell in ipairs(live_cells()) do
         local hit = false
-        pcall(function()
-            if alive(cell) then hit = cell:IsHovered() end
-        end)
+        pcall(function() hit = cell:IsHovered() end)
         if hit == true then return cell end
     end
     return nil

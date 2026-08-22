@@ -50,8 +50,7 @@ end
 -- Building
 -- ---------------------------------------------------------------------------
 
-local function build()
-    trace.at("overlay: build begins")
+local function build_now()
     local pc = api.player_controller()
 
     local widget_cls = api.cdo("/Script/UMG.UserWidget")
@@ -120,9 +119,29 @@ local function build()
         return false
     end
 
-    trace.at("overlay: build done, widget made")
     widget, tree, canvas = made, made_tree, made_canvas
     return true
+end
+
+-- One mark around a whole call, popped however the call leaves.
+--
+-- The guard is not decoration. This module hot-reloads and trace.lua does
+-- not, so a session that reloads the overlay after trace gained around()
+-- gets the NEW overlay talking to the OLD trace, where the field is nil -
+-- and calling it throws inside M.host, which takes the entire panel down
+-- silently, because the refresh that reaches it sits under a pcall. That
+-- cost a diagnosis; the fallback costs a line. The breadcrumb is simply
+-- less precise until the game restarts.
+local function traced(where, fn)
+    if trace.around then return trace.around(where, fn) end
+    return fn()
+end
+
+-- The mark lives out here rather than inside, because the body has ten exits
+-- and one of them used to carry the only done(). trace.around unwinds to the
+-- depth it started at whichever way the body leaves.
+local function build()
+    return traced("overlay: building the panel widget", build_now)
 end
 
 -- The canvas panels draw into, and the tree that must own anything they
@@ -152,8 +171,7 @@ end
 --
 -- It failed before because the mode wants a widget to focus and we had none of
 -- our own to give it. Now we do.
-local function set_input(on)
-    trace.at("overlay: set_input " .. tostring(on))
+local function set_input_now(on)
     local pc = api.player_controller()
     if not alive(pc) then return end
 
@@ -226,10 +244,15 @@ end
 -- Showing
 -- ---------------------------------------------------------------------------
 
-function M.show()
-    trace.at("overlay: show, asking for a host")
+-- Three early returns, so the mark is owned by a wrapper here too.
+local function set_input(on)
+    return traced("overlay: set_input " .. tostring(on), function()
+        return set_input_now(on)
+    end)
+end
+
+local function show_now()
     if M.host() == nil then
-        trace.done()
         return false
     end
 
@@ -241,6 +264,10 @@ function M.show()
 
     M.open = true
     return true
+end
+
+function M.show()
+    return traced("overlay: showing the panel", show_now)
 end
 
 function M.hide()

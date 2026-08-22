@@ -118,7 +118,19 @@ function M.now()
     -- The holders re-resolve, or they keep calling the module that was just
     -- thrown away. Reloading without this looks like reloading doing nothing,
     -- which is a whole evening on its own if it is not written down.
-    if M.rewire then pcall(M.rewire) end
+    if M.rewire then
+        -- The result is checked. It used to be a bare pcall, so a rewire that
+        -- threw was swallowed and the next line still announced success -
+        -- while main.lua carried on calling the modules that were just
+        -- discarded. That is the "reloading looks like it did nothing"
+        -- evening described three lines up, wearing a confirmation message.
+        local ok, err = pcall(M.rewire)
+        if not ok then
+            log.warn("reload loaded the new code but could not rewire the " ..
+                "holders, so the old modules are still in use: " .. tostring(err))
+            return false
+        end
+    end
 
     log.say("reloaded " .. table.concat(SWAPPED, " and ") ..
         ", the panel key will draw the new code")

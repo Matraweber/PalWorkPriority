@@ -386,6 +386,20 @@ local function apply_pal(cfg, pal, want, stats)
         return
     end
 
+    -- One loop, over everything the pal can physically do.
+    --
+    -- There used to be a second pass below this one that re-enforced X. It was
+    -- redundant and actively harmful: `capable` already contains X'd types
+    -- (base_allowed excludes X from `allowed`, not from `capable`), and
+    -- `want` is built from allowed - so the loop below already switches them
+    -- off. The second pass then read the same pre-toggle `off` snapshot, saw
+    -- them as still on, and sent every one of those RPCs a second time. It
+    -- also had no budget check of its own, and counted no failures.
+    --
+    -- Worse, the budget check here returns, which skipped that second pass
+    -- entirely - so the one rule documented as absolute was the first thing
+    -- dropped exactly when a pass was busiest. With the pass gone, so is the
+    -- hole: X is enforced by the loop below, under the budget, every time.
     for value in pairs(pal.capable or pal.base or {}) do
         if stats.toggles + stats.would_toggle >= MAX_TOGGLES_PER_PASS then
             stats.deferred = stats.deferred + 1
@@ -409,22 +423,6 @@ local function apply_pal(cfg, pal, want, stats)
         end
     end
 
-    -- X is absolute: it applies whether or not the pal is fenced, and it is
-    -- the whole reason X can stop a pal working at all.
-    for i = 1, #workdefs.ORDER do
-        local name = workdefs.ORDER[i]
-        local value = workdefs.value(name)
-
-        if store.effective(cfg, pal, name, value) == false and not off[value]
-            and api.suitability_rank(pal.param, value) >= 1 then
-
-            if cfg.dry_run then
-                stats.would_toggle = stats.would_toggle + 1
-            elseif api.set_work_enabled(pal.id, value, false) then
-                stats.toggles = stats.toggles + 1
-            end
-        end
-    end
 end
 
 -- ---------------------------------------------------------------------------

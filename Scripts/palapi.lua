@@ -201,6 +201,27 @@ function M.has_authority()
     return valid(gm)
 end
 
+-- A string that changes when the world does, and does not change when the
+-- player merely respawns.
+--
+-- ClientRestart fires on every spawn, not only on a world load, so the mod
+-- needs to tell the two apart before it throws away every cache it holds. The
+-- level's own object path is the cheapest thing that answers: a new map means
+-- a new PersistentLevel, a respawn means the same one. Read fresh and returned
+-- as a string, so nothing is kept but text.
+function M.world_key()
+    local key
+    pcall(function()
+        local pc = FindFirstOf("PlayerController")
+        if pc == nil then return end
+        local world = pc:GetWorld()
+        if world == nil then return end
+        key = world:GetFullName()
+    end)
+    if type(key) == "string" and key ~= "" then return key end
+    return nil
+end
+
 function M.base_camps()
     local camps = {}
     pcall(function()

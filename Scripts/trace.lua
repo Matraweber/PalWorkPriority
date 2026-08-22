@@ -62,6 +62,33 @@ function M.done()
     write_top()
 end
 
+-- Runs fn inside a mark, and unwinds to the depth it started at whatever fn
+-- does.
+--
+-- at() at the top of a function has to be matched by done() at every exit,
+-- and overlay.lua grew ten exits against one pop: a successful panel open
+-- pushed four marks and popped one, so the stack climbed on every toggle and
+-- write_top() permanently named a step that had long finished. The breadcrumb
+-- - the entire point of this file, and the thing that found the 23:09 crash -
+-- quietly became a liar in exactly the way the note above says it must not.
+--
+-- Restoring by DEPTH rather than popping one also survives M.on being toggled
+-- between the two halves of a pair, which would otherwise leak a mark: at()
+-- would have run and done() would not.
+function M.around(where, fn)
+    local mark = #stack
+    M.at(where)
+
+    local ok, a, b, c = pcall(fn)
+
+    for i = #stack, mark + 1, -1 do stack[i] = nil end
+    if M.on and M.path then write_top() end
+
+    -- The caller's error, with its own position rather than this line's.
+    if not ok then error(a, 0) end
+    return a, b, c
+end
+
 -- Read back at startup, so a crash announces itself in the ordinary log the
 -- next time the mod runs rather than waiting to be asked.
 function M.last()

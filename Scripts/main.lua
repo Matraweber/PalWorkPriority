@@ -245,12 +245,18 @@ end
 -- stress reproducer agreed, dropping the engine tick within 25 executed
 -- passes whatever shape the callbacks took. The full story is in
 -- docs/research-ue4ss-crash.md; the machinery is in clock.lua.
-local function start_timer()
-    if timer_running then return end
-    timer_running = true
+-- Registers or re-registers the pass entry. clock.every replaces by name, so
+-- calling this again is how a changed interval takes effect.
+local function arm_pass_timer()
     clock.every("pass", cfg.interval_seconds * 1000, function()
         run_pass("tick")
     end)
+end
+
+local function start_timer()
+    if timer_running then return end
+    timer_running = true
+    arm_pass_timer()
     clock.start()
 end
 
@@ -266,6 +272,10 @@ local grid_owed = 0
 -- The same rule as pass_body, and this one mattered more: it was scheduled
 -- once a second for the whole session, so it minted a registry reference every
 -- second the game was open.
+-- The last panel error reported, so a throw that repeats ten times a second
+-- is logged once rather than a hundred times.
+local last_panel_error = nil
+
 local function ui_body()
     -- The grid stays on its second, because refreshing it means a FindAllOf
     -- over every cell and it has nothing to gain from ten times the rate.
@@ -276,7 +286,24 @@ local function ui_body()
 
     -- Drawn independently: the panel opens on a hotkey and has to keep
     -- working with the stand shut.
-    pcall(function() panel.refresh(cfg) end)
+    -- The message is kept, not thrown away.
+    --
+    -- A bare pcall here meant a panel that threw simply stopped drawing, with
+    -- nothing anywhere to say why - which is exactly how a use-before-local in
+    -- panel.lua hid for a whole session. Rate limited to one line per distinct
+    -- error, because this runs ten times a second and a repeating throw would
+    -- otherwise write a hundred lines a second into priority.log.
+    local ok, err = pcall(function() panel.refresh(cfg) end)
+    if not ok then
+        err = tostring(err)
+        if err ~= last_panel_error then
+            last_panel_error = err
+            log.warn("the panel stopped drawing: " .. err)
+        end
+    elseif last_panel_error ~= nil then
+        last_panel_error = nil
+        log.say("the panel is drawing again")
+    end
 
     -- Instructions from outside, read and acted on here rather than on a
     -- timer of their own, so one can never land between two halves of a draw.
@@ -540,6 +567,11 @@ end
 COMMANDS.reload = function()
     if load_config() then
         scheduler.forget()
+        -- Re-armed, or a changed interval_seconds does nothing at all:
+        -- start_timer returns immediately once the timer is running, so the
+        -- entry kept whatever interval it was first registered with while the
+        -- command cheerfully reported the config reloaded.
+        if timer_running then arm_pass_timer() end
         log.say("config reloaded")
         COMMANDS.status()
     end
@@ -1022,18 +1054,45 @@ local function decide_write_or_send()
     end
 end
 
+-- The world the caches were built against. nil until the first spawn.
+local world_key = nil
+
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
-    -- Engine wrappers do not survive a world switch, and neither should any
-    -- memo built from them.
-    api.reset()
-    clock.reset()
-    scheduler.forget()
-    demandidx.reset()
-    ui.reset()
-    items.reset()
-    panel.reset()
-    net.reset()
-    overlay.reset()
+  -- Every line below runs under one pcall.
+  --
+  -- Nine calls ran bare here. If any of them threw - and panel.reset reaches
+  -- into icons, overlay and the whole widget tree - everything after it was
+  -- skipped, so net.reset, overlay.reset, demandidx.install and all four
+  -- delayed starts silently did not happen and the mod came up half reset
+  -- with nothing in the log.
+  local ok, err = pcall(function()
+
+    -- ClientRestart fires on every spawn, not only on a world load, so this
+    -- also ran on every death. That wiped the demand index, the hold timers,
+    -- the stock cache and every icon cache, and re-queued four one-shots -
+    -- after which the scheduler saw no demand and idle-skipped every camp for
+    -- up to forty five seconds. Dying is not a world change, so the caches
+    -- only go when the world key actually moves.
+    local now_key = api.world_key()
+    local switched = (now_key == nil) or (now_key ~= world_key)
+    world_key = now_key
+
+    if switched then
+        -- Engine wrappers do not survive a world switch, and neither should
+        -- any memo built from them.
+        api.reset()
+        clock.reset()
+        scheduler.forget()
+        demandidx.reset()
+        ui.reset()
+        items.reset()
+        panel.reset()
+        net.reset()
+        overlay.reset()
+    else
+        log.debug("respawn in the same world, caches kept")
+    end
+
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
     demandidx.install()
@@ -1076,6 +1135,12 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     end
     start_timer()
     start_ui()
+
+  end)
+
+  if not ok then
+      log.warn("world load handler threw: " .. tostring(err))
+  end
 end)
 
 -- Started at load as well, not only on world entry. ClientRestart fires when
