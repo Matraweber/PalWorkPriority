@@ -532,7 +532,15 @@ local function line(key, row, col, text, colour_key, points)
     -- last had, usually UMG's 24, while this centred it as though it were 20.
     -- Centring cannot be right while the size is a guess.
     local pt = points or DEFAULT_PT
-    local y = (row * LINE - 3) + (ROW_H - pt * 1.35) / 2
+    -- Centred on the glyphs, not on the block.
+    --
+    -- A text block reserves room for descenders whether the text has any or
+    -- not, so centring the block leaves capitals sitting low: RULES and ADD
+    -- and CLOSE have no descender between them and every one of them looked
+    -- like it had sunk. The nudge is the difference between the block's
+    -- middle and the middle of the capitals, which is about an eighth of the
+    -- point size.
+    local y = (row * LINE - 3) + (ROW_H - pt * 1.35) / 2 - pt * 0.13
     text_at(key, col, y, text, colour_key, pt)
 end
 
@@ -1055,8 +1063,13 @@ local function draw_tabs(active)
         -- 0.62 of the point size each, so the rule is as wide as the label
         -- and starts where the label starts, rather than the constant plus
         -- fudge that left it hanging off to one side.
+        -- Measured off a screenshot rather than assumed: RULES rendered 83
+        -- pixels across for five capitals at 20pt, so a capital is about 0.83
+        -- of the point size, not the 0.62 an em-width guess gives. The rule
+        -- was coming out a fifth short and left aligned under the word, which
+        -- is what read as off centre.
         if on then
-            local w = #tab.label * 20 * 0.62
+            local w = #tab.label * 20 * 0.83
             slab("tabsel:" .. tab.key, x, TAB_H - 6, w, 3, COLOUR.tab_on)
         end
 
@@ -1490,16 +1503,16 @@ end
 
 local function step(current, dir)
     if dir < 0 then
-        if current == nil then return LADDER[1] end
-        for _, n in ipairs(LADDER) do
+        if current == nil then return caps.LADDER[1] end
+        for _, n in ipairs(caps.LADDER) do
             if n > current then return n end
         end
-        return LADDER[#LADDER]
+        return caps.LADDER[#caps.LADDER]
     end
 
     if current == nil then return nil end
     local below = nil
-    for _, n in ipairs(LADDER) do
+    for _, n in ipairs(caps.LADDER) do
         if n < current then below = n end
     end
     return below
@@ -1579,6 +1592,51 @@ function M.activate(cfg, dir)
 end
 
 -- Returns true when the click was ours, so the caller leaves the grid alone.
+-- Click something by name, without a mouse.
+--
+-- The panel holds the input mode while it is open, so a real click is the one
+-- thing that cannot be driven from outside, and every interaction has had to
+-- be tested by asking a person to click and then reading a log. This walks the
+-- same hit map the pointer walks and calls the same handler, so it exercises
+-- the real path rather than a shortcut around it.
+--
+-- "pwp click item Wood"   the picker tile for an item
+-- "pwp click rule 1"      the ceiling on the first rule
+-- "pwp click job 1"       that rule's work type
+-- "pwp click tab add"     a tab, or close, or new, or back
+function M.click_named(cfg, kind, what_arg, dir)
+    if not M.open then return "the panel is shut" end
+    dir = dir or -1
+
+    local wanted = nil
+    for _, key in ipairs(order) do
+        local h = hits[key]
+        if h and h.kind == kind then
+            if kind == "item" and h.item == what_arg then
+                wanted = h
+            elseif (kind == "rule" or kind == "job" or kind == "drop")
+                and tostring(what_arg) == "1" then
+                wanted = h
+            elseif kind == "tab" and h.mode == what_arg then
+                wanted = h
+            elseif what_arg == nil then
+                wanted = h
+            end
+            if wanted then break end
+        end
+    end
+
+    if wanted == nil then
+        return "nothing on this screen matches " .. tostring(kind) ..
+            " " .. tostring(what_arg)
+    end
+
+    local ok, result = pcall(M.apply, cfg, wanted, dir, true)
+    if not ok then return "failed: " .. tostring(result) end
+    return "clicked " .. kind .. " " .. tostring(what_arg) ..
+        " -> " .. tostring(result)
+end
+
 function M.handle_click(cfg, dir)
     if not M.open then return false end
 
@@ -1660,9 +1718,9 @@ function M.apply(cfg, what, dir, from_mouse)
         -- place instead of on a dead end.
         local work = workdefs.work_for_item(what.item) or workdefs.DEFAULT_WORK
 
-        caps.set(work, what.item, LADDER[1])
+        caps.set(work, what.item, caps.LADDER[1])
         log.say(string.format("rule added: %s until %d %s",
-            workdefs.label(work), LADDER[1], what.item))
+            workdefs.label(work), caps.LADDER[1], what.item))
         M.wants_pass = true
         mode, sel = "list", 1
         return true

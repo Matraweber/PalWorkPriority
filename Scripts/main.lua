@@ -488,6 +488,20 @@ COMMANDS.trace = function(args)
     end
 end
 
+-- Drives the panel's own click handler by name, so an interaction can be
+-- tested without a person and a mouse. The panel owns the input mode while it
+-- is open, which is exactly when its clicking most needs testing.
+COMMANDS.click = function(args)
+    local kind, rest = (args or ""):match("^%s*(%S+)%s*(.*)$")
+    if kind == nil then
+        log.say("use: " .. cfg.chat_prefix ..
+            " click item <ItemId> | rule 1 | job 1 | drop 1 | tab add")
+        return
+    end
+    rest = (rest ~= "" and rest) or nil
+    log.say(panel.click_named(cfg, kind, rest, -1))
+end
+
 COMMANDS.clicks = function()
     panel.debug_clicks = not panel.debug_clicks
     log.say("click reporting " .. (panel.debug_clicks and "on" or "off"))

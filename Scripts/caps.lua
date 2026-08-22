@@ -12,6 +12,22 @@ local log = require("log")
 
 local M = {}
 
+-- What a click or an arrow key walks a ceiling through. Ceilings run into the
+-- thousands, so a step of one would be useless, and the steps coarsen as the
+-- numbers grow.
+--
+-- Here rather than in a screen, because two screens walk it and both had
+-- their own idea of where it lived. ui.lua kept it as a local and panel.lua
+-- simply used the name, which in Lua is a nil global: adding a rule from the
+-- picker threw "attempt to index a nil value (global 'LADDER')" every time,
+-- and the arrow keys and right click on a ceiling were dead for the same
+-- reason. All of it silent, because the click handler is wrapped in a pcall
+-- that discarded the message.
+M.LADDER = {
+    100, 250, 500, 1000, 2000, 3000, 5000,
+    7500, 10000, 15000, 20000, 30000, 50000,
+}
+
 M.path = nil
 M.data = {}          -- work name -> { [item id] = ceiling }
 

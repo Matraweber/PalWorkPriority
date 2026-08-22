@@ -634,12 +634,9 @@ M.wants_pass = false
 local HEADER_BOX = "HorizontalBox_WorkIcon"
 local ICON_SIZE = 32
 
--- What a click walks through. Ceilings run into the thousands, so a step of
--- one would be useless, and the steps coarsen as the numbers grow.
-local LADDER = {
-    100, 250, 500, 1000, 2000, 3000, 5000,
-    7500, 10000, 15000, 20000, 30000, 50000,
-}
+-- The one definition lives in caps.lua, which owns ceilings. Two copies of a
+-- constant is how they drift apart.
+local LADDER = caps.LADDER
 
 -- Bounded breadth-first search for a widget by name. A nested UserWidget
 -- keeps its children in its own WidgetTree rather than behind GetChildAt, so
