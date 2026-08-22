@@ -93,17 +93,6 @@ end
 -- Lookup caches only. cell_text MUST survive: this runs on every scroll, rows
 -- recycle rather than die, and dropping the reference to a live TextBlock
 -- makes the next tick inject a second one on top of it.
--- Ceiling row state. Declared here rather than beside the rest of the
--- ceiling code so M.reset, which runs above it, can clear it.
-local ceiling_text = {}     -- suitability value -> TextBlock
-local ceiling_last = {}     -- suitability value -> last glyph drawn
-local ceiling_cols = nil    -- suitability value -> the icon's canvas
-
--- Forward declared because M.refresh sits above the ceiling code and
--- would otherwise resolve this as a nil global. The call there is inside
--- a pcall, so that failure would not be reported: the row would simply
--- never appear, with nothing anywhere saying why.
-local refresh_ceilings
 
 local function invalidate_cells()
     cell_cache = nil
@@ -128,9 +117,6 @@ function M.reset()
     cell_last = {}
     cell_cb = {}
     row_pal = {}
-    ceiling_text = {}
-    ceiling_last = {}
-    ceiling_cols = nil
     menu_likely_open = false
     ftext_mode = nil
     warned = {}
@@ -610,7 +596,6 @@ function M.refresh(cfg)
     end
 
     refresh_cells(cfg)
-    pcall(function() refresh_ceilings(cfg, menu) end)
 
     store.flush()
     return true
@@ -620,268 +605,6 @@ end
 -- effect within a second rather than waiting out the 30s cycle.
 M.wants_pass = false
 
--- ---------------------------------------------------------------------------
--- Ceiling row
--- ---------------------------------------------------------------------------
---
--- The stand's icon header is a HorizontalBox of thirteen 32x32 SizeBoxes, one
--- per work suitability in enum order, each holding a
--- WBP_MainMenu_Pal_WorkIcon_C whose root canvas is somewhere a number can
--- sit. Hanging the row off that box means the columns line themselves up:
--- there are no coordinates to compute, and none to keep in step when the
--- game's own layout shifts under us.
-
-local HEADER_BOX = "HorizontalBox_WorkIcon"
-local ICON_SIZE = 32
-
--- The one definition lives in caps.lua, which owns ceilings. Two copies of a
--- constant is how they drift apart.
-local LADDER = caps.LADDER
-
--- Bounded breadth-first search for a widget by name. A nested UserWidget
--- keeps its children in its own WidgetTree rather than behind GetChildAt, so
--- both routes have to be followed.
-local function find_named(root, want)
-    local queue, seen = { root }, 0
-
-    while #queue > 0 and seen < 800 do
-        local node = table.remove(queue, 1)
-        seen = seen + 1
-
-        if alive(node) then
-            local name
-            pcall(function() name = node:GetFName():ToString() end)
-            if name == want then return node end
-
-            local tree
-            pcall(function() tree = node.WidgetTree end)
-            if alive(tree) then
-                local sub
-                pcall(function() sub = tree.RootWidget end)
-                if alive(sub) then queue[#queue + 1] = sub end
-            end
-
-            local count = 0
-            pcall(function() count = node:GetChildrenCount() end)
-            if type(count) == "number" then
-                for i = 0, count - 1 do
-                    local child
-                    pcall(function() child = node:GetChildAt(i) end)
-                    if alive(child) then queue[#queue + 1] = child end
-                end
-            end
-        end
-    end
-    return nil
-end
-
--- The canvas inside each icon column, keyed by suitability value.
---
--- The icons are laid out in enum order and the enum reserves 0 for None, so
--- the first icon is suitability 1. If a game update ever reorders them the
--- numbers would sit under the wrong icons, which is visible at a glance
--- rather than silent.
-local function header_columns(menu)
-    if ceiling_cols then return ceiling_cols end
-
-    local tree
-    pcall(function() tree = menu.WidgetTree end)
-    if not alive(tree) then return nil end
-
-    local root
-    pcall(function() root = tree.RootWidget end)
-    if not alive(root) then return nil end
-
-    local box = find_named(root, HEADER_BOX)
-    if not alive(box) then
-        warn_once("nohdr", "work icon header not found, so no ceiling row")
-        return nil
-    end
-
-    local count = 0
-    pcall(function() count = box:GetChildrenCount() end)
-    if type(count) ~= "number" or count == 0 then return nil end
-
-    local cols = {}
-    for i = 0, count - 1 do
-        local sizebox
-        pcall(function() sizebox = box:GetChildAt(i) end)
-
-        local icon
-        if alive(sizebox) then pcall(function() icon = sizebox:GetChildAt(0) end) end
-
-        local itree, iroot
-        if alive(icon) then pcall(function() itree = icon.WidgetTree end) end
-        if alive(itree) then pcall(function() iroot = itree.RootWidget end) end
-
-        -- Canvas and tree both: the canvas is where the number is parented,
-        -- the tree is what must own it. See ensure_ceiling_text.
-        if alive(iroot) and alive(itree) then
-            cols[i + 1] = { canvas = iroot, tree = itree }
-        end
-    end
-
-    ceiling_cols = cols
-    return cols
-end
-
-local function ensure_ceiling_text(value, column)
-    local cached = ceiling_text[value]
-    if cached then
-        if alive(cached) then return cached end
-        ceiling_text[value] = nil
-        ceiling_last[value] = nil
-    end
-
-    local canvas, tree = column.canvas, column.tree
-    if not alive(canvas) or not alive(tree) then return nil end
-
-    local cls = api.cdo("/Script/UMG.TextBlock")
-    if not cls then return nil end
-
-    -- Constructed against the WidgetTree rather than the canvas. A UMG widget
-    -- belongs to a tree; the panel it renders in is parenting, not ownership.
-    -- Giving one a CanvasPanel as its outer crashed the game inside UE4SS.
-    local tb
-    pcall(function() tb = StaticConstructObject(cls, tree) end)
-    if not alive(tb) then return nil end
-
-    local slot
-    local ok = pcall(function() slot = canvas:AddChildToCanvas(tb) end)
-    if not ok or not alive(slot) then return nil end
-
-    -- Wider than the icon and nudged left, so a five digit ceiling stays
-    -- centred under a 32 pixel column instead of drifting right.
-    pcall(function() slot:SetAutoSize(false) end)
-    pcall(function() slot:SetPosition({ X = -8, Y = ICON_SIZE + 1 }) end)
-    pcall(function() slot:SetSize({ X = ICON_SIZE + 16, Y = 16 }) end)
-    pcall(function() slot:SetZOrder(50) end)
-
-    -- Visible rather than HitTestInvisible, unlike the grid numbers: this row
-    -- is the control, and a widget that cannot be hit cannot report IsHovered
-    -- either, so making it click-through would make it unclickable.
-    pcall(function() tb:SetVisibility(0) end)
-    pcall(function() tb:SetJustification(1) end)
-    pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
-
-    ceiling_text[value] = tb
-    return tb
-end
-
--- Which item a ceiling set from the stand applies to. Work types that produce
--- nothing in particular have no answer, and their columns stay blank.
-local function ceiling_material(cfg, work_name)
-    return (cfg.ceiling_material or {})[work_name]
-end
-
-local function ceiling_now(cfg, work_name, item)
-    if item == nil then return nil end
-    local ceilings = caps.for_work(cfg, work_name)
-    if ceilings == nil then return nil end
-    return ceilings[item]
-end
-
-function refresh_ceilings(cfg, menu)
-    local cols = header_columns(menu)
-    if cols == nil then return end
-
-    for value, column in pairs(cols) do
-        local work_name = workdefs.name(value)
-        if work_name and alive(column.canvas) then
-            local item = ceiling_material(cfg, work_name)
-            local ceiling = ceiling_now(cfg, work_name, item)
-
-            local glyph, colour
-            if ceiling then
-                glyph, colour = tostring(math.floor(ceiling)), "cap_set"
-            elseif item then
-                glyph, colour = "-", "cap_none"
-            else
-                -- No material to hang a ceiling on, so nothing to show and
-                -- nothing a click here could mean.
-                glyph, colour = "", "cap_none"
-            end
-
-            local token = glyph .. "|" .. colour
-            if ceiling_last[value] ~= token then
-                local tb = ensure_ceiling_text(value, column)
-                if tb then
-                    local ft = make_ftext(glyph)
-                    if ft then
-                        pcall(function() tb:SetText(ft) end)
-                        pcall(function()
-                            tb:SetColorAndOpacity({
-                                SpecifiedColor = COLOUR[colour],
-                                ColorUseRule = 0,
-                            })
-                        end)
-                        ceiling_last[value] = token
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function hovered_ceiling()
-    for value, tb in pairs(ceiling_text) do
-        local hit = false
-        pcall(function()
-            if alive(tb) then hit = tb:IsHovered() end
-        end)
-        if hit == true then return value end
-    end
-    return nil
-end
-
--- dir -1 raises the ceiling, +1 lowers it and eventually takes it off.
--- Both ends clamp rather than wrap, as the priority cells do.
-local function step_ceiling(current, dir)
-    if dir < 0 then
-        if current == nil then return LADDER[1] end
-        for _, step in ipairs(LADDER) do
-            if step > current then return step end
-        end
-        return LADDER[#LADDER]
-    end
-
-    if current == nil then return nil end
-    local below = nil
-    for _, step in ipairs(LADDER) do
-        if step < current then below = step end
-    end
-    return below
-end
-
-local function bump_ceiling(cfg, value, dir)
-    local work_name = workdefs.name(value)
-    if work_name == nil then return end
-
-    local item = ceiling_material(cfg, work_name)
-    if item == nil then
-        log.say(workdefs.label(work_name) ..
-            " has no material to cap. Add one to ceiling_material in config.lua")
-        return
-    end
-
-    local current = ceiling_now(cfg, work_name, item)
-    local next_ceiling = step_ceiling(current, dir)
-    if next_ceiling == current then return end
-
-    if next_ceiling == nil then
-        caps.clear(work_name, item)
-    else
-        caps.set(work_name, item, next_ceiling)
-    end
-
-    ceiling_last[value] = nil
-    M.wants_pass = true
-
-    log.say(string.format("%s pauses at %s %s",
-        workdefs.label(work_name),
-        next_ceiling and tostring(next_ceiling) or "no limit,",
-        item))
-end
 
 -- ---------------------------------------------------------------------------
 -- Clicking a cell
@@ -946,15 +669,6 @@ end
 -- dir -1 for left click (towards priority 1), +1 for right click.
 local function bump(cfg, dir)
     if not menu_likely_open then return end
-
-    -- The header row is checked first. Its numbers sit outside every cell, so
-    -- the two can never both be hovered, and asking about them first keeps
-    -- the cheap plain-Lua loop ahead of the FindAllOf-backed one.
-    local ceiling = hovered_ceiling()
-    if ceiling then
-        bump_ceiling(cfg, ceiling, dir)
-        return
-    end
 
     local cell = hovered_cell()
     if not cell then return end
@@ -1027,11 +741,9 @@ end
 
 -- Walks an open menu's widget tree, with canvas geometry where there is any.
 --
--- The ceiling row has to line up under the work type icons, and neither the
--- widget that holds those icons nor the x of each column is something to
--- guess at. Reading any property name off a UE4SS object returns a live
--- looking wrapper whether or not it exists, so the only safe move is to
--- print what is actually there and build against that.
+-- Reading any property name off a UE4SS object returns a live looking wrapper
+-- whether or not it exists, so the only safe move is to print what is actually
+-- there and build against that.
 --
 -- Only useful with the stand open. With it shut the menu has no tree.
 local function dump_tree(f, node, depth, budget)
@@ -1057,13 +769,13 @@ local function dump_tree(f, node, depth, budget)
         else
             -- The icon row is a HorizontalBox, so its children carry a
             -- HorizontalBoxSlot with no coordinates at all. Naming the slot
-            -- class is what says which way a ceiling row has to be built.
+            -- class is what says which way anything here has to be built.
             geom = "  slot=" .. sclass
         end
     end
 
     -- A SizeBox is what fixes each icon column's width, so its override is
-    -- the column pitch a ceiling row would have to match.
+    -- the column pitch of the work icon header.
     pcall(function()
         if class_name(node) == "SizeBox" then
             local w = node.WidthOverride
