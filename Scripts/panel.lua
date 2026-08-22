@@ -2403,6 +2403,33 @@ local function redraw(cfg, totals)
     return draw_list(cfg, totals)
 end
 
+-- Is the pointer over anything belonging to this key?
+--
+-- All three surfaces are asked, not just the first one that exists. A key can
+-- own a slab AND text AND a picture, and only ONE of them can be hovered at a
+-- time: Slate gives the pointer to the topmost hit-testable widget under it,
+-- and this panel draws text at a higher Z order than the slabs behind it.
+--
+-- Taking the first surface that existed therefore broke every control that
+-- had just been given a slab. Asking the slab alone meant hovering the WORD
+-- reported nothing, because the word was on top and had taken the pointer -
+-- so tabs, list rows, the limit well, Remove and the action bars all answered
+-- in the padding around their labels and nowhere else. Which is worse than
+-- where they started, and is what "a lot of the mouse events stopped working"
+-- was.
+local function over_key(key)
+    local hit_any = false
+    pcall(function()
+        local a = tile_face[key]
+        if a ~= nil and alive(a) and a:IsHovered() then hit_any = true return end
+        local b = blocks[key]
+        if b ~= nil and alive(b) and b:IsHovered() then hit_any = true return end
+        local c = images[key]
+        if c ~= nil and alive(c) and c:IsHovered() then hit_any = true end
+    end)
+    return hit_any
+end
+
 function M.refresh(cfg)
     -- Timed, because "laggy" has three plausible causes here and guessing
     -- between them has already cost a round. Reports the worst refresh seen
@@ -2428,14 +2455,8 @@ function M.refresh(cfg)
     local hn = 0
     hover_key = nil
     for key in pairs(hits) do
-        -- A row reports through its text, a tile through its picture.
-        local w = tile_face[key] or blocks[key] or images[key]
-        local over = false
         hn = hn + 1
-        pcall(function()
-            if alive(w) then over = w:IsHovered() end
-        end)
-        if over == true then
+        if over_key(key) then
             hover_key = key
             break
         end
@@ -2638,12 +2659,7 @@ end
 
 local function hovered()
     for key, what in pairs(hits) do
-        local w = tile_face[key] or blocks[key] or images[key]
-        local over = false
-        pcall(function()
-            if alive(w) then over = w:IsHovered() end
-        end)
-        if over == true then
+        if over_key(key) then
             -- Moving the mouse moves the keyboard position with it, so the
             -- two never disagree about which row is current.
             for i, k in ipairs(order) do
