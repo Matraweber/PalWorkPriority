@@ -855,6 +855,7 @@ end
 reload.scripts_dir = SCRIPT_DIR
 
 reload.rewire = function()
+    icons = require("icons")
     panel = require("panel")
     overlay = require("overlay")
     pcall(function() remote.rewire() end)

@@ -206,6 +206,27 @@ end
 -- The texture for an item id, or nil when there is none to be had yet.
 --
 -- The result is good for this frame only. Do not keep it.
+-- An id that is already an icon suffix.
+--
+-- The generated table is keyed by whatever the pak reader could pull out of a
+-- path, and it does not always keep the whole of it: PalSphere_Giga is filed
+-- under "giga", so looking up the item id found nothing and the tile fell back
+-- to text while its icon sat in the table under another name.
+--
+-- Every value in the table is a real icon suffix, so an id that matches one is
+-- its own answer. Built once, on demand, and remembered.
+local self_names = nil
+
+local function self_named(key)
+    if self_names == nil then
+        self_names = {}
+        for _, suffix in pairs(icondex.NAMES) do
+            self_names[tostring(suffix):lower()] = suffix
+        end
+    end
+    return self_names[key]
+end
+
 function M.get(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
 
@@ -215,7 +236,7 @@ function M.get(item_id)
     if name == false then return nil end
 
     if name == nil then
-        name = icondex.NAMES[key] or look_around()[key]
+        name = icondex.NAMES[key] or look_around()[key] or self_named(key)
         if name == nil then
             -- Nothing recorded and nothing loaded that matches. Guessing at
             -- category names was tried and removed: it invented paths, asked

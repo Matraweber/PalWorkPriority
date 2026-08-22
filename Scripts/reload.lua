@@ -30,7 +30,14 @@ local M = {}
 
 -- Only these. Adding a module that registers a hook or holds a timer would
 -- turn a reload into a duplicate of both.
-local SWAPPED = { "panel", "overlay" }
+-- icons joins the list now that its scheduling went through clock.lua: it
+-- registers nothing with UE4SS any more, which was the whole reason for the
+-- rule that a module holding a hook must never be swapped. Its caches reset
+-- with it, which costs one re-resolve per icon and is what a reload is for.
+--
+-- panel must come after icons: it is reloaded too, so its own require picks
+-- up whichever icons table is current when it runs.
+local SWAPPED = { "icons", "overlay", "panel" }
 
 -- Every module ever swapped out, kept forever on purpose.
 --
