@@ -277,6 +277,10 @@ local COLOUR = {
     -- The filter placeholder, on the filter well. Light enough to clear 4.5
     -- there, quiet enough not to be mistaken for something already typed.
     hint_on_field = { R = 0.31, G = 0.35, B = 0.41, A = 1.00 },
+    -- A control that exists but has nothing left to do. Quieter than an
+    -- active one and darker than the prose, so "no more pages" cannot be
+    -- mistaken for a sentence.
+    spent  = { R = 0.34, G = 0.38, B = 0.44, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -358,6 +362,10 @@ local ACCENT    = { R = 0.42,  G = 0.80,  B = 1.00,  A = 1.00 }
 -- A full-height bar is position-encoded, so it survives any colour vision and
 -- it scans down a column.
 local RULE_RAIL = { R = 0.558, G = 0.847, B = 0.631, A = 1.00 }
+-- A hit region with no appearance. A Border with a fully transparent brush
+-- still takes hit testing while its visibility is Visible, which is what lets
+-- a word have a click target bigger than itself without a box drawn round it.
+local INVISIBLE = { R = 0.0, G = 0.0, B = 0.0, A = 0.0 }
 -- Inset, darker than the row it sits in, which is how every text field in
 -- every dark interface says "type here".
 -- Measurably darker than the row it sits in, not merely darker than nothing.
@@ -582,7 +590,17 @@ end
 -- The box behind a row. Creative Menu draws every entry as a bordered slab
 -- that lights up under the pointer, and that alone is most of the difference
 -- between a menu and a wall of text.
-local function slab(key, px, py, w, h, colour)
+-- hittable: this slab is the thing the pointer reports, instead of whatever
+-- text happens to sit on it.
+--
+-- Slabs are hit-test invisible by default and that was right when a row's
+-- only clickable thing was one word. It stopped being right as rows grew:
+-- a list row's hit key owns no text at all - its name is drawn under
+-- "n:"..key - so the only hoverable part of a 330 by 36 row was the 28 pixel
+-- icon, and a row whose icon had not loaded could not be hovered at all.
+-- The tab bar had the same shape: the target was the word ADD and nothing
+-- else, about 50 pixels wide.
+local function slab(key, px, py, w, h, colour, hittable)
     local host = ensure_root()
     if not host then return end
 
@@ -603,11 +621,18 @@ local function slab(key, px, py, w, h, colour)
         pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(8995) end)
-        -- Hit test invisible: the row's text is what reports hover, and a
-        -- border on top of it would swallow that.
-        pcall(function() border:SetVisibility(3) end)
+        -- Hit test invisible unless the caller wants this to BE the target.
+        -- A visible-to-hit-testing border sits above the text it backs and
+        -- swallows its hover, which is exactly what is wanted when the slab
+        -- is registered as the surface for the key, and exactly what is not
+        -- when several separate words on one row each need their own.
+        pcall(function() border:SetVisibility(hittable and 0 or 3) end)
         stripes[key] = border
     end
+
+    -- Re-applied every time, not only at construction: a recycled border may
+    -- have been made for a different role last frame.
+    pcall(function() border:SetVisibility(hittable and 0 or 3) end)
 
     local at = px .. ":" .. py .. ":" .. w .. ":" .. h
     if placed["s:" .. key] ~= at then
@@ -650,8 +675,8 @@ local function slab(key, px, py, w, h, colour)
 end
 
 -- A full width row, which is what the rules list is made of.
-local function stripe(key, row, from, width, colour)
-    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour)
+local function stripe(key, row, from, width, colour, hittable)
+    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable)
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -810,6 +835,10 @@ local DEFAULT_PT = 20
 -- The cursor slot at the left of every selectable row, and the caret drawn
 -- into it. 13 pixels is what the old two-space prefix measured at 17pt, so
 -- rows keep the indent they already had and only the header moves to match.
+-- How far the title block sits below its plain row position, so there is a
+-- band of chrome between the tab strip and the words under it.
+local TITLE_DROP = 10
+
 local MARK_W = 20
 
 -- The leading glyph on an action row: "+", "<", or the toggle's box. Wide
@@ -832,7 +861,9 @@ local function row_is_current(...)
     return false
 end
 
-local function line(key, row, col, text, colour_key, points)
+-- drop: extra pixels down, for the two header lines that need clearance
+-- under the tab bar without moving every row beneath them.
+local function line(key, row, col, text, colour_key, points, drop)
     -- pt is passed on, never the caller's nil. text_at reads nil as "leave
     -- the size alone", so an unsized line kept whatever the recycled widget
     -- last had, usually UMG's 24, while this centred it as though it were 20.
@@ -846,7 +877,7 @@ local function line(key, row, col, text, colour_key, points)
     -- like it had sunk. The nudge is the difference between the block's
     -- middle and the middle of the capitals, which is about an eighth of the
     -- point size.
-    local y = (row * LINE - 3) + (ROW_H - pt * 1.35) / 2 - pt * 0.13
+    local y = (row * LINE - 3) + (ROW_H - pt * 1.35) / 2 - pt * 0.13 + (drop or 0)
     text_at(key, col, y, text, colour_key, pt)
 end
 
@@ -1070,7 +1101,10 @@ local function list_row(key, at, item, have, top, limited)
     local px = PAD + col * (LIST_W + LIST_GUTTER)
     local py = top + row * LIST_PITCH
 
-    slab(key, px, py, LIST_W, LIST_H, TILE_BG)
+    -- The row itself is the target. Its hit key owns no text - the name is
+    -- drawn under "n:"..key - so before this the only hoverable part of the
+    -- row was the icon, and a row still waiting for its icon had none at all.
+    slab(key, px, py, LIST_W, LIST_H, TILE_BG, true)
     tile_face[key] = stripes[key]
 
     -- The rail says three things at once without any of them fighting: it is
@@ -1216,7 +1250,20 @@ local function style_box(box, which)
         pcall(function() box:SetStyle(st) end)
     end)
 
-    log.say("text field " .. which .. ": pale field, so its own text shows")
+    -- The WIDGET's own setter, which is not one of the four struct fields
+    -- that were tried and did nothing. Worth one call: if it lands, the
+    -- ceiling box can carry dark text on its pale field instead of the
+    -- near-invisible mid grey it defaults to. A missing method is a Lua
+    -- error, which pcall does catch - unlike an access violation, which it
+    -- never could - so this cannot cost anything but the attempt.
+    local fore = (which == "ceiling")
+        and { R = 0.06, G = 0.08, B = 0.11, A = 1.00 }
+        or { R = 0.90, G = 0.93, B = 0.97, A = 1.00 }
+    local ok_fore = pcall(function() box:SetForegroundColor(fore) end)
+
+    log.say("text field " .. which .. ": " ..
+        ((which == "ceiling") and "pale field" or "dark well") ..
+        ", SetForegroundColor " .. (ok_fore and "took" or "refused"))
 end
 
 local function ensure_search(row)
@@ -1344,10 +1391,22 @@ local function ensure_amount_box()
     local slot
     pcall(function() slot = amount_box.Slot end)
     if alive(slot) then
+        -- Exactly the well's footprint, from the same constants the well is
+        -- drawn from. It used to be 210 wide at COL_CAP - 6, so a box for a
+        -- four digit number ran 90 pixels past the LIMIT column and sat on
+        -- top of PALS - the row read "8000  Stopped" with the two overlapping
+        -- and neither belonging to the box.
         pcall(function()
-            slot:SetPosition({ X = X + COL_CAP - 6, Y = Y + editing.row * LINE - 4 })
+            slot:SetPosition({
+                X = X + COL_CAP - WELL_INSET,
+                Y = Y + editing.row * LINE - 1,
+            })
         end)
-        pcall(function() slot:SetSize({ X = 210, Y = 30 }) end)
+        pcall(function() slot:SetSize({ X = WELL_W, Y = ROW_H - 4 }) end)
+        -- Right aligned, to sit where the number it replaces sat. The digits
+        -- started hard against the left edge of a box drawn around a column
+        -- whose values are set from their right.
+        pcall(function() amount_box:SetJustification(2) end)
     end
     pcall(function() amount_box:SetVisibility(0) end)
 
@@ -1539,6 +1598,14 @@ local function draw_tabs(active)
         local on = (active == tab.mode)
         hit(tab.key, { kind = "tab", mode = tab.mode })
 
+        -- A padded region, and it IS the target. The word alone was about
+        -- fifty pixels of a thirty four pixel tall bar, so clicking a tab
+        -- meant hitting three capitals exactly; the pointer landing a few
+        -- pixels off found the chrome behind them and nothing happened.
+        slab("tabhit:" .. tab.key, x - 12, -6, #tab.label * 20 * 0.83 + 24,
+            TAB_H, INVISIBLE, true)
+        tile_face[tab.key] = stripes["tabhit:" .. tab.key]
+
         -- The active tab is filled, not merely tinted. Two words in slightly
         -- different colours is not a tab bar: which screen you are on should
         -- be readable at a glance and from the corner of the eye, which is
@@ -1568,6 +1635,8 @@ local function draw_tabs(active)
     end
 
     hit("tab_close", { kind = "close" })
+    slab("tabhit:close", W - 102, -6, 5 * 20 * 0.83 + 24, TAB_H, INVISIBLE, true)
+    tile_face["tab_close"] = stripes["tabhit:close"]
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
 
     -- What this is and what it does, which the panel never said. Opening it
@@ -1576,10 +1645,13 @@ local function draw_tabs(active)
     -- Not "Pal Work Priority". Palworld already has work suitability and
     -- priority, which is about which job a Pal picks; nothing on this screen
     -- ranks anything. The mod keeps its name, the screen says what it does.
-    line("title", 1, PAD, "Production Limits", "title", 22)
+    -- Nudged down out of the tab bar. At its plain row-1 position the cap
+    -- height of the title sat four pixels under the active tab's underline,
+    -- so the two read as one stacked block instead of a header and a bar.
+    line("title", 1, PAD, "Production Limits", "title", 22, TITLE_DROP)
     line("why", 2, PAD,
         "Your Pals stop a job once base storage reaches the limit you set.",
-        "dim", 14)
+        "dim", 14, TITLE_DROP)
 
     -- Counted rather than assumed. The keyboard cursor starts at order[1],
     -- which is whatever the tab bar registered first, so switching screens
@@ -1744,8 +1816,13 @@ local function draw_list(cfg, totals)
             -- instruction line explaining where to click is the design
             -- admitting its controls do not look like controls.
             if not editing_this then
+                -- The well is the click target, not the digits inside it.
+                -- It is drawn to say "type here" and was not the thing that
+                -- could be pressed: a four digit number is about a fifty
+                -- pixel target inside a 118 pixel box.
                 slab("capbox" .. i, COL_CAP - WELL_INSET, row * LINE - 1,
-                    WELL_W, ROW_H - 4, FIELD_WELL)
+                    WELL_W, ROW_H - 4, FIELD_WELL, true)
+                tile_face["cap" .. i] = stripes["capbox" .. i]
             end
 
             local cap_text = editing_this and "" or short_amount(rule.amount)
@@ -1853,10 +1930,15 @@ local function draw_list(cfg, totals)
             -- something looked pasted on top of the list rather than in it.
             slab("delbox" .. i, COL3 - 10, row * LINE - 1,
                 (W - PAD) - (COL3 - 10), ROW_H - 4,
-                asking and DANGER_WELL_ON or DANGER_WELL)
-            line("del" .. i, row, COL3,
-                asking and "Sure?" or "Remove",
-                asking and "danger" or "quiet", ROW_PT)
+                asking and DANGER_WELL_ON or DANGER_WELL, true)
+            tile_face["del" .. i] = stripes["delbox" .. i]
+            -- Centred in the box, not started at its left edge. "Remove"
+            -- is wider than the space that was left for it, so the word ran
+            -- out past the red surface and past the row itself.
+            local del_text = asking and "Sure?" or "Remove"
+            local del_x, del_w = COL3 - 10, (W - PAD) - (COL3 - 10)
+            line("del" .. i, row, centre_x(del_x, del_w, del_text, ROW_PT),
+                del_text, asking and "danger" or "quiet", ROW_PT)
 
             hit(key, { kind = "job", rule = rule })
             -- On the limit, which is the number being edited, the number the
@@ -1877,7 +1959,8 @@ local function draw_list(cfg, totals)
     -- job" and "< Back" were the same bar in the same tone with the same cyan
     -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
-    stripe("new", row, PAD, W - PAD * 2, PRIMARY_BG)
+    stripe("new", row, PAD, W - PAD * 2, PRIMARY_BG, true)
+    tile_face["new"] = stripes["new"]
     -- Glyph and label in fixed slots, so all three action rows start their
     -- words on one edge. Baked into single strings before, where "[x]   ",
     -- "+   " and "<   " are three different widths and the labels came out
@@ -2123,19 +2206,41 @@ local function draw_item_picker(cfg, totals)
     -- eighteen items, which is exactly what toggling "show every item" does.
     -- Reserving the row costs one empty line and makes the two controls at
     -- the bottom of this screen sit still, whatever the list is showing.
+    -- Two buttons with a surface each, and each one clickable all over.
+    --
+    -- These were four separate words with a hit on two of them, so Previous
+    -- answered only on its arrow and Next only on its label - and a disabled
+    -- page rendered in the same grey as the body text, which made "you are on
+    -- the last page" look like a caption rather than a spent control. Now
+    -- they are shaped like the other buttons on this screen: a bar you can
+    -- press anywhere, tinted when it does something and flat when it does not.
+    local PAGE_W = 200
+    local can_prev = page > 0
+    local can_next = page < pages - 1
+
     if pages > 1 then
-        line("prev", row, PAD + MARK_W, "<", page > 0 and "action" or "dim", ROW_PT)
-        line("prev_l", row, PAD + MARK_W + GLYPH_SLOT, "Previous",
-            page > 0 and "action" or "dim", ROW_PT)
-        line("next", row, PAD + 210, "Next", page < pages - 1 and "action" or "dim", ROW_PT)
-        line("next_l", row, PAD + 290, ">", page < pages - 1 and "action" or "dim", ROW_PT)
-        if page > 0 then hit("prev", { kind = "page", by = -1 }) end
-        if page < pages - 1 then hit("next", { kind = "page", by = 1 }) end
+        if can_prev then hit("prev", { kind = "page", by = -1 }) end
+        if can_next then hit("next", { kind = "page", by = 1 }) end
+
+        slab("prevbox", PAD, row * LINE - 1, PAGE_W, ROW_H - 4,
+            can_prev and BUTTON_BG or ROW_BG, can_prev)
+        slab("nextbox", PAD + PAGE_W + 12, row * LINE - 1, PAGE_W, ROW_H - 4,
+            can_next and BUTTON_BG or ROW_BG, can_next)
+        if can_prev then tile_face["prev"] = stripes["prevbox"] end
+        if can_next then tile_face["next"] = stripes["nextbox"] end
+
+        line("prev", row, PAD + 16, "<   Previous",
+            can_prev and "action" or "spent", ROW_PT)
+        line("next", row, PAD + PAGE_W + 28, "Next   >",
+            can_next and "action" or "spent", ROW_PT)
+        line("pageno", row, PAD + PAGE_W * 2 + 40,
+            string.format("page %d of %d", page + 1, pages), "dim", 13)
     else
-        line("prev", row, PAD + MARK_W, "", "dim", ROW_PT)
-        line("prev_l", row, PAD + MARK_W + GLYPH_SLOT, "", "dim", ROW_PT)
-        line("next", row, PAD + 210, "", "dim", ROW_PT)
-        line("next_l", row, PAD + 290, "", "dim", ROW_PT)
+        -- The row is kept even on a single page, or the two buttons below it
+        -- move every time the list crosses eighteen items.
+        line("prev", row, PAD + 16, "", "dim", ROW_PT)
+        line("next", row, PAD + PAGE_W + 28, "", "dim", ROW_PT)
+        line("pageno", row, PAD + PAGE_W * 2 + 40, "", "dim", 13)
     end
     row = row + 1
 
@@ -2153,7 +2258,8 @@ local function draw_item_picker(cfg, totals)
     -- once, and the box survives being read by somebody who cannot separate
     -- the two label colours.
     hit("all", { kind = "toggle_all" })
-    stripe("all", row, PAD, W - PAD * 2, BUTTON_BG)
+    stripe("all", row, PAD, W - PAD * 2, BUTTON_BG, true)
+    tile_face["all"] = stripes["all"]
     line("mk_all", row, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
     line("g_all", row, PAD + MARK_W,
         everything and "[x]" or "[  ]", "action", ROW_PT)
@@ -2162,7 +2268,8 @@ local function draw_item_picker(cfg, totals)
     row = row + 1
 
     hit("back", { kind = "back" })
-    stripe("back", row, PAD, W - PAD * 2, BUTTON_BG)
+    stripe("back", row, PAD, W - PAD * 2, BUTTON_BG, true)
+    tile_face["back"] = stripes["back"]
     line("mk_back", row, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
     line("g_back", row, PAD + MARK_W, "<", "action", ROW_PT)
     line("back", row, PAD + MARK_W + GLYPH_SLOT, "Back", "action", ROW_PT)
