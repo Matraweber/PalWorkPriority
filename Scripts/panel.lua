@@ -80,6 +80,7 @@ local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
 local sel = 1                   -- which row the keyboard is on
+local tab_hits = 0              -- how many order entries the tab bar owns
 
 local ftext_mode = nil
 local warned = {}
@@ -763,7 +764,9 @@ local function ensure_search(row)
     pcall(function() slot = search_box.Slot end)
     if alive(slot) then
         pcall(function() slot:SetPosition({ X = X + PAD, Y = Y + row * LINE }) end)
-        pcall(function() slot:SetSize({ X = W - PAD * 2, Y = 30 }) end)
+        -- 30 cut the descenders off its own hint text. A field that clips the
+        -- word "type" is not a field anybody trusts to hold what they typed.
+        pcall(function() slot:SetSize({ X = W - PAD * 2, Y = 36 }) end)
     end
     pcall(function() search_box:SetVisibility(0) end)
 
@@ -987,12 +990,27 @@ local function draw_tabs(active)
     for _, tab in ipairs(tabs) do
         local on = (active == tab.mode)
         hit(tab.key, { kind = "tab", mode = tab.mode })
+
+        -- The active tab is filled, not merely tinted. Two words in slightly
+        -- different colours is not a tab bar: which screen you are on should
+        -- be readable at a glance and from the corner of the eye, which is
+        -- what Creative Menu gets right and this did not.
+        if on then
+            slab("tabsel:" .. tab.key, x - 14, -8, 118, TAB_H - 4)
+        end
+
         line(tab.key, 0, x, tab.label, on and "tab_on" or "dim", 20)
         x = x + 130
     end
 
     hit("tab_close", { kind = "close" })
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
+
+    -- Counted rather than assumed. The keyboard cursor starts at order[1],
+    -- which is whatever the tab bar registered first, so switching screens
+    -- left the marker sitting on RULES while the ADD screen was showing. The
+    -- two disagreed about where you were.
+    tab_hits = #order
 end
 
 local function rule_list(cfg)
@@ -1186,25 +1204,33 @@ local function draw_item_picker(cfg, totals)
     local row = 4 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
 
     if pages > 1 then
-        line("prev", row, PAD, "<   previous", page > 0 and "action" or "dim")
+        line("prev", row, PAD + 10, "<   previous",
+            page > 0 and "action" or "dim", ROW_PT)
         line("next", row, 220, "next   >",
-            page < pages - 1 and "action" or "dim")
+            page < pages - 1 and "action" or "dim", ROW_PT)
         if page > 0 then hit("prev", { kind = "page", by = -1 }) end
         if page < pages - 1 then hit("next", { kind = "page", by = 1 }) end
         row = row + 1
     end
 
-    line("all", row, PAD,
+    -- Rows, like every other action in this panel. These were 20pt text
+    -- floating in dead space below the grid, which made the two most
+    -- important controls on the screen look like a caption. "+ add a rule"
+    -- across in the rules list is the same kind of thing and reads as a
+    -- control because it sits on a stripe.
+    hit("all", { kind = "toggle_all" })
+    stripe("all", row, PAD, W - PAD * 2)
+    line("all", row, PAD + 10,
         everything and "show only what I have"
             or "show everything your base can make",
-        "action")
-    hit("all", { kind = "toggle_all" })
+        "action", ROW_PT)
     row = row + 1
 
-    line("back", row, PAD, "<   back", "action")
     hit("back", { kind = "back" })
+    stripe("back", row, PAD, W - PAD * 2)
+    line("back", row, PAD + 10, "<   back", "action", ROW_PT)
 
-    return row + 2
+    return row + 1
 end
 
 -- ---------------------------------------------------------------------------
@@ -1313,6 +1339,11 @@ end
 -- Switch screens without clicking, for driving the panel from outside while
 -- it holds the input mode and no key press reaches us.
 function M.set_screen(name)
+    -- The cursor moves with the screen here too. Clicking a tab does this
+    -- already; this is the same change arriving through the command channel,
+    -- and the two paths disagreeing is how the marker ended up on RULES while
+    -- ADD was the screen being shown.
+    sel = tab_hits + 1
     if name ~= "item" and name ~= "list" then return false end
     mode, page, sel = name, 0, 1
     want_focus = (name == "item")
@@ -1499,6 +1530,7 @@ function M.apply(cfg, what, dir, from_mouse)
     if what.kind == "tab" then
         mode, page = what.mode, 0
         want_focus = (what.mode == "item")
+        sel = tab_hits + 1
         return true
     end
 
@@ -1515,6 +1547,7 @@ function M.apply(cfg, what, dir, from_mouse)
 
     if what.kind == "back" then
         mode, page = "list", 0
+        sel = tab_hits + 1
         return true
     end
 
