@@ -157,6 +157,9 @@ local COLOUR = {
     action = { R = 0.42, G = 0.80, B = 1.00, A = 1.00 },
     hover  = { R = 0.60, G = 1.00, B = 1.00, A = 1.00 },
     tab_on = { R = 0.55, G = 0.95, B = 1.00, A = 1.00 },
+    -- Readable on a pale field rather than on the panel, which is the one
+    -- place in here that is not dark.
+    hint   = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -168,6 +171,23 @@ local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
 local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
 local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
+
+-- Text fields.
+--
+-- A pale field with dark text, which is the opposite of the rest of the panel
+-- and is deliberate. The dark version was tried first and the background took
+-- while none of the four foreground colours did, so the field went dark and
+-- the text stayed dark with it: a ceiling box that read as empty while a
+-- probe showed it holding "8000" the whole time. Whatever governs that text
+-- on this build is not reachable from here.
+--
+-- So the one thing that is reachable, the background, is set to suit the text
+-- rather than the other way about. A pale input on a dark panel is a normal
+-- enough thing to look at, and it is unambiguously readable, which is what
+-- was actually being complained about.
+local FIELD_BG    = { R = 0.86, G = 0.89, B = 0.93, A = 1.00 }
+local FIELD_HINT  = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 }
+
 
 -- Registers a row as clickable and, in the same breath, as reachable by the
 -- arrow keys. Two lists that could disagree would be a bug waiting.
@@ -787,6 +807,51 @@ end
 -- ownership; that is why the picker paged through items instead of filtering
 -- them. In a widget we construct ourselves the engine will hand it the
 -- keyboard.
+-- Make a text field belong to this panel rather than to UMG's defaults.
+--
+-- An EditableTextBox ships light: a near-white background with grey text on
+-- it. Dropped into a dark panel that reads as a blank white bar, and the hint
+-- inside it is grey on near-white, which is the "very difficult to read" of
+-- it. The rest of the panel is light text on dark, so the field should be too.
+--
+-- The style struct is read out, changed and written back, never built. This
+-- codebase has a scar from hand-building a struct off a header, and the same
+-- read-modify-write shape is already used for fonts a few hundred lines up.
+--
+-- If the write does not take, the fallback makes the text dark instead, which
+-- is at least readable on the pale default. Reported once either way, so a
+-- session says which of the two it got rather than leaving it to a screenshot.
+local styled_boxes = {}
+
+local function style_box(box, which)
+    if not alive(box) or styled_boxes[which] then return end
+    styled_boxes[which] = true
+
+    -- The struct write lands even when SetStyle refuses.
+    --
+    -- First attempt read SetStyle throwing as "the style would not take" and
+    -- fell back to dark text, which is right for the pale default it assumed
+    -- was still there. It was not: assigning the field had already darkened
+    -- the background, so the fallback put dark text on a dark field and made
+    -- it worse than before. UE4SS hands out the style struct by reference,
+    -- so the assignment is the part that works and SetStyle is the optional
+    -- half.
+    pcall(function()
+        local st = box.WidgetStyle
+        if st == nil then return end
+        st.BackgroundColor = { SpecifiedColor = FIELD_BG, ColorUseRule = 0 }
+
+        -- Only the background. The four foreground colours an
+        -- EditableTextBox carries were all set and none of them moved the
+        -- text, so they are not pretended at here.
+        -- Offered, not required. It refuses on this build and the field is
+        -- already dark by the time it does.
+        pcall(function() box:SetStyle(st) end)
+    end)
+
+    log.say("text field " .. which .. ": pale field, so its own text shows")
+end
+
 local function ensure_search(row)
     local host = ensure_root()
     if not host then return nil end
@@ -815,7 +880,12 @@ local function ensure_search(row)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(9010) end)
         pcall(function() search_box:SetVisibility(0) end)
-        pcall(function() search_box:SetHintText(make_ftext("type to filter")) end)
+        -- No hint text. SetForegroundColor governs what is typed, not the
+        -- hint, which keeps its own colour somewhere in the style struct, so
+        -- darkening the field left "type to filter" dark on dark. Drawn below
+        -- as an ordinary TextBlock instead, in a colour this panel already
+        -- owns, which is one fewer thing to negotiate with UMG over.
+        style_box(search_box, "filter")
     end
 
     local slot
@@ -880,6 +950,12 @@ local function ensure_amount_box()
         -- Above the rows it covers.
         pcall(function() slot:SetZOrder(9020) end)
     end
+
+    -- Styled here rather than at construction. The first version styled on
+    -- creation only, and the ceiling box is built the first time somebody
+    -- clicks a number, which is after the log line that says what happened,
+    -- so it went out pale while the filter went out dark.
+    style_box(amount_box, "ceiling")
 
     local slot
     pcall(function() slot = amount_box.Slot end)
@@ -1159,8 +1235,16 @@ local function draw_list(cfg, totals)
             stripe(key, row, PAD, W - PAD * 2)
             line(key, row, PAD, workdefs.label(rule.work), "action", ROW_PT)
             line("itm" .. i, row, COL_ITEM, short_item(rule.item), "item", ROW_PT)
+            -- Blank while its box is open. The box does not fully cover the
+            -- text beneath it, so both were drawing at once and the reading
+            -- was "8155 | 8000" over "8155 / 8000": a field that looks like
+            -- it already contains nonsense before anything is typed.
+            local editing_this = editing ~= nil
+                and editing.work == rule.work and editing.item == rule.item
+
             line("amt" .. i, row, COL2,
-                short_amount(have) .. " / " .. short_amount(rule.amount),
+                editing_this and ""
+                    or (short_amount(have) .. " / " .. short_amount(rule.amount)),
                 met and "met" or "unmet", ROW_PT)
             line("done" .. i, row, COL_DONE, met and "done" or "", "met", ROW_PT)
 
@@ -1249,6 +1333,11 @@ local function draw_item_picker(cfg, totals)
         (under and under.kind == "item") and under.item or "", "title", 22)
 
     ensure_search(2)
+
+    -- The placeholder, ours rather than UMG's. Cleared the moment anything is
+    -- typed, which is what a hint is supposed to do.
+    line("hint", 2, PAD + 10,
+        search_text == "" and "type to filter" or "", "hint", 15)
 
     line("sub", 3, PAD, string.format("%s,  %d item(s),  page %d of %d",
         search_text ~= "" and ("matching " .. search_text)
@@ -1489,6 +1578,7 @@ function M.reset()
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     amount_box, editing, edit_focus = nil, nil, false
+    styled_boxes = {}
     images, item_of, grid_from, grid_count = {}, {}, 0, 0
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
@@ -1655,6 +1745,56 @@ function M.command(cfg, args)
         end
         M.wants_pass = true
         return string.format("%s %s set to %d", workdefs.label(job), item, n)
+    end
+
+    -- Reads only, and only off a widget that already exists and is parented.
+    -- Constructing a throwaway one to probe is what crashed the game earlier
+    -- today: a UMG widget with no WidgetTree outer and no slot faults when a
+    -- brush call walks up to a parent that is not there.
+    if verb == "probe" then
+        local w = (rest == "amount") and amount_box or search_box
+        if not alive(w) then return "that box does not exist right now" end
+
+        local out = {}
+        local cls
+        pcall(function() cls = w:GetClass():GetFName():ToString() end)
+        out[#out + 1] = "class=" .. tostring(cls)
+
+        -- What it actually holds, which is the difference between a field
+        -- that is empty and one whose text is the same colour as its own
+        -- background.
+        local txt
+        pcall(function()
+            local ft = w:GetText()
+            if ft then txt = ft:ToString() end
+        end)
+        out[#out + 1] = "text='" .. tostring(txt) .. "'"
+
+        for _, name in ipairs({
+            "SetForegroundColor", "SetStyle", "SetTextStyle",
+            "SetJustification", "SetHintText", "SetIsReadOnly",
+            "WidgetStyle", "Style", "Font", "ForegroundColor",
+        }) do
+            local got
+            pcall(function() got = w[name] end)
+            out[#out + 1] = name .. "=" .. type(got)
+        end
+
+        -- What the style struct actually carries, if it can be read at all.
+        local st
+        pcall(function() st = w.WidgetStyle end)
+        if st ~= nil then
+            for _, f in ipairs({ "BackgroundImageNormal", "ForegroundColor",
+                                 "BackgroundColor", "Padding", "Font",
+                                 "TextStyle", "HintTextColor", "ReadOnlyForegroundColor",
+                                 "FocusedForegroundColor" }) do
+                local v
+                pcall(function() v = st[f] end)
+                out[#out + 1] = "  WidgetStyle." .. f .. "=" .. type(v)
+            end
+        end
+
+        return table.concat(out, "  ")
     end
 
     if verb == "state" then
