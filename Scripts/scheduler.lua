@@ -215,7 +215,15 @@ local function base_allowed(cfg, pal, capped)
         local name = workdefs.ORDER[i]
         local value = workdefs.value(name)
 
-        if api.suitability_rank(pal.param, value) >= 1 then
+        -- Anyone names no skill, so there is no rank to pass. workdefs says
+        -- as much in as many words and nothing acted on it: the gate below
+        -- asked for a rank in a value that is not a real EPalWorkSuitability,
+        -- so capable was never set, Anyone never entered a pal's order, and
+        -- work_priority.Anyone was inert - while run_camp already made a
+        -- special case to keep it out of the capped set, which only makes
+        -- sense if it was expected to work.
+        if name == workdefs.ANYONE
+            or api.suitability_rank(pal.param, value) >= 1 then
             capable[value] = true
 
             -- X bars a pal outright, and a met ceiling bars the work for

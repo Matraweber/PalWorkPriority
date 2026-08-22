@@ -50,6 +50,25 @@ end
 -- Building
 -- ---------------------------------------------------------------------------
 
+-- The controller the widget was built under, by name.
+--
+-- The UserWidget is outered to the PlayerController, which the engine
+-- destroys on a world or level change. ClientRestart fires on the NEW
+-- controller - after the old one is gone - so between those two moments the
+-- clock keeps beating and, if the panel is open, host() would ask a widget
+-- whose owner had already been freed whether it is still valid. A name is a
+-- string and cannot dangle; comparing it costs one engine call and closes the
+-- window without needing an unload hook.
+local built_under = nil
+
+local function owner_name()
+    local pc = api.player_controller()
+    if not alive(pc) then return nil end
+    local n
+    pcall(function() n = pc:GetFullName() end)
+    return n
+end
+
 local function build_now()
     local pc = api.player_controller()
 
@@ -120,6 +139,7 @@ local function build_now()
     end
 
     widget, tree, canvas = made, made_tree, made_canvas
+    built_under = owner_name()
     return true
 end
 
@@ -147,6 +167,15 @@ end
 -- The canvas panels draw into, and the tree that must own anything they
 -- construct. Builds on first use.
 function M.host()
+    -- A different controller than the one this was built under means the
+    -- world moved. Everything is dropped without being touched.
+    local now_owner = owner_name()
+    if built_under ~= nil and now_owner ~= nil and now_owner ~= built_under then
+        widget, tree, canvas = nil, nil, nil
+        built_under = nil
+        M.open = false
+    end
+
     if alive(widget) and alive(tree) and alive(canvas) then
         return canvas, tree, widget
     end
@@ -285,6 +314,7 @@ end
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
     widget, tree, canvas = nil, nil, nil
+    built_under = nil
     cursor_was, input_route = nil, nil
     M.open = false
     warned = {}

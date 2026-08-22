@@ -584,8 +584,33 @@ local function live_cells()
 end
 
 local function refresh_cells(cfg)
-    for _, cell in ipairs(live_cells()) do
+    local cells = live_cells()
+    if #cells == 0 then return end
+
+    local seen = {}
+    for _, cell in ipairs(cells) do
+        local name = full_name(cell)
+        if name then seen[name] = true end
         pcall(function() handle_cell(cfg, cell) end)
+    end
+
+    -- Entries whose cell no longer exists are dropped.
+    --
+    -- These are keyed by cell full name and were cleared only on a world
+    -- switch, so every open and close of the stand added a fresh set that
+    -- nothing ever reclaimed. Safe to prune here and only here: the sweep
+    -- above just enumerated every cell that exists, so a key missing from it
+    -- names something gone. Guarded on a non-empty sweep, because an empty
+    -- one means the menu is shut, not that every cell died - and cell_text
+    -- must survive a shut menu, or the next tick injects a second widget on
+    -- top of the one already there.
+    for name in pairs(cell_text) do
+        if not seen[name] then
+            cell_text[name] = nil
+            cell_last[name] = nil
+            cell_cb[name] = nil
+            cell_row[name] = nil
+        end
     end
 end
 
