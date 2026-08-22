@@ -882,7 +882,7 @@ local function ensure_search(row)
         pcall(function() search_box:SetVisibility(0) end)
         -- No hint text. SetForegroundColor governs what is typed, not the
         -- hint, which keeps its own colour somewhere in the style struct, so
-        -- darkening the field left "type to filter" dark on dark. Drawn below
+        -- darkening the field left "Type to filter" dark on dark. Drawn below
         -- as an ordinary TextBlock instead, in a colour this panel already
         -- owns, which is one fewer thing to negotiate with UMG over.
         style_box(search_box, "filter")
@@ -1212,19 +1212,19 @@ local function draw_list(cfg, totals)
     -- sentence you need while typing.
     if editing ~= nil then
         line("sub", row, PAD,
-            "setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
-            editing.item .. "  |  type a number, then click anywhere to save",
+            "Setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
+            editing.item .. "  |  Type a number, then click anywhere to save",
             "action", 13)
     else
         line("sub", row, PAD,
-            "click a number to type a new ceiling, a job to change it, " ..
+            "Click a number to type a new ceiling, a job to change it, " ..
             "remove to delete",
             "dim", 13)
     end
     row = row + 1
 
     if #rules == 0 then
-        line("empty", row, PAD, "no rules yet, every job runs unlimited", "dim")
+        line("empty", row, PAD, "No rules yet. Every job runs unlimited", "dim")
         row = row + 2
     else
         for i, rule in ipairs(rules) do
@@ -1246,12 +1246,12 @@ local function draw_list(cfg, totals)
                 editing_this and ""
                     or (short_amount(have) .. " / " .. short_amount(rule.amount)),
                 met and "met" or "unmet", ROW_PT)
-            line("done" .. i, row, COL_DONE, met and "done" or "", "met", ROW_PT)
+            line("done" .. i, row, COL_DONE, met and "Done" or "", "met", ROW_PT)
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
             -- be somewhere to correct the guess.
-            line("del" .. i, row, COL3, "remove", "dim", ROW_PT)
+            line("del" .. i, row, COL3, "Remove", "dim", ROW_PT)
 
             hit(key, { kind = "job", rule = rule })
             hit("amt" .. i, { kind = "rule", rule = rule, row = row })
@@ -1263,7 +1263,7 @@ local function draw_list(cfg, totals)
 
     hit("new", { kind = "new" })
     stripe("new", row, PAD, W - PAD * 2)
-    line("new", row, PAD, "+   add a rule", "action")
+    line("new", row, PAD, "+   Add a rule", "action")
 
     return row + 2
 end
@@ -1277,7 +1277,54 @@ end
 -- same question a rule has to answer anyway. That is what removes the job
 -- screen rather than merely hiding it: everything reaching the picker already
 -- knows its job, so there is nothing left to ask.
+-- Item ids the game keeps for its own use, which no base can make.
+--
+-- "Show every item with a job" listed 598 items and among them were
+-- Assault Rifle NPC Grass Boss, Assault Rifle Default2 through 5, Beam
+-- Launcher 2 through 5 and Berries2. Those are the variants the game hands to
+-- NPCs and bosses, and internal duplicates. Claiming a base can make them is
+-- simply untrue, and a picker whose first page is rifles nobody can craft is
+-- worse than one that shows less.
+local INTERNAL = {
+    "npc", "boss", "otomo", "default", "debug", "test_", "_test",
+    "enemy", "raid", "invader", "dummy",
+    -- Schematics, not products. A base does not make a blueprint, it consumes
+    -- one, and the picker was showing four pages of them.
+    "blueprint", "schematic", "recipe",
+}
+
+local function looks_internal(id)
+    local hay = tostring(id):lower()
+    for _, mark in ipairs(INTERNAL) do
+        if hay:find(mark, 1, true) then return true end
+    end
+    return false
+end
+
+-- Berries2 next to Berries, PalSphere_Giga next to PalSphere. A trailing
+-- digit on a name whose stem is also in the list is a variant of it, and only
+-- the stem is worth capping. Checked against the list rather than assumed,
+-- because PalUpgradeStone2 is a real and separate item with no PalUpgradeStone
+-- beside it.
+-- Rarity tiers, which Palworld numbers from 2 upwards: Beam Launcher 2
+-- through 5, Charge 2 through 5, Berries2. A base making the tier-4 version of
+-- a weapon is not a production line anybody caps, and thirteen pages of them
+-- buried the fifty items that are.
+--
+-- Anything ending in a digit from 2 to 9 goes; the plain item stays, and an id
+-- ending in 1 or 0 is a name rather than a tier.
+local function drop_numbered_variants(list)
+    local out = {}
+    for _, id in ipairs(list) do
+        if not tostring(id):match("[2-9]$") then
+            out[#out + 1] = id
+        end
+    end
+    return out
+end
+
 local function producible(id)
+    if looks_internal(id) then return false end
     return workdefs.work_for_item(id) ~= nil
 end
 
@@ -1286,7 +1333,7 @@ local function only_producible(list)
     for _, id in ipairs(list or {}) do
         if producible(id) then out[#out + 1] = id end
     end
-    return out
+    return drop_numbered_variants(out)
 end
 
 local function picker_source(totals)
@@ -1337,12 +1384,12 @@ local function draw_item_picker(cfg, totals)
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
     line("hint", 2, PAD + 10,
-        search_text == "" and "type to filter" or "", "hint", 15)
+        search_text == "" and "Type to filter" or "", "hint", 15)
 
     line("sub", 3, PAD, string.format("%s,  %d item(s),  page %d of %d",
-        search_text ~= "" and ("matching " .. search_text)
-            or (everything and "everything your base can make"
-                or "what your storage holds"),
+        search_text ~= "" and ("Matching " .. search_text)
+            or (everything and "Every item with a job"
+                or "What your storage holds"),
         #source, page + 1, pages), "dim", 13)
 
     local top = 4 * LINE
@@ -1367,9 +1414,9 @@ local function draw_item_picker(cfg, totals)
     local row = 4 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
 
     if pages > 1 then
-        line("prev", row, PAD + 10, "<   previous",
+        line("prev", row, PAD + 10, "<   Previous",
             page > 0 and "action" or "dim", ROW_PT)
-        line("next", row, 220, "next   >",
+        line("next", row, 220, "Next   >",
             page < pages - 1 and "action" or "dim", ROW_PT)
         if page > 0 then hit("prev", { kind = "page", by = -1 }) end
         if page < pages - 1 then hit("next", { kind = "page", by = 1 }) end
@@ -1384,14 +1431,14 @@ local function draw_item_picker(cfg, totals)
     hit("all", { kind = "toggle_all" })
     stripe("all", row, PAD, W - PAD * 2)
     line("all", row, PAD + 10,
-        everything and "show only what I have"
-            or "show everything your base can make",
+        everything and "Show only what I have"
+            or "Show every item with a job",
         "action", ROW_PT)
     row = row + 1
 
     hit("back", { kind = "back" })
     stripe("back", row, PAD, W - PAD * 2)
-    line("back", row, PAD + 10, "<   back", "action", ROW_PT)
+    line("back", row, PAD + 10, "<   Back", "action", ROW_PT)
 
     return row + 1
 end
