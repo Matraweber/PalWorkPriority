@@ -145,12 +145,23 @@ function M.reset()
 end
 
 function M.cdo(path)
-    local hit = cdo_cache[path]
-    if valid(hit) then return hit end
+    -- valid() on a kept wrapper is the one dereference this file permits, and
+    -- only because every path cached here is a UClass or a class default
+    -- under /Script/, which the engine does not collect. A /Game/ path would
+    -- be a real asset, collectable, and this would become the crash the whole
+    -- codebase is built to avoid - so it is refused rather than trusted to
+    -- stay out by convention.
+    local cacheable = path:sub(1, 8) == "/Script/"
+
+    if cacheable then
+        local hit = cdo_cache[path]
+        if valid(hit) then return hit end
+    end
+
     local obj
     pcall(function() obj = StaticFindObject(path) end)
     if valid(obj) then
-        cdo_cache[path] = obj
+        if cacheable then cdo_cache[path] = obj end
         return obj
     end
     return nil
@@ -655,7 +666,6 @@ local function work_text(w, kind, name, first_token)
     return text
 end
 
-M.work_text = work_text
 
 -- Returns (value, reason). value is the integer suitability, or nil when the
 -- work could not be typed. reason is "ignored" for things that are
@@ -708,22 +718,6 @@ function M.work_suitability(w)
 end
 
 
--- ---------------------------------------------------------------------------
--- Acting on the world
--- ---------------------------------------------------------------------------
-
-function M.assign(camp_id, work_id, individual_id)
-    local comp = M.network_component()
-    if not valid(comp) then
-        return false, "PalNetworkBaseCampComponent unavailable"
-    end
-
-    local ok, err = pcall(function()
-        comp:RequestFixedAssignWorkInBaseCamp_ToServer(camp_id, work_id, individual_id)
-    end)
-    if not ok then return false, tostring(err) end
-    return true, nil
-end
 
 -- The work types this pal currently has switched OFF, as a set. This is the
 -- game's own record and the only ground truth for what a pal is allowed to

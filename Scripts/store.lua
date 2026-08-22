@@ -32,7 +32,14 @@ local SAVE_DEBOUNCE = 2.0   -- one file write per burst of clicks
 -- half-written Lua table would fail to load on next start where a truncated
 -- line just drops one cell.
 local function parse_line(line)
-    local key, value, prio = line:match("^(%x+)|(%d+)|(%w+)$")
+    -- Word characters and dashes, not hex.
+    --
+    -- The reader demanded ^(%x+) while the writer wrote whatever key it held,
+    -- and palapi's fallbacks produce keys hex cannot express: guid_key gives
+    -- "123-456-789-012", and a pal with no id at all gets "slot3". Both saved
+    -- cleanly and were silently dropped by the next load, so priorities set on
+    -- those pals vanished at restart with nothing said.
+    local key, value, prio = line:match("^([%w%-]+)|(%d+)|(%w+)$")
     if not key then return nil end
 
     value = tonumber(value)

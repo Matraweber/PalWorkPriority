@@ -217,8 +217,11 @@ local function run_pass(reason, explicit)
     -- their own terms as well: two of them read the same camp and both decide
     -- what to fence, which is how a pal could be assigned twice in a tick.
     --
-    -- Whether this is also the reference fault is the thing being tested. It
-    -- is worth having either way.
+    -- Re-entrancy only, now that passes run synchronously on the clock: a
+    -- pass cannot currently overlap itself, and this costs nothing to keep
+    -- against the day one is deferred again. It was written while the crash
+    -- was still unexplained and the comment claimed to be testing for it,
+    -- which it never was.
     if pass_queued then
         if explicit then
             log.say(reason .. ": a pass is already running")

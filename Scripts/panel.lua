@@ -39,7 +39,6 @@ local page = 0
 local show_all = false          -- the picker starts on what the base holds
 
 local root = nil                -- the canvas we hang off
-local root_owner = nil          -- the layout it belongs to, to spot a swap
 local root_tree = nil           -- that layout's WidgetTree, our outer
 local backdrop = nil
 local blocks = {}               -- key -> TextBlock
@@ -69,7 +68,6 @@ local was_sel = nil
 local placed = {}               -- key -> where it was last put, to skip no-op moves
 local stripes = {}              -- key -> Border drawn behind a row
 local images = {}               -- key -> Image showing an item icon
-local item_of = {}              -- key -> which item that Image is for
 
 -- Where the tiles sit inside "order", so up and down can cross a row of them
 -- instead of stepping to the neighbour.
@@ -103,7 +101,10 @@ local stock_totals
 -- Switched on with "pwp clicks", or here, since this module hot reloads and
 -- main.lua does not: turning it on in the file is the only way to get it into
 -- a session that started before the command existed.
-M.debug_clicks = true
+-- Off by default. Every click wrote a formatted line to priority.log, and
+-- log writes are an open/write/close each; "pwp clicks" turns it on for a
+-- session that needs it.
+M.debug_clicks = false
 local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
@@ -273,6 +274,9 @@ local COLOUR = {
     -- On the filled primary button, where cyan-on-tint measured 3.94 and was
     -- the lowest contrast text in the panel while being its main action.
     primary = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
+    -- The filter placeholder, on the filter well. Light enough to clear 4.5
+    -- there, quiet enough not to be mistaken for something already typed.
+    hint_on_field = { R = 0.31, G = 0.35, B = 0.41, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -299,7 +303,17 @@ local BUTTON_BG = { R = 0.120, G = 0.152, B = 0.196, A = 1.00 }
 -- the picker byte-identical to a data row on the rules list: the surface was
 -- encoding "inside the panel" instead of "you can click this", which is
 -- exactly backwards from what three tones were introduced to do.
-local TILE_BG   = BUTTON_BG
+-- List rows use the DATA tone, not the button tone.
+--
+-- They wore BUTTON_BG so a pressable row would not look like a read-only one,
+-- and it cost three contrast failures: at (97,109,122) the count measured
+-- 4.16, the green has-rule name 4.12 and a cyan label 3.94, all under 4.5.
+-- The rules table has always used ROW_BG and every token on it passes, so the
+-- fix is to stop having two greys for the same job. Pressability is carried
+-- by the rail and the hover lift instead, which is where it belongs: a fill
+-- that has to be light enough to read as a control is a fill that is too
+-- light to read text on.
+local TILE_BG   = ROW_BG
 -- Filled, for the single action on a screen that creates something. A
 -- secondary control is a tinted bar with a cyan label; the primary one is a
 -- solid field with a white label, so the two stop being the same object.
@@ -323,7 +337,16 @@ local DANGER_WELL_ON = { R = 0.320, G = 0.055, B = 0.048, A = 1.00 }
 -- against 1.94 for the bright version - while every token GAINS contrast:
 -- that same amber comes back at 7.3:1. Luminance is the wrong channel to
 -- carry this signal up; the caret and the accent bar carry it instead.
-local ROW_HOVER = { R = 0.013, G = 0.042, B = 0.089, A = 1.00 }
+-- Hover shares the selection fill on purpose.
+--
+-- Its own darker value measured 1.20 against the panel body, so a hovered row
+-- effectively vanished into the panel, and 1.34 against the selection, so
+-- hovering made a row read as MORE selected than the selected one. Every fill
+-- dark enough to sit below the selection lands within 1.5 of both. The signal
+-- moved to the rail, which gets wider under the pointer.
+local ROW_HOVER = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
+local RAIL_W      = 3
+local RAIL_W_HOT  = 6
 -- Where the keyboard is, quieter than where the mouse is.
 local ROW_SEL   = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
 -- The cyan edge that says "this one", independent of fill luminance. A row
@@ -460,9 +483,9 @@ local function ensure_root()
     local host, host_tree = overlay.host()
 
     if not alive(host) or not alive(host_tree) then
-        root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+        root, root_tree, backdrop = nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
-        images, tile_face, item_of = {}, {}, {}
+        images, tile_face = {}, {}
         search_box, amount_box, editing = nil, nil, nil
         styled_boxes = {}
         picker_key, picker_hit = nil, nil
@@ -479,7 +502,7 @@ local function ensure_root()
     -- everything we made belonged to the old one and went with it. References
     -- are dropped rather than unparented: asking a freed widget anything is
     -- the crash, not the check for it.
-    root, root_owner, root_tree = host, host, host_tree
+    root, root_tree = host, host_tree
     backdrop = nil
     blocks, drawn, stripes, placed = {}, {}, {}, {}
     -- Every table that holds a widget, not just the four that were listed.
@@ -491,7 +514,7 @@ local function ensure_root()
     -- IsHovered() by the mouse keybind and alive() by blank_unused, which is
     -- the stored-wrapper dereference that this whole codebase is built to
     -- avoid - and the comment three lines up says so in as many words.
-    images, tile_face, item_of = {}, {}, {}
+    images, tile_face = {}, {}
     search_box, amount_box, editing = nil, nil, nil
     -- Cleared with the boxes it describes. style_box only ever styles a given
     -- field once, keyed here, so leaving this set after the boxes are dropped
@@ -990,7 +1013,14 @@ local function group_digits(n)
 end
 
 local function text_w(text, pt, factor)
-    return #tostring(text) * pt * (factor or GLYPH_W)
+    text = tostring(text)
+    -- Separators are much narrower than the digits around them, and counting
+    -- them as full width made every grouped number finish short of the edge
+    -- it was aligned to while an ungrouped one landed on it - so "573" hung
+    -- four pixels right of "16,635" in a column whose only job is comparing
+    -- them. Measured at roughly two fifths of a digit.
+    local commas = select(2, text:gsub(",", ""))
+    return (#text - commas * 0.6) * pt * (factor or GLYPH_W)
 end
 
 local function centre_x(px, w, text, pt, factor)
@@ -1009,7 +1039,11 @@ end
 local function pretty_name(item)
     local out = {}
     for chunk in tostring(item):gmatch("[^_%s]+") do
-        chunk = chunk:gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2")
+        -- Two capitals before the next word, not one. The single-capital form
+        -- turned "AIcore" into "A Icore" while the readout above the list, on
+        -- the same screen, called it AIcore. A run is what the rule was for:
+        -- HPMedicine still becomes HP Medicine.
+        chunk = chunk:gsub("(%l)(%u)", "%1 %2"):gsub("(%u%u)(%u%l)", "%1 %2")
         out[#out + 1] = chunk
     end
     local name = table.concat(out, " ")
@@ -1020,7 +1054,10 @@ end
 local function fit_name(text, chars)
     text = tostring(text)
     if #text <= chars then return text end
-    return text:sub(1, chars - 2) .. ".."
+    -- Trailing space stripped before the dots. Cutting on a word boundary
+    -- left "Baked Meat Chicken .." against "Baked Meat Grass Ma..", so the
+    -- gap looked like a typo in some rows and not others.
+    return (text:sub(1, chars - 2):gsub("%s+$", "")) .. ".."
 end
 
 -- One item as a row: a left rail, its icon, its name, and how many are in
@@ -1036,7 +1073,12 @@ local function list_row(key, at, item, have, top, limited)
     slab(key, px, py, LIST_W, LIST_H, TILE_BG)
     tile_face[key] = stripes[key]
 
-    slab("rail:" .. key, px, py, 3, LIST_H,
+    -- The rail says three things at once without any of them fighting: it is
+    -- wider under the pointer, cyan where the cursor is, green where a rule
+    -- already exists. Width is the hover channel because no fill dark enough
+    -- to sit below the selection can be told apart from the panel behind it.
+    slab("rail:" .. key, px, py,
+        (hover_key == key) and RAIL_W_HOT or RAIL_W, LIST_H,
         (row_is_current(key) and ACCENT)
             or (limited and RULE_RAIL)
             or TILE_BG)
@@ -1052,7 +1094,7 @@ local function list_row(key, at, item, have, top, limited)
     -- on that list are not in storage at all and so have no count, and their
     -- names should have the whole row.
     local count = have > 0 and group_digits(have) or nil
-    local room = LIST_COUNT_R - LIST_NAME_X - 8
+    local room = LIST_COUNT_R - LIST_NAME_X
     if count then room = room - text_w(count, 14, DIGIT_W) - 10 end
 
     -- Green while a rule already exists, so the rail and the name agree.
@@ -1203,19 +1245,18 @@ local function ensure_search(row)
 
         pcall(function() slot:SetAnchors(CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
-        pcall(function() slot:SetZOrder(9010) end)
+        -- Below the text layer, not above it.
+        --
+        -- UMG keeps a field's hint colour in the one part of the style struct
+        -- this build will not let us write, and that hint measured 2.20
+        -- against the field. Darkening the field cannot rescue it: against
+        -- that grey, pure black only reaches 3.25. So the panel draws its own
+        -- placeholder instead, which means the box has to sit UNDER the text
+        -- layer rather than over it. Nothing else overlaps the field, so
+        -- nothing else is affected.
+        pcall(function() slot:SetZOrder(8996) end)
         pcall(function() search_box:SetVisibility(0) end)
         style_box(search_box, "filter")
-        -- The field's own hint, which is the one label that can appear inside
-        -- it. A TextBlock cannot: the box sits at a higher Z order than any
-        -- text this panel draws, so a label placed inside renders behind it.
-        -- Left bare, this was a 1014 by 36 empty bar sitting directly above a
-        -- grid, which reads as a search field that does nothing.
-        --
-        -- Set after style_box, since that rewrites the style struct.
-        pcall(function()
-            search_box:SetHintText(make_ftext("Search for an item to limit"))
-        end)
     end
 
     local slot
@@ -1807,8 +1848,12 @@ local function draw_list(cfg, totals)
             -- and a slight difference in warmth. Two pale warm words at the
             -- same size and weight read as a matched pair of labels, and one
             -- of them deletes a rule.
+            -- Ends where the row ends. It used to run 12 pixels past both
+            -- the row band and the table, so the one control that destroys
+            -- something looked pasted on top of the list rather than in it.
             slab("delbox" .. i, COL3 - 10, row * LINE - 1,
-                96, ROW_H - 4, asking and DANGER_WELL_ON or DANGER_WELL)
+                (W - PAD) - (COL3 - 10), ROW_H - 4,
+                asking and DANGER_WELL_ON or DANGER_WELL)
             line("del" .. i, row, COL3,
                 asking and "Sure?" or "Remove",
                 asking and "danger" or "quiet", ROW_PT)
@@ -2007,6 +2052,14 @@ local function draw_item_picker(cfg, totals)
 
     ensure_search(4)
 
+    -- Ours, in a colour the panel controls, and only while the field is
+    -- empty. The bar was otherwise 1014 by 36 of flat dark with no border and
+    -- no words, which does not read as somewhere you can type - and the field
+    -- is the one thing that makes 233 items findable.
+    line("hint", 4, PAD + 10,
+        search_text == "" and "Search for an item to limit" or "",
+        "hint_on_field", ROW_PT)
+
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
     -- No in-field placeholder. The field sits at a higher Z order than any
@@ -2052,18 +2105,39 @@ local function draw_item_picker(cfg, totals)
     -- from the page size. Reserving all five rows for ten items left the
     -- panel with an empty half and everything below it stranded at the
     -- bottom of a box nothing filled.
-    local tall = math.max(1, math.ceil(grid_count / LIST_COLS))
-    local row = 6 + math.ceil((tall * LIST_PITCH) / LINE) + 1
+    -- The grid reserves its whole page whether or not it is full.
+    --
+    -- Sized to its contents, toggling "show every item" grew the list from
+    -- four rows to six and moved everything under it down 136 pixels - so the
+    -- second click of a double-click landed on a list row and silently made a
+    -- rule, and collapsing it again moved the bar out from under the pointer
+    -- entirely, sending the click to the world behind the panel. A control
+    -- that moves when you press it is a trap, and this one changed what the
+    -- next click did.
+    local row = 6 + math.ceil((LIST_ROWS * LIST_PITCH) / LINE) + 1
 
+    -- The pager keeps its row even on a single page.
+    --
+    -- Drawn only when there was more than one page, it took its 34 pixels
+    -- with it - so the two buttons below moved every time the list crossed
+    -- eighteen items, which is exactly what toggling "show every item" does.
+    -- Reserving the row costs one empty line and makes the two controls at
+    -- the bottom of this screen sit still, whatever the list is showing.
     if pages > 1 then
-        line("prev", row, PAD + 10, "<   Previous",
+        line("prev", row, PAD + MARK_W, "<", page > 0 and "action" or "dim", ROW_PT)
+        line("prev_l", row, PAD + MARK_W + GLYPH_SLOT, "Previous",
             page > 0 and "action" or "dim", ROW_PT)
-        line("next", row, 220, "Next   >",
-            page < pages - 1 and "action" or "dim", ROW_PT)
+        line("next", row, PAD + 210, "Next", page < pages - 1 and "action" or "dim", ROW_PT)
+        line("next_l", row, PAD + 290, ">", page < pages - 1 and "action" or "dim", ROW_PT)
         if page > 0 then hit("prev", { kind = "page", by = -1 }) end
         if page < pages - 1 then hit("next", { kind = "page", by = 1 }) end
-        row = row + 1
+    else
+        line("prev", row, PAD + MARK_W, "", "dim", ROW_PT)
+        line("prev_l", row, PAD + MARK_W + GLYPH_SLOT, "", "dim", ROW_PT)
+        line("next", row, PAD + 210, "", "dim", ROW_PT)
+        line("next_l", row, PAD + 290, "", "dim", ROW_PT)
     end
+    row = row + 1
 
     -- Rows, like every other action in this panel. These were 20pt text
     -- floating in dead space below the grid, which made the two most
@@ -2274,6 +2348,7 @@ function M.toggle()
         blank_everything()
         overlay.hide()
         mode, page, show_all = "list", 0, false
+        pcall(function() scheduler.want_totals = false end)
         return
     end
 
@@ -2292,6 +2367,12 @@ function M.toggle()
     -- now instead of being served up to thirty seconds stale.
     pcall(function() scheduler.forget_stock() end)
 
+    -- The pass measures storage for us while this is open, so the panel never
+    -- has to sweep containers itself. Without it, a base with no rules set
+    -- left last_totals empty and the fallback scan below ran every fifteen
+    -- seconds on the drawing thread.
+    pcall(function() scheduler.want_totals = true end)
+
     want_first_row = true
 
     log.say("work rules open, Ctrl+F9 again to close")
@@ -2299,14 +2380,15 @@ end
 
 function M.reset()
     M.open = false
+    pcall(function() scheduler.want_totals = false end)
     scanned_once, scanned_at = nil, 0
-    root, root_owner, root_tree, backdrop = nil, nil, nil, nil
+    root, root_tree, backdrop = nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     amount_box, editing, edit_focus = nil, nil, false
     tile_face = {}
     styled_boxes = {}
-    images, item_of, grid_from, grid_count = {}, {}, 0, 0
+    images, grid_from, grid_count = {}, 0, 0
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
     mode, page, show_all = "list", 0, false

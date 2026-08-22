@@ -28,8 +28,6 @@ local trace = require("trace")
 
 local M = {}
 
-M.last_report = nil
-
 -- One pass never issues an unbounded number of RPCs. Steady state sends
 -- almost nothing because only differences go out; this bounds the first pass
 -- over a large base, and whatever is skipped is picked up next tick.
@@ -54,7 +52,6 @@ local hold_since = {}
 -- does and it was doing it every three seconds on the game thread. The pass
 -- already has the answer; it was throwing it away.
 M.last_totals = {}
-M.totals_at = 0
 local pass_totals = nil
 
 -- The fence itself is recomputed from demand every pass and remembers
@@ -429,10 +426,21 @@ end
 -- One camp, one pass
 -- ---------------------------------------------------------------------------
 
+-- Set by the panel while it is open. See needs_totals.
+M.want_totals = false
+
 -- Reading every chest in a camp is the most expensive thing a pass does, so
--- it only happens when some ceiling could actually use the answer.
+-- it only happens when some ceiling could actually use the answer - or when
+-- somebody is looking at the numbers.
+--
+-- The panel shows storage counts whether or not any rule exists, and with no
+-- rules this returned false, so last_totals stayed empty and the panel fell
+-- back to sweeping every container itself, every fifteen seconds, for as long
+-- as it was open. That is the same sweep, at a higher rate, from the thread
+-- that is also drawing - which is exactly what the note above stock_totals
+-- says was taken out of the panel. The pass does it once and publishes.
 local function needs_totals(cfg)
-    return caps.any(cfg)
+    return caps.any(cfg) or M.want_totals
 end
 
 local function run_camp(cfg, camp, stats)
@@ -645,7 +653,6 @@ function M.run_pass(cfg)
     trace.done()
     if #camps == 0 then
         log.debug("no base camps loaded")
-        M.last_report = nil
         return stats
     end
 
@@ -665,7 +672,6 @@ function M.run_pass(cfg)
     -- with an empty table would make the panel show every rule at zero.
     if next(pass_totals) ~= nil then
         M.last_totals = pass_totals
-        M.totals_at = os.clock()
     end
     pass_totals = nil
 
@@ -677,14 +683,6 @@ function M.run_pass(cfg)
         log.info("fenced: " .. table.concat(who, "; "))
     end
 
-    M.last_report = {
-        lines = stats.lines,
-        summary = (stats.camps > 0) and M.format_stats(cfg, stats) or "no base camp loaded",
-        camps = stats.camps,
-        pals = stats.pals,
-        fenced = stats.fenced,
-        toggles = cfg.dry_run and stats.would_toggle or stats.toggles,
-    }
 
     return stats
 end

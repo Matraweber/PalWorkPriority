@@ -224,7 +224,10 @@ end
 function M.install()
     if M.installed then return true end
 
-    local ok_up = pcall(function()
+    -- Only the halves that have not already landed.
+    local ok_up, ok_down = M.up_hooked, M.down_hooked
+
+    if not ok_up then ok_up = pcall(function()
         RegisterHook("/Script/Pal.PalNetworkBaseCampComponent:Request_Server_int32",
             function(Context, A, B, C)
                 pcall(function()
@@ -250,9 +253,9 @@ function M.install()
                     if M.on_command then M.on_command(command, value, comp) end
                 end)
             end)
-    end)
+    end) end
 
-    local ok_down = pcall(function()
+    if not ok_down then ok_down = pcall(function()
         RegisterHook("/Script/Pal.PalNetworkBaseCampComponent:Notify_RequestClient_int32",
             function(Context, A, B, C)
                 pcall(function()
@@ -271,12 +274,25 @@ function M.install()
                     if M.on_state then M.on_state(message) end
                 end)
             end)
-    end)
+    end) end
 
-    M.installed = ok_up and ok_down
+    -- Tracked separately, and never re-registered.
+    --
+    -- A UE4SS hook cannot be unregistered, so a retry after a half success
+    -- would double-register the half that already landed and every message
+    -- would be handled twice. This used to keep one flag: if one side
+    -- registered and the other did not, M.installed stayed false, selftest
+    -- refused to run and status reported NOT HOOKED - while one hook was
+    -- genuinely live and firing.
+    M.up_hooked = M.up_hooked or ok_up
+    M.down_hooked = M.down_hooked or ok_down
+    M.installed = M.up_hooked and M.down_hooked
+
     if not M.installed then
-        log.warn("transport hooks failed to register, up=" .. tostring(ok_up) ..
-            " down=" .. tostring(ok_down))
+        log.warn("transport hooks: up=" .. tostring(M.up_hooked) ..
+            " down=" .. tostring(M.down_hooked) ..
+            ". A hook cannot be unregistered, so the half that landed stays " ..
+            "and will not be registered again.")
     end
     return M.installed
 end
