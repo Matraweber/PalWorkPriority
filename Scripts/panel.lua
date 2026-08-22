@@ -1927,21 +1927,33 @@ end
 -- Nothing above changes within a frame, or between frames while the search
 -- box, the toggle and the stock figures all stand still - but it was rebuilt
 -- from scratch ten times a second, walking the whole item table and filtering
--- it. The key is the three things the answer depends on; `totals` counts by
--- table identity, because the scheduler publishes a fresh table each pass and
--- the quantities cannot change without it doing so.
+-- it, which is around 180,000 substring searches per frame.
+--
+-- The stock figures count by table IDENTITY, not by their contents: the
+-- scheduler builds a fresh pass_totals every pass and publishes it whole, so
+-- the numbers cannot change without the table changing with them.
+--
+-- The table itself is held rather than its address. An address is not a safe
+-- key: once the old totals table is unreferenced it can be collected, and a
+-- later table can be allocated at the same address, which would match a key
+-- it has nothing to do with and serve a stale list. Holding the reference
+-- makes that impossible, and costs one table. It is a plain map of strings to
+-- numbers, not an engine object, so there is no wrapper-age question here.
 local picker_key = nil
 local picker_hit = nil
 
 local function picker_source(totals)
-    local key = tostring(search_text) .. "|" .. tostring(show_all)
-        .. "|" .. tostring(totals)
-    if picker_key == key and picker_hit ~= nil then
+    if picker_key ~= nil
+        and picker_key[1] == search_text
+        and picker_key[2] == show_all
+        and picker_key[3] == totals
+    then
         return picker_hit[1], picker_hit[2]
     end
 
     local list, everything = build_picker_source(totals)
-    picker_key, picker_hit = key, { list, everything }
+    picker_key = { search_text, show_all, totals }
+    picker_hit = { list, everything }
     return list, everything
 end
 
