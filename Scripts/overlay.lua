@@ -70,7 +70,15 @@ local built_under = nil
 -- check is to be ahead of the next beat rather than the next microsecond.
 local owner_cached = nil
 local owner_at = -1
-local OWNER_TTL = 1.0
+-- Five seconds, not one.
+--
+-- The check is a FindFirstOf plus a GetFullName, measured at 9ms - which was
+-- showing up as the worst frame of every second the panel was open, for a
+-- question whose answer changes only on a world switch. It is not the only
+-- thing standing between the panel and a dead widget either: host() validates
+-- the canvas, the tree and the widget on every call, so this is the early
+-- warning rather than the guard.
+local OWNER_TTL = 5.0
 
 local function owner_name()
     local now = os.clock()
