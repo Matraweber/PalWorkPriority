@@ -100,6 +100,15 @@ local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
 local sel = 1                   -- which row the keyboard is on
+-- "put the cursor on the first real row once you know where that is".
+--
+-- Opening the panel or switching screens wants the cursor past the tab strip,
+-- because both the selection tint and the caret are suppressed on tabs on
+-- purpose - so a cursor parked there is a cursor nobody can see. It cannot be
+-- set at the time of asking: tab_hits is counted while drawing, and after a
+-- reload or a fresh open it is still zero, so tab_hits + 1 is the first tab
+-- again. Resolved after the draw instead, where the number is real.
+local want_first_row = false
 local tab_hits = 0              -- how many order entries the tab bar owns
 
 -- A Remove waiting for its second click, and when it started.
@@ -275,9 +284,14 @@ local PRIMARY_BG = { R = 0.034, G = 0.188, B = 0.305, A = 1.00 }
 -- the two is the armed state, while the row is asking "Sure?".
 local DANGER_WELL    = { R = 0.115, G = 0.030, B = 0.028, A = 1.00 }
 local DANGER_WELL_ON = { R = 0.320, G = 0.055, B = 0.048, A = 1.00 }
-local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
+-- Both were picked against ROW_BG, the darkest surface a stripe is drawn on.
+-- Tiles now wear BUTTON_BG, which is brighter than either of them was, so the
+-- selected tile came out no lighter than an unselected one and the cursor
+-- vanished on the picker. Lifted until each is clearly above BUTTON_BG:
+-- hover reads at 2.0 against a tile, selection at 1.5.
+local ROW_HOVER = { R = 0.220, G = 0.380, B = 0.500, A = 1.00 }
 -- Where the keyboard is, quieter than where the mouse is.
-local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
+local ROW_SEL   = { R = 0.160, G = 0.260, B = 0.360, A = 1.00 }
 -- Inset, darker than the row it sits in, which is how every text field in
 -- every dark interface says "type here".
 -- Measurably darker than the row it sits in, not merely darker than nothing.
@@ -718,7 +732,7 @@ local DEFAULT_PT = 20
 -- The cursor slot at the left of every selectable row, and the caret drawn
 -- into it. 13 pixels is what the old two-space prefix measured at 17pt, so
 -- rows keep the indent they already had and only the header moves to match.
-local MARK_W = 13
+local MARK_W = 20
 
 -- Whether any of a row's hit keys is the current one.
 --
@@ -900,6 +914,19 @@ local NAME_LINES = 3
 local GLYPH_W = 0.83     -- mixed-case words, from the tab bar
 local DIGIT_W = 0.72     -- digits, from the rules list
 
+-- Thousands separators. The only thing the numeric columns are for is
+-- deciding which of two figures is bigger, and "16562" against "15000" makes
+-- a reader count digit positions where "16,562" against "15,000" does not.
+-- Shared so the picker and the rules list cannot write the same number two
+-- different ways, which they did.
+local function group_digits(n)
+    local flipped = tostring(math.floor(tonumber(n) or 0)):reverse()
+    local chunked = flipped:gsub("(%d%d%d)", "%1,")
+    local out = chunked:reverse()
+    if out:sub(1, 1) == "," then out = out:sub(2) end
+    return out
+end
+
 local function text_w(text, pt, factor)
     return #tostring(text) * pt * (factor or GLYPH_W)
 end
@@ -1015,7 +1042,10 @@ local function tile(key, at, item, have, top, limited)
     -- on how many digits it happened to have. It read as a rendering fault,
     -- because it was one.
     if have > 0 then
-        local count = tostring(math.floor(have))
+        -- Grouped, like the same figure on the rules list. The picker said
+        -- 16600 while the row it feeds said 16,600, so the two screens wrote
+        -- the same number two different ways.
+        local count = group_digits(have)
         text_at("q:" .. key, centre_x(px, TILE, count, 13, DIGIT_W),
             py + ICON + 6, count, "title", 13, true)
     end
@@ -1158,12 +1188,17 @@ local function ensure_search(row)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(9010) end)
         pcall(function() search_box:SetVisibility(0) end)
-        -- No hint text. SetForegroundColor governs what is typed, not the
-        -- hint, which keeps its own colour somewhere in the style struct, so
-        -- darkening the field left "Type to filter" dark on dark. Drawn below
-        -- as an ordinary TextBlock instead, in a colour this panel already
-        -- owns, which is one fewer thing to negotiate with UMG over.
         style_box(search_box, "filter")
+        -- The field's own hint, which is the one label that can appear inside
+        -- it. A TextBlock cannot: the box sits at a higher Z order than any
+        -- text this panel draws, so a label placed inside renders behind it.
+        -- Left bare, this was a 1014 by 36 empty bar sitting directly above a
+        -- grid, which reads as a search field that does nothing.
+        --
+        -- Set after style_box, since that rewrites the style struct.
+        pcall(function()
+            search_box:SetHintText(make_ftext("Search for an item to limit"))
+        end)
     end
 
     local slot
@@ -1535,12 +1570,7 @@ local function short_amount(n)
     if n >= 1000000 then
         return string.format("%.1fM", n / 1000000)
     end
-
-    local flipped = tostring(n):reverse()
-    local chunked = flipped:gsub("(%d%d%d)", "%1,")
-    local out = chunked:reverse()
-    if out:sub(1, 1) == "," then out = out:sub(2) end
-    return out
+    return group_digits(n)
 end
 
 local function draw_list(cfg, totals)
@@ -1553,19 +1583,20 @@ local function draw_list(cfg, totals)
     -- appears over a number with no caption leaves you guessing which of the
     -- two numbers it replaces, and "click a job to change it" is not the
     -- sentence you need while typing.
+    --
+    -- It borrows the subtitle's row rather than reserving one of its own. A
+    -- dedicated row meant a whole empty LINE above the table on every normal
+    -- visit - 34 pixels of dead air carrying a sentence that only appears
+    -- while a number is being typed - and collapsing it instead would have
+    -- shifted the table out from under the row you had just clicked. The
+    -- general explanation is the one thing you do not need while typing, so
+    -- it steps aside.
     if editing ~= nil then
-        line("sub", row, PAD,
+        line("why", 2, PAD,
             "Setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
             editing.item .. "  |  Type a number, then click anywhere to save",
-            "action", 13)
-    else
-        -- Nothing here any more. The limit sits in a well, the job is the
-        -- only coloured word in its row, and Remove asks before it acts, so
-        -- the three things this line used to explain now explain themselves.
-        -- The panel is a line shorter and says more.
-        line("sub", row, PAD, "", "dim", 13)
+            "action", 14)
     end
-    row = row + 1
 
     -- Names both numbers. Without this the pair reads as progress towards a
     -- goal, which is the opposite of what it means.
@@ -2086,6 +2117,10 @@ function M.refresh(cfg)
     perf_draw = os.clock() - td
 
     -- Clamped after the draw, since the row count is only known then.
+    if want_first_row and #order > tab_hits then
+        want_first_row = false
+        sel = tab_hits + 1
+    end
     if sel > #order then sel = #order end
     if sel < 1 then sel = 1 end
 
@@ -2178,7 +2213,7 @@ function M.set_screen(name)
     -- screen change driven through the command channel did not, which is why
     -- the panel looked like it had no keyboard cursor at all.
     mode, page = name, 0
-    sel = tab_hits + 1
+    want_first_row = true
     -- Same rule through the command channel as through a click: the picker
     -- does not take the keyboard just because it opened.
     want_focus = false
@@ -2209,6 +2244,8 @@ function M.toggle()
     -- moment the numbers are being read by somebody, so they get measured
     -- now instead of being served up to thirty seconds stale.
     pcall(function() scheduler.forget_stock() end)
+
+    want_first_row = true
 
     log.say("work rules open, Ctrl+F9 again to close")
 end
@@ -2555,7 +2592,7 @@ function M.apply(cfg, what, dir, from_mouse)
     if what.kind == "new" then
         mode, page, show_all = "item", 0, false
         want_focus = false
-        sel = 1
+        want_first_row = true
         log.say("picking an item, type to filter or click one")
         return true
     end
