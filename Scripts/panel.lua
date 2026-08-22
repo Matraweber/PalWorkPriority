@@ -65,6 +65,15 @@ local item_of = {}              -- key -> which item that Image is for
 -- instead of stepping to the neighbour.
 local grid_from, grid_count = 0, 0
 local search_box = nil          -- EditableTextBox, only possible in a widget we own
+-- Typing an exact ceiling.
+--
+-- The ladder that left and right step through is quick for a nudge and
+-- useless for "I want exactly 4200", which was the whole complaint. Left
+-- click on the number opens a box over it; right click and the arrow keys
+-- keep stepping, so the fast path is not lost to the precise one.
+local amount_box = nil
+local editing = nil             -- { work, item, row } while a box is open
+local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
 local sel = 1                   -- which row the keyboard is on
@@ -82,8 +91,12 @@ local warned = {}
 -- centred at any resolution without ever asking how big the viewport is,
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
-local X = -410
 local W = 1010
+-- Derived, never typed. X was left at -410 when W grew from 820 to 1010, so
+-- the panel stopped being centred and its right edge slid under the game's
+-- own Base Info panel. A width and a left edge that have to be kept in step
+-- by hand will drift apart again the next time either changes.
+local X = -(W / 2)
 
 -- Vertical offset, recomputed from the drawn height so the panel sits in the
 -- middle of the screen whichever screen it is showing. Fixed before, which
@@ -104,10 +117,17 @@ local PAD = 18
 -- column of its own instead of being glued onto the end of the amount string,
 -- because a marker whose position depends on how many digits precede it will
 -- collide again the moment a base gets richer.
-local COL_ITEM = 260
+-- Budgeted, not eyeballed. The row is W - PAD*2 wide and every column must
+-- fit its widest possible text before the next one starts, at ROW_PT: the
+-- work label, an item id trimmed to ITEM_CHARS, "16299 / 15000", "done" and
+-- "remove". The previous version put remove at 890, where its text ran past
+-- the stripe drawn behind the row.
+local ROW_PT     = 17
+local ITEM_CHARS = 16
+local COL_ITEM = 210
 local COL2     = 520
-local COL_DONE = 800
-local COL3     = 890
+local COL_DONE = 780
+local COL3     = 880
 local TAB_H = 34
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
@@ -130,10 +150,14 @@ local COLOUR = {
     tab_on = { R = 0.55, G = 0.95, B = 1.00, A = 1.00 },
 }
 
-local BACKDROP  = { R = 0.035, G = 0.055, B = 0.080, A = 0.94 }
-local ROW_BG    = { R = 0.075, G = 0.100, B = 0.135, A = 0.90 }
-local ROW_HOVER = { R = 0.110, G = 0.200, B = 0.260, A = 0.95 }
-local TAB_BAR   = { R = 0.055, G = 0.080, B = 0.110, A = 0.95 }
+-- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
+-- through the panel and the text had to compete with grass; a rules window is
+-- something to read, not a HUD element to see past. The rows sit a shade
+-- lighter than the backdrop so a list reads as rows without needing borders.
+local BACKDROP  = { R = 0.035, G = 0.050, B = 0.075, A = 0.985 }
+local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
+local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
+local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
 -- Registers a row as clickable and, in the same breath, as reachable by the
@@ -250,7 +274,12 @@ local function ensure_backdrop(rows)
         pcall(function() backdrop:SetVisibility(3) end)
     end
 
+    -- Both, because the brush colour alone did not do it. A Border with an
+    -- alpha of 0.985 still showed grass through itself, so the widget's own
+    -- render opacity was multiplying against it. A window to read has to
+    -- stop the world behind it.
     pcall(function() backdrop:SetBrushColor(BACKDROP) end)
+    pcall(function() backdrop:SetRenderOpacity(1.0) end)
 
     local slot
     pcall(function() slot = backdrop.Slot end)
@@ -757,6 +786,109 @@ local function ensure_search(row)
     return search_box
 end
 
+-- The box that edits a ceiling, drawn over the amount column of its row.
+local function ensure_amount_box()
+    if editing == nil then return nil end
+
+    local host = ensure_root()
+    if not host then return nil end
+
+    used["amount"] = true
+
+    if not alive(amount_box) then
+        local cls = api.cdo("/Script/UMG.EditableTextBox")
+        if not cls or not alive(root_tree) then return nil end
+
+        pcall(function() amount_box = StaticConstructObject(cls, root_tree) end)
+        if not alive(amount_box) then
+            warn_once("noamount", "no EditableTextBox on this build, " ..
+                "so ceilings step through the ladder instead of being typed")
+            editing = nil
+            return nil
+        end
+
+        local slot
+        local ok = pcall(function() slot = host:AddChildToCanvas(amount_box) end)
+        if not ok or not alive(slot) then
+            amount_box = nil
+            editing = nil
+            return nil
+        end
+
+        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAutoSize(false) end)
+        -- Above the rows it covers.
+        pcall(function() slot:SetZOrder(9020) end)
+    end
+
+    local slot
+    pcall(function() slot = amount_box.Slot end)
+    if alive(slot) then
+        pcall(function()
+            slot:SetPosition({ X = X + COL2 - 6, Y = Y + editing.row * LINE - 4 })
+        end)
+        pcall(function() slot:SetSize({ X = 210, Y = 30 }) end)
+    end
+    pcall(function() amount_box:SetVisibility(0) end)
+
+    if edit_focus then
+        edit_focus = false
+        pcall(function() amount_box:SetKeyboardFocus() end)
+    end
+
+    return amount_box
+end
+
+-- Reads what was typed and stores it. Called every refresh while a box is
+-- open, the same way the picker's filter is read: polling costs one call and
+-- needs no delegate, and delegates taking a Lua function is exactly what this
+-- build refuses elsewhere.
+local function poll_amount(cfg)
+    if editing == nil or not alive(amount_box) then return end
+
+    local text
+    pcall(function()
+        local ft = amount_box:GetText()
+        if ft then text = ft:ToString() end
+    end)
+    if type(text) ~= "string" then return end
+
+    -- Committed when the box stops holding the keyboard, which covers both
+    -- pressing enter and clicking away, without binding either.
+    local focused = true
+    pcall(function() focused = amount_box:HasKeyboardFocus() end)
+    if focused then return end
+
+    local want = tonumber((text:gsub("[^%d]", "")))
+    local job, item = editing.work, editing.item
+    editing = nil
+    pcall(function() amount_box:SetVisibility(1) end)
+
+    if want == nil then
+        log.say("no number typed, ceiling left alone")
+        return
+    end
+    if want <= 0 then
+        caps.clear(job, item)
+        log.say("rule removed: " .. workdefs.label(job) .. " " .. item)
+    else
+        caps.set(job, item, want)
+        log.say(string.format("%s %s ceiling set to %d",
+            workdefs.label(job), item, want))
+    end
+    M.wants_pass = true
+end
+
+local function begin_edit(rule, row)
+    editing = { work = rule.work, item = rule.item, row = row }
+    edit_focus = true
+    if alive(amount_box) then
+        pcall(function()
+            amount_box:SetText(make_ftext(tostring(rule.amount or "")))
+        end)
+    end
+end
+
 local function hide_search()
     if alive(search_box) then
         -- Collapsed rather than destroyed, so the same box comes back with
@@ -865,6 +997,16 @@ end
 -- reaches whatever sits beside it. Anything past five digits loses the units,
 -- which nobody reads on a ceiling of fifteen thousand anyway, and the string
 -- can then never outgrow its column.
+-- An id like AncientCivilizationParts is twenty four characters and would
+-- cross two columns. Trimmed so the row keeps its shape; the picker shows
+-- the full name, and this list is read by its job and its number rather
+-- than by matching an id letter for letter.
+local function short_item(id)
+    id = tostring(id or "")
+    if #id <= ITEM_CHARS then return id end
+    return id:sub(1, ITEM_CHARS - 2) .. ".."
+end
+
 local function short_amount(n)
     n = tonumber(n) or 0
     if n >= 100000 then
@@ -894,20 +1036,20 @@ local function draw_list(cfg, totals)
             local key = "rule" .. i
 
             stripe(key, row, PAD, W - PAD * 2)
-            line(key, row, PAD, workdefs.label(rule.work), "action")
-            line("itm" .. i, row, COL_ITEM, rule.item, "item")
+            line(key, row, PAD, workdefs.label(rule.work), "action", ROW_PT)
+            line("itm" .. i, row, COL_ITEM, short_item(rule.item), "item", ROW_PT)
             line("amt" .. i, row, COL2,
                 short_amount(have) .. " / " .. short_amount(rule.amount),
-                met and "met" or "unmet")
-            line("done" .. i, row, COL_DONE, met and "done" or "", "met")
+                met and "met" or "unmet", ROW_PT)
+            line("done" .. i, row, COL_DONE, met and "done" or "", "met", ROW_PT)
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
             -- be somewhere to correct the guess.
-            line("del" .. i, row, COL3, "remove", "dim")
+            line("del" .. i, row, COL3, "remove", "dim", ROW_PT)
 
             hit(key, { kind = "job", rule = rule })
-            hit("amt" .. i, { kind = "rule", rule = rule })
+            hit("amt" .. i, { kind = "rule", rule = rule, row = row })
             hit("del" .. i, { kind = "drop", rule = rule })
             row = row + 1
         end
@@ -1051,6 +1193,14 @@ local function redraw(cfg, totals)
 end
 
 function M.refresh(cfg)
+    -- The typed-ceiling box, when one is open: placed, then read.
+    if editing ~= nil then
+        ensure_amount_box()
+        poll_amount(cfg)
+    elseif alive(amount_box) then
+        pcall(function() amount_box:SetVisibility(1) end)
+    end
+
     if not M.open then return end
     if not ensure_root() then return end
 
@@ -1174,6 +1324,7 @@ function M.reset()
     root, root_owner, root_tree, backdrop = nil, nil, nil, nil
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
+    amount_box, editing, edit_focus = nil, nil, false
     images, item_of, grid_from, grid_count = {}, {}, 0, 0
     icons.reset()
     was_hit, was_sel, hover_key = {}, nil, nil
@@ -1281,12 +1432,16 @@ function M.handle_click(cfg, dir)
     if not M.open then return false end
 
     local what = hovered()
-    if what == nil then return false end
-    return M.apply(cfg, what, dir)
+    if what == nil then
+        -- A click on nothing still ends an edit, which is how "click away to
+        -- set it" is honoured when the click lands on empty panel.
+        return false
+    end
+    return M.apply(cfg, what, dir, true)
 end
 
 -- What a row does, whichever way it was reached.
-function M.apply(cfg, what, dir)
+function M.apply(cfg, what, dir, from_mouse)
     if what.kind == "close" then
         M.toggle()
         return true
@@ -1372,6 +1527,16 @@ function M.apply(cfg, what, dir)
 
     if what.kind == "rule" then
         local rule = what.rule
+
+        -- Left click types, right click and the arrows step. Both are worth
+        -- having: the ladder is faster for a nudge, typing is the only way to
+        -- land on a number that is not on it.
+        if from_mouse and dir < 0 then
+            begin_edit(rule, what.row or 3)
+            log.say("type a ceiling, then click away to set it")
+            return true
+        end
+
         local next_amount = step(rule.amount, dir)
 
         if next_amount == nil then
