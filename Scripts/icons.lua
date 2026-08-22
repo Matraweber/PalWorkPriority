@@ -310,6 +310,28 @@ local function find(name)
 
     if real(found) then return found end
 
+    -- It was here once and it is not here now, so ask for it again.
+    --
+    -- Nothing holds a reference to one of these textures except the Image
+    -- currently drawing it. Point that Image at a different item - change
+    -- page, switch to the storage view, anything - and the old texture is
+    -- unreferenced and the engine is free to collect it. Come back and the
+    -- lookup fails.
+    --
+    -- `requested` then made that permanent: it records that a load was asked
+    -- for, want() returns early on it, and so the reload was never issued.
+    -- Icons that had been drawing all session went blank after browsing away
+    -- and back, and could not recover. Clearing the flag lets the pump fetch
+    -- it again, which costs 0.3ms.
+    --
+    -- This is the same reason the module keeps names instead of textures: a
+    -- texture is not ours and does not stay put. The flag has to follow the
+    -- same rule as the thing it describes.
+    if requested[name] then
+        requested[name] = nil
+        arrived[name] = nil
+        queued[name] = nil
+    end
     want(name)
     return nil
 end
