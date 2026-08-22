@@ -46,6 +46,16 @@ local blocks = {}               -- key -> TextBlock
 local drawn = {}                -- key -> last token drawn
 local hits = {}                 -- key -> what clicking it means
 local order = {}                -- the same keys in draw order, for the arrows
+
+-- A tile's whole face, for hit testing.
+--
+-- Hover tested the icon, which is 48 square inside a tile 76 by 118, so about
+-- a fifth of what looks like a button actually answered the pointer and the
+-- highlight came and went as the mouse crossed the name. Only tiles go in
+-- here: a rules row's stripe spans the full width, and letting that answer
+-- would put it in competition with the limit and the Remove drawn on top of
+-- it, decided by whichever pairs() reached first.
+local tile_face = {}
 local used = {}                 -- keys touched this frame, so the rest blank
 local hover_key = nil
 
@@ -158,7 +168,7 @@ local TAB_H = 34
 local COLS = 10
 local TILE = 76          -- width, and the icon's square
 local ICON = 48          -- the picture, in the tile's top band
-local TILE_H = 118       -- icon, then the count, then two lines of name
+local TILE_H = 82        -- the icon, and its count beneath
 local GAP = 8
 local GRID_ROWS = 4
 
@@ -233,7 +243,17 @@ local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 -- brighter than the title and every icon: a spotlight aimed at the least
 -- important control. It still has to carry the dark text this build will not
 -- let us recolour, so it stays light enough to read against, and no lighter.
-local FIELD_BG    = { R = 0.66, G = 0.70, B = 0.75, A = 1.00 }
+-- Dark, because this field's text is light.
+--
+-- Worth writing down because it was got backwards twice. The ceiling box
+-- renders what you type in a dark colour, so that one needs a pale field. The
+-- filter box renders it light, so a pale field hides it, which is what
+-- "typing in the text bar is unreadable" was. Same widget class, two
+-- different text colours, neither of them settable from here.
+--
+-- So they no longer share a colour. This one is dark and matches the panel.
+local FIELD_BG    = { R = 0.055, G = 0.075, B = 0.100, A = 1.00 }
+local CEILING_BG  = { R = 0.82,  G = 0.85,  B = 0.89,  A = 1.00 }
 local FIELD_HINT  = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 }
 
 
@@ -805,6 +825,7 @@ local function tile(key, at, item, have, top, limited)
     local py = top + row * (TILE_H + GAP)
 
     slab(key, px, py, TILE, TILE_H)
+    tile_face[key] = stripes[key]
 
     item_of[key] = item
 
@@ -822,23 +843,29 @@ local function tile(key, at, item, have, top, limited)
     -- with no words cannot be read, cannot be searched, and cannot be learned.
     -- Two tiles showed a brown log and a blue crystal, both labelled 2k, and
     -- nothing on screen could tell you which was which.
-    -- The name is what you read to find a thing, and it was the smallest
-    -- text on the panel: smaller than the column headings, and half the size
-    -- the same word renders at in the rules table. It also reached within a
-    -- pixel of the tile's right edge, which reads as clipped rather than as
-    -- tight.
-    local lines = name_lines(item)
-    local first = py + ICON + 20
-    for n = 1, math.min(#lines, 2) do
-        text_at("n" .. n .. ":" .. key, px + 7, first + (n - 1) * 14,
-            lines[n], "item", 12, true)
+    -- No name while there is a picture. Item ids do not fit a 76 pixel
+    -- square: they wrapped, broke a word across two lines, and ran past the
+    -- tile's own edge, and shrinking them until they fit made the name the
+    -- smallest text on the panel. The picker already names whatever the
+    -- pointer is over, in full, at the top of the screen.
+    --
+    -- Without a picture it is the only thing there is, though. Dropping it
+    -- outright left rows of blank grey squares for every icon still queued,
+    -- which is worse than a clipped word.
+    if not has_icon then
+        local lines = name_lines(item)
+        local first = py + 16
+        for n = 1, math.min(#lines, 3) do
+            text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 12,
+                lines[n], "item", 10, true)
+        end
     end
 
     -- The count, exact. The picker said 8k where the rules list said 8299, so
     -- the two screens disagreed about the number you were about to set a limit
     -- against, and two different piles both read 2k.
     if have > 0 then
-        text_at("q:" .. key, px + 7, py + ICON + 4,
+        text_at("q:" .. key, px + 7, py + ICON + 6,
             tostring(math.floor(have)), "title", 13, true)
     end
 
@@ -936,7 +963,10 @@ local function style_box(box, which)
     pcall(function()
         local st = box.WidgetStyle
         if st == nil then return end
-        st.BackgroundColor = { SpecifiedColor = FIELD_BG, ColorUseRule = 0 }
+        st.BackgroundColor = {
+            SpecifiedColor = (which == "ceiling") and CEILING_BG or FIELD_BG,
+            ColorUseRule = 0,
+        }
 
         -- Only the background. The four foreground colours an
         -- EditableTextBox carries were all set and none of them moved the
@@ -1430,14 +1460,18 @@ local function draw_list(cfg, totals)
             -- panel cannot simply widen: at 1050 its right edge already sits
             -- a few pixels from the game's own Base Info panel, so growing it
             -- trades one collision for a worse one.
-            local gap = have - rule.amount
+            -- What the job is doing, in a word.
+            --
+            -- OVER 651 restated arithmetic already sitting two columns to its
+            -- left, and AT LIMIT described the storage rather than the job
+            -- while claiming a precision it did not have. The JOB column is
+            -- right there, so this column reads as a sentence about it:
+            -- Lumbering ... Stopped.
             local status, tone
-            if gap > 0 then
-                status, tone = "OVER " .. short_amount(gap), "over"
-            elseif gap == 0 then
-                status, tone = "AT LIMIT", "atlimit"
+            if met then
+                status, tone = "Stopped", "over"
             else
-                status, tone = short_amount(-gap) .. " LEFT", "working"
+                status, tone = "Working", "working"
             end
             line("done" .. i, row, COL_DONE, status, tone, ROW_PT)
 
@@ -1499,6 +1533,10 @@ local INTERNAL = {
     -- Schematics, not products. A base does not make a blueprint, it consumes
     -- one, and the picker was showing four pages of them.
     "blueprint", "schematic", "recipe",
+    -- Work Suitability Deforest and friends are the game's own trait tokens,
+    -- not things a base produces. They match "deforest" in the job table and
+    -- walked straight into the picker.
+    "suitability", "passive", "skillcard", "skill_",
 }
 
 local function looks_internal(id)
@@ -1707,7 +1745,7 @@ function M.refresh(cfg)
     hover_key = nil
     for key in pairs(hits) do
         -- A row reports through its text, a tile through its picture.
-        local w = blocks[key] or images[key]
+        local w = tile_face[key] or blocks[key] or images[key]
         local over = false
         hn = hn + 1
         pcall(function()
@@ -1851,6 +1889,7 @@ function M.reset()
     blocks, drawn, hits, used = {}, {}, {}, {}
     stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
     amount_box, editing, edit_focus = nil, nil, false
+    tile_face = {}
     styled_boxes = {}
     images, item_of, grid_from, grid_count = {}, {}, 0, 0
     icons.reset()
@@ -1883,7 +1922,7 @@ end
 
 local function hovered()
     for key, what in pairs(hits) do
-        local w = blocks[key] or images[key]
+        local w = tile_face[key] or blocks[key] or images[key]
         local over = false
         pcall(function()
             if alive(w) then over = w:IsHovered() end
