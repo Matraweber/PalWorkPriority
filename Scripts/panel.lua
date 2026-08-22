@@ -200,6 +200,9 @@ local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
 local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
 -- Where the keyboard is, quieter than where the mouse is.
 local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
+-- Inset, darker than the row it sits in, which is how every text field in
+-- every dark interface says "type here".
+local FIELD_WELL = { R = 0.040, G = 0.055, B = 0.075, A = 1.00 }
 local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
@@ -640,8 +643,26 @@ end
 --
 -- The run where icons actually appeared was the one that matched sizes; the
 -- log said so plainly and I read it as evidence for the opposite call.
-local function apply_texture(img, texture)
+local function apply_texture(img, texture, size)
+    -- bMatchSize true, then the size corrected.
+    --
+    -- Matching is what makes the brush draw at all, per the note in
+    -- overlay.lua: a brush with no size reports success and paints nothing.
+    -- But matching sets the brush to the texture's own dimensions, and the
+    -- art in this pak is not one size, so roughly half the picker's icons
+    -- spilled past their tiles onto the panel and read as a rendering fault.
+    --
+    -- The slot decides the box; the brush is then told to agree with it. The
+    -- style struct write is the same shape that worked for the text fields,
+    -- read out and assigned rather than built.
     pcall(function() img:SetBrushFromTexture(texture, true) end)
+
+    if size then
+        pcall(function()
+            local brush = img.Brush
+            if brush then brush.ImageSize = { X = size, Y = size } end
+        end)
+    end
 end
 
 -- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
@@ -703,7 +724,7 @@ local function picture(key, px, py, size, item_id, token)
         --
         local texture = item_id and icons.get(item_id) or nil
         if texture then
-            apply_texture(img, texture)
+            apply_texture(img, texture, size)
             pcall(function() img:SetOpacity(1.0) end)
         else
             -- Kept, not hidden. A hidden widget reports no hover, and the
@@ -1301,10 +1322,11 @@ local function draw_list(cfg, totals)
             editing.item .. "  |  Type a number, then click anywhere to save",
             "action", 13)
     else
-        line("sub", row, PAD,
-            "Click the limit to change it, the job to swap it, " ..
-            "Remove to delete the rule.",
-            "dim", 13)
+        -- Nothing here any more. The limit sits in a well, the job is the
+        -- only coloured word in its row, and Remove asks before it acts, so
+        -- the three things this line used to explain now explain themselves.
+        -- The panel is a line shorter and says more.
+        line("sub", row, PAD, "", "dim", 13)
     end
     row = row + 1
 
@@ -1356,6 +1378,19 @@ local function draw_list(cfg, totals)
             -- the reading order.
             line("amt" .. i, row, COL2,
                 short_amount(have), "limit", ROW_PT)
+
+            -- A well behind the number, so it looks like something you can
+            -- type into.
+            --
+            -- The limit was styled as plain text, indistinguishable from the
+            -- storage figure beside it that cannot be changed, which is why
+            -- the panel needed a line of prose telling you to click it. An
+            -- instruction line explaining where to click is the design
+            -- admitting its controls do not look like controls.
+            if not editing_this then
+                slab("capbox" .. i, COL_CAP - 12, row * LINE - 1,
+                    118, ROW_H - 4, FIELD_WELL)
+            end
 
             line("cap" .. i, row, COL_CAP,
                 editing_this and "" or short_amount(rule.amount),
