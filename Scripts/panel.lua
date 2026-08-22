@@ -142,10 +142,20 @@ local TAB_H = 34
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
 -- worth paging to, narrow enough that a tile stays big enough to recognise.
-local COLS = 8
-local TILE = 76
+-- Ten across rather than eight, because the grid was 664px wide inside a
+-- 1014px panel and the 350px to its right was doing nothing.
+--
+-- A tile is taller than it is wide now: the icon keeps its square and the
+-- name goes underneath. Icon-only tiles were unusable. Two of them read "2k"
+-- and could not be told apart, two spheres differed only in hue, and the
+-- filter searched by a name the grid never showed, so it only worked for
+-- somebody who already knew every item id by heart.
+local COLS = 10
+local TILE = 76          -- width, and the icon's square
+local ICON = 48          -- the picture, in the tile's top band
+local TILE_H = 112       -- icon, then the count, then two lines of name
 local GAP = 8
-local GRID_ROWS = 5
+local GRID_ROWS = 4
 
 local PER_PAGE = COLS * GRID_ROWS
 
@@ -179,6 +189,8 @@ local COLOUR = {
 local BACKDROP  = { R = 0.035, G = 0.050, B = 0.075, A = 0.985 }
 local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
 local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
+-- Where the keyboard is, quieter than where the mouse is.
+local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
 local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
@@ -395,11 +407,25 @@ local function slab(key, px, py, w, h, colour)
         end
     end
 
-    local on = (key == (hover_key or was_sel))
-    local want = on and "on" or "off"
-    if drawn["s:" .. key] ~= (want .. tostring(colour)) then
-        pcall(function() border:SetBrushColor(colour or on and ROW_HOVER or ROW_BG) end)
-        drawn["s:" .. key] = want
+    -- Three states. The mouse and the keyboard were sharing one highlight, so
+    -- there was no way to see where the keyboard was while the mouse was over
+    -- something else.
+    local want = (key == hover_key and "hot")
+        or (key == was_sel and "sel")
+        or "cold"
+
+    -- The token written has to be the token compared. It was writing `want`
+    -- and comparing `want .. colour`, so every slab failed its own cache check
+    -- and repainted on every frame.
+    local token = want .. tostring(colour)
+    if drawn["s:" .. key] ~= token then
+        pcall(function()
+            border:SetBrushColor(colour
+                or (want == "hot" and ROW_HOVER)
+                or (want == "sel" and ROW_SEL)
+                or ROW_BG)
+        end)
+        drawn["s:" .. key] = token
     end
 end
 
@@ -725,44 +751,53 @@ end
 
 -- One item: a slab, its icon, how many are in storage, and a name when there
 -- is no icon to be had.
-local function tile(key, at, item, have, top)
+local function tile(key, at, item, have, top, limited)
     local col = at % COLS
     local row = math.floor(at / COLS)
     local px = PAD + col * (TILE + GAP)
-    local py = top + row * (TILE + GAP)
+    local py = top + row * (TILE_H + GAP)
 
-    slab(key, px, py, TILE, TILE)
+    slab(key, px, py, TILE, TILE_H)
 
     item_of[key] = item
 
-    -- Back on the texture route. SetBrushFromSoftTexture was accepted and set
-    -- a brush whose texture never arrived, so every tile drew as a white
-    -- square: this build does not stream a soft brush on its own. The engine
-    -- has to be given a loaded texture, which is what icons.get returns.
-    -- ready() is a table lookup once the icon has arrived; get() is a
-    -- StaticFindObject and costs about ten milliseconds. Only picture() calls
-    -- it, and only on the frame a tile's icon actually changes.
+    -- The icon keeps the top square of the tile; the name sits under it.
+    -- The icon gets the top band only. Sized to leave room below rather than
+    -- filling the tile, because the count and the name were being drawn over
+    -- the bottom of the picture.
     local has_icon = icons.ready(item)
-    picture(key, px + 4, py + 4, TILE - 8, item, item .. (has_icon and "+" or "-"))
+    picture(key, px + 14, py + 4, ICON, item,
+        item .. (has_icon and "+" or "-"))
 
-    -- Without an icon the tile would be an anonymous square, so it falls back
-    -- to as much of the name as fits rather than to nothing.
-    if not has_icon then
-        local lines = name_lines(item)
-        local step = 11
-        local first = py + TILE / 2 - (#lines * step) / 2 - 1
-        for n, line in ipairs(lines) do
-            text_at("n" .. n .. ":" .. key, px + 5, first + (n - 1) * step,
-                line, "item", 9, true)
-        end
+    -- The name, always, not only when the icon is missing.
+    --
+    -- This is the fix the review was most insistent about: a grid of pictures
+    -- with no words cannot be read, cannot be searched, and cannot be learned.
+    -- Two tiles showed a brown log and a blue crystal, both labelled 2k, and
+    -- nothing on screen could tell you which was which.
+    local lines = name_lines(item)
+    local first = py + ICON + 20
+    for n = 1, math.min(#lines, 2) do
+        text_at("n" .. n .. ":" .. key, px + 5, first + (n - 1) * 12,
+            lines[n], "item", 10, true)
     end
 
+    -- The count, exact. The picker said 8k where the rules list said 8299, so
+    -- the two screens disagreed about the number you were about to set a limit
+    -- against, and two different piles both read 2k.
     if have > 0 then
-        local shown = have >= 1000
-            and (math.floor(have / 1000) .. "k") or tostring(have)
-        text_at("q:" .. key, px + 6, py + TILE - 18, shown, "dim", 11, true)
+        text_at("q:" .. key, px + 5, py + ICON + 6,
+            tostring(math.floor(have)), "title", 11, true)
+    end
+
+    -- Already has a rule. Without this the picker offers items that are
+    -- already limited, identically to ones that are not, and clicking one
+    -- silently resets its limit to the bottom of the ladder.
+    if limited then
+        text_at("lim:" .. key, px + TILE - 20, py + 4, "•", "atlimit", 16, true)
     end
 end
+
 
 -- Anything not drawn this frame is emptied rather than destroyed. A destroyed
 -- widget leaves a dead wrapper behind; an empty one costs nothing. The first
@@ -1476,11 +1511,15 @@ local function draw_item_picker(cfg, totals)
 
     grid_from, grid_count = #order + 1, 0
 
+    -- Which items already have a rule, so the grid can say so.
+    local has_rule = {}
+    for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
+
     for i = from, math.min(from + PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
 
-        tile(key, i - from, id, totals[id] or 0, top)
+        tile(key, i - from, id, totals[id] or 0, top, has_rule[id])
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
     end
@@ -1490,7 +1529,7 @@ local function draw_item_picker(cfg, totals)
     -- panel with an empty half and everything below it stranded at the
     -- bottom of a box nothing filled.
     local tall = math.max(1, math.ceil(grid_count / COLS))
-    local row = 6 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
+    local row = 6 + math.ceil((tall * (TILE_H + GAP)) / LINE) + 1
 
     if pages > 1 then
         line("prev", row, PAD + 10, "<   Previous",
