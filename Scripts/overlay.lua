@@ -169,12 +169,24 @@ end
 function M.host()
     -- A different controller than the one this was built under means the
     -- world moved. Everything is dropped without being touched.
+    -- A nil owner counts as moved, and that is the whole point.
+    --
+    -- The guard used to require now_owner ~= nil, which skipped the drop in
+    -- exactly the interval it was written for: the old PlayerController freed
+    -- and the new one not yet made. In that window there is no controller to
+    -- compare, so the check passed, and the next line asked a widget outered
+    -- to freed memory whether it was still valid. That is the crash, not a
+    -- guard against it, and it is the LONGER half of the transition.
     local now_owner = owner_name()
-    if built_under ~= nil and now_owner ~= nil and now_owner ~= built_under then
+    if built_under ~= nil and now_owner ~= built_under then
         widget, tree, canvas = nil, nil, nil
         built_under = nil
         M.open = false
     end
+
+    -- Nothing to build onto yet. Said plainly rather than falling through to
+    -- a construct that would be outered to nil.
+    if now_owner == nil then return nil end
 
     if alive(widget) and alive(tree) and alive(canvas) then
         return canvas, tree, widget

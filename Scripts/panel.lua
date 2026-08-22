@@ -859,6 +859,19 @@ local DEFAULT_PT = 20
 -- band of chrome between the tab strip and the words under it.
 local TITLE_DROP = 10
 
+-- Resolved once, here, with a fallback.
+--
+-- caps.lua does not hot-reload and this module does, so a session started
+-- before LADDER moved into caps gets nil - and this is an INDEX, not a call,
+-- so it is invisible to a search for guarded calls. Every path that reaches
+-- it is pcall-wrapped with the message discarded, which is precisely how the
+-- last incarnation of this exact bug stayed hidden: caps.lua's own comment
+-- describes it.
+local LADDER = caps.LADDER or {
+    100, 250, 500, 1000, 2000, 3000, 5000, 7500,
+    10000, 15000, 20000, 30000, 50000,
+}
+
 local MARK_W = 20
 
 -- The leading glyph on an action row: "+", "<", or the toggle's box. Wide
@@ -1105,10 +1118,23 @@ end
 local function fit_name(text, chars)
     text = tostring(text)
     if #text <= chars then return text end
-    -- Trailing space stripped before the dots. Cutting on a word boundary
-    -- left "Baked Meat Chicken .." against "Baked Meat Grass Ma..", so the
-    -- gap looked like a typo in some rows and not others.
-    return (text:sub(1, chars - 2):gsub("%s+$", "")) .. ".."
+
+    -- Elided in the MIDDLE, not at the end.
+    --
+    -- Names in this game share long prefixes and differ at the tail -
+    -- "Skill Unlock Grass Mammoth" against "Skill Unlock Grass Mammoth Ice" -
+    -- so cutting the end made two different items render the SAME string. Two
+    -- rows on one page came out identical to the pixel, and with no icon on
+    -- either there was nothing left to tell them apart before committing a
+    -- rule to one of them. Keeping both ends keeps the half that
+    -- distinguishes them.
+    --
+    -- Trailing space stripped before the dots, or a cut landing on a word
+    -- boundary leaves a gap that reads as a typo in some rows and not others.
+    local tail = math.min(9, math.floor(chars / 3))
+    local head = chars - tail - 2
+    if head < 1 then return text:sub(1, chars) end
+    return (text:sub(1, head):gsub("%s+$", "")) .. ".." .. text:sub(-tail)
 end
 
 -- One item as a row: a left rail, its icon, its name, and how many are in
@@ -1486,10 +1512,23 @@ local function poll_amount(cfg)
 
     -- Committed when the box stops holding the keyboard, which covers both
     -- pressing enter and clicking away, without binding either.
-    local focused = true
-    pcall(function() focused = amount_box:HasKeyboardFocus() end)
-    if focused then
+    -- Not focused until the engine says so, and the answer is only trusted
+    -- when the call itself succeeded.
+    --
+    -- This defaulted to true, so a build where HasKeyboardFocus is missing or
+    -- throws set had_focus on the very first poll and then returned for ever:
+    -- never committing, never abandoning, the editor pinned open for the
+    -- session with the header still reading "Setting the X ceiling for Y".
+    -- The pcall's own result was discarded, so "the call failed" and "the box
+    -- has focus" were the same answer.
+    local focused = false
+    local asked = pcall(function()
+        focused = (amount_box:HasKeyboardFocus() == true)
+    end)
+
+    if asked and focused then
         editing.had_focus = true
+        editing.waiting = 0
         return
     end
 
@@ -1506,7 +1545,7 @@ local function poll_amount(cfg)
     --
     -- Abandoned, not committed, if the keyboard never arrives at all. An edit
     -- that never took focus cannot contain anything worth saving.
-    if not editing.had_focus then
+    if not editing.had_focus or not asked then
         editing.waiting = (editing.waiting or 0) + 1
         if editing.waiting > 30 then
             log.say("the ceiling box never took the keyboard, so the " ..
@@ -2109,14 +2148,37 @@ local INTERNAL = {
     -- not things a base produces. They match "deforest" in the job table and
     -- walked straight into the picker.
     "suitability", "passive", "skillcard", "skill_",
+    -- Cut content that still ships in the item table.
+    --
+    -- Palworld's data keeps entries the game itself cannot give you. The wiki
+    -- files them under Category:Unused, and Curry is the clearest case: an
+    -- item whose only id is "Curry_old", documented as unobtainable without
+    -- modifying the game. They have no icon because they are not real, which
+    -- is why a page of the picker came back with blank squares - the icons
+    -- were never missing, the items were.
+    --
+    -- Offering one is the same error as offering a Pal drop: the player picks
+    -- it, gets a rule, and no pal will ever make the thing.
+    "_old", "_tmp", "tmp_", "_dummy", "unused", "deprecated",
 }
+
+-- Ids that end in a bare serial, like Yakushima_Ingot001 or Key_Sphere_01.
+--
+-- These are the other shape cut content takes. A real variant reads
+-- PalSphere_Giga; a leftover reads Ingot001. Kept separate from INTERNAL
+-- because it is a shape rather than a word, and matched only at the end so
+-- an id that merely contains digits is untouched.
+local function looks_serial(id)
+    local hay = tostring(id):lower()
+    return hay:match("%d%d%d$") ~= nil or hay:match("_%d%d$") ~= nil
+end
 
 local function looks_internal(id)
     local hay = tostring(id):lower()
     for _, mark in ipairs(INTERNAL) do
         if hay:find(mark, 1, true) then return true end
     end
-    return false
+    return looks_serial(hay)
 end
 
 -- Berries2 next to Berries, PalSphere_Giga next to PalSphere. A trailing
@@ -2589,6 +2651,17 @@ function M.toggle()
         overlay.hide()
         mode, page, show_all = "list", 0, false
         pcall(function() scheduler.want_totals = false end)
+
+        -- An open ceiling edit is dropped, not left pending.
+        --
+        -- refresh() runs poll_amount BEFORE it checks M.open, and main.lua
+        -- calls refresh once a second whether the panel is open or not - so
+        -- closing the panel mid-edit lost the box's focus and committed a
+        -- second later, with the panel already gone. That is the same silent
+        -- ceiling change had_focus was added to stop, arriving through the
+        -- one door it did not cover.
+        editing = nil
+        pcall(function() if alive(amount_box) then amount_box:SetVisibility(1) end end)
         return
     end
 
@@ -2642,16 +2715,16 @@ end
 
 local function step(current, dir)
     if dir < 0 then
-        if current == nil then return caps.LADDER[1] end
-        for _, n in ipairs(caps.LADDER) do
+        if current == nil then return LADDER[1] end
+        for _, n in ipairs(LADDER) do
             if n > current then return n end
         end
-        return caps.LADDER[#caps.LADDER]
+        return LADDER[#LADDER]
     end
 
     if current == nil then return nil end
     local below = nil
-    for _, n in ipairs(caps.LADDER) do
+    for _, n in ipairs(LADDER) do
         if n < current then below = n end
     end
     return below
@@ -3019,9 +3092,9 @@ function M.apply(cfg, what, dir, from_mouse)
         -- place instead of on a dead end.
         local work = workdefs.work_for_item(what.item) or workdefs.DEFAULT_WORK
 
-        caps.set(work, what.item, caps.LADDER[1])
+        caps.set(work, what.item, LADDER[1])
         log.say(string.format("rule added: %s until %d %s",
-            workdefs.label(work), caps.LADDER[1], what.item))
+            workdefs.label(work), LADDER[1], what.item))
         M.wants_pass = true
         mode, sel = "list", 1
         return true

@@ -81,6 +81,9 @@ local waited = {}
 local retried = {}
 local alternates = {}
 
+-- id -> how many draws it has waited for an idle queue to guess under.
+local idle_waits = {}
+
 -- A whole-session budget for speculative loads, so a list full of unknown
 -- items cannot turn into hundreds of them.
 -- Raised now that guesses also cover ids the index never had. Each one
@@ -361,14 +364,29 @@ function M.get(item_id)
             -- looking at, and only for a bounded number of ids per session.
             -- The index covers 858 of about 2466 items, so without this every
             -- id it missed is a blank square for the session.
-            if not retried[key] and #queue == 0 and retries_left > 0 then
-                retries_left = retries_left - 1
-                retried[key] = true
-                alternates[key] = item_id
-                for _, cat in ipairs(CATEGORIES) do
-                    want(cat .. "_" .. item_id)
+            if not retried[key] then
+                if #queue == 0 and retries_left > 0 then
+                    retries_left = retries_left - 1
+                    retried[key] = true
+                    alternates[key] = item_id
+                    for _, cat in ipairs(CATEGORIES) do
+                        want(cat .. "_" .. item_id)
+                    end
+                    return nil
                 end
-                return nil
+
+                -- "Not now" is not "never".
+                --
+                -- Falling through to resolved = false here condemned an id
+                -- for the session because the queue happened to be busy at
+                -- the moment it was first drawn - and the first unknown id on
+                -- a page fills the queue itself, so every other unknown id in
+                -- that frame was written off. The budget could barely be
+                -- spent and most of a page stayed blank. Asked again later
+                -- instead, and only given up on once it has waited as long as
+                -- a named icon would.
+                idle_waits[key] = (idle_waits[key] or 0) + 1
+                if idle_waits[key] < PATIENCE then return nil end
             end
 
             if alternates[key] then
@@ -394,7 +412,12 @@ function M.get(item_id)
     end
 
     local texture = find(name)
-    if texture ~= nil then return texture end
+    if texture ~= nil then
+        -- Cleared on success, or M.unresolved reports every icon that was
+        -- ever slow as though it were still pending.
+        waited[key] = nil
+        return texture
+    end
 
     -- Still loading. Waited on rather than given up on, but not for ever.
     waited[key] = (waited[key] or 0) + 1
@@ -442,17 +465,36 @@ function M.get(item_id)
                 if found ~= nil then
                     resolved[key] = alt
                     alternates[key] = nil
-                    waited[key] = 0
+                    waited[key] = nil
                     return found
                 end
             end
         end
 
+        alternates[key] = nil
         resolved[key] = false
         M.last_missing = item_id .. " (waited on " .. name .. ")"
     end
     return nil
 end
+
+-- Tried and rejected: the game's own icon pointer.
+--
+-- PalStaticItemDataBase.IconTexture is a TSoftObjectPtr and
+-- SetBrushFromSoftTexture takes one, which would have retired this whole file
+-- - no path to build, no scraped category, no queue, right for every item
+-- because it is what the game itself uses. It was built and measured.
+--
+-- On this build the call succeeds immediately and the texture streams in
+-- later, so the brush is real and empty in between and the Image draws a
+-- WHITE SQUARE. Reading the brush back to reject that does not help: the
+-- resource reports valid while nothing is there, and the brush has already
+-- been overwritten by the time the answer is known. A white square is worse
+-- than an empty slot - this file already carries that lesson under "not a
+-- missing icon, damage done by the code meant to cope with a missing icon".
+--
+-- Worth revisiting only with a way to ask whether the soft pointer has
+-- actually resolved BEFORE writing the brush.
 
 -- Every id this has given up on, and every id it is still waiting for.
 --
@@ -461,6 +503,7 @@ end
 -- off thirteen screenshots is guesswork; this is the list.
 function M.unresolved()
     local dead, waiting = {}, {}
+
     for key, name in pairs(resolved) do
         if name == false then
             dead[#dead + 1] = key
@@ -468,6 +511,26 @@ function M.unresolved()
             waiting[#waiting + 1] = key .. " (" .. tostring(name) .. ")"
         end
     end
+
+    -- Ids mid-guess, which have no entry in `resolved` at all.
+    --
+    -- Reporting only what `resolved` knows about made this blind to exactly
+    -- the state the newest retry path puts an id into: no name yet, guesses
+    -- in flight. Those showed in neither list, so the one command written to
+    -- answer "which symbols are missing" under-reported - and a reading of
+    -- zero meant "nothing has been written off", not "everything has an
+    -- icon". Two reviews caught the same gap independently.
+    for key in pairs(alternates) do
+        if resolved[key] == nil then
+            waiting[#waiting + 1] = key .. " (guessing)"
+        end
+    end
+    for key, n in pairs(idle_waits) do
+        if resolved[key] == nil and not alternates[key] and n > 0 then
+            waiting[#waiting + 1] = key .. " (queued behind others)"
+        end
+    end
+
     table.sort(dead)
     table.sort(waiting)
     return dead, waiting
@@ -479,7 +542,7 @@ function M.reset()
     ready_ids = {}
     not_ready = {}
     resolved, requested, waited = {}, {}, {}
-    retried, alternates = {}, {}
+    retried, alternates, idle_waits = {}, {}, {}
     retries_left = RETRY_BUDGET
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0

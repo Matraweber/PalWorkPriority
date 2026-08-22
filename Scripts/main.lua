@@ -1078,23 +1078,37 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- only go when the world key actually moves.
     local now_key = api.world_key()
     local switched = (now_key == nil) or (now_key ~= world_key)
-    world_key = now_key
 
     if switched then
         -- Engine wrappers do not survive a world switch, and neither should
         -- any memo built from them.
-        api.reset()
-        clock.reset()
-        scheduler.forget()
-        demandidx.reset()
-        ui.reset()
-        items.reset()
-        panel.reset()
-        net.reset()
-        overlay.reset()
+        --
+        -- One pcall each, and the key committed only afterwards. Under a
+        -- single pcall a throw in any one of these - and panel.reset reaches
+        -- into icons, overlay and the whole widget tree - aborted the rest
+        -- while world_key had ALREADY been updated, so the next ClientRestart
+        -- saw no change and never retried. That left api.reset done and
+        -- overlay.reset not, which is the precise state that makes the
+        -- overlay's freed-controller window fire every time rather than
+        -- occasionally.
+        for _, step in ipairs({
+            { "api", api.reset }, { "clock", clock.reset },
+            { "scheduler", scheduler.forget }, { "demand", demandidx.reset },
+            { "ui", ui.reset }, { "items", items.reset },
+            { "panel", panel.reset }, { "net", net.reset },
+            { "overlay", overlay.reset },
+        }) do
+            local ok_step, err_step = pcall(step[2])
+            if not ok_step then
+                log.warn("world reset step '" .. step[1] .. "' threw: " ..
+                    tostring(err_step))
+            end
+        end
     else
         log.debug("respawn in the same world, caches kept")
     end
+
+    world_key = now_key
 
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
