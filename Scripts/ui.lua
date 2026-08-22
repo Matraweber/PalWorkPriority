@@ -581,6 +581,16 @@ end
 function M.refresh(cfg)
     try_hook_bind()
 
+    -- Before every early return below, not after them.
+    --
+    -- A click marks the store dirty and this flush is debounced two seconds so
+    -- a run of clicks is one write. It used to sit at the bottom of this
+    -- function, under two early returns - so closing the stand within that
+    -- window took the only path that reaches it away, and the edit never
+    -- reached priorities.txt. Silently: the checkbox had visibly moved.
+    -- Flushing here costs nothing when nothing is dirty.
+    store.flush()
+
     -- Plain Lua read while the stand has never been opened: zero engine calls
     -- is the whole idle cost of the mod.
     if not menu_likely_open then return false end
@@ -596,8 +606,6 @@ function M.refresh(cfg)
     end
 
     refresh_cells(cfg)
-
-    store.flush()
     return true
 end
 
