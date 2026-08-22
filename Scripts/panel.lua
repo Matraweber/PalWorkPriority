@@ -124,7 +124,10 @@ local X = -(W / 2)
 -- Vertical offset, recomputed from the drawn height so the panel sits in the
 -- middle of the screen whichever screen it is showing. Fixed before, which
 -- was fine for one screen and wrong for the other.
-local Y = -300
+-- Where the panel's top edge lives, always. Chosen so the tallest screen
+-- still clears the bottom of a 1080 viewport.
+local TOP_Y = -300
+local Y = TOP_Y
 local LINE = 34
 local ROW_H = 30
 local PAD = 18
@@ -171,7 +174,7 @@ local TAB_H = 34
 local COLS = 12
 local TILE = 76          -- width, and the icon's square
 local ICON = 48          -- the picture, in the tile's top band
-local TILE_H = 116       -- the icon, its count, and its name
+local TILE_H = 84        -- the icon, and its count beneath
 local GAP = 8
 local GRID_ROWS = 4
 
@@ -204,7 +207,10 @@ local COLOUR = {
     over   = { R = 0.94, G = 0.74, B = 0.36, A = 1.00 },
     -- Quieter than the data it sits beside, so it does not compete, but its
     -- own colour rather than the one five harmless things share.
-    quiet  = { R = 0.62, G = 0.58, B = 0.60, A = 1.00 },
+    -- Warm and clearly readable. This was the lowest contrast text anywhere
+    -- in the panel, on the one control that destroys something, which is
+    -- exactly backwards.
+    quiet  = { R = 0.94, G = 0.64, B = 0.60, A = 1.00 },
     working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
 }
 
@@ -213,7 +219,15 @@ local COLOUR = {
 -- something to read, not a HUD element to see past. The rows sit a shade
 -- lighter than the backdrop so a list reads as rows without needing borders.
 local BACKDROP  = { R = 0.035, G = 0.050, B = 0.075, A = 0.985 }
+-- Three surfaces, not one.
+--
+-- The header band, the data rows, the tiles and every button were the same
+-- fill, so a static title bar and a pressable control were indistinguishable
+-- and nothing in the panel looked like it could be touched. Chrome sits below
+-- the body, data sits on it, and things you press sit above it.
+local CHROME_BG = { R = 0.045, G = 0.060, B = 0.082, A = 1.00 }
 local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
+local BUTTON_BG = { R = 0.120, G = 0.152, B = 0.196, A = 1.00 }
 local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
 -- Where the keyboard is, quieter than where the mouse is.
 local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
@@ -479,8 +493,8 @@ local function slab(key, px, py, w, h, colour)
 end
 
 -- A full width row, which is what the rules list is made of.
-local function stripe(key, row, from, width)
-    slab(key, from - 6, row * LINE - 3, width, ROW_H)
+local function stripe(key, row, from, width, colour)
+    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour)
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -855,19 +869,24 @@ local function tile(key, at, item, have, top, limited)
     -- Without a picture it is the only thing there is, though. Dropping it
     -- outright left rows of blank grey squares for every icon still queued,
     -- which is worse than a clipped word.
-    -- Every tile is named, not only the ones still waiting for a picture.
+    -- Named only when there is no picture.
     --
-    -- Dropping the names made the grid unreadable in the mode the panel
-    -- pushes you towards: searching returns items the base owns none of, so
-    -- they have no count either, and nine of fifteen results were bare
-    -- pictograms with no text at all. Identifying them cost one hover each,
-    -- with the answer appearing at the top of the panel, up to two hundred
-    -- pixels from the pointer.
-    local lines = name_lines(item)
-    local first = py + ICON + (has_icon and 22 or 4)
-    for n = 1, math.min(#lines, 2) do
-        text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 13,
-            lines[n], "item", 11, true)
+    -- Both halves of this were learned the hard way. Names on every tile
+    -- clutter a grid whose whole point is recognising things at a glance, and
+    -- the panel already names whatever the pointer is over, in full, at the
+    -- top. But dropping them outright left nine of fifteen search results as
+    -- bare grey squares, because a search returns items the base owns none
+    -- of: no count, and often no icon loaded yet either.
+    --
+    -- So the name is the fallback it always should have been. An icon speaks
+    -- for itself; nothing else does.
+    if not has_icon then
+        local lines = name_lines(item)
+        local first = py + 14
+        for n = 1, math.min(#lines, 3) do
+            text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 13,
+                lines[n], "item", 11, true)
+        end
     end
 
     -- The count, exact. The picker said 8k where the rules list said 8299, so
@@ -1286,7 +1305,7 @@ local function draw_tabs(active)
     -- row insets, which put the header band six pixels left of the panel it
     -- sits in, so a strip of chrome hung over the edge onto the 3D world.
     -- Measured off a screenshot: band at 431, panel at 437.
-    slab("tabbar", -PAD, -3, W + PAD * 2, ROW_H)
+    slab("tabbar", -PAD, -3, W + PAD * 2, ROW_H, CHROME_BG)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
@@ -1535,7 +1554,7 @@ local function draw_list(cfg, totals)
     end
 
     hit("new", { kind = "new" })
-    stripe("new", row, PAD, W - PAD * 2)
+    stripe("new", row, PAD, W - PAD * 2, BUTTON_BG)
     line("new", row, PAD, "+   Add a rule", "action")
 
     -- One row of breathing space, not two. The panel is sized from what it
@@ -1731,7 +1750,7 @@ local function draw_item_picker(cfg, totals)
     -- across in the rules list is the same kind of thing and reads as a
     -- control because it sits on a stripe.
     hit("all", { kind = "toggle_all" })
-    stripe("all", row, PAD, W - PAD * 2)
+    stripe("all", row, PAD, W - PAD * 2, BUTTON_BG)
     line("all", row, PAD + 10,
         everything and "Show only what I have"
             or "Show every item with a job",
@@ -1739,7 +1758,7 @@ local function draw_item_picker(cfg, totals)
     row = row + 1
 
     hit("back", { kind = "back" })
-    stripe("back", row, PAD, W - PAD * 2)
+    stripe("back", row, PAD, W - PAD * 2, BUTTON_BG)
     line("back", row, PAD + 10, "<   Back", "action", ROW_PT)
 
     return row + 1
@@ -1821,7 +1840,13 @@ function M.refresh(cfg)
     -- contents in the switch from ADD back to RULES. Drawing it again is
     -- cheaper than living with it, and only happens on the frame the height
     -- actually changes rather than every frame.
-    local want = -math.floor((rows * LINE) / 2)
+    -- Anchored by its top edge, not centred.
+    --
+    -- Centring meant the panel's height decided where its header sat, so
+    -- switching from the rules list to the picker moved the tab bar a hundred
+    -- pixels up: the tab you just clicked jumped out from under the pointer,
+    -- and clicking again in the same place hit empty panel.
+    local want = TOP_Y
     if want ~= Y then
         Y = want
         -- Every remembered position was measured against the old offset.
