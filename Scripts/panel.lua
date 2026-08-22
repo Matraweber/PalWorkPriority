@@ -2273,6 +2273,9 @@ end
 
 local function producible(id)
     if looks_internal(id) then return false end
+    -- An id the icon loader has exhausted every route for is not an item the
+    -- game itself believes in. See icons.gave_up.
+    if icons.gave_up and icons.gave_up(id) then return false end
     return workdefs.work_for_item(id) ~= nil
 end
 
@@ -2337,16 +2340,20 @@ picker_key = nil
 picker_hit = nil
 
 local function picker_source(totals)
+    -- The fourth term is how many ids the icon loader has written off. It
+    -- only ever grows, and when it does the filtered list is stale.
+    local gave_up = icons.gave_up_n or 0
     if picker_key ~= nil
         and picker_key[1] == search_text
         and picker_key[2] == show_all
         and picker_key[3] == totals
+        and picker_key[4] == gave_up
     then
         return picker_hit[1], picker_hit[2]
     end
 
     local list, everything = build_picker_source(totals)
-    picker_key = { search_text, show_all, totals }
+    picker_key = { search_text, show_all, totals, gave_up }
     picker_hit = { list, everything }
     return list, everything
 end

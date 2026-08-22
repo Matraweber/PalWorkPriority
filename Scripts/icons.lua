@@ -25,6 +25,10 @@ M.worst_load = 0
 M.load_ms = 0
 M.loads = 0
 -- The same for StaticFindObject, which every drawn icon goes through.
+-- Bumped whenever an id is written off, so a caller memoising a list built
+-- from this can tell that the answer has changed.
+M.gave_up_n = 0
+
 M.worst_find = 0
 M.find_ms = 0
 M.finds = 0
@@ -462,25 +466,39 @@ function M.get(item_id)
             end
 
             if alternates[key] then
+                -- Decided as soon as the pump has been through every
+                -- candidate, not after a hundred and fifty draws.
+                --
+                -- PATIENCE is right for a name the index promised, where the
+                -- only question is whether the texture has finished loading.
+                -- It is wrong here: every guess has either produced an object
+                -- or provably not, and once the last one has been tried there
+                -- is nothing left to wait for. Waiting anyway meant an id
+                -- needed roughly fifty seconds ON SCREEN before it could be
+                -- called missing, which made the answer useless to anything
+                -- that wanted to act on it.
+                local all_tried = true
                 for _, cat in ipairs(CATEGORIES) do
                     local alt = cat .. "_" .. item_id
-                    -- The pump already asked. Only the winner costs a lookup.
-                    if arrived[alt] then
+                    if arrived[alt] == nil then
+                        all_tried = false
+                    elseif arrived[alt] then
                         local found = find(alt)
                         if found ~= nil then
                             resolved[key] = alt
                             alternates[key] = nil
+                            waited[key] = nil
                             return found
                         end
                     end
                 end
-                -- Given time to arrive before being written off.
-                waited[key] = (waited[key] or 0) + 1
-                if waited[key] < PATIENCE then return nil end
+
+                if not all_tried then return nil end
                 alternates[key] = nil
             end
 
             resolved[key] = false
+            M.gave_up_n = M.gave_up_n + 1
             return nil
         end
         resolved[key] = name
@@ -550,6 +568,7 @@ function M.get(item_id)
 
         alternates[key] = nil
         resolved[key] = false
+        M.gave_up_n = M.gave_up_n + 1
         M.last_missing = item_id .. " (waited on " .. name .. ")"
     end
     return nil
@@ -587,6 +606,21 @@ end
 --
 -- Worth revisiting only with a way to ask whether the soft pointer has
 -- actually resolved BEFORE writing the brush.
+
+-- Has this id been written off?
+--
+-- The picker uses it as a filter, on evidence rather than a hunch. Every
+-- iconless item checked against the wiki so far - Curry, Pal Growth Stone,
+-- Iron Ore - is documented as unused: unobtainable, uncraftable, no drops, no
+-- merchants. The game does not draw an icon for a thing that is not a thing,
+-- so an id the loader has exhausted every route for is one a base cannot
+-- produce, and offering it is the same error as offering a Pal drop.
+--
+-- Better than a list of names, which would need editing every patch.
+function M.gave_up(item_id)
+    if type(item_id) ~= "string" then return false end
+    return resolved[item_id:lower()] == false
+end
 
 -- Every id this has given up on, and every id it is still waiting for.
 --
