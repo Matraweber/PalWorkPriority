@@ -76,6 +76,19 @@ local PUMP_BATCH = 8
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
 
+-- Ids whose recorded icon name failed and have had their one retry, and the
+-- base name being retried under other categories.
+local retried = {}
+local alternates = {}
+
+-- The category prefixes the shipped index actually uses. Ordered by how many
+-- entries carry each, so the likeliest is asked for first.
+local CATEGORIES = {
+    "Food", "Material", "Accessory", "Armor", "Weapon", "Consume",
+    "Essential", "Ammo", "food", "Relic", "PalSphere", "Blueprint",
+    "QuestItem", "PalAwakening", "SphereModule", "Glider",
+}
+
 -- id (lowercased) -> icon name, from whatever is loaded right now
 local sighted = nil
 local sighted_at = 0
@@ -343,6 +356,45 @@ function M.get(item_id)
     -- Still loading. Waited on rather than given up on, but not for ever.
     waited[key] = (waited[key] or 0) + 1
     if waited[key] >= PATIENCE then
+        -- One more try, under a different category, before giving up.
+        --
+        -- This is NOT the blanket guessing the note above rejects. That
+        -- invented paths for every id the table did not know; this fires only
+        -- for an id the table DID know, whose recorded path has now failed to
+        -- arrive for a hundred and fifty frames - so the name is wrong rather
+        -- than slow. The scrape is the reason: the pak's index is only partly
+        -- readable from outside the engine, and its own output proves the
+        -- damage, carrying "Food" and "food" as separate categories.
+        --
+        -- Bounded twice over: only for ids that have provably failed, and
+        -- only across the categories the table already uses.
+        if not retried[key] then
+            retried[key] = true
+            local base = tostring(name):match("^[^_]+_(.+)$")
+            if base then
+                for _, cat in ipairs(CATEGORIES) do
+                    local alt = cat .. "_" .. base
+                    if alt ~= name then want(alt) end
+                end
+                alternates[key] = base
+                waited[key] = 0
+                return nil
+            end
+        elseif alternates[key] then
+            -- Whichever of them landed is now this id's name.
+            local base = alternates[key]
+            for _, cat in ipairs(CATEGORIES) do
+                local alt = cat .. "_" .. base
+                local found = find(alt)
+                if found ~= nil then
+                    resolved[key] = alt
+                    alternates[key] = nil
+                    waited[key] = 0
+                    return found
+                end
+            end
+        end
+
         resolved[key] = false
         M.last_missing = item_id .. " (waited on " .. name .. ")"
     end
@@ -355,6 +407,7 @@ function M.reset()
     ready_ids = {}
     not_ready = {}
     resolved, requested, waited = {}, {}, {}
+    retried, alternates = {}, {}
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0
 end

@@ -294,4 +294,32 @@ function M.work_for_item(item_id)
     return nil
 end
 
+-- Every work type that could produce this item, in ORDER order.
+--
+-- work_for_item answers with the first match because a rule needs one job.
+-- This answers with all of them, because the panel needs to know whether
+-- there is any choice to offer at all - and for most items there is not.
+-- Offering to cycle a Wood rule through Watering is not a choice, it is a
+-- way to break a working rule by accident.
+local memo_all = {}
+
+function M.works_for_item(item_id)
+    if type(item_id) ~= "string" or item_id == "" then return {} end
+
+    local known = memo_all[item_id]
+    if known ~= nil then return known end
+
+    local hay = item_id:lower()
+    local seen, out = {}, {}
+    for _, entry in ipairs(M.ITEM_WORK) do
+        if hay:find(entry[1], 1, true) and not seen[entry[2]] then
+            seen[entry[2]] = true
+            out[#out + 1] = entry[2]
+        end
+    end
+
+    memo_all[item_id] = out
+    return out
+end
+
 return M

@@ -198,8 +198,22 @@ local TAB_H = 34
 -- aligned, "8879" and "16562" shared a left edge and differed by 14 pixels on
 -- the right, so the digit places did not line up in a column whose entire
 -- purpose is telling which of two numbers is bigger.
+-- The row band's own inset, six pixels outside the text inset, so a stripe
+-- reads as a band behind a whole row rather than a box around its words.
+-- Everything that has to finish flush with a row edge is derived from it:
+-- the band ended at 1026 while Remove's surface ended at 1032, so the one
+-- control that destroys something hung six pixels off the end of its row.
+local ROW_INSET = PAD - 6
+local ROW_W     = W - ROW_INSET * 2
+
+-- The filter field is taller than a row on purpose: it is the one thing on
+-- the picker you type into, and it reads as a field rather than a band.
+local SEARCH_H  = 36
+
 local WELL_INSET = 12
-local WELL_W     = 118
+-- Room for six grouped digits and a caret at 17pt. At 118 a four digit
+-- number plus its cursor already filled the box edge to edge.
+local WELL_W     = 136
 local COL2_R     = COL_CAP - WELL_INSET - 18                  -- storage, clear of the well
 local COL_CAP_R  = COL_CAP - WELL_INSET + WELL_W - WELL_INSET -- inside the well
 
@@ -1309,7 +1323,9 @@ local function ensure_search(row)
     local slot
     pcall(function() slot = search_box.Slot end)
     if alive(slot) then
-        pcall(function() slot:SetPosition({ X = X + PAD, Y = Y + row * LINE }) end)
+        pcall(function()
+            slot:SetPosition({ X = X + ROW_INSET, Y = Y + row * LINE })
+        end)
         -- 30 cut the descenders off its own hint text. A field that clips the
         -- word "type" is not a field anybody trusts to hold what they typed.
         -- As wide as the grid it filters. It ran the full panel width while
@@ -1318,7 +1334,7 @@ local function ensure_search(row)
         -- stopped 176 pixels short of them and left a dead gutter down the
         -- right of every picker screen.
         pcall(function()
-            slot:SetSize({ X = W - PAD * 2, Y = 36 })
+            slot:SetSize({ X = ROW_W, Y = SEARCH_H })
         end)
     end
     pcall(function() search_box:SetVisibility(0) end)
@@ -1740,14 +1756,23 @@ local function draw_list(cfg, totals)
         -- out five pixels left of the data it headed.
         line("h_job",  row, PAD + MARK_W, "JOB",    "faint", 12)
         line("h_item", row, COL_ITEM, "ITEM",       "faint", 12)
-        -- Both numeric headings sit on their column's right edge, the same
-        -- edge the numbers under them are set from. IN STORAGE used to be
-        -- placed from the left and ran 12 pixels out from its own values,
-        -- because every value silently carried the two-space marker slot that
-        -- only the JOB heading compensated for.
-        line("h_have", row, right_x(COL2_R, "IN STORAGE", 12, CAPS_W),
+        -- Numeric headings are CENTRED over their column, not set from its
+        -- right edge.
+        --
+        -- Words align left and numbers align right, which is what makes a
+        -- column of figures comparable at a glance. That leaves the heading
+        -- with no fixed edge to meet: the values under it are right aligned
+        -- from a computed width, and the heading's own width is computed the
+        -- same way, so any error in either estimate shows up as the two
+        -- disagreeing - which is exactly what "some text is left bound and
+        -- some is right bound" looked like from the outside. Centring halves
+        -- the error and makes it symmetric, and a centred heading over a
+        -- right-aligned column is a normal table.
+        line("h_have", row,
+            centre_x(COL2, COL2_R - COL2, "IN STORAGE", 12, CAPS_W),
             "IN STORAGE", "faint", 12)
-        line("h_cap",  row, right_x(COL_CAP_R, "LIMIT", 12, CAPS_W),
+        line("h_cap",  row,
+            centre_x(COL_CAP - WELL_INSET, WELL_W, "LIMIT", 12, CAPS_W),
             "LIMIT", "faint", 12)
         -- PALS, not STATUS. The column sits 780 pixels right of the job it
         -- describes with three number columns in between, so "STATUS" had
@@ -1767,7 +1792,7 @@ local function draw_list(cfg, totals)
             local met = have >= rule.amount
             local key = "rule" .. i
 
-            stripe(key, row, PAD, W - PAD * 2)
+            stripe(key, row, PAD, ROW_W)
 
             -- One caret for the whole row, in the slot the layout already
             -- reserved for it. Every column after this one is placed from a
@@ -1776,8 +1801,24 @@ local function draw_list(cfg, totals)
                 row_is_current(key, "amt" .. i, "cap" .. i, "del" .. i)
                     and ">" or "",
                 "hover", ROW_PT)
+            -- Cyan only when it can be changed.
+            --
+            -- The job cycled through all fourteen work types, so a Wood rule
+            -- could be walked onto Watering - a job that cannot make wood -
+            -- and the rule quietly stopped meaning anything. Most items have
+            -- exactly one job that produces them, and for those this is a
+            -- fact about the item rather than a control, so it stops wearing
+            -- the colour every control on this panel uses.
+            -- Guarded: this module hot-reloads and workdefs does not, so a
+            -- panel dropped in after workdefs gained works_for_item talks to
+            -- the old one, where the field is nil. A nil call here takes
+            -- draw_list down and the panel comes up as a bare header. Third
+            -- time this shape has bitten; it costs one line to refuse it.
+            local works = workdefs.works_for_item
+                and workdefs.works_for_item(rule.item) or {}
+            local choosable = #works > 1
             line(key, row, PAD + MARK_W, workdefs.label(rule.work),
-                "action", ROW_PT)
+                choosable and "action" or "item", ROW_PT)
             line("itm" .. i, row, COL_ITEM, short_item(rule.item), "item", ROW_PT)
             -- Blank while its box is open. The box does not fully cover the
             -- text beneath it, so both were drawing at once and the reading
@@ -1929,18 +1970,20 @@ local function draw_list(cfg, totals)
             -- the row band and the table, so the one control that destroys
             -- something looked pasted on top of the list rather than in it.
             slab("delbox" .. i, COL3 - 10, row * LINE - 1,
-                (W - PAD) - (COL3 - 10), ROW_H - 4,
+                (W - ROW_INSET) - (COL3 - 10), ROW_H - 4,
                 asking and DANGER_WELL_ON or DANGER_WELL, true)
             tile_face["del" .. i] = stripes["delbox" .. i]
             -- Centred in the box, not started at its left edge. "Remove"
             -- is wider than the space that was left for it, so the word ran
             -- out past the red surface and past the row itself.
             local del_text = asking and "Sure?" or "Remove"
-            local del_x, del_w = COL3 - 10, (W - PAD) - (COL3 - 10)
+            local del_x, del_w = COL3 - 10, (W - ROW_INSET) - (COL3 - 10)
             line("del" .. i, row, centre_x(del_x, del_w, del_text, ROW_PT),
                 del_text, asking and "danger" or "quiet", ROW_PT)
 
-            hit(key, { kind = "job", rule = rule })
+            if choosable then
+                hit(key, { kind = "job", rule = rule, works = works })
+            end
             -- On the limit, which is the number being edited, the number the
             -- well is drawn behind and the number the typing box opens over.
             -- It was registered on the storage figure 170 pixels to the left:
@@ -1959,7 +2002,7 @@ local function draw_list(cfg, totals)
     -- job" and "< Back" were the same bar in the same tone with the same cyan
     -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
-    stripe("new", row, PAD, W - PAD * 2, PRIMARY_BG, true)
+    stripe("new", row, PAD, ROW_W, PRIMARY_BG, true)
     tile_face["new"] = stripes["new"]
     -- Glyph and label in fixed slots, so all three action rows start their
     -- words on one edge. Baked into single strings before, where "[x]   ",
@@ -2136,12 +2179,18 @@ local function draw_item_picker(cfg, totals)
     ensure_search(4)
 
     -- Ours, in a colour the panel controls, and only while the field is
-    -- empty. The bar was otherwise 1014 by 36 of flat dark with no border and
-    -- no words, which does not read as somewhere you can type - and the field
-    -- is the one thing that makes 233 items findable.
-    line("hint", 4, PAD + 10,
+    -- empty. The bar was otherwise flat dark with no border and no words,
+    -- which does not read as somewhere you can type - and the field is the
+    -- one thing that makes 233 items findable.
+    --
+    -- Placed from the FIELD's own box, not from line()'s row formula. The
+    -- field is 36 tall and sits flush on the row's top edge while a row is 30
+    -- tall and inset three, so a hint placed by row sat about eight pixels
+    -- high in it - which is what "not properly in the middle" was.
+    text_at("hint", ROW_INSET + 13,
+        4 * LINE + (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
         search_text == "" and "Search for an item to limit" or "",
-        "hint_on_field", ROW_PT)
+        "hint_on_field", ROW_PT, true)
 
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
@@ -2258,7 +2307,7 @@ local function draw_item_picker(cfg, totals)
     -- once, and the box survives being read by somebody who cannot separate
     -- the two label colours.
     hit("all", { kind = "toggle_all" })
-    stripe("all", row, PAD, W - PAD * 2, BUTTON_BG, true)
+    stripe("all", row, PAD, ROW_W, BUTTON_BG, true)
     tile_face["all"] = stripes["all"]
     line("mk_all", row, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
     line("g_all", row, PAD + MARK_W,
@@ -2268,7 +2317,7 @@ local function draw_item_picker(cfg, totals)
     row = row + 1
 
     hit("back", { kind = "back" })
-    stripe("back", row, PAD, W - PAD * 2, BUTTON_BG, true)
+    stripe("back", row, PAD, ROW_W, BUTTON_BG, true)
     tile_face["back"] = stripes["back"]
     line("mk_back", row, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
     line("g_back", row, PAD + MARK_W, "<", "action", ROW_PT)
@@ -2877,20 +2926,30 @@ function M.apply(cfg, what, dir, from_mouse)
     -- another screen for it.
     if what.kind == "job" then
         local rule = what.rule
+
+        -- Only among the jobs that could actually produce this item. The
+        -- cycle used to run the whole ORDER list, so two clicks on a Stone
+        -- rule landed it on Oil Extraction and the ceiling stopped firing,
+        -- with nothing on screen to say the pairing was nonsense.
+        local works = what.works
+            or (workdefs.works_for_item and workdefs.works_for_item(rule.item))
+            or {}
+        if #works < 2 then
+            log.say(rule.item .. " is only made by " ..
+                workdefs.label(rule.work) .. ", so there is nothing to switch to")
+            return false
+        end
+
         local at = 1
-        for i, name in ipairs(workdefs.ORDER) do
+        for i, name in ipairs(works) do
             if name == rule.work then at = i break end
         end
 
-        local step = (dir < 0) and 1 or -1
-        for _ = 1, #workdefs.ORDER do
-            at = at + step
-            if at > #workdefs.ORDER then at = 1 end
-            if at < 1 then at = #workdefs.ORDER end
-            if workdefs.ORDER[at] ~= workdefs.ANYONE then break end
-        end
+        at = at + ((dir < 0) and 1 or -1)
+        if at > #works then at = 1 end
+        if at < 1 then at = #works end
 
-        local moved = workdefs.ORDER[at]
+        local moved = works[at]
         caps.clear(rule.work, rule.item)
         caps.set(moved, rule.item, rule.amount)
         log.say(rule.item .. " is now made by " .. workdefs.label(moved))
