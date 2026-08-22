@@ -279,12 +279,32 @@ local grid_owed = 0
 -- is logged once rather than a hundred times.
 local last_panel_error = nil
 
+-- Whether the icon warm pass still has work. Kept here so the ui tick can
+-- stop calling into it once it is done.
+local warming = false
+
 local function ui_body()
     -- The grid stays on its second, because refreshing it means a FindAllOf
     -- over every cell and it has nothing to gain from ten times the rate.
     if grid_owed >= 1000 then
         grid_owed = 0
         pcall(function() ui.refresh(cfg) end)
+    end
+
+    -- Icons resolved ahead of being drawn, a few per beat.
+    --
+    -- Looking one up costs an engine call, and doing it while a tile is being
+    -- drawn puts that cost on the frame that can least afford it. This gets
+    -- the answers known before anybody opens the picker, and it stands aside
+    -- whenever the loader has real work queued.
+    -- The picker asks for the next page while you read the current one.
+    if panel.wants_warm then
+        panel.wants_warm = false
+        warming = true
+    end
+    if warming and icons.warm_step then
+        local ok_warm, more = pcall(icons.warm_step)
+        warming = ok_warm and more == true
     end
 
     -- Drawn independently: the panel opens on a hotkey and has to keep
@@ -1143,6 +1163,22 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         -- Base camps and their worker slots are not populated the instant
         -- the controller restarts, so the first look is late on purpose.
         clock.once(15000, function() run_pass("world load") end)
+
+        -- Warm the icons for what the bases hold, after the first pass has
+        -- measured storage. These are the items the picker opens on, so
+        -- having them resolved is the difference between the first visit
+        -- being instant and it being the slowest.
+        clock.once(22000, function()
+            local ids = {}
+            for id in pairs(scheduler.last_totals or {}) do
+                ids[#ids + 1] = id
+            end
+            if #ids > 0 and icons.warm then
+                icons.warm(ids)
+                warming = true
+                log.debug("icons: warming " .. #ids .. " from storage")
+            end
+        end)
 
         -- One question, asked once: does the game hand out item icons itself?
         -- If it does, most of icons.lua stops being necessary.

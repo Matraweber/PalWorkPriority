@@ -71,7 +71,19 @@ local pumping = false
 -- load on the game thread and a filter that matches four hundred items should
 -- not try to load four hundred textures in one frame.
 local PUMP_MS = 100
-local PUMP_BATCH = 8
+-- Three, not eight.
+--
+-- Every one of these is a blocking LoadAsset on the game thread, and the
+-- speculative retry queues a couple of dozen at a time for an id the index
+-- does not know - so a batch of eight was stalling the frame for most of half
+-- a second and the panel timer reported it as time spent nowhere, because it
+-- lands between the measured buckets rather than inside them. Three keeps a
+-- page filling in about a second while cutting the worst stall to a third.
+local PUMP_BATCH = 3
+
+-- icon name -> whether its load actually produced an object. Written by the
+-- pump, which is the only code that finds out.
+local arrived = {}
 
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
@@ -175,7 +187,16 @@ local function pump_one()
         -- game thread. Issue #1372's reporter mitigated this very crash class
         -- by taking file I/O out of hot callbacks. A load that fails is worth
         -- shouting about; a load that works is not.
-        if real(landed) then
+        -- Recorded, not just logged.
+        --
+        -- This is the one place that knows whether a name resolves, and it
+        -- was throwing the answer away - so the retry scan below re-asked the
+        -- engine about all two dozen candidates, at roughly 10ms per
+        -- StaticFindObject, once a second for every unresolved item on the
+        -- page. That is the ADD tab's remaining lag, and it is a table lookup.
+        arrived[name] = real(landed)
+
+        if arrived[name] then
             log.debug(string.format("icon load %-28s arrived", name))
         else
             log.say(string.format("icon load %-28s did not arrive", name))
@@ -392,11 +413,14 @@ function M.get(item_id)
             if alternates[key] then
                 for _, cat in ipairs(CATEGORIES) do
                     local alt = cat .. "_" .. item_id
-                    local found = find(alt)
-                    if found ~= nil then
-                        resolved[key] = alt
-                        alternates[key] = nil
-                        return found
+                    -- The pump already asked. Only the winner costs a lookup.
+                    if arrived[alt] then
+                        local found = find(alt)
+                        if found ~= nil then
+                            resolved[key] = alt
+                            alternates[key] = nil
+                            return found
+                        end
                     end
                 end
                 -- Given time to arrive before being written off.
@@ -461,12 +485,14 @@ function M.get(item_id)
             local base = alternates[key]
             for _, cat in ipairs(CATEGORIES) do
                 local alt = cat .. "_" .. base
-                local found = find(alt)
-                if found ~= nil then
-                    resolved[key] = alt
-                    alternates[key] = nil
-                    waited[key] = nil
-                    return found
+                if arrived[alt] then
+                    local found = find(alt)
+                    if found ~= nil then
+                        resolved[key] = alt
+                        alternates[key] = nil
+                        waited[key] = nil
+                        return found
+                    end
                 end
             end
         end
@@ -476,6 +502,50 @@ function M.get(item_id)
         M.last_missing = item_id .. " (waited on " .. name .. ")"
     end
     return nil
+end
+
+-- Resolving ahead of time, off the drawing path.
+--
+-- Icons were only ever looked up while a tile was being drawn, so the cost of
+-- finding them landed on the frame that wanted to show them - which is
+-- exactly the frame that can least afford it, and why the picker felt heavy
+-- on the first visit to every page.
+--
+-- This walks a list a few ids per beat and asks for each one, so by the time
+-- somebody opens the picker the answers are already known and drawing is a
+-- table lookup. Deliberately small per beat: it shares the pump's queue and
+-- must never be the reason a visible icon waits.
+local warm_list = nil
+local warm_at = 0
+local WARM_PER_BEAT = 3
+
+-- Called with the ids worth having ready, usually what the bases hold.
+function M.warm(ids)
+    if type(ids) ~= "table" then return end
+    warm_list, warm_at = ids, 0
+end
+
+-- One beat's worth. Returns false when there is nothing left to do, so the
+-- caller can stop asking.
+function M.warm_step()
+    if warm_list == nil then return false end
+
+    -- Never ahead of the icons somebody is actually looking at.
+    if #queue > 0 then return true end
+
+    local done = 0
+    while done < WARM_PER_BEAT do
+        warm_at = warm_at + 1
+        local id = warm_list[warm_at]
+        if id == nil then
+            warm_list = nil
+            log.debug("icons: warm pass finished")
+            return false
+        end
+        M.get(id)
+        done = done + 1
+    end
+    return true
 end
 
 -- Tried and rejected: the game's own icon pointer.
@@ -543,6 +613,8 @@ function M.reset()
     not_ready = {}
     resolved, requested, waited = {}, {}, {}
     retried, alternates, idle_waits = {}, {}, {}
+    arrived = {}
+    warm_list, warm_at = nil, 0
     retries_left = RETRY_BUDGET
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0

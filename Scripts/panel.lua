@@ -87,6 +87,12 @@ local editing = nil             -- { work, item, row } while a box is open
 -- and a name assigned above its own `local` writes a global and leaves the
 -- real local nil forever.
 local styled_boxes = {}         -- which fields have had their style applied
+-- The source list whose icons have already been asked for, compared by
+-- identity so a steady screen does not re-queue the same warm every frame.
+local warmed_source = nil
+-- Read by main's tick: the picker has queued a warm pass worth stepping.
+M.wants_warm = false
+
 local picker_key = nil          -- { search_text, show_all, totals }
 local picker_hit = nil          -- { list, everything }
 
@@ -126,6 +132,10 @@ local pending_at = 0
 local perf_worst, perf_at = 0, 0
 local perf_hover, perf_draw, perf_hits = 0, 0, 0
 local perf_stock, perf_blank = 0, 0
+-- The setup half of a refresh: the amount box, the root canvas and the
+-- backdrop. Unmeasured until a 400ms refresh reported every named bucket at
+-- zero, which means the time was somewhere nothing was looking.
+local perf_setup = 0
 
 local ftext_mode = nil
 local warned = {}
@@ -2160,6 +2170,13 @@ local INTERNAL = {
     -- Offering one is the same error as offering a Pal drop: the player picks
     -- it, gets a rule, and no pal will ever make the thing.
     "_old", "_tmp", "tmp_", "_dummy", "unused", "deprecated",
+    -- Named families the wiki documents as unobtainable. Pal Growth Stone XL
+    -- is the clearest: no recipe, no drop, no merchant, reachable only by
+    -- modifying the game. It slipped past the markers above because its id
+    -- carries none of them - it got in by matching "stone" in the job table
+    -- and being filed under Mining, which is a substring match rather than a
+    -- fact about the item.
+    "growth_stone", "skillunlock", "palegg_",
 }
 
 -- Ids that end in a bare serial, like Yakushima_Ingot001 or Key_Sphere_01.
@@ -2349,6 +2366,26 @@ local function draw_item_picker(cfg, totals)
     local has_rule = {}
     for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
 
+    -- The WHOLE list's icons, asked for as soon as the picker opens.
+    --
+    -- A page turn was the only place the picker still stalled: eighteen items
+    -- all wanting an icon at once, each a blocking load on the game thread.
+    -- Steady state on a page whose icons are already in memory measures 14ms;
+    -- the frame straight after a page change measured 250 to 500. Measured
+    -- rather than assumed - turning the speculative guessing off entirely
+    -- changed nothing, so it is the ordinary loads, not the clever ones.
+    --
+    -- Prefetching only the next page was tried first and did not help enough:
+    -- the warm pass stands aside while the loader has work, so it barely
+    -- started before the next turn arrived. Asking for everything means the
+    -- whole list is resolved a few seconds after the picker opens and no page
+    -- turn ever loads anything again.
+    if icons.warm and #source > 0 and source ~= warmed_source then
+        warmed_source = source
+        pcall(function() icons.warm(source) end)
+        M.wants_warm = true
+    end
+
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -2508,7 +2545,11 @@ function M.refresh(cfg)
     end
 
     if not M.open then return end
-    if not ensure_root() then return end
+
+    local tsetup = os.clock()
+    local rooted = ensure_root()
+    perf_setup = os.clock() - tsetup
+    if not rooted then return end
 
     -- Which row the mouse is on, decided from last frame's map before it is
     -- rebuilt. One frame of lag on a highlight is invisible; drawing the whole
@@ -2581,8 +2622,9 @@ function M.refresh(cfg)
         perf_at = os.clock()
         if perf_worst > 4.0 then
             log.say(string.format(
-                "panel refresh worst %.1fms  (hover %.1f/%d, stock %.1f, draw %.1f, blank %.1f)",
-                perf_worst, perf_hover * 1000, perf_hits,
+                "panel refresh worst %.1fms  (setup %.1f, hover %.1f/%d, " ..
+                "stock %.1f, draw %.1f, blank %.1f)",
+                perf_worst, perf_setup * 1000, perf_hover * 1000, perf_hits,
                 perf_stock * 1000, perf_draw * 1000, perf_blank * 1000))
         end
         perf_worst = 0

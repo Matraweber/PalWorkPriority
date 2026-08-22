@@ -61,11 +61,26 @@ end
 -- window without needing an unload hook.
 local built_under = nil
 
+-- Asked at most once a second, not ten times.
+--
+-- This is a FindFirstOf plus a GetFullName, and host() runs it on every
+-- refresh - measured at 11ms of a 100ms frame, spent re-answering a question
+-- whose answer only changes when the world does. A world switch is not going
+-- to happen and be acted on inside one second, and the whole point of the
+-- check is to be ahead of the next beat rather than the next microsecond.
+local owner_cached = nil
+local owner_at = -1
+local OWNER_TTL = 1.0
+
 local function owner_name()
+    local now = os.clock()
+    if owner_at >= 0 and (now - owner_at) < OWNER_TTL then return owner_cached end
+
     local pc = api.player_controller()
-    if not alive(pc) then return nil end
     local n
-    pcall(function() n = pc:GetFullName() end)
+    if alive(pc) then pcall(function() n = pc:GetFullName() end) end
+
+    owner_cached, owner_at = n, now
     return n
 end
 
@@ -327,6 +342,7 @@ end
 function M.reset()
     widget, tree, canvas = nil, nil, nil
     built_under = nil
+    owner_cached, owner_at = nil, -1
     cursor_was, input_route = nil, nil
     M.open = false
     warned = {}
