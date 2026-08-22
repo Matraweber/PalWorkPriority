@@ -33,8 +33,16 @@ local CLIENT_TTL = 120          -- seconds before an unheard-from client is drop
 
 M.installed = false
 
--- Components that have sent us something, so we know who to push to.
--- name -> { comp = component, at = os.clock() }
+-- Who has sent us something, so we know who to push to.
+--
+-- Names, never components. Storing the component wrapper and calling it back
+-- two minutes later is the use-after-free this codebase is built to avoid -
+-- demand.lua carries a long comment about why it stopped keeping work
+-- objects, and a network component on a busy server churns exactly the same
+-- way. The name is a string, which is safe to keep forever, and the component
+-- is looked up again inside the call that uses it.
+--
+-- name -> { at = os.clock() }
 M.clients = {}
 
 -- Set by main.lua. Called on the authority with (command, value, component).
@@ -112,8 +120,27 @@ function M.to_server(command, value)
     return true
 end
 
+-- The live component with this full name, or nil.
+--
+-- Resolved inside the frame it is used, which is the only age at which an
+-- engine object is safe to touch. FindAllOf is not free, but it runs once per
+-- message to one client rather than once per frame, and the alternative is a
+-- stored wrapper - which is not a cheaper option, it is a crash.
+local function live_client(name)
+    local all = FindAllOf("PalNetworkBaseCampComponent")
+    if not all then return nil end
+    for _, comp in ipairs(all) do
+        if full_name(comp) == name then return comp end
+    end
+    return nil
+end
+
 -- Server to one client, through that client's own component.
+--
+-- Takes either a name (the stored case, re-resolved here) or a component the
+-- caller obtained in this same call, which is what the hook handlers pass.
 function M.to_client(comp, message)
+    if type(comp) == "string" then comp = live_client(comp) end
     if not api.valid(comp) then return false end
 
     local ok, err = pcall(function()
@@ -144,7 +171,7 @@ function M.broadcast(message)
         -- question.
         if (now - entry.at) > CLIENT_TTL then
             M.clients[name] = nil
-        elseif M.to_client(entry.comp, message) then
+        elseif M.to_client(name, message) then
             sent = sent + 1
         else
             M.clients[name] = nil
@@ -164,8 +191,10 @@ local function remember(context)
 
     local name = full_name(comp)
     if name then
-        M.clients[name] = { comp = comp, at = os.clock() }
+        M.clients[name] = { at = os.clock() }
     end
+    -- Returned for the caller to use NOW, inside this hook callback. It is
+    -- deliberately not what gets stored.
     return comp
 end
 

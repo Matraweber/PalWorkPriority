@@ -84,6 +84,14 @@ local search_box = nil          -- EditableTextBox, only possible in a widget we
 local amount_box = nil
 local editing = nil             -- { work, item, row } while a box is open
 
+-- Forward declaration. Its body is far below, next to the scan it wraps, but
+-- poll_amount calls it when a typed limit is committed. Without this the name
+-- resolved to a nil global there, so committing a number threw AFTER the
+-- limit had already been stored: the value took, the "this is below the %d in
+-- storage, so %s stops now" warning never printed, and refresh aborted for
+-- that frame. Silent, and the warning it swallowed is the important one.
+local stock_totals
+
 -- Switched on with "pwp clicks", or here, since this module hot reloads and
 -- main.lua does not: turning it on in the file is the only way to get it into
 -- a session that started before the command existed.
@@ -154,9 +162,25 @@ local TILE_CHARS = 9      -- what fits across a tile at 12pt
 local COL_ITEM = 210
 local COL2     = 480      -- what storage holds
 local COL_CAP  = 650      -- the limit it stops at
-local COL_DONE = 810      -- working or paused
+local COL_DONE = 810      -- what the pals are doing
 local COL3     = 920
 local TAB_H = 34
+
+-- The limit's well, and the two numeric right edges derived from it.
+--
+-- The well's inset used to be a bare 12 written at the call site while the
+-- row stripe subtracted 6 and the column headers subtracted nothing, so one
+-- row carried three different ideas of where its left edge was and the well
+-- sat 13 pixels left of the heading above it. One number now, used by both.
+--
+-- Numbers are placed from a right edge rather than a left origin. Left
+-- aligned, "8879" and "16562" shared a left edge and differed by 14 pixels on
+-- the right, so the digit places did not line up in a column whose entire
+-- purpose is telling which of two numbers is bigger.
+local WELL_INSET = 12
+local WELL_W     = 118
+local COL2_R     = COL_CAP - WELL_INSET - 18                  -- storage, clear of the well
+local COL_CAP_R  = COL_CAP - WELL_INSET + WELL_W - WELL_INSET -- inside the well
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
 -- worth paging to, narrow enough that a tile stays big enough to recognise.
@@ -212,6 +236,9 @@ local COLOUR = {
     -- exactly backwards.
     quiet  = { R = 0.94, G = 0.64, B = 0.60, A = 1.00 },
     working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
+    -- On the filled primary button, where cyan-on-tint measured 3.94 and was
+    -- the lowest contrast text in the panel while being its main action.
+    primary = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -225,9 +252,29 @@ local BACKDROP  = { R = 0.035, G = 0.050, B = 0.075, A = 0.985 }
 -- fill, so a static title bar and a pressable control were indistinguishable
 -- and nothing in the panel looked like it could be touched. Chrome sits below
 -- the body, data sits on it, and things you press sit above it.
-local CHROME_BG = { R = 0.045, G = 0.060, B = 0.082, A = 1.00 }
+-- Chrome was 0.045/0.060/0.082, which is LIGHTER than the backdrop on all
+-- three channels: the comment above said chrome sits below the body and the
+-- numbers did the opposite. Measured off a screenshot it came out at
+-- (60,69,81) against a body of (55,65,79) - a contrast ratio of 1.064, which
+-- is not a tone, it is a rounding error. Now genuinely darker, at 1.40.
+local CHROME_BG = { R = 0.014, G = 0.021, B = 0.035, A = 1.00 }
 local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
 local BUTTON_BG = { R = 0.120, G = 0.152, B = 0.196, A = 1.00 }
+-- Tiles are pressable, so they wear the pressable tone rather than the
+-- read-only one. They used to fall through to ROW_BG, which made a tile in
+-- the picker byte-identical to a data row on the rules list: the surface was
+-- encoding "inside the panel" instead of "you can click this", which is
+-- exactly backwards from what three tones were introduced to do.
+local TILE_BG   = BUTTON_BG
+-- Filled, for the single action on a screen that creates something. A
+-- secondary control is a tinted bar with a cyan label; the primary one is a
+-- solid field with a white label, so the two stop being the same object.
+local PRIMARY_BG = { R = 0.034, G = 0.188, B = 0.305, A = 1.00 }
+-- Behind Remove, so it reads as a control rather than as a second status
+-- word, and towards red so it reads as the destructive one. The brighter of
+-- the two is the armed state, while the row is asking "Sure?".
+local DANGER_WELL    = { R = 0.115, G = 0.030, B = 0.028, A = 1.00 }
+local DANGER_WELL_ON = { R = 0.320, G = 0.055, B = 0.048, A = 1.00 }
 local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
 -- Where the keyboard is, quieter than where the mouse is.
 local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
@@ -358,7 +405,8 @@ local function ensure_root()
     if not alive(host) or not alive(host_tree) then
         root, root_owner, root_tree, backdrop = nil, nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
-        search_box = nil
+        images, tile_face, item_of = {}, {}, {}
+        search_box, amount_box, editing = nil, nil, nil
         root_checked = -1
         return nil
     end
@@ -375,7 +423,17 @@ local function ensure_root()
     root, root_owner, root_tree = host, host, host_tree
     backdrop = nil
     blocks, drawn, stripes, placed = {}, {}, {}, {}
-    search_box = nil
+    -- Every table that holds a widget, not just the four that were listed.
+    --
+    -- images, tile_face and amount_box survived both resets and kept handles
+    -- into the tree that was just discarded, and tile_face is guaranteed to:
+    -- tile() writes tile_face[key] = stripes[key], so it is a second
+    -- reference to a table this line clears. Those handles are then asked
+    -- IsHovered() by the mouse keybind and alive() by blank_unused, which is
+    -- the stored-wrapper dereference that this whole codebase is built to
+    -- avoid - and the comment three lines up says so in as many words.
+    images, tile_face, item_of = {}, {}, {}
+    search_box, amount_box, editing = nil, nil, nil
     root_checked = frame_id
     return root
 end
@@ -483,9 +541,16 @@ local function slab(key, px, py, w, h, colour)
     local token = want .. tostring(colour)
     if drawn["s:" .. key] ~= token then
         pcall(function()
-            border:SetBrushColor(colour
-                or (want == "hot" and ROW_HOVER)
+            -- State first, base colour second. It read `colour or hot or sel
+            -- or ROW_BG`, and Lua stops at the first non-nil: any caller that
+            -- passed a colour got that colour forever. The three action rows
+            -- all pass BUTTON_BG - "+ Add a rule", "Show every item with a
+            -- job", "< Back" - so the panel's three most pressable controls
+            -- were the only ones that could never light up under the mouse or
+            -- the keyboard.
+            border:SetBrushColor((want == "hot" and ROW_HOVER)
                 or (want == "sel" and ROW_SEL)
+                or colour
                 or ROW_BG)
         end)
         drawn["s:" .. key] = token
@@ -610,14 +675,16 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
     -- tab and the underline was the only thing still telling the truth.
     local shown = (selected and not key:match("^tab_")) and "hover" or colour_key
 
-    -- A marker as well as a colour. Colour alone was not enough to see where
-    -- the selection was, least of all on a row that is already blue.
-    -- Not on tabs. The underline says which screen you are on; a second
-    -- marker on a different tab said something else, and the two contradicted
-    -- each other on every screen change.
-    if was_hit[key] and not key:match("^tab_") then
-        text = (selected and "> " or "  ") .. text
-    end
+    -- The marker used to be glued on here, as a "> " or "  " prefix on every
+    -- clickable string. That put a 13 pixel slot inside three different
+    -- columns of the same row - the job, the storage figure and Remove - and
+    -- only the JOB heading was ever compensated for it, so IN STORAGE hung 12
+    -- pixels right of its own heading and nothing numeric could be aligned on
+    -- an edge. It also meant a row with several hit keys marked whichever one
+    -- the pointer was over rather than the row.
+    --
+    -- It is now one element per row, drawn in its own slot by the caller. See
+    -- row_is_current and MARK_W.
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
@@ -647,6 +714,27 @@ end
 -- stripe's middle less half of that. DEFAULT_PT has to match text_at's own
 -- default or headings drift again.
 local DEFAULT_PT = 20
+
+-- The cursor slot at the left of every selectable row, and the caret drawn
+-- into it. 13 pixels is what the old two-space prefix measured at 17pt, so
+-- rows keep the indent they already had and only the header moves to match.
+local MARK_W = 13
+
+-- Whether any of a row's hit keys is the current one.
+--
+-- A rule row owns four - the job, the storage figure, the limit and Remove -
+-- and the marker belongs to the row rather than to whichever of them the
+-- pointer happens to be over. The pointer wins when it is over something,
+-- otherwise the keyboard position stands, which is the same rule the stripe
+-- tint uses so the two can never disagree.
+local function row_is_current(...)
+    local cur = hover_key or was_sel
+    if cur == nil then return false end
+    for i = 1, select("#", ...) do
+        if select(i, ...) == cur then return true end
+    end
+    return false
+end
 
 local function line(key, row, col, text, colour_key, points)
     -- pt is passed on, never the caller's nil. text_at reads nil as "leave
@@ -796,6 +884,34 @@ end
 local NAME_COLS = 11
 local NAME_LINES = 3
 
+-- Placing text by its right edge or its centre.
+--
+-- text_at asks the slot to auto-size, because sizing a text slot explicitly
+-- produced widgets that positioned correctly and drew nothing (see the note
+-- on text_at). Auto-size means a string grows rightward from its origin and
+-- there is no justification to set, so alignment has to be done by choosing
+-- the origin, which means knowing how wide the string will be.
+--
+-- Both factors are measured off screenshots rather than guessed. Digits are
+-- much narrower than the average glyph: four digits of "8879" at 17pt
+-- occupied 49 pixels, and "16562", "8000" and "15000" all agree on 12.2 to
+-- 12.4 pixels per digit. Using the word factor for numbers would overestimate
+-- by a sixth and leave every right-aligned column visibly short of its edge.
+local GLYPH_W = 0.83     -- mixed-case words, from the tab bar
+local DIGIT_W = 0.72     -- digits, from the rules list
+
+local function text_w(text, pt, factor)
+    return #tostring(text) * pt * (factor or GLYPH_W)
+end
+
+local function centre_x(px, w, text, pt, factor)
+    return px + math.max(0, (w - text_w(text, pt, factor)) / 2)
+end
+
+local function right_x(edge, text, pt, factor)
+    return edge - text_w(text, pt, factor)
+end
+
 local function name_lines(item)
     local words = {}
     for chunk in tostring(item):gmatch("[^_%s]+") do
@@ -841,7 +957,7 @@ local function tile(key, at, item, have, top, limited)
     local px = PAD + col * (TILE + GAP)
     local py = top + row * (TILE_H + GAP)
 
-    slab(key, px, py, TILE, TILE_H)
+    slab(key, px, py, TILE, TILE_H, TILE_BG)
     tile_face[key] = stripes[key]
 
     item_of[key] = item
@@ -884,7 +1000,8 @@ local function tile(key, at, item, have, top, limited)
         local lines = name_lines(item)
         local first = py + 14
         for n = 1, math.min(#lines, 3) do
-            text_at("n" .. n .. ":" .. key, px + 6, first + (n - 1) * 13,
+            text_at("n" .. n .. ":" .. key,
+                centre_x(px, TILE, lines[n], 11), first + (n - 1) * 13,
                 lines[n], "item", 11, true)
         end
     end
@@ -892,9 +1009,15 @@ local function tile(key, at, item, have, top, limited)
     -- The count, exact. The picker said 8k where the rules list said 8299, so
     -- the two screens disagreed about the number you were about to set a limit
     -- against, and two different piles both read 2k.
+    -- Centred under the icon, which is itself centred at px + (TILE-ICON)/2.
+    -- Pinned at px + 7 before, so a one-digit count sat 27 pixels left of the
+    -- picture above it and every tile in the row leaned differently depending
+    -- on how many digits it happened to have. It read as a rendering fault,
+    -- because it was one.
     if have > 0 then
-        text_at("q:" .. key, px + 7, py + ICON + 6,
-            tostring(math.floor(have)), "title", 13, true)
+        local count = tostring(math.floor(have))
+        text_at("q:" .. key, centre_x(px, TILE, count, 13, DIGIT_W),
+            py + ICON + 6, count, "title", 13, true)
     end
 
     -- Already has a rule. Without this the picker offers items that are
@@ -1253,7 +1376,8 @@ end
 local scanned_once = nil
 local scanned_at = 0
 
-local function stock_totals(cfg)
+-- Assigns the forward-declared local above; do not add "local" here.
+function stock_totals(cfg)
     if next(scheduler.last_totals or {}) ~= nil then
         return scheduler.last_totals
     end
@@ -1305,7 +1429,12 @@ local function draw_tabs(active)
     -- row insets, which put the header band six pixels left of the panel it
     -- sits in, so a strip of chrome hung over the edge onto the 3D world.
     -- Measured off a screenshot: band at 431, panel at 437.
-    slab("tabbar", -PAD, -3, W + PAD * 2, ROW_H, CHROME_BG)
+    -- Starts at the backdrop's own top edge, not three pixels below it. The
+    -- backdrop is placed at Y - PAD and this band was placed at Y - 3, so a
+    -- PAD-3 = 15 pixel strip of body tone sat above the header and read as a
+    -- render seam along the top of the panel. The height grows by the same
+    -- amount so the band still ends where it did.
+    slab("tabbar", -PAD, -PAD, W + PAD * 2, ROW_H + PAD - 3, CHROME_BG)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
@@ -1395,12 +1524,23 @@ local function short_item(id)
     return id:sub(1, ITEM_CHARS - 2) .. ".."
 end
 
+-- Grouped in threes, because the only thing these two columns are for is
+-- deciding which of two numbers is bigger. "16562" against "15000" makes a
+-- reader count digit positions; "16,562" against "15,000" does not.
 local function short_amount(n)
-    n = tonumber(n) or 0
-    if n >= 100000 then
-        return string.format("%.0fk", n / 1000)
+    n = math.floor(tonumber(n) or 0)
+
+    -- Past a million the separators stop earning their width and the column
+    -- would start pushing into the one beside it.
+    if n >= 1000000 then
+        return string.format("%.1fM", n / 1000000)
     end
-    return tostring(math.floor(n))
+
+    local flipped = tostring(n):reverse()
+    local chunked = flipped:gsub("(%d%d%d)", "%1,")
+    local out = chunked:reverse()
+    if out:sub(1, 1) == "," then out = out:sub(2) end
+    return out
 end
 
 local function draw_list(cfg, totals)
@@ -1433,11 +1573,27 @@ local function draw_list(cfg, totals)
         -- The two leading spaces match the marker slot every hit row
         -- carries, so JOB sits over Lumbering instead of thirteen pixels
         -- left of it.
-        line("h_job",  row, PAD,      "  JOB",      "faint", 12)
+        -- Sits over the job names exactly, because both are placed from the
+        -- same constant. It used to be the string "  JOB" placed at PAD, and
+        -- two spaces at 12pt are not two spaces at 17pt, so the heading came
+        -- out five pixels left of the data it headed.
+        line("h_job",  row, PAD + MARK_W, "JOB",    "faint", 12)
         line("h_item", row, COL_ITEM, "ITEM",       "faint", 12)
-        line("h_have", row, COL2,     "IN STORAGE", "faint", 12)
-        line("h_cap",  row, COL_CAP,  "LIMIT",      "faint", 12)
-        line("h_st",   row, COL_DONE, "STATUS",     "faint", 12)
+        -- Both numeric headings sit on their column's right edge, the same
+        -- edge the numbers under them are set from. IN STORAGE used to be
+        -- placed from the left and ran 12 pixels out from its own values,
+        -- because every value silently carried the two-space marker slot that
+        -- only the JOB heading compensated for.
+        line("h_have", row, right_x(COL2_R, "IN STORAGE", 12), "IN STORAGE",
+            "faint", 12)
+        line("h_cap",  row, right_x(COL_CAP_R, "LIMIT", 12), "LIMIT",
+            "faint", 12)
+        -- PALS, not STATUS. The column sits 780 pixels right of the job it
+        -- describes with three number columns in between, so "STATUS" had
+        -- three things it could plausibly be the status OF - the job, the
+        -- item, or the rule - and readers picked the rule. Naming the subject
+        -- in the heading makes "Stopped" mean the pals stopped.
+        line("h_st",   row, COL_DONE, "PALS",       "faint", 12)
         row = row + 1
     end
 
@@ -1451,7 +1607,16 @@ local function draw_list(cfg, totals)
             local key = "rule" .. i
 
             stripe(key, row, PAD, W - PAD * 2)
-            line(key, row, PAD, workdefs.label(rule.work), "action", ROW_PT)
+
+            -- One caret for the whole row, in the slot the layout already
+            -- reserved for it. Every column after this one is placed from a
+            -- fixed x and never moves, whether the row is current or not.
+            line("mk" .. i, row, PAD,
+                row_is_current(key, "amt" .. i, "cap" .. i, "del" .. i)
+                    and ">" or "",
+                "hover", ROW_PT)
+            line(key, row, PAD + MARK_W, workdefs.label(rule.work),
+                "action", ROW_PT)
             line("itm" .. i, row, COL_ITEM, short_item(rule.item), "item", ROW_PT)
             -- Blank while its box is open. The box does not fully cover the
             -- text beneath it, so both were drawing at once and the reading
@@ -1473,8 +1638,13 @@ local function draw_list(cfg, totals)
             -- limit is the brighter of the two. It was the other way round,
             -- which put the one number the panel exists to change second in
             -- the reading order.
-            line("amt" .. i, row, COL2,
-                short_amount(have), "limit", ROW_PT)
+            -- Amber once storage has reached the limit, neutral while it is
+            -- under. The one fact a reader opens this panel for - am I over
+            -- or under - was left entirely to mental arithmetic between two
+            -- identically coloured numbers 170 pixels apart.
+            local have_text = short_amount(have)
+            line("amt" .. i, row, right_x(COL2_R, have_text, ROW_PT, DIGIT_W),
+                have_text, met and "over" or "limit", ROW_PT)
 
             -- A well behind the number, so it looks like something you can
             -- type into.
@@ -1485,13 +1655,13 @@ local function draw_list(cfg, totals)
             -- instruction line explaining where to click is the design
             -- admitting its controls do not look like controls.
             if not editing_this then
-                slab("capbox" .. i, COL_CAP - 12, row * LINE - 1,
-                    118, ROW_H - 4, FIELD_WELL)
+                slab("capbox" .. i, COL_CAP - WELL_INSET, row * LINE - 1,
+                    WELL_W, ROW_H - 4, FIELD_WELL)
             end
 
-            line("cap" .. i, row, COL_CAP,
-                editing_this and "" or short_amount(rule.amount),
-                "title", ROW_PT)
+            local cap_text = editing_this and "" or short_amount(rule.amount)
+            line("cap" .. i, row, right_x(COL_CAP_R, cap_text, ROW_PT, DIGIT_W),
+                cap_text, "title", ROW_PT)
 
             -- AT LIMIT, not PAUSED, and not amber.
             --
@@ -1518,12 +1688,45 @@ local function draw_list(cfg, totals)
             -- while claiming a precision it did not have. The JOB column is
             -- right there, so this column reads as a sentence about it:
             -- Lumbering ... Stopped.
-            -- Paused, not Stopped. The job starts again by itself once stock
-            -- drops below the limit, and "stopped" reads as final. It also
-            -- pairs grammatically with "Working", which "Stopped" does not.
+            -- What the PALS are doing, which is why the column is headed PALS.
+            --
+            -- This said "Paused", and a paused rule is a rule that is switched
+            -- off, so the most likely reading was the exact inverse of the
+            -- truth: it means the rule fired and is enforcing right now. The
+            -- word is about the pals, the heading says so, and neither reading
+            -- is available any more.
+            --
+            -- The state itself comes from the scheduler rather than from
+            -- `have >= rule.amount`. A work type stops only when every item
+            -- limited for it is at its ceiling, so a row can be over its own
+            -- limit while its job carries on for something else - that is
+            -- "Waiting", and it is the only way to find out that a Stone
+            -- limit is doing nothing because Ore is still short.
+            -- Guarded because panel.lua hot-reloads and scheduler.lua does
+            -- not: between dropping in a new panel and restarting the game,
+            -- the running scheduler is still the old one and does not export
+            -- this yet. Falling back to the per-item answer is wrong in the
+            -- multi-item case, but it is the answer this row gave before, and
+            -- a wrong word beats a nil call that takes the whole refresh out.
+            local capped
+            if scheduler.cap_state then
+                capped = scheduler.cap_state(cfg, rule.work, totals)
+            else
+                capped = met
+            end
+
             local status, tone
-            if met then
-                status, tone = "Paused", "over"
+            if cfg.enabled == false then
+                -- Both of these mean no rule on this screen is doing
+                -- anything, and both used to render as "Working", which is a
+                -- flat untruth the panel had no other way to correct.
+                status, tone = "Off", "dim"
+            elseif cfg.dry_run then
+                status, tone = "Dry run", "dim"
+            elseif capped then
+                status, tone = "Stopped", "over"
+            elseif met then
+                status, tone = "Waiting", "unmet"
             else
                 status, tone = "Working", "working"
             end
@@ -1541,21 +1744,42 @@ local function draw_list(cfg, totals)
             local asking = pending_drop ~= nil
                 and pending_drop.work == rule.work
                 and pending_drop.item == rule.item
+            -- A surface of its own, tinted towards red.
+            --
+            -- Remove had no fill at all: a scanline across the row ran
+            -- unbroken from the limit well to the panel edge, so the only
+            -- thing separating "Paused" from "Remove" was 48 pixels of gap
+            -- and a slight difference in warmth. Two pale warm words at the
+            -- same size and weight read as a matched pair of labels, and one
+            -- of them deletes a rule.
+            slab("delbox" .. i, COL3 - 10, row * LINE - 1,
+                96, ROW_H - 4, asking and DANGER_WELL_ON or DANGER_WELL)
             line("del" .. i, row, COL3,
                 asking and "Sure?" or "Remove",
                 asking and "danger" or "quiet", ROW_PT)
 
             hit(key, { kind = "job", rule = rule })
-            hit("amt" .. i, { kind = "rule", rule = rule, row = row })
+            -- On the limit, which is the number being edited, the number the
+            -- well is drawn behind and the number the typing box opens over.
+            -- It was registered on the storage figure 170 pixels to the left:
+            -- the well said "click here" over something that was not
+            -- clickable, and clicking the thing that was opened a box
+            -- somewhere else entirely.
+            hit("cap" .. i, { kind = "rule", rule = rule, row = row })
             hit("del" .. i, { kind = "drop", rule = rule })
             row = row + 1
         end
         row = row + 1
     end
 
+    -- The one action on this screen that creates something, so it is the one
+    -- that gets the filled treatment. "+ Add a rule", "Show every item with a
+    -- job" and "< Back" were the same bar in the same tone with the same cyan
+    -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
-    stripe("new", row, PAD, W - PAD * 2, BUTTON_BG)
-    line("new", row, PAD, "+   Add a rule", "action")
+    stripe("new", row, PAD, W - PAD * 2, PRIMARY_BG)
+    line("mk_new", row, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
+    line("new", row, PAD + MARK_W, "+   Add a rule", "primary")
 
     -- One row of breathing space, not two. The panel is sized from what it
     -- draws, so a spare row is 34 pixels of empty backdrop; with the top
@@ -1636,7 +1860,8 @@ local function only_producible(list)
     return drop_numbered_variants(out)
 end
 
-local function picker_source(totals)
+-- What the picker is showing, before paging.
+local function build_picker_source(totals)
     -- Searching casts wider than the base holds, but still only over things
     -- the base could make. Asked for more rows than before, because the
     -- filter takes most of them away again.
@@ -1664,6 +1889,29 @@ local function picker_source(totals)
         return a < b
     end)
     return out, false
+end
+
+-- The same list, remembered between frames.
+--
+-- Nothing above changes within a frame, or between frames while the search
+-- box, the toggle and the stock figures all stand still - but it was rebuilt
+-- from scratch ten times a second, walking the whole item table and filtering
+-- it. The key is the three things the answer depends on; `totals` counts by
+-- table identity, because the scheduler publishes a fresh table each pass and
+-- the quantities cannot change without it doing so.
+local picker_key = nil
+local picker_hit = nil
+
+local function picker_source(totals)
+    local key = tostring(search_text) .. "|" .. tostring(show_all)
+        .. "|" .. tostring(totals)
+    if picker_key == key and picker_hit ~= nil then
+        return picker_hit[1], picker_hit[2]
+    end
+
+    local list, everything = build_picker_source(totals)
+    picker_key, picker_hit = key, { list, everything }
+    return list, everything
 end
 
 local function draw_item_picker(cfg, totals)
@@ -1749,17 +1997,26 @@ local function draw_item_picker(cfg, totals)
     -- important controls on the screen look like a caption. "+ add a rule"
     -- across in the rules list is the same kind of thing and reads as a
     -- control because it sits on a stripe.
+    -- A checkbox with a fixed label, not a label that swaps.
+    --
+    -- It read "Show every item with a job" in one state and "Show only what I
+    -- have" in the other, with nothing else changing, so there was no way to
+    -- tell whether the words described what you were looking at or what
+    -- pressing it would do. A stable label plus a box that fills says both at
+    -- once, and the box survives being read by somebody who cannot separate
+    -- the two label colours.
     hit("all", { kind = "toggle_all" })
     stripe("all", row, PAD, W - PAD * 2, BUTTON_BG)
-    line("all", row, PAD + 10,
-        everything and "Show only what I have"
-            or "Show every item with a job",
+    line("mk_all", row, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
+    line("all", row, PAD + MARK_W,
+        (everything and "[x]" or "[  ]") .. "   Show every item with a job",
         "action", ROW_PT)
     row = row + 1
 
     hit("back", { kind = "back" })
     stripe("back", row, PAD, W - PAD * 2, BUTTON_BG)
-    line("back", row, PAD + 10, "<   Back", "action", ROW_PT)
+    line("mk_back", row, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
+    line("back", row, PAD + MARK_W, "<   Back", "action", ROW_PT)
 
     return row + 1
 end
@@ -1910,9 +2167,18 @@ function M.set_screen(name)
     -- already; this is the same change arriving through the command channel,
     -- and the two paths disagreeing is how the marker ended up on RULES while
     -- ADD was the screen being shown.
-    sel = tab_hits + 1
     if name ~= "item" and name ~= "list" then return false end
-    mode, page, sel = name, 0, 1
+    -- sel lands on the first row of the new screen, not on 1.
+    --
+    -- It used to set sel = tab_hits + 1 and then, two lines later,
+    -- unconditionally overwrite it with 1 - which is the RULES tab. Both the
+    -- selection tint and the "> " marker are suppressed on tabs on purpose,
+    -- so parking the cursor there means no cursor is drawn anywhere. Clicking
+    -- a tab with the mouse goes through M.apply and gets this right; every
+    -- screen change driven through the command channel did not, which is why
+    -- the panel looked like it had no keyboard cursor at all.
+    mode, page = name, 0
+    sel = tab_hits + 1
     -- Same rule through the command channel as through a click: the picker
     -- does not take the keyboard just because it opened.
     want_focus = false

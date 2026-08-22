@@ -545,18 +545,24 @@ COMMANDS.reload = function()
     end
 end
 
-COMMANDS.discover = function()
-    run_now(function()
-        discover.run(DIR .. "Discovery.txt")
-    end)
-end
-
 -- Calls fn immediately. Stands where ExecuteInGameThread used to, in code
 -- that is only ever reached on the game thread already: command handlers run
 -- from the chat hook or from the clock's ui entry, both game-thread contexts.
 -- Every removed registration is one fewer registry write, and registry writes
 -- are the currency this mod's crash was paid in.
+--
+-- Declared ABOVE its first caller. It used to sit ten lines below
+-- COMMANDS.discover, which made that one reference compile to a global read
+-- instead of an upvalue, so "pwp discover" and Ctrl+F11 both died on "attempt
+-- to call a nil value" - and Discovery.txt is what the README tells you to
+-- run when a work type comes back unmapped.
 local function run_now(fn) fn() end
+
+COMMANDS.discover = function()
+    run_now(function()
+        discover.run(DIR .. "Discovery.txt")
+    end)
+end
 
 -- Prints what the base is actually holding, by internal item id. Those ids
 -- are what work_caps keys on, and guessing their spelling is the easiest way

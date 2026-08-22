@@ -264,13 +264,33 @@ M.DEFAULT_WORK = "Handcraft"
 -- nil now means "the base does not make this", because the picker uses this
 -- to decide what to show at all. Pal drops and world loot match nothing here
 -- and that is exactly what keeps them out of a menu about base production.
+-- The answer for an id never changes: a fixed table scanned with fixed
+-- patterns. It was recomputed from scratch every time anything asked, and the
+-- picker asks for every item it might show, on every frame it draws. With the
+-- full list that is 2466 ids against up to 60 entries, ten times a second -
+-- roughly 180,000 substring searches per frame, which is most of what made
+-- the ADD tab feel slow. Bounded by the number of distinct item ids.
+local memo = {}
+
 function M.work_for_item(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
-    local hay = item_id:lower()
 
-    for _, entry in ipairs(M.ITEM_WORK) do
-        if hay:find(entry[1], 1, true) then return entry[2] end
+    local known = memo[item_id]
+    -- false is a remembered "nothing makes this", nil is "not asked yet".
+    if known ~= nil then
+        if known == false then return nil end
+        return known
     end
+
+    local hay = item_id:lower()
+    for _, entry in ipairs(M.ITEM_WORK) do
+        if hay:find(entry[1], 1, true) then
+            memo[item_id] = entry[2]
+            return entry[2]
+        end
+    end
+
+    memo[item_id] = false
     return nil
 end
 

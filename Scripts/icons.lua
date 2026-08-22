@@ -308,7 +308,6 @@ end
 -- A world switch invalidates nothing held here, since nothing is held, but
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()
-    knows_icon = {}
     ready_ids = {}
     resolved, requested, waited = {}, {}, {}
     queue, queued = {}, {}
@@ -390,70 +389,6 @@ end
 -- This only looks. Names and types, never values, because reading a value off
 -- a type that has not been confirmed is how every previous attempt at this
 -- went wrong.
--- The game's own icon pointer for an item.
---
--- This replaces the whole LoadAsset apparatus. That built a path from a
--- generated index, asked the engine to load it synchronously on the game
--- thread, and rationed itself to one every 250 ms so the frame survived. The
--- ration is why the picker filled in slowly, and the index is why some items
--- never got an icon at all: it is keyed by whatever a pak reader could
--- recover from a path, and it cannot cover everything.
---
--- PalStaticItemDataBase.IconTexture is a TSoftObjectPtr, and
--- UMG.Image.SetBrushFromSoftTexture takes one and lets the engine stream it.
--- No path, no index, no blocking, no queue.
---
--- Never cached. A soft pointer is a member of an engine object, and keeping
--- engine values past the frame that produced them is the fault that took
--- three days to find. Fetching costs two lookups and no load, and the caller
--- only asks when a tile's item actually changes.
-local function static_data(item_id)
-    local util = api.cdo("/Script/Pal.Default__PalUtility")
-    local world = api.player_controller()
-    if not util or not api.valid(world) then return nil end
-
-    local manager
-    pcall(function() manager = util:GetItemIDManager(world) end)
-    if not api.valid(manager) then return nil end
-
-    local data
-    pcall(function() data = manager:GetStaticItemData(FName(item_id)) end)
-    if not api.valid(data) then return nil end
-    return data
-end
-
-function M.soft_for(item_id)
-    if type(item_id) ~= "string" or item_id == "" then return nil end
-
-    local data = static_data(item_id)
-    if data == nil then return nil end
-
-    local soft
-    pcall(function() soft = data.IconTexture end)
-    return soft
-end
-
--- Whether an item has an icon at all, so a tile knows to draw its name
--- instead. The answer is a boolean, which is safe to remember; the pointer it
--- came from is not.
-local knows_icon = {}
-
-function M.has(item_id)
-    if type(item_id) ~= "string" or item_id == "" then return false end
-
-    local known = knows_icon[item_id]
-    if known ~= nil then return known end
-
-    local soft = M.soft_for(item_id)
-    -- Only remembered once the world can answer. Before that, "no" is just
-    -- "not yet" and caching it would blank every icon for the session.
-    if soft == nil and static_data(item_id) == nil then return false end
-
-    known = (soft ~= nil)
-    knows_icon[item_id] = known
-    return known
-end
-
 function M.data_probe()
     log.say("item data probe")
 

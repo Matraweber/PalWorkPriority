@@ -99,18 +99,42 @@ end
 -- Demand
 -- ---------------------------------------------------------------------------
 
-local function cap_reached(cfg, work_name, totals)
+-- Whether a work type is suspended by its limits right now, and if it is not,
+-- which of its items is still short.
+--
+-- A work type stops only when EVERY item listed for it has reached its
+-- ceiling: one item still under means the job has something left to do. That
+-- rule lives here, and the panel used to re-derive it per row as
+-- `have >= rule.amount`, which is a different rule. With Mining limited on
+-- both Stone and Ore, a full stone chest made the Stone row report itself
+-- stopped while Mining carried on digging for Ore - the panel stating the
+-- opposite of what the mod was doing. Exported so there is one answer to the
+-- question instead of two.
+function M.cap_state(cfg, work_name, totals)
     local ceilings = caps.for_work(cfg, work_name)
-    if ceilings == nil then return false end
+    if ceilings == nil then return false, nil end
 
-    local listed = false
+    local listed, short = false, nil
     for item, ceiling in pairs(ceilings) do
-        listed = true
-        if type(ceiling) == "number" and (totals[item] or 0) < ceiling then
-            return false
+        -- Only a number is a ceiling. A malformed one used to count towards
+        -- `listed` while being impossible to satisfy, so the work type was
+        -- capped for the rest of the session; config validation only warns
+        -- about these, so a single typo in work_caps silently stopped a job
+        -- and nothing said why.
+        if type(ceiling) == "number" then
+            listed = true
+            if (totals[item] or 0) < ceiling then
+                short = short or item
+            end
         end
     end
-    return listed
+
+    if not listed then return false, nil end
+    return short == nil, short
+end
+
+local function cap_reached(cfg, work_name, totals)
+    return (M.cap_state(cfg, work_name, totals))
 end
 
 -- Pending jobs per work type. A type whose resource ceiling is met

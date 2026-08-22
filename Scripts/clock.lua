@@ -69,15 +69,43 @@ local function arm(mygen)
     end
 end
 
-body = function(mygen)
-    if mygen ~= gen then return end   -- a world switch retired this chain
+-- Reused across beats so a healthy chain allocates nothing per tick.
+local due = {}
 
-    M.last_beat = os.clock()
-
+-- The work of one beat, split out so body() can run it under pcall and still
+-- re-arm afterwards no matter what it does.
+local function beat()
+    -- Two passes, and the split is not tidiness. An entry's fn may call
+    -- M.once or M.every - icons.lua re-arms its own pump from inside its
+    -- pump, and every command handler that starts a timer runs from the ui
+    -- entry - and both of those ASSIGN A NEW KEY to `entries`. The Lua manual
+    -- makes adding a field during a pairs traversal undefined behaviour;
+    -- removing one is fine. When it bites, `next` raises "invalid key to
+    -- 'next'" from the loop itself, which is OUTSIDE the pcall below and so
+    -- escapes before arm() runs. The chain never re-arms and the whole mod
+    -- goes silent with nothing in the log - indistinguishable from UE4SS
+    -- dropping its engine tick, which is the exact failure this file exists
+    -- to prevent.
+    --
+    -- So: decide what is due while only reading, then call while only the
+    -- second loop is live. New keys added by a callback land in `entries` and
+    -- are picked up next beat, which is what one-shots want anyway.
+    local n = 0
     for name, e in pairs(entries) do
         e.owed = e.owed + BEAT_MS
         if e.owed >= e.every then
             e.owed = 0
+            n = n + 1
+            due[n] = name
+        end
+    end
+
+    for i = 1, n do
+        local name = due[i]
+        due[i] = nil
+        local e = entries[name]
+        -- A callback earlier in this batch may have cancelled a later one.
+        if e then
             local ok, err = pcall(e.fn)
             if not ok then
                 log.warn("clock entry '" .. name .. "' threw: " .. tostring(err))
@@ -85,7 +113,28 @@ body = function(mygen)
             if e.once then entries[name] = nil end
         end
     end
+end
 
+body = function(mygen)
+    if mygen ~= gen then return end   -- a world switch retired this chain
+
+    M.last_beat = os.clock()
+
+    -- beat() is already careful, and it still runs under pcall: the one thing
+    -- this chain must never do is stop. An error raised anywhere in the
+    -- scheduling logic - not in a callback, which has its own pcall, but in
+    -- the loop around them - would otherwise escape before the re-arm below
+    -- and silently end the mod. So the failure is logged and the heartbeat
+    -- continues. (This catches Lua errors only; an access violation is not
+    -- catchable and never was.)
+    local ok, err = pcall(beat)
+    if not ok then
+        log.warn("clock beat threw: " .. tostring(err))
+    end
+
+    -- Unconditional, and deliberately last: whatever went wrong above, the
+    -- heartbeat survives it. A chain that stops re-arming takes the mod with
+    -- it.
     arm(mygen)
 end
 
