@@ -486,9 +486,24 @@ local function run_camp(cfg, camp, stats)
 
         stats.chests = stats.chests + (chests or 0)
 
+        -- Summed across camps, but only when each camp holds its own count.
+        --
+        -- In global scope every camp reads the SAME cached figure - scope_key
+        -- is the literal "global" for all of them - so adding it once per camp
+        -- multiplied the published totals by the number of loaded camps. Three
+        -- camps made the panel and "pwp limit" report triple the real stock,
+        -- while ceilings kept firing off the honest per-camp `totals`. The two
+        -- numbers disagreed, and since cap_state now reads the published one,
+        -- the status column would call a job stopped that was still running.
         if pass_totals then
-            for id, n in pairs(totals) do
-                pass_totals[id] = (pass_totals[id] or 0) + n
+            if cfg.storage_scope == "global" then
+                for id, n in pairs(totals) do
+                    pass_totals[id] = n
+                end
+            else
+                for id, n in pairs(totals) do
+                    pass_totals[id] = (pass_totals[id] or 0) + n
+                end
             end
         end
     end

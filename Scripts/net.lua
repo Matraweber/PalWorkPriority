@@ -130,7 +130,12 @@ local function live_client(name)
     local all = FindAllOf("PalNetworkBaseCampComponent")
     if not all then return nil end
     for _, comp in ipairs(all) do
-        if full_name(comp) == name then return comp end
+        -- Validated before it is asked its name. FindAllOf hands back
+        -- everything it finds including objects on their way out, and
+        -- GetFullName on one of those is a member call on freed memory - the
+        -- pcall inside full_name cannot catch that, it never could. Every
+        -- other FindAllOf loop in this codebase checks first.
+        if api.valid(comp) and full_name(comp) == name then return comp end
     end
     return nil
 end
@@ -153,6 +158,24 @@ function M.to_client(comp, message)
     end
 
     M.stats.sent_down = M.stats.sent_down + 1
+    return true
+end
+
+-- Several messages to one client, resolving that client exactly once.
+--
+-- push_rules sends a Reset, one line per rule, and a Done. Routing each of
+-- those through M.to_client meant a full FindAllOf sweep per message per
+-- client - twenty rules across four clients is 88 sweeps in one synchronous
+-- burst on the game thread, every time a rule changes, and rule changes come
+-- from clicking a tile. Resolve once, send the batch, drop the client if the
+-- component has gone.
+function M.send_batch(name, messages)
+    local comp = live_client(name)
+    if not api.valid(comp) then return false end
+
+    for _, message in ipairs(messages) do
+        if not M.to_client(comp, message) then return false end
+    end
     return true
 end
 
@@ -292,9 +315,12 @@ end
 function M.push_rules(caps, cfg, comp)
     local all = caps.all(cfg)
 
+    -- Collected first, sent second, so each recipient is resolved once
+    -- instead of once per line.
+    local batch = {}
     local send = function(msg)
-        if comp then return M.to_client(comp, msg) end
-        return M.broadcast(msg) > 0
+        batch[#batch + 1] = msg
+        return true
     end
 
     send(PREFIX .. "Reset")
@@ -304,6 +330,31 @@ function M.push_rules(caps, cfg, comp)
         end
     end
     send(PREFIX .. "Done")
+
+    -- One named target: a component the caller obtained inside the hook
+    -- callback that is still on the stack. Used as given and never stored.
+    if comp then
+        for _, msg in ipairs(batch) do
+            if not M.to_client(comp, msg) then return false end
+        end
+        return true
+    end
+
+    -- Everyone we have heard from, each resolved exactly once for the whole
+    -- batch. Dropping a key during pairs is defined behaviour in Lua; adding
+    -- one is not, and nothing here adds.
+    local now = os.clock()
+    local sent = 0
+    for name, entry in pairs(M.clients) do
+        if (now - entry.at) > CLIENT_TTL then
+            M.clients[name] = nil
+        elseif M.send_batch(name, batch) then
+            sent = sent + 1
+        else
+            M.clients[name] = nil
+        end
+    end
+    return sent > 0
 end
 
 -- Called on a client to ask the server for a rule change. Returns false when

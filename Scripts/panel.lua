@@ -84,6 +84,14 @@ local search_box = nil          -- EditableTextBox, only possible in a widget we
 local amount_box = nil
 local editing = nil             -- { work, item, row } while a box is open
 
+-- Forward declarations. Their bodies live next to the code that uses them,
+-- far below, but ensure_root has to clear them when the overlay is rebuilt -
+-- and a name assigned above its own `local` writes a global and leaves the
+-- real local nil forever.
+local styled_boxes = {}         -- which fields have had their style applied
+local picker_key = nil          -- { search_text, show_all, totals }
+local picker_hit = nil          -- { list, everything }
+
 -- Forward declaration. Its body is far below, next to the scan it wraps, but
 -- poll_amount calls it when a typed limit is committed. Without this the name
 -- resolved to a nil global there, so committing a number threw AFTER the
@@ -172,7 +180,11 @@ local COL_ITEM = 210
 local COL2     = 480      -- what storage holds
 local COL_CAP  = 650      -- the limit it stops at
 local COL_DONE = 810      -- what the pals are doing
-local COL3     = 920
+-- Remove, pushed right into the inset the rows were not using. Its surface
+-- used to end 16 pixels after the status word, so the two read as a pair and
+-- the only control in the row that destroys something sat shoulder to
+-- shoulder with a label.
+local COL3     = 952
 local TAB_H = 34
 
 -- The limit's well, and the two numeric right edges derived from it.
@@ -212,6 +224,14 @@ local GAP = 8
 local GRID_ROWS = 4
 
 local PER_PAGE = COLS * GRID_ROWS
+
+-- No minimum height, deliberately. Padding the list up to the picker's height
+-- was tried to stop the panel resizing on a tab switch, and it is the wrong
+-- trade: the picker is itself variable - one grid row for eleven items, four
+-- for a full page - so the floor has to be the tallest case, which left both
+-- screens sitting in several hundred pixels of empty backdrop. A panel that
+-- fits its contents is normal. The tab strip is top-anchored and does not
+-- move, which was the part that actually cost anything.
 
 local COLOUR = {
     title  = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
@@ -284,14 +304,26 @@ local PRIMARY_BG = { R = 0.034, G = 0.188, B = 0.305, A = 1.00 }
 -- the two is the armed state, while the row is asking "Sure?".
 local DANGER_WELL    = { R = 0.115, G = 0.030, B = 0.028, A = 1.00 }
 local DANGER_WELL_ON = { R = 0.320, G = 0.055, B = 0.048, A = 1.00 }
--- Both were picked against ROW_BG, the darkest surface a stripe is drawn on.
--- Tiles now wear BUTTON_BG, which is brighter than either of them was, so the
--- selected tile came out no lighter than an unselected one and the cursor
--- vanished on the picker. Lifted until each is clearly above BUTTON_BG:
--- hover reads at 2.0 against a tile, selection at 1.5.
-local ROW_HOVER = { R = 0.220, G = 0.380, B = 0.500, A = 1.00 }
+-- Both are DARKER than a normal row, not brighter, and that is the whole
+-- point of them.
+--
+-- Lifting them was the obvious move and it was wrong. Every token in this
+-- panel is light - amber, white, cyan - so a brighter fill eats their
+-- contrast: at the brightest version the amber on a selected row measured
+-- 2.73:1, under the 3:1 floor for large text, on the one row the player is
+-- actually working with. Selecting a row made it the hardest row on screen to
+-- read, which is the exact inverse of what selecting is for.
+--
+-- Going down instead separates just as well - 1.38 against a normal row,
+-- against 1.94 for the bright version - while every token GAINS contrast:
+-- that same amber comes back at 7.3:1. Luminance is the wrong channel to
+-- carry this signal up; the caret and the accent bar carry it instead.
+local ROW_HOVER = { R = 0.013, G = 0.042, B = 0.089, A = 1.00 }
 -- Where the keyboard is, quieter than where the mouse is.
-local ROW_SEL   = { R = 0.160, G = 0.260, B = 0.360, A = 1.00 }
+local ROW_SEL   = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
+-- The cyan edge that says "this one", independent of fill luminance. A row
+-- has the caret; a tile has no room for one and gets this instead.
+local ACCENT    = { R = 0.42,  G = 0.80,  B = 1.00,  A = 1.00 }
 -- Inset, darker than the row it sits in, which is how every text field in
 -- every dark interface says "type here".
 -- Measurably darker than the row it sits in, not merely darker than nothing.
@@ -421,6 +453,8 @@ local function ensure_root()
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face, item_of = {}, {}, {}
         search_box, amount_box, editing = nil, nil, nil
+        styled_boxes = {}
+        picker_key, picker_hit = nil, nil
         root_checked = -1
         return nil
     end
@@ -448,6 +482,16 @@ local function ensure_root()
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face, item_of = {}, {}, {}
     search_box, amount_box, editing = nil, nil, nil
+    -- Cleared with the boxes it describes. style_box only ever styles a given
+    -- field once, keyed here, so leaving this set after the boxes are dropped
+    -- meant the rebuilt EditableTextBox kept UMG's pale default - light text
+    -- on a pale field, which is the unreadable-filter bug this panel already
+    -- spent a round fixing.
+    styled_boxes = {}
+    -- The picker list was built from an item table that went with the old
+    -- world. Nothing else invalidates it: a world switch resets search_text
+    -- and show_all to the values already in the key, so it would match.
+    picker_key, picker_hit = nil, nil
     root_checked = frame_id
     return root
 end
@@ -734,6 +778,10 @@ local DEFAULT_PT = 20
 -- rows keep the indent they already had and only the header moves to match.
 local MARK_W = 20
 
+-- The leading glyph on an action row: "+", "<", or the toggle's box. Wide
+-- enough for the widest of them at ROW_PT, so every label starts on one edge.
+local GLYPH_SLOT = 42
+
 -- Whether any of a row's hit keys is the current one.
 --
 -- A rule row owns four - the job, the storage figure, the limit and Remove -
@@ -913,6 +961,11 @@ local NAME_LINES = 3
 -- by a sixth and leave every right-aligned column visibly short of its edge.
 local GLYPH_W = 0.83     -- mixed-case words, from the tab bar
 local DIGIT_W = 0.72     -- digits, from the rules list
+-- All-caps column headings. Measured off the first right-aligned build, where
+-- IN STORAGE and LIMIT came up 7 and 4 pixels short of the edge their own
+-- values sat on, because the mixed-case factor overestimates a caps-and-space
+-- string by about seven percent.
+local CAPS_W  = 0.76
 
 -- Thousands separators. The only thing the numeric columns are for is
 -- deciding which of two figures is bigger, and "16562" against "15000" makes
@@ -986,6 +1039,12 @@ local function tile(key, at, item, have, top, limited)
 
     slab(key, px, py, TILE, TILE_H, TILE_BG)
     tile_face[key] = stripes[key]
+
+    -- A tile cannot carry the "> " caret a row does, so the selection gets an
+    -- edge instead. Always drawn, in the tile's own colour when it is not the
+    -- current one, so there is nothing to retire when the cursor moves on.
+    slab("selbar:" .. key, px, py, 3, TILE_H,
+        row_is_current(key) and ACCENT or TILE_BG)
 
     item_of[key] = item
 
@@ -1126,7 +1185,8 @@ end
 -- If the write does not take, the fallback makes the text dark instead, which
 -- is at least readable on the pale default. Reported once either way, so a
 -- session says which of the two it got rather than leaving it to a screenshot.
-local styled_boxes = {}
+-- Assigns the forward-declared local above; do not add "local" here.
+styled_boxes = {}
 
 local function style_box(box, which)
     if not alive(box) or styled_boxes[which] then return end
@@ -1145,7 +1205,14 @@ local function style_box(box, which)
         local st = box.WidgetStyle
         if st == nil then return end
         st.BackgroundColor = {
-            SpecifiedColor = (which == "ceiling") and CEILING_BG or FIELD_BG,
+            -- The filter field wears the same inset well as the limit
+            -- fields. As FIELD_BG it sat at 1.16 against the panel, so its
+            -- own boundary was nearly invisible, and UMG's hint colour - the
+            -- one part of this widget whose colour cannot be set - measured
+            -- 1.88 against it, well under the 3:1 that any visible thing
+            -- needs. Darkening what CAN be set fixes both: the boundary reads
+            -- at 2.2 and the hint at 3.2.
+            SpecifiedColor = (which == "ceiling") and CEILING_BG or FIELD_WELL,
             ColorUseRule = 0,
         }
 
@@ -1615,10 +1682,10 @@ local function draw_list(cfg, totals)
         -- placed from the left and ran 12 pixels out from its own values,
         -- because every value silently carried the two-space marker slot that
         -- only the JOB heading compensated for.
-        line("h_have", row, right_x(COL2_R, "IN STORAGE", 12), "IN STORAGE",
-            "faint", 12)
-        line("h_cap",  row, right_x(COL_CAP_R, "LIMIT", 12), "LIMIT",
-            "faint", 12)
+        line("h_have", row, right_x(COL2_R, "IN STORAGE", 12, CAPS_W),
+            "IN STORAGE", "faint", 12)
+        line("h_cap",  row, right_x(COL_CAP_R, "LIMIT", 12, CAPS_W),
+            "LIMIT", "faint", 12)
         -- PALS, not STATUS. The column sits 780 pixels right of the job it
         -- describes with three number columns in between, so "STATUS" had
         -- three things it could plausibly be the status OF - the job, the
@@ -1751,9 +1818,16 @@ local function draw_list(cfg, totals)
                 -- Both of these mean no rule on this screen is doing
                 -- anything, and both used to render as "Working", which is a
                 -- flat untruth the panel had no other way to correct.
-                status, tone = "Off", "dim"
+                --
+                -- "Rule off" rather than "Off", because "Off" and "Stopped"
+                -- are the same word in plain English and nothing would have
+                -- told a reader that one means "hit its limit" and the other
+                -- means "not switched on". "Testing" rather than "Dry run",
+                -- which is a developer's phrase no player is going to read as
+                -- "would stop, but nothing is being sent".
+                status, tone = "Rule off", "dim"
             elseif cfg.dry_run then
-                status, tone = "Dry run", "dim"
+                status, tone = "Testing", "dim"
             elseif capped then
                 status, tone = "Stopped", "over"
             elseif met then
@@ -1809,8 +1883,13 @@ local function draw_list(cfg, totals)
     -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
     stripe("new", row, PAD, W - PAD * 2, PRIMARY_BG)
+    -- Glyph and label in fixed slots, so all three action rows start their
+    -- words on one edge. Baked into single strings before, where "[x]   ",
+    -- "+   " and "<   " are three different widths and the labels came out
+    -- ten and thirty pixels apart.
     line("mk_new", row, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
-    line("new", row, PAD + MARK_W, "+   Add a rule", "primary")
+    line("g_new", row, PAD + MARK_W, "+", "primary", ROW_PT)
+    line("new", row, PAD + MARK_W + GLYPH_SLOT, "Add a rule", "primary")
 
     -- One row of breathing space, not two. The panel is sized from what it
     -- draws, so a spare row is 34 pixels of empty backdrop; with the top
@@ -1939,8 +2018,9 @@ end
 -- it has nothing to do with and serve a stale list. Holding the reference
 -- makes that impossible, and costs one table. It is a plain map of strings to
 -- numbers, not an engine object, so there is no wrapper-age question here.
-local picker_key = nil
-local picker_hit = nil
+-- Both forward-declared above, so ensure_root can drop them on a rebuild.
+picker_key = nil
+picker_hit = nil
 
 local function picker_source(totals)
     if picker_key ~= nil
@@ -2051,15 +2131,17 @@ local function draw_item_picker(cfg, totals)
     hit("all", { kind = "toggle_all" })
     stripe("all", row, PAD, W - PAD * 2, BUTTON_BG)
     line("mk_all", row, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
-    line("all", row, PAD + MARK_W,
-        (everything and "[x]" or "[  ]") .. "   Show every item with a job",
-        "action", ROW_PT)
+    line("g_all", row, PAD + MARK_W,
+        everything and "[x]" or "[  ]", "action", ROW_PT)
+    line("all", row, PAD + MARK_W + GLYPH_SLOT,
+        "Show every item with a job", "action", ROW_PT)
     row = row + 1
 
     hit("back", { kind = "back" })
     stripe("back", row, PAD, W - PAD * 2, BUTTON_BG)
     line("mk_back", row, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
-    line("back", row, PAD + MARK_W, "<   Back", "action", ROW_PT)
+    line("g_back", row, PAD + MARK_W, "<", "action", ROW_PT)
+    line("back", row, PAD + MARK_W + GLYPH_SLOT, "Back", "action", ROW_PT)
 
     return row + 1
 end
@@ -2117,7 +2199,8 @@ function M.refresh(cfg)
     end
     perf_hover, perf_hits = os.clock() - th, hn
 
-    was_hit, was_sel = hits, order[sel]
+    -- was_sel is set after the draw instead, once `order` is this frame's.
+    was_hit = hits
     hits, order, used = {}, {}, {}
 
     local ts = os.clock()
@@ -2136,6 +2219,13 @@ function M.refresh(cfg)
     if sel > #order then sel = #order end
     if sel < 1 then sel = 1 end
 
+    -- Taken from the order just drawn, with the sel just clamped, rather than
+    -- from the previous frame's order. On a screen that is not changing shape
+    -- the two are the same key; on a tab switch, a page turn, or the frame a
+    -- rule is added, the old order named something that is no longer on
+    -- screen and the cursor blinked out for one frame.
+    was_sel = order[sel]
+
     -- Centred vertically from what was actually drawn.
     --
     -- The height is only known once the screen has been drawn, so a screen
@@ -2150,14 +2240,9 @@ function M.refresh(cfg)
     -- switching from the rules list to the picker moved the tab bar a hundred
     -- pixels up: the tab you just clicked jumped out from under the pointer,
     -- and clicking again in the same place hit empty panel.
-    local want = TOP_Y
-    if want ~= Y then
-        Y = want
-        -- Every remembered position was measured against the old offset.
-        placed = {}
-        hits, order, used = {}, {}, {}
-        rows = redraw(cfg, totals)
-    end
+    -- Y is set from TOP_Y at load and nothing else ever writes it, so the
+    -- redraw-on-move branch that used to sit here could not run. It was left
+    -- over from the centred layout, where the height decided the offset.
 
     ensure_backdrop(rows)
     local tb = os.clock()

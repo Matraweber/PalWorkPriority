@@ -169,21 +169,48 @@ def use_before_local(clean, path):
             for hit in pattern.finditer(text):
                 inner.update(names_in(hit.group(1)))
 
+    # Brace depth entering each line, so a `name =` inside a table constructor
+    # can be told from a real assignment. Lua blocks close with `end`, not `}`,
+    # so depth is zero everywhere except inside a table literal - which is
+    # exactly the case that must not be reported.
+    depth_at, depth = [], 0
+    for text in lines:
+        depth_at.append(depth)
+        depth += text.count("{") - text.count("}")
+
     problems = []
     for name, decl_line in sorted(declared.items(), key=lambda kv: kv[1]):
         if name in inner:
             continue
-        # Not preceded by . or : - a field access is not a read of the local.
-        # Not followed by a lone = either: that is a table key (`{ X = 0.5 }`)
-        # or an assignment, and neither reads the value.
+        # A read. Not preceded by . or : - a field access is not a read of the
+        # local - and not followed by a lone =, which is a write, handled next.
         use = re.compile(r"(?<![\w.:])" + re.escape(name) + r"(?![\w])(?!\s*=[^=])")
+
+        # A write, and the more dangerous of the two. A read above the
+        # declaration yields nil and usually errors loudly at the call; a write
+        # silently creates a global in UE4SS's shared _G AND leaves the real
+        # local permanently unset, so the cache it meant to clear never
+        # clears. That is how `knows_icon` hid: M.reset assigned it 128 lines
+        # above its own `local`, and the first version of this check exempted
+        # every `name =` to avoid tripping over table keys like { X = 0.5 }.
+        # Requiring the name to open the line, at brace depth zero, separates
+        # the two without giving the case up.
+        write = re.compile(r"^\s*" + re.escape(name) + r"\s*=[^=]")
+
         for n in range(1, decl_line):
-            if not use.search(lines[n - 1]):
+            text = lines[n - 1]
+            is_write = depth_at[n - 1] == 0 and write.match(text)
+            if not (use.search(text) or is_write):
                 continue
             problems.append(
-                "%s:%d '%s' is used here but not declared until line %d, so it "
-                "reads as a nil global. Add 'local %s' above the first use."
-                % (path, n, name, decl_line, name))
+                "%s:%d '%s' is %s here but not declared until line %d, so it "
+                "%s. Add 'local %s' above the first use."
+                % (path, n, name,
+                   "assigned" if is_write else "used",
+                   decl_line,
+                   "writes a global and leaves the local unset" if is_write
+                   else "reads as a nil global",
+                   name))
             break
 
     return problems
