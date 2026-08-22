@@ -486,3 +486,20 @@ proven functional and proven to do 2.5x the work of the old under load, the
 crash mechanism it removes is the one UE4SS's maintainers documented, and
 the final conviction test is one client session, where the old build never
 lasted thirty seconds of stress.
+
+## 22 August, 11:17: acquitted where it was convicted
+
+The client, in singleplayer, with every client-only mod loaded — the
+environment that killed five stress runs inside 25 passes — ran the migrated
+build at the same full rate:
+
+    survived 300s, 673 passes executed, zero ref errors, game still up
+
+A 27x margin over every previous death, on the same machine, same world, same
+mods. Live mode restored afterwards and the next ordinary pass fenced and
+toggled normally. The heartbeat answered from inside the running session.
+
+This closes the crash. The clock (one game-thread chain, zero per-pass
+registrations), the stored-wrapper purges, the property-path roster, and the
+cached chest counts stand together as the fix; the research file records why
+each piece exists and which upstream issue it answers.
