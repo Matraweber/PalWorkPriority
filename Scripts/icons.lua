@@ -83,7 +83,9 @@ local alternates = {}
 
 -- A whole-session budget for speculative loads, so a list full of unknown
 -- items cannot turn into hundreds of them.
-local RETRY_BUDGET = 24
+-- Raised now that guesses also cover ids the index never had. Each one
+-- queues a load per category, and they only go out while the queue is idle.
+local RETRY_BUDGET = 80
 local retries_left = RETRY_BUDGET
 
 -- The category prefixes the shipped index actually uses. Ordered by how many
@@ -92,6 +94,10 @@ local CATEGORIES = {
     "Food", "Material", "Accessory", "Armor", "Weapon", "Consume",
     "Essential", "Ammo", "food", "Relic", "PalSphere", "Blueprint",
     "QuestItem", "PalAwakening", "SphereModule", "Glider",
+    -- The tail of the index. Rare, but the growth stones and the egg items
+    -- live down here and they are the ones that came back blank.
+    "Jewelry", "PalUpgradeStone", "PalUpgradeStone2", "PalUpgradeStone3",
+    "PalUpgradeStone4", "PalEgg", "SkillUnlock", "SkillCard",
 }
 
 -- id (lowercased) -> icon name, from whatever is loaded right now
@@ -345,10 +351,42 @@ function M.get(item_id)
     if name == nil then
         name = icondex.NAMES[key] or look_around()[key] or self_named(key)
         if name == nil then
-            -- Nothing recorded and nothing loaded that matches. Guessing at
-            -- category names was tried and removed: it invented paths, asked
-            -- the engine to load each of them, and bought coverage the table
-            -- and a look around the running game mostly had already.
+            -- Nothing recorded and nothing loaded that matches.
+            --
+            -- Guessing category names was tried once and removed, because it
+            -- invented paths for every unknown id and asked the engine to
+            -- load each of them - drowning the loader in speculation. What
+            -- makes it affordable now is WHEN it runs: only while the queue
+            -- is empty, so a guess can never delay an icon somebody is
+            -- looking at, and only for a bounded number of ids per session.
+            -- The index covers 858 of about 2466 items, so without this every
+            -- id it missed is a blank square for the session.
+            if not retried[key] and #queue == 0 and retries_left > 0 then
+                retries_left = retries_left - 1
+                retried[key] = true
+                alternates[key] = item_id
+                for _, cat in ipairs(CATEGORIES) do
+                    want(cat .. "_" .. item_id)
+                end
+                return nil
+            end
+
+            if alternates[key] then
+                for _, cat in ipairs(CATEGORIES) do
+                    local alt = cat .. "_" .. item_id
+                    local found = find(alt)
+                    if found ~= nil then
+                        resolved[key] = alt
+                        alternates[key] = nil
+                        return found
+                    end
+                end
+                -- Given time to arrive before being written off.
+                waited[key] = (waited[key] or 0) + 1
+                if waited[key] < PATIENCE then return nil end
+                alternates[key] = nil
+            end
+
             resolved[key] = false
             return nil
         end
@@ -414,6 +452,25 @@ function M.get(item_id)
         M.last_missing = item_id .. " (waited on " .. name .. ")"
     end
     return nil
+end
+
+-- Every id this has given up on, and every id it is still waiting for.
+--
+-- "some symbols are missing" is answerable from the inside: resolution either
+-- found no name at all, or found one whose asset never arrived. Reading it
+-- off thirteen screenshots is guesswork; this is the list.
+function M.unresolved()
+    local dead, waiting = {}, {}
+    for key, name in pairs(resolved) do
+        if name == false then
+            dead[#dead + 1] = key
+        elseif waited[key] and waited[key] > 0 then
+            waiting[#waiting + 1] = key .. " (" .. tostring(name) .. ")"
+        end
+    end
+    table.sort(dead)
+    table.sort(waiting)
+    return dead, waiting
 end
 
 -- A world switch invalidates nothing held here, since nothing is held, but

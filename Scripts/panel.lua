@@ -2754,6 +2754,32 @@ function M.command(cfg, args)
         return M.click_named(cfg, kind, (arg ~= "" and arg) or nil, -1)
     end
 
+    -- Jump straight to a page, for sweeping the picker from outside.
+    --
+    -- "click page" matches whichever pager hit pairs() yields first, which is
+    -- fine on page one where only Next exists and useless anywhere else. An
+    -- audit of thirteen pages needs to land on the page it asked for.
+    if verb == "page" then
+        if mode ~= "item" then return "the picker is not open" end
+        local n = tonumber(rest)
+        if n == nil then return "usage: page <number>" end
+        page = math.max(0, math.floor(n) - 1)
+        want_first_row = true
+        return "page " .. (page + 1)
+    end
+
+    -- What has no icon, from the inside. Lives here rather than in main.lua's
+    -- command table because this module reloads and that one does not.
+    if verb == "icons" then
+        if not icons.unresolved then return "this build cannot report that" end
+        local dead, waiting = icons.unresolved()
+        log.say(string.format("icons: %d gave up, %d still loading",
+            #dead, #waiting))
+        for _, id in ipairs(dead) do log.say("  no icon: " .. id) end
+        for _, id in ipairs(waiting) do log.say("  waiting: " .. id) end
+        return string.format("%d without an icon", #dead)
+    end
+
     if verb == "nav" then
         if not M.open then return "the panel is shut" end
         if rest == "up" then M.move(-1) return "moved up"
