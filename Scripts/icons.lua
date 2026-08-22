@@ -247,6 +247,31 @@ local function self_named(key)
     return self_names[key]
 end
 
+-- Whether an item's icon is on screen-ready, without paying to fetch it.
+--
+-- get() ends in StaticFindObject, which walks the object array and cost about
+-- ten milliseconds a call on this build. A tile asked it every frame purely to
+-- decide between a picture and a name, so eleven tiles spent over a hundred
+-- milliseconds per refresh, on a refresh that runs ten times a second. That is
+-- the whole of "the ADD tab is super laggy": not loading, not drawing, one
+-- lookup in a loop.
+--
+-- The answer is a boolean and booleans are safe to keep, unlike the texture it
+-- came from. Once true it stays true: an icon that has loaded does not unload
+-- while the panel is open, and a world change clears this with everything else.
+local ready_ids = {}
+
+function M.ready(item_id)
+    if type(item_id) ~= "string" or item_id == "" then return false end
+    if ready_ids[item_id] then return true end
+
+    if M.get(item_id) ~= nil then
+        ready_ids[item_id] = true
+        return true
+    end
+    return false
+end
+
 function M.get(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
 
@@ -284,6 +309,7 @@ end
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()
     knows_icon = {}
+    ready_ids = {}
     resolved, requested, waited = {}, {}, {}
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0

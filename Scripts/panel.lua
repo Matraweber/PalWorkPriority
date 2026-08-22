@@ -74,13 +74,18 @@ local search_box = nil          -- EditableTextBox, only possible in a widget we
 local amount_box = nil
 local editing = nil             -- { work, item, row } while a box is open
 
--- Switched on with "pwp clicks" while working out why a click did nothing.
-M.debug_clicks = false
+-- Switched on with "pwp clicks", or here, since this module hot reloads and
+-- main.lua does not: turning it on in the file is the only way to get it into
+-- a session that started before the command existed.
+M.debug_clicks = true
 local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
 local sel = 1                   -- which row the keyboard is on
 local tab_hits = 0              -- how many order entries the tab bar owns
+local perf_worst, perf_at = 0, 0
+local perf_hover, perf_draw, perf_hits = 0, 0, 0
+local perf_stock, perf_blank = 0, 0
 
 local ftext_mode = nil
 local warned = {}
@@ -225,17 +230,36 @@ end
 -- Nothing in Palworld holds a reference to the overlay, so nothing can free it
 -- or hide it behind our back. It also means the panel is no longer tied to a
 -- Monitoring Stand, which was a real loss when it was hosted there.
+-- Validated once per frame, not once per widget.
+--
+-- Every drawing helper began by calling this, and this costs six engine calls:
+-- three inside overlay.host and three of its own. A picker frame builds about
+-- thirty five widgets, so a single refresh spent over two hundred round trips
+-- re-asking whether the same canvas was still there, and measured at 110ms on
+-- a loop that runs ten times a second. That is what "the ADD tab is super
+-- laggy" actually was.
+--
+-- The answer cannot change midway through a frame: nothing between the first
+-- widget and the last destroys the canvas they are all going onto. So it is
+-- asked once and remembered for the frame, and refresh bumps the counter.
+local frame_id = 0
+local root_checked = -1
+
 local function ensure_root()
+    if root_checked == frame_id and root ~= nil then return root end
+
     local host, host_tree = overlay.host()
 
     if not alive(host) or not alive(host_tree) then
         root, root_owner, root_tree, backdrop = nil, nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         search_box = nil
+        root_checked = -1
         return nil
     end
 
     if root == host and alive(root_tree) then
+        root_checked = frame_id
         return root
     end
 
@@ -247,6 +271,7 @@ local function ensure_root()
     backdrop = nil
     blocks, drawn, stripes, placed = {}, {}, {}, {}
     search_box = nil
+    root_checked = frame_id
     return root
 end
 
@@ -302,7 +327,7 @@ end
 -- The box behind a row. Creative Menu draws every entry as a bordered slab
 -- that lights up under the pointer, and that alone is most of the difference
 -- between a menu and a wall of text.
-local function slab(key, px, py, w, h)
+local function slab(key, px, py, w, h, colour)
     local host = ensure_root()
     if not host then return end
 
@@ -342,8 +367,8 @@ local function slab(key, px, py, w, h)
 
     local on = (key == (hover_key or was_sel))
     local want = on and "on" or "off"
-    if drawn["s:" .. key] ~= want then
-        pcall(function() border:SetBrushColor(on and ROW_HOVER or ROW_BG) end)
+    if drawn["s:" .. key] ~= (want .. tostring(colour)) then
+        pcall(function() border:SetBrushColor(colour or on and ROW_HOVER or ROW_BG) end)
         drawn["s:" .. key] = want
     end
 end
@@ -465,7 +490,10 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     -- A marker as well as a colour. Colour alone was not enough to see where
     -- the selection was, least of all on a row that is already blue.
-    if was_hit[key] then
+    -- Not on tabs. The underline says which screen you are on; a second
+    -- marker on a different tab said something else, and the two contradicted
+    -- each other on every screen change.
+    if was_hit[key] and not key:match("^tab_") then
         text = (selected and "> " or "  ") .. text
     end
 
@@ -524,7 +552,7 @@ end
 -- matter, so the diagnostics fire themselves the first time a tile is drawn.
 local probed = false
 
-local function picture(key, px, py, size, texture, token)
+local function picture(key, px, py, size, item_id, token)
     if not probed then
         probed = true
         -- Only the lookup. The image probe reported that UMG.Image has no
@@ -576,6 +604,7 @@ local function picture(key, px, py, size, texture, token)
         -- works there is nothing here for the table, the queue or the
         -- rationing to do.
         --
+        local texture = item_id and icons.get(item_id) or nil
         if texture then
             apply_texture(img, texture)
             pcall(function() img:SetOpacity(1.0) end)
@@ -654,12 +683,15 @@ local function tile(key, at, item, have, top)
     -- a brush whose texture never arrived, so every tile drew as a white
     -- square: this build does not stream a soft brush on its own. The engine
     -- has to be given a loaded texture, which is what icons.get returns.
-    local texture = icons.get(item)
-    picture(key, px + 4, py + 4, TILE - 8, texture, item .. (texture and "+" or "-"))
+    -- ready() is a table lookup once the icon has arrived; get() is a
+    -- StaticFindObject and costs about ten milliseconds. Only picture() calls
+    -- it, and only on the frame a tile's icon actually changes.
+    local has_icon = icons.ready(item)
+    picture(key, px + 4, py + 4, TILE - 8, item, item .. (has_icon and "+" or "-"))
 
     -- Without an icon the tile would be an anonymous square, so it falls back
     -- to as much of the name as fits rather than to nothing.
-    if not texture then
+    if not has_icon then
         local lines = name_lines(item)
         local step = 11
         local first = py + TILE / 2 - (#lines * step) / 2 - 1
@@ -995,8 +1027,15 @@ local function draw_tabs(active)
         -- different colours is not a tab bar: which screen you are on should
         -- be readable at a glance and from the corner of the eye, which is
         -- what Creative Menu gets right and this did not.
+        -- An underline inside the bar, not a slab over it. The filled box
+        -- stood taller than the header it sat in and read as a stray
+        -- rectangle rather than a selected tab. A rule under the active word
+        -- is the quieter convention and cannot overhang anything.
+        -- Drawn in the accent colour. The first attempt used slab's default,
+        -- which is the row background: a dark rule on a dark bar, invisible.
         if on then
-            slab("tabsel:" .. tab.key, x - 14, -8, 118, TAB_H - 4)
+            slab("tabsel:" .. tab.key, x - 4, TAB_H - 8,
+                #tab.label * 14 + 10, 3, COLOUR.tab_on)
         end
 
         line(tab.key, 0, x, tab.label, on and "tab_on" or "dim", 20)
@@ -1248,6 +1287,12 @@ local function redraw(cfg, totals)
 end
 
 function M.refresh(cfg)
+    -- Timed, because "laggy" has three plausible causes here and guessing
+    -- between them has already cost a round. Reports the worst refresh seen
+    -- in each five second window, once, with where the time went.
+    local t0 = os.clock()
+    frame_id = frame_id + 1
+
     -- The typed-ceiling box, when one is open: placed, then read.
     if editing ~= nil then
         ensure_amount_box()
@@ -1262,11 +1307,14 @@ function M.refresh(cfg)
     -- Which row the mouse is on, decided from last frame's map before it is
     -- rebuilt. One frame of lag on a highlight is invisible; drawing the whole
     -- screen twice to avoid it is not.
+    local th = os.clock()
+    local hn = 0
     hover_key = nil
     for key in pairs(hits) do
         -- A row reports through its text, a tile through its picture.
         local w = blocks[key] or images[key]
         local over = false
+        hn = hn + 1
         pcall(function()
             if alive(w) then over = w:IsHovered() end
         end)
@@ -1275,12 +1323,18 @@ function M.refresh(cfg)
             break
         end
     end
+    perf_hover, perf_hits = os.clock() - th, hn
 
     was_hit, was_sel = hits, order[sel]
     hits, order, used = {}, {}, {}
-    local totals = stock_totals(cfg)
 
+    local ts = os.clock()
+    local totals = stock_totals(cfg)
+    perf_stock = os.clock() - ts
+
+    local td = os.clock()
     local rows = redraw(cfg, totals)
+    perf_draw = os.clock() - td
 
     -- Clamped after the draw, since the row count is only known then.
     if sel > #order then sel = #order end
@@ -1304,7 +1358,22 @@ function M.refresh(cfg)
     end
 
     ensure_backdrop(rows)
+    local tb = os.clock()
     blank_unused()
+    perf_blank = os.clock() - tb
+
+    local ms = (os.clock() - t0) * 1000
+    perf_worst = math.max(perf_worst, ms)
+    if (os.clock() - perf_at) > 5.0 then
+        perf_at = os.clock()
+        if perf_worst > 4.0 then
+            log.say(string.format(
+                "panel refresh worst %.1fms  (hover %.1f/%d, stock %.1f, draw %.1f, blank %.1f)",
+                perf_worst, perf_hover * 1000, perf_hits,
+                perf_stock * 1000, perf_draw * 1000, perf_blank * 1000))
+        end
+        perf_worst = 0
+    end
 end
 
 local function blank_everything()
