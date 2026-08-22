@@ -73,6 +73,9 @@ local search_box = nil          -- EditableTextBox, only possible in a widget we
 -- keep stepping, so the fast path is not lost to the precise one.
 local amount_box = nil
 local editing = nil             -- { work, item, row } while a box is open
+
+-- Switched on with "pwp clicks" while working out why a click did nothing.
+M.debug_clicks = false
 local edit_focus = false        -- focus is taken once, not fought for
 local search_text = ""
 local want_focus = false
@@ -520,7 +523,7 @@ end
 -- matter, so the diagnostics fire themselves the first time a tile is drawn.
 local probed = false
 
-local function picture(key, px, py, size, item_id, token)
+local function picture(key, px, py, size, texture, token)
     if not probed then
         probed = true
         -- Only the lookup. The image probe reported that UMG.Image has no
@@ -572,17 +575,8 @@ local function picture(key, px, py, size, item_id, token)
         -- works there is nothing here for the table, the queue or the
         -- rationing to do.
         --
-        local soft = item_id and icons.soft_for(item_id) or nil
-        local done = false
-        if soft ~= nil then
-            -- bMatchSize true, matching the call this replaces. The note in
-            -- overlay.lua earned the hard way says a brush with no size
-            -- reports success and draws nothing, and the canvas slot decides
-            -- the layout regardless of what the brush thinks it measures.
-            done = pcall(function() img:SetBrushFromSoftTexture(soft, true) end)
-        end
-
-        if done then
+        if texture then
+            apply_texture(img, texture)
             pcall(function() img:SetOpacity(1.0) end)
         else
             -- Kept, not hidden. A hidden widget reports no hover, and the
@@ -655,16 +649,16 @@ local function tile(key, at, item, have, top)
 
     item_of[key] = item
 
-    -- The soft pointer route: the game is asked whether this item has an icon
-    -- and the engine streams it. No load is issued here, so a page of tiles
-    -- costs lookups rather than forty blocking asset loads rationed out over
-    -- ten seconds, which is what made this tab crawl.
-    local has_icon = icons.has(item)
-    picture(key, px + 4, py + 4, TILE - 8, item, item .. (has_icon and "+" or "-"))
+    -- Back on the texture route. SetBrushFromSoftTexture was accepted and set
+    -- a brush whose texture never arrived, so every tile drew as a white
+    -- square: this build does not stream a soft brush on its own. The engine
+    -- has to be given a loaded texture, which is what icons.get returns.
+    local texture = icons.get(item)
+    picture(key, px + 4, py + 4, TILE - 8, texture, item .. (texture and "+" or "-"))
 
     -- Without an icon the tile would be an anonymous square, so it falls back
     -- to as much of the name as fits rather than to nothing.
-    if not has_icon then
+    if not texture then
         local lines = name_lines(item)
         local step = 11
         local first = py + TILE / 2 - (#lines * step) / 2 - 1
@@ -1467,6 +1461,18 @@ function M.handle_click(cfg, dir)
     if not M.open then return false end
 
     local what = hovered()
+
+    -- Says which of two very different failures is happening when a click
+    -- does nothing. Reaching here at all means UE4SS saw the button, so the
+    -- input mode is not eating it and the hit test is at fault. Never
+    -- reaching here means the opposite, and no amount of work on hit testing
+    -- would have helped.
+    if M.debug_clicks then
+        log.say(string.format("click: dir=%s screen=%s hovered=%s",
+            tostring(dir), tostring(mode),
+            what and tostring(what.kind) or "nothing"))
+    end
+
     if what == nil then
         -- A click on nothing still ends an edit, which is how "click away to
         -- set it" is honoured when the click lands on empty panel.

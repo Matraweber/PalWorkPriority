@@ -488,6 +488,11 @@ COMMANDS.trace = function(args)
     end
 end
 
+COMMANDS.clicks = function()
+    panel.debug_clicks = not panel.debug_clicks
+    log.say("click reporting " .. (panel.debug_clicks and "on" or "off"))
+end
+
 COMMANDS.dry = function()
     cfg.dry_run = true
     log.say("dry run on, changes are logged and nothing is sent")

@@ -55,10 +55,23 @@ local queue = {}
 local queued = {}
 local pumping = false
 
--- Slow enough to be gentle, quick enough that a page fills while you look at
--- it. A tile shows its name until its icon arrives, so the wait is legible
--- rather than blank.
-local PUMP_MS = 250
+-- The ration, and why it can finally be lifted.
+--
+-- 250 ms and one load at a time was set after nine LoadAsset calls in a
+-- single frame took the game down. That was read as "loading is dangerous",
+-- and it was not: the fault was the cross-thread scheduling that took three
+-- days to find, and a mod that loaded more simply reached it sooner. With
+-- everything on one game-thread heartbeat, the reason for the ration is gone.
+--
+-- A page is forty tiles. At one per 250 ms that is ten seconds of watching
+-- names turn into pictures, which is what "the ADD tab is super laggy" was.
+-- Eight per beat clears a page in half a second.
+--
+-- Still rationed rather than unbounded, because each of these is a blocking
+-- load on the game thread and a filter that matches four hundred items should
+-- not try to load four hundred textures in one frame.
+local PUMP_MS = 100
+local PUMP_BATCH = 8
 
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
@@ -101,7 +114,7 @@ local function object_path(name)
 end
 
 -- One load, then wait, then the next.
-local function pump()
+local function pump_one()
     local name = table.remove(queue, 1)
 
     if name then
@@ -131,6 +144,13 @@ local function pump()
         pcall(function() landed = StaticFindObject(path) end)
         log.say(string.format("icon load %-28s %s", name,
             real(landed) and "arrived" or "did not arrive"))
+    end
+
+end
+
+local function pump()
+    for _ = 1, PUMP_BATCH do
+        pump_one()
     end
 
     if #queue > 0 then
