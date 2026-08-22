@@ -137,6 +137,7 @@ local PAD = 18
 -- the stripe drawn behind the row.
 local ROW_PT     = 17
 local ITEM_CHARS = 16
+local TILE_CHARS = 9      -- what fits across a tile at 12pt
 local COL_ITEM = 210
 local COL2     = 480      -- what storage holds
 local COL_CAP  = 650      -- the limit it stops at
@@ -157,7 +158,7 @@ local TAB_H = 34
 local COLS = 10
 local TILE = 76          -- width, and the icon's square
 local ICON = 48          -- the picture, in the tile's top band
-local TILE_H = 112       -- icon, then the count, then two lines of name
+local TILE_H = 118       -- icon, then the count, then two lines of name
 local GAP = 8
 local GRID_ROWS = 4
 
@@ -185,6 +186,9 @@ local COLOUR = {
     atlimit = { R = 0.56, G = 0.85, B = 0.63, A = 1.00 },
     -- Destructive, and only ever used for that.
     danger = { R = 1.00, G = 0.45, B = 0.40, A = 1.00 },
+    -- Past the limit, which is a normal resting state rather than a fault,
+    -- so it is amber and not red.
+    over   = { R = 0.94, G = 0.74, B = 0.36, A = 1.00 },
     -- Quieter than the data it sits beside, so it does not compete, but its
     -- own colour rather than the one five harmless things share.
     quiet  = { R = 0.62, G = 0.58, B = 0.60, A = 1.00 },
@@ -202,7 +206,11 @@ local ROW_HOVER = { R = 0.130, G = 0.240, B = 0.310, A = 1.00 }
 local ROW_SEL   = { R = 0.105, G = 0.170, B = 0.230, A = 1.00 }
 -- Inset, darker than the row it sits in, which is how every text field in
 -- every dark interface says "type here".
-local FIELD_WELL = { R = 0.040, G = 0.055, B = 0.075, A = 1.00 }
+-- Measurably darker than the row it sits in, not merely darker than nothing.
+-- The first attempt used the panel's own colour, so the well only existed
+-- where a row stripe happened to be behind it and its boundary against that
+-- stripe measured 1.48:1, under the 3:1 a UI boundary needs to be seen.
+local FIELD_WELL = { R = 0.012, G = 0.020, B = 0.030, A = 1.00 }
 local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
@@ -560,7 +568,10 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
     -- selected marked two rows at once, which the video shows plainly.
     local current = hover_key or was_sel
     local selected = (key == current)
-    local shown = selected and "hover" or colour_key
+    -- Tabs keep their own colour. The selection tint was overriding it, so on
+    -- the picker the inactive RULES tab rendered brighter than the active ADD
+    -- tab and the underline was the only thing still telling the truth.
+    local shown = (selected and not key:match("^tab_")) and "hover" or colour_key
 
     -- A marker as well as a colour. Colour alone was not enough to see where
     -- the selection was, least of all on a row that is already blue.
@@ -811,19 +822,24 @@ local function tile(key, at, item, have, top, limited)
     -- with no words cannot be read, cannot be searched, and cannot be learned.
     -- Two tiles showed a brown log and a blue crystal, both labelled 2k, and
     -- nothing on screen could tell you which was which.
+    -- The name is what you read to find a thing, and it was the smallest
+    -- text on the panel: smaller than the column headings, and half the size
+    -- the same word renders at in the rules table. It also reached within a
+    -- pixel of the tile's right edge, which reads as clipped rather than as
+    -- tight.
     local lines = name_lines(item)
     local first = py + ICON + 20
     for n = 1, math.min(#lines, 2) do
-        text_at("n" .. n .. ":" .. key, px + 5, first + (n - 1) * 12,
-            lines[n], "item", 10, true)
+        text_at("n" .. n .. ":" .. key, px + 7, first + (n - 1) * 14,
+            lines[n], "item", 12, true)
     end
 
     -- The count, exact. The picker said 8k where the rules list said 8299, so
     -- the two screens disagreed about the number you were about to set a limit
     -- against, and two different piles both read 2k.
     if have > 0 then
-        text_at("q:" .. key, px + 5, py + ICON + 6,
-            tostring(math.floor(have)), "title", 11, true)
+        text_at("q:" .. key, px + 7, py + ICON + 4,
+            tostring(math.floor(have)), "title", 13, true)
     end
 
     -- Already has a rule. Without this the picker offers items that are
@@ -1403,9 +1419,27 @@ local function draw_list(cfg, totals)
             -- of the truth. Amber made it worse: it is the caution colour
             -- everywhere else in games, so two working rules looked like two
             -- warnings.
-            line("done" .. i, row, COL_DONE,
-                met and "AT LIMIT" or "Working",
-                met and "atlimit" or "working", ROW_PT)
+            -- Says what is actually true, with the number.
+            --
+            -- Both rows read AT LIMIT while storage stood 557 and 1500 above
+            -- the limit, and still climbing. To anybody reading it cold that
+            -- is not a status, it is evidence the mod does not work. A
+            -- ceiling stops new work; it cannot un-chop wood already in a
+            -- chest, so being over is normal and the panel has to say so.
+            -- Kept short on purpose. "OVER BY 1518" ran into Remove, and the
+            -- panel cannot simply widen: at 1050 its right edge already sits
+            -- a few pixels from the game's own Base Info panel, so growing it
+            -- trades one collision for a worse one.
+            local gap = have - rule.amount
+            local status, tone
+            if gap > 0 then
+                status, tone = "OVER " .. short_amount(gap), "over"
+            elseif gap == 0 then
+                status, tone = "AT LIMIT", "atlimit"
+            else
+                status, tone = short_amount(-gap) .. " LEFT", "working"
+            end
+            line("done" .. i, row, COL_DONE, status, tone, ROW_PT)
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
