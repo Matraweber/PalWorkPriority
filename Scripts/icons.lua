@@ -53,6 +53,9 @@ local requested = {}
 -- issuing a blocking package load, let alone nine of them in a frame.
 local queue = {}
 local queued = {}
+-- Names queued on spec rather than because the index named them. A guess that
+-- misses is the expected case, not news, so pump_one keeps it out of the log.
+local guessed = {}
 local pumping = false
 
 -- The ration, and why it can finally be lifted.
@@ -196,11 +199,21 @@ local function pump_one()
         -- page. That is the ADD tab's remaining lag, and it is a table lookup.
         arrived[name] = real(landed)
 
-        if arrived[name] then
-            log.debug(string.format("icon load %-28s arrived", name))
+        -- A guess that misses is expected and silent. Only a name the index
+        -- promised is worth shouting about.
+        --
+        -- log.say writes to file per line, and one unknown id queues two
+        -- dozen guesses - so a single sweep of the picker wrote ninety six
+        -- file opens on the game thread announcing that made-up paths do not
+        -- exist. Issue #1372's reporter mitigated this very crash class by
+        -- taking file I/O out of hot callbacks.
+        if arrived[name] or guessed[name] then
+            log.debug(string.format("icon load %-28s %s", name,
+                arrived[name] and "arrived" or "did not arrive"))
         else
             log.say(string.format("icon load %-28s did not arrive", name))
         end
+        guessed[name] = nil
     end
 
 end
@@ -234,9 +247,10 @@ function M.shutdown()
     clock.cancel(PUMP_ENTRY)
 end
 
-local function want(name)
+local function want(name, speculative)
     if requested[name] or queued[name] then return end
 
+    if speculative then guessed[name] = true end
     queued[name] = true
     queue[#queue + 1] = name
 
@@ -391,7 +405,7 @@ function M.get(item_id)
                     retried[key] = true
                     alternates[key] = item_id
                     for _, cat in ipairs(CATEGORIES) do
-                        want(cat .. "_" .. item_id)
+                        want(cat .. "_" .. item_id, true)
                     end
                     return nil
                 end
@@ -474,7 +488,7 @@ function M.get(item_id)
             if base then
                 for _, cat in ipairs(CATEGORIES) do
                     local alt = cat .. "_" .. base
-                    if alt ~= name then want(alt) end
+                    if alt ~= name then want(alt, true) end
                 end
                 alternates[key] = base
                 waited[key] = 0
@@ -616,7 +630,7 @@ function M.reset()
     arrived = {}
     warm_list, warm_at = nil, 0
     retries_left = RETRY_BUDGET
-    queue, queued = {}, {}
+    queue, queued, guessed = {}, {}, {}
     sighted, sighted_at = nil, 0
 end
 
