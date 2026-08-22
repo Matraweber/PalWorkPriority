@@ -520,7 +520,7 @@ end
 -- matter, so the diagnostics fire themselves the first time a tile is drawn.
 local probed = false
 
-local function picture(key, px, py, size, texture, token)
+local function picture(key, px, py, size, item_id, token)
     if not probed then
         probed = true
         -- Only the lookup. The image probe reported that UMG.Image has no
@@ -572,16 +572,17 @@ local function picture(key, px, py, size, texture, token)
         -- works there is nothing here for the table, the queue or the
         -- rationing to do.
         --
-        -- The old route stays underneath while the new one is unproven, and
-        -- comes out in its own change once it is.
+        local soft = item_id and icons.soft_for(item_id) or nil
         local done = false
-        if item_of[key] then
-            done = icons.apply(item_of[key], img)
-            if done then pcall(function() img:SetOpacity(1.0) end) end
+        if soft ~= nil then
+            -- bMatchSize true, matching the call this replaces. The note in
+            -- overlay.lua earned the hard way says a brush with no size
+            -- reports success and draws nothing, and the canvas slot decides
+            -- the layout regardless of what the brush thinks it measures.
+            done = pcall(function() img:SetBrushFromSoftTexture(soft, true) end)
         end
 
-        if not done and texture then
-            apply_texture(img, texture)
+        if done then
             pcall(function() img:SetOpacity(1.0) end)
         else
             -- Kept, not hidden. A hidden widget reports no hover, and the
@@ -654,12 +655,16 @@ local function tile(key, at, item, have, top)
 
     item_of[key] = item
 
-    local texture = icons.get(item)
-    picture(key, px + 4, py + 4, TILE - 8, texture, item .. (texture and "+" or "-"))
+    -- The soft pointer route: the game is asked whether this item has an icon
+    -- and the engine streams it. No load is issued here, so a page of tiles
+    -- costs lookups rather than forty blocking asset loads rationed out over
+    -- ten seconds, which is what made this tab crawl.
+    local has_icon = icons.has(item)
+    picture(key, px + 4, py + 4, TILE - 8, item, item .. (has_icon and "+" or "-"))
 
     -- Without an icon the tile would be an anonymous square, so it falls back
     -- to as much of the name as fits rather than to nothing.
-    if not texture then
+    if not has_icon then
         local lines = name_lines(item)
         local step = 11
         local first = py + TILE / 2 - (#lines * step) / 2 - 1
@@ -831,6 +836,13 @@ local function ensure_amount_box()
     end
     pcall(function() amount_box:SetVisibility(0) end)
 
+    if editing.seed then
+        local seed = editing.seed
+        editing.seed = nil
+        pcall(function() amount_box:SetText(make_ftext(seed)) end)
+        pcall(function() amount_box:SetHintText(make_ftext("new ceiling")) end)
+    end
+
     if edit_focus then
         edit_focus = false
         pcall(function() amount_box:SetKeyboardFocus() end)
@@ -880,13 +892,18 @@ local function poll_amount(cfg)
 end
 
 local function begin_edit(rule, row)
-    editing = { work = rule.work, item = rule.item, row = row }
+    -- The starting value travels with the request rather than being written
+    -- here. On the first edit of a session the box does not exist yet, so the
+    -- SetText that used to sit here went nowhere and the field opened empty
+    -- over the top of the old number, which read as a broken overlay rather
+    -- than something to type in.
+    editing = {
+        work = rule.work,
+        item = rule.item,
+        row = row,
+        seed = tostring(rule.amount or ""),
+    }
     edit_focus = true
-    if alive(amount_box) then
-        pcall(function()
-            amount_box:SetText(make_ftext(tostring(rule.amount or "")))
-        end)
-    end
 end
 
 local function hide_search()
@@ -959,7 +976,13 @@ end
 -- A tab bar, the first thing Creative Menu shows and the clearest way to say
 -- what screen you are on and what else there is.
 local function draw_tabs(active)
-    stripe("tabbar", 0, 0, W)
+    -- Flush with the backdrop, which sits at X - PAD and is W + PAD*2 wide.
+    -- Three different insets were in play here: the backdrop bled to the
+    -- panel edge, this bar stopped one pad short of it, and the row stripes
+    -- stopped another pad short of that, so nothing lined up with anything.
+    -- A header bar reads as a title bar when it runs the full width and as a
+    -- mistake when it runs almost the full width.
+    stripe("tabbar", 0, -PAD, W + PAD * 2)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
@@ -1021,9 +1044,21 @@ local function draw_list(cfg, totals)
     draw_tabs("list")
     local row = 2
 
-    line("sub", row, PAD,
-        "click a job to change it, a number to adjust it, remove to delete",
-        "dim", 13)
+    -- The instruction line doubles as the editor's label. A text field that
+    -- appears over a number with no caption leaves you guessing which of the
+    -- two numbers it replaces, and "click a job to change it" is not the
+    -- sentence you need while typing.
+    if editing ~= nil then
+        line("sub", row, PAD,
+            "setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
+            editing.item .. "  |  type a number, then click anywhere to save",
+            "action", 13)
+    else
+        line("sub", row, PAD,
+            "click a number to type a new ceiling, a job to change it, " ..
+            "remove to delete",
+            "dim", 13)
+    end
     row = row + 1
 
     if #rules == 0 then
