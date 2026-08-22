@@ -1,0 +1,10 @@
+# One line ending, decided rather than drifted into.
+#
+# The repo was CRLF because it started on Windows, and successive edit scripts
+# rewrote files as LF a few at a time, so it ended up twelve one way and
+# twenty eight the other. Lua and Python do not care, but a whole-file diff
+# every time a line ending flips buries the two lines that actually changed.
+#
+# LF everywhere, normalised on commit. Nothing here needs CRLF: UE4SS reads
+# the Lua, python reads the tools, and both are happy either way.
+* text=auto eol=lf
