@@ -514,8 +514,26 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 end
 
 -- Text on one of the list's rows.
+-- Text centred in its stripe, not merely placed on the same row.
+--
+-- stripe() puts its slab's top at row*LINE - 3 and stands ROW_H tall, while
+-- this put the text's top at row*LINE. Two different tops, so nothing was
+-- centred and the error grew with the font: barely visible on a 17pt rule
+-- row, plainly wrong on the 20pt header and on "+ add a rule".
+--
+-- A text block stands about 1.35 times its point size, so centring is the
+-- stripe's middle less half of that. DEFAULT_PT has to match text_at's own
+-- default or headings drift again.
+local DEFAULT_PT = 20
+
 local function line(key, row, col, text, colour_key, points)
-    text_at(key, col, row * LINE, text, colour_key, points)
+    -- pt is passed on, never the caller's nil. text_at reads nil as "leave
+    -- the size alone", so an unsized line kept whatever the recycled widget
+    -- last had, usually UMG's 24, while this centred it as though it were 20.
+    -- Centring cannot be right while the size is a guess.
+    local pt = points or DEFAULT_PT
+    local y = (row * LINE - 3) + (ROW_H - pt * 1.35) / 2
+    text_at(key, col, y, text, colour_key, pt)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1033,9 +1051,13 @@ local function draw_tabs(active)
         -- is the quieter convention and cannot overhang anything.
         -- Drawn in the accent colour. The first attempt used slab's default,
         -- which is the row background: a dark rule on a dark bar, invisible.
+        -- Sized and placed from the word itself. Capitals at 20pt run about
+        -- 0.62 of the point size each, so the rule is as wide as the label
+        -- and starts where the label starts, rather than the constant plus
+        -- fudge that left it hanging off to one side.
         if on then
-            slab("tabsel:" .. tab.key, x - 4, TAB_H - 8,
-                #tab.label * 14 + 10, 3, COLOUR.tab_on)
+            local w = #tab.label * 20 * 0.62
+            slab("tabsel:" .. tab.key, x, TAB_H - 6, w, 3, COLOUR.tab_on)
         end
 
         line(tab.key, 0, x, tab.label, on and "tab_on" or "dim", 20)
@@ -1578,7 +1600,18 @@ function M.handle_click(cfg, dir)
         -- set it" is honoured when the click lands on empty panel.
         return false
     end
-    return M.apply(cfg, what, dir, true)
+
+    -- Reported, not swallowed. ui.bind_mouse wraps this whole call in a bare
+    -- pcall and throws the message away, so a click that hit its target and
+    -- then failed looked exactly like a click that never landed: the hit test
+    -- said "item", and nothing happened, and nothing said why.
+    local ok, result = pcall(M.apply, cfg, what, dir, true)
+    if not ok then
+        log.warn("click on " .. tostring(what.kind) .. " failed: " ..
+            tostring(result))
+        return false
+    end
+    return result
 end
 
 -- What a row does, whichever way it was reached.
