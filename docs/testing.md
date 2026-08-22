@@ -157,3 +157,46 @@ answer arrives fast either way.
 Also worth keeping: the old build only got 292 of 753 forced passes through
 its queue; the clock ran essentially all of them. Same machine, same world,
 2.5 times the completed work.
+
+## What can be tested without a person (22 August)
+
+### Driven from outside, no hands needed
+
+| action | command |
+|---|---|
+| open / close the panel | `remote.py open` / `close` |
+| switch screen | `remote.py "mode item"` / `mode list` |
+| click anything on it | `remote.py "pwp panel click item Wood"` |
+| ... a rule's ceiling, job, remove | `click rule 1` / `click job 1` / `click drop 1` |
+| ... a tab, close, add, back, show-all | `click tab add` / `click close` / `click new` / `click back` / `click toggle_all` |
+| keyboard navigation | `pwp panel nav up\|down\|left\|right` |
+| type into the picker's filter | `pwp panel filter Wood` |
+| type a ceiling into an open box | `pwp panel type 4200` |
+| read what is on screen | `pwp panel state` |
+| photograph it | `remote.py snap` |
+| every other mod command | `pwp status`, `limit`, `scope`, `dry`, `live`, ... |
+| swap panel / overlay / icons code | `remote.py reload` |
+| the whole scheduler, headless | `server.py start`, then any of the above with `--server` |
+
+`pwp panel` is one command with a dispatcher inside panel.lua, which hot
+reloads. Every new test action goes there and costs no restart. That was the
+point: main.lua cannot be swapped, so a command added there costs a game
+restart to try, and the panel is the part that changes most.
+
+### Still needs a restart
+
+Code in the five modules that register with UE4SS: `main`, `ui`, `clock`,
+`demand`, `net`. A registered hook cannot be unregistered, so swapping the
+module that owns one leaves the game holding a callback into code that no
+longer exists.
+
+`caps`, `palapi`, `scheduler` and `workdefs` hold no registrations and look
+swappable, but `ui` and `demand` hold them as locals and cannot themselves
+reload. Swapping one would leave half the mod on the new copy and half on the
+old, which is worse than a restart.
+
+### Still needs a person
+
+The Monitoring Stand grid in `ui.lua`. It draws into the game's own menu, so
+it only exists while somebody has that menu open, and nothing outside the game
+can open it. Everything the panel does is now reachable; the stand is not.

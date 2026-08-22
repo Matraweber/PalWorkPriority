@@ -491,6 +491,13 @@ end
 -- Drives the panel's own click handler by name, so an interaction can be
 -- tested without a person and a mouse. The panel owns the input mode while it
 -- is open, which is exactly when its clicking most needs testing.
+-- The one door into the panel's own test actions. Everything behind it lives
+-- in panel.lua, which hot reloads, so adding a new one never costs a restart
+-- again. This is the last panel command that should ever need adding here.
+COMMANDS.panel = function(args)
+    log.say(panel.command(cfg, args))
+end
+
 COMMANDS.click = function(args)
     local kind, rest = (args or ""):match("^%s*(%S+)%s*(.*)$")
     if kind == nil then

@@ -1592,6 +1592,90 @@ function M.activate(cfg, dir)
 end
 
 -- Returns true when the click was ours, so the caller leaves the grid alone.
+-- One way in for every test action, so new ones cost no restart.
+--
+-- main.lua cannot be hot swapped, so each command added there costs a game
+-- restart to try. This module can, so a single generic command over there and
+-- a dispatcher here means every future panel action is reachable by editing
+-- one hot-reloadable file. That is the difference between testing a change in
+-- ten seconds and testing it in two minutes with somebody else's hands.
+--
+--   pwp panel click item Wood     click a picker tile
+--   pwp panel click rule 1        the first rule's ceiling
+--   pwp panel click job 1         its work type
+--   pwp panel click drop 1        its remove
+--   pwp panel click tab add       a tab: add, list
+--   pwp panel click close|new|back|toggle_all
+--   pwp panel nav up|down|left|right
+--   pwp panel filter <text>       type into the picker's filter
+--   pwp panel type <number>       type into an open ceiling box and commit
+--   pwp panel state               what is on screen right now
+function M.command(cfg, args)
+    local verb, rest = tostring(args or ""):match("^%s*(%S*)%s*(.-)%s*$")
+    rest = (rest ~= "" and rest) or nil
+
+    if verb == "click" then
+        local kind, arg = tostring(rest or ""):match("^(%S*)%s*(.-)$")
+        return M.click_named(cfg, kind, (arg ~= "" and arg) or nil, -1)
+    end
+
+    if verb == "nav" then
+        if not M.open then return "the panel is shut" end
+        if rest == "up" then M.move(-1) return "moved up"
+        elseif rest == "down" then M.move(1) return "moved down"
+        elseif rest == "left" or rest == "right" then
+            local what = hits[order[sel]]
+            if what == nil then return "nothing selected" end
+            local ok, r = pcall(M.apply, cfg, what, rest == "left" and -1 or 1)
+            if not ok then return "failed: " .. tostring(r) end
+            return "applied " .. rest .. " to " .. tostring(what.kind)
+        end
+        return "use nav up|down|left|right"
+    end
+
+    if verb == "filter" then
+        if not alive(search_box) then return "no filter box on this screen" end
+        search_text = rest or ""
+        pcall(function() search_box:SetText(make_ftext(search_text)) end)
+        return "filter is now '" .. search_text .. "'"
+    end
+
+    if verb == "type" then
+        if editing == nil then return "no ceiling box is open" end
+        local n = tonumber(tostring(rest or ""):match("%d+"))
+        if n == nil then return "give a number" end
+        -- Straight down the same road the box takes when focus leaves it.
+        local job, item = editing.work, editing.item
+        editing = nil
+        pcall(function() amount_box:SetVisibility(1) end)
+        if n <= 0 then
+            caps.clear(job, item)
+        else
+            caps.set(job, item, n)
+        end
+        M.wants_pass = true
+        return string.format("%s %s set to %d", workdefs.label(job), item, n)
+    end
+
+    if verb == "state" then
+        local kinds = {}
+        for _, key in ipairs(order) do
+            local h = hits[key]
+            if h then
+                kinds[#kinds + 1] = h.kind ..
+                    (h.item and (":" .. h.item) or "") ..
+                    (h.mode and (":" .. h.mode) or "")
+            end
+        end
+        return string.format("screen=%s open=%s rows=%d sel=%d editing=%s | %s",
+            tostring(mode), tostring(M.open), #order, sel,
+            editing and (editing.item or "yes") or "no",
+            table.concat(kinds, ", "))
+    end
+
+    return "use: click | nav | filter | type | state"
+end
+
 -- Click something by name, without a mouse.
 --
 -- The panel holds the input mode while it is open, so a real click is the one
