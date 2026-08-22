@@ -20,6 +20,15 @@ local api = require("palapi")
 
 local M = {}
 
+-- What LoadAsset actually costs, reported by "pwp panel icons".
+M.worst_load = 0
+M.load_ms = 0
+M.loads = 0
+-- The same for StaticFindObject, which every drawn icon goes through.
+M.worst_find = 0
+M.find_ms = 0
+M.finds = 0
+
 -- Why only names are remembered
 --
 -- The first version cached the texture object and checked it was still valid
@@ -74,15 +83,17 @@ local pumping = false
 -- load on the game thread and a filter that matches four hundred items should
 -- not try to load four hundred textures in one frame.
 local PUMP_MS = 100
--- Three, not eight.
+-- Twelve, and the number comes from a measurement rather than a fear.
 --
--- Every one of these is a blocking LoadAsset on the game thread, and the
--- speculative retry queues a couple of dozen at a time for an id the index
--- does not know - so a batch of eight was stalling the frame for most of half
--- a second and the panel timer reported it as time spent nowhere, because it
--- lands between the measured buckets rather than inside them. Three keeps a
--- page filling in about a second while cutting the worst stall to a third.
-local PUMP_BATCH = 3
+-- This was cut to three on the theory that LoadAsset was stalling the frame.
+-- It is not: timed over five hundred loads it averages 0.3ms and has never
+-- exceeded 2ms. The expensive call is StaticFindObject at 13ms, which is what
+-- resolving an icon costs, and that is rationed by the panel instead.
+--
+-- Getting textures into memory quickly is what makes those lookups SUCCEED,
+-- so starving the loader just meant the panel looked up the same icons over
+-- and over and found nothing. Twelve loads is under 4ms a beat.
+local PUMP_BATCH = 12
 
 -- icon name -> whether its load actually produced an object. Written by the
 -- pump, which is the only code that finds out.
@@ -176,7 +187,22 @@ local function pump_one()
         local path = object_path(name)
         -- The pump rides the clock, so this already runs on the game thread
         -- and the load happens in place, with no registration.
+        --
+        -- Timed, because this is the one call in the mod that can block the
+        -- game thread for an unbounded stretch and nothing has ever measured
+        -- it. Every guess at the picker's remaining lag has been an inference
+        -- from a number that turned out to measure something else.
+        local t0 = os.clock()
         pcall(function() LoadAsset(path) end)
+        local took = (os.clock() - t0) * 1000
+
+        M.load_ms = (M.load_ms or 0) + took
+        M.loads = (M.loads or 0) + 1
+        if took > M.worst_load then
+            M.worst_load = took
+            log.say(string.format("icon load %s took %.0fms (worst so far)",
+                name, took))
+        end
 
         -- Said out loud, because "the icon did not appear" has covered a
         -- failed lookup, a load that went nowhere, a texture that would
@@ -265,8 +291,19 @@ end
 -- Only ever a lookup. Wanting something loaded is a separate matter, handled
 -- above at its own pace, and a later frame is what finds it.
 local function find(name)
+    -- Timed. The note above says StaticFindObject measures about 10ms, and if
+    -- that is still true then drawing eighteen icons costs a fifth of a
+    -- second before anything else happens - which is where the picker's whole
+    -- remaining lag would be.
+    local t0 = os.clock()
     local found
     pcall(function() found = StaticFindObject(object_path(name)) end)
+
+    local took = (os.clock() - t0) * 1000
+    M.find_ms = M.find_ms + took
+    M.finds = M.finds + 1
+    if took > M.worst_find then M.worst_find = took end
+
     if real(found) then return found end
 
     want(name)
@@ -518,49 +555,20 @@ function M.get(item_id)
     return nil
 end
 
--- Resolving ahead of time, off the drawing path.
+-- Tried and rejected: resolving ahead of the draw.
 --
--- Icons were only ever looked up while a tile was being drawn, so the cost of
--- finding them landed on the frame that wanted to show them - which is
--- exactly the frame that can least afford it, and why the picker felt heavy
--- on the first visit to every page.
+-- A warm pass walked the picker's list a few ids per beat so the answers
+-- would be known before anybody looked. It made things worse, measurably:
+-- resolving an id means StaticFindObject, which is 13ms on this build, so
+-- three per beat is 400ms of every second spent on the game thread - and it
+-- never converged, because it walks each id ONCE. An id whose texture had not
+-- finished loading was left unresolved and never revisited, so it queued the
+-- load and threw the answer away. 2798 lookups, 37 seconds of game thread,
+-- and 163 of 208 items still unresolved at the end of it.
 --
--- This walks a list a few ids per beat and asks for each one, so by the time
--- somebody opens the picker the answers are already known and drawing is a
--- table lookup. Deliberately small per beat: it shares the pump's queue and
--- must never be the reason a visible icon waits.
-local warm_list = nil
-local warm_at = 0
-local WARM_PER_BEAT = 3
-
--- Called with the ids worth having ready, usually what the bases hold.
-function M.warm(ids)
-    if type(ids) ~= "table" then return end
-    warm_list, warm_at = ids, 0
-end
-
--- One beat's worth. Returns false when there is nothing left to do, so the
--- caller can stop asking.
-function M.warm_step()
-    if warm_list == nil then return false end
-
-    -- Never ahead of the icons somebody is actually looking at.
-    if #queue > 0 then return true end
-
-    local done = 0
-    while done < WARM_PER_BEAT do
-        warm_at = warm_at + 1
-        local id = warm_list[warm_at]
-        if id == nil then
-            warm_list = nil
-            log.debug("icons: warm pass finished")
-            return false
-        end
-        M.get(id)
-        done = done + 1
-    end
-    return true
-end
+-- Resolving on the draw is both cheaper and self-correcting: an icon that is
+-- not ready yet leaves its token stale, so the next refresh asks again, and
+-- the panel budgets how many may be asked per frame.
 
 -- Tried and rejected: the game's own icon pointer.
 --
@@ -628,7 +636,6 @@ function M.reset()
     resolved, requested, waited = {}, {}, {}
     retried, alternates, idle_waits = {}, {}, {}
     arrived = {}
-    warm_list, warm_at = nil, 0
     retries_left = RETRY_BUDGET
     queue, queued, guessed = {}, {}, {}
     sighted, sighted_at = nil, 0

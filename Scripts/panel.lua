@@ -87,11 +87,6 @@ local editing = nil             -- { work, item, row } while a box is open
 -- and a name assigned above its own `local` writes a global and leaves the
 -- real local nil forever.
 local styled_boxes = {}         -- which fields have had their style applied
--- The source list whose icons have already been asked for, compared by
--- identity so a steady screen does not re-queue the same warm every frame.
-local warmed_source = nil
--- Read by main's tick: the picker has queued a warm pass worth stepping.
-M.wants_warm = false
 
 local picker_key = nil          -- { search_text, show_all, totals }
 local picker_hit = nil          -- { list, everything }
@@ -136,6 +131,20 @@ local perf_stock, perf_blank = 0, 0
 -- backdrop. Unmeasured until a 400ms refresh reported every named bucket at
 -- zero, which means the time was somewhere nothing was looking.
 local perf_setup = 0
+
+-- How many icons may be resolved in one refresh. Three keeps the worst frame
+-- near 40ms while a page still fills inside a fifth of a second.
+local ICONS_PER_FRAME = 3
+local icon_budget = ICONS_PER_FRAME
+-- key -> when an icon that failed to resolve may be tried again.
+local icon_retry = {}
+-- How long a failed resolve waits before trying again. Short, because the
+-- usual reason for failing is that the texture is still loading and will be
+-- there within a beat or two; the only cost of asking again is one lookup.
+local ICON_RETRY_S = 0.3
+-- The same figures, frozen at the moment the worst refresh was seen.
+local worst_setup, worst_hover, worst_hits = 0, 0, 0
+local worst_stock, worst_draw, worst_blank = 0, 0, 0
 
 local ftext_mode = nil
 local warned = {}
@@ -1022,7 +1031,33 @@ local function picture(key, px, py, size, item_id, token)
         end
     end
 
+    -- A budget, because resolving an icon is expensive and eighteen of them
+    -- land on one frame.
+    --
+    -- Measured rather than guessed: StaticFindObject averages 12ms on this
+    -- build, and every icon drawn goes through one. A page turn changes all
+    -- eighteen tokens at once, so the frame that draws a new page spent about
+    -- 430ms inside the lookup - the entire remaining lag, and the reason the
+    -- earlier readings blamed loading, which turns out to average 0.3ms.
+    --
+    -- The texture cannot be kept between frames, so the call cannot be
+    -- avoided; it can only be spread. Rows past the budget keep whatever they
+    -- were showing and are picked up on the next refresh a tenth of a second
+    -- later, so a page fills over two or three frames instead of stalling one.
+    local hold = icon_retry[key]
+    if hold and os.clock() < hold and drawn["i:" .. key] ~= token then
+        return
+    end
+
+    if drawn["i:" .. key] ~= token and icon_budget <= 0 then
+        -- Left for the next frame. Nothing is drawn wrong meanwhile: the
+        -- image keeps its old contents and its token stays stale, which is
+        -- exactly the condition that brings us back here.
+        return
+    end
+
     if drawn["i:" .. key] ~= token then
+        icon_budget = icon_budget - 1
         -- The game's own loader first. It takes the item id and does the
         -- rest: finds the icon, streams it, puts it on the Image. When that
         -- works there is nothing here for the table, the queue or the
@@ -1032,12 +1067,20 @@ local function picture(key, px, py, size, item_id, token)
         if texture then
             apply_texture(img, texture, size)
             pcall(function() img:SetOpacity(1.0) end)
+            -- Marked drawn only now. A failed resolve leaves the token stale
+            -- so the next refresh tries again, which is what makes an icon
+            -- appear by itself once it has loaded - the job the "+"/"-" in
+            -- the old token was doing, without its cost.
+            drawn["i:" .. key] = token
         else
+            -- Not before a full second has passed. Without this an item with
+            -- no icon retries every frame and eats the whole budget, starving
+            -- the rows whose icons are really there.
+            icon_retry[key] = os.clock() + ICON_RETRY_S
             -- Kept, not hidden. A hidden widget reports no hover, and the
             -- tile still has to be clickable when its picture is missing.
             pcall(function() img:SetOpacity(0.0) end)
         end
-        drawn["i:" .. key] = token
     end
 end
 
@@ -1173,8 +1216,16 @@ local function list_row(key, at, item, have, top, limited)
             or (limited and RULE_RAIL)
             or TILE_BG)
 
+    -- The token is just the item.
+    --
+    -- It used to carry icons.ready(item) so a tile would redraw when its
+    -- picture finally arrived - but ready() costs a 12ms StaticFindObject the
+    -- first time it is asked about an item, once per row, which is 200ms of a
+    -- page turn spent asking a question that resolving the icon answers
+    -- anyway. picture() marks itself drawn only once it actually applied a
+    -- texture, so an icon that is not there yet comes back on its own.
     picture(key, px + 8, py + math.floor((LIST_H - LIST_ICON) / 2), LIST_ICON,
-        item, item .. (icons.ready(item) and "+" or "-"))
+        item, item)
 
     -- The name takes whatever the count is not using.
     --
@@ -2366,26 +2417,6 @@ local function draw_item_picker(cfg, totals)
     local has_rule = {}
     for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
 
-    -- The WHOLE list's icons, asked for as soon as the picker opens.
-    --
-    -- A page turn was the only place the picker still stalled: eighteen items
-    -- all wanting an icon at once, each a blocking load on the game thread.
-    -- Steady state on a page whose icons are already in memory measures 14ms;
-    -- the frame straight after a page change measured 250 to 500. Measured
-    -- rather than assumed - turning the speculative guessing off entirely
-    -- changed nothing, so it is the ordinary loads, not the clever ones.
-    --
-    -- Prefetching only the next page was tried first and did not help enough:
-    -- the warm pass stands aside while the loader has work, so it barely
-    -- started before the next turn arrived. Asking for everything means the
-    -- whole list is resolved a few seconds after the picker opens and no page
-    -- turn ever loads anything again.
-    if icons.warm and #source > 0 and source ~= warmed_source then
-        warmed_source = source
-        pcall(function() icons.warm(source) end)
-        M.wants_warm = true
-    end
-
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -2535,6 +2566,7 @@ function M.refresh(cfg)
     -- in each five second window, once, with where the time went.
     local t0 = os.clock()
     frame_id = frame_id + 1
+    icon_budget = ICONS_PER_FRAME
 
     -- The typed-ceiling box, when one is open: placed, then read.
     if editing ~= nil then
@@ -2616,16 +2648,27 @@ function M.refresh(cfg)
     blank_unused()
     perf_blank = os.clock() - tb
 
+    -- The breakdown of the WORST refresh, captured when it happens.
+    --
+    -- The report printed the worst total beside whatever the LATEST refresh
+    -- had spent, so the two never described the same frame - which is how a
+    -- 400ms total came to sit beside four buckets reading zero, and why two
+    -- rounds of guessing at the cause went nowhere. Snapshotted here instead.
+    -- perf_worst is in milliseconds; compare in milliseconds.
     local ms = (os.clock() - t0) * 1000
-    perf_worst = math.max(perf_worst, ms)
+    if ms > perf_worst then
+        perf_worst = ms
+        worst_setup, worst_hover, worst_hits = perf_setup, perf_hover, perf_hits
+        worst_stock, worst_draw, worst_blank = perf_stock, perf_draw, perf_blank
+    end
     if (os.clock() - perf_at) > 5.0 then
         perf_at = os.clock()
         if perf_worst > 4.0 then
             log.say(string.format(
                 "panel refresh worst %.1fms  (setup %.1f, hover %.1f/%d, " ..
                 "stock %.1f, draw %.1f, blank %.1f)",
-                perf_worst, perf_setup * 1000, perf_hover * 1000, perf_hits,
-                perf_stock * 1000, perf_draw * 1000, perf_blank * 1000))
+                perf_worst, worst_setup * 1000, worst_hover * 1000, worst_hits,
+                worst_stock * 1000, worst_draw * 1000, worst_blank * 1000))
         end
         perf_worst = 0
     end
@@ -2890,6 +2933,13 @@ function M.command(cfg, args)
         local dead, waiting = icons.unresolved()
         log.say(string.format("icons: %d gave up, %d still loading",
             #dead, #waiting))
+        log.say(string.format("  loads: %d, worst %.0fms, average %.1fms",
+            icons.loads or 0, icons.worst_load or 0,
+            (icons.loads or 0) > 0 and (icons.load_ms / icons.loads) or 0))
+        log.say(string.format("  finds: %d, worst %.0fms, average %.2fms, total %.0fms",
+            icons.finds or 0, icons.worst_find or 0,
+            (icons.finds or 0) > 0 and (icons.find_ms / icons.finds) or 0,
+            icons.find_ms or 0))
         for _, id in ipairs(dead) do log.say("  no icon: " .. id) end
         for _, id in ipairs(waiting) do log.say("  waiting: " .. id) end
         return string.format("%d without an icon", #dead)
