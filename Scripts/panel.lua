@@ -175,7 +175,6 @@ local PAD = 18
 -- the stripe drawn behind the row.
 local ROW_PT     = 17
 local ITEM_CHARS = 16
-local TILE_CHARS = 9      -- what fits across a tile at 12pt
 local COL_ITEM = 210
 local COL2     = 480      -- what storage holds
 local COL_CAP  = 650      -- the limit it stops at
@@ -202,28 +201,34 @@ local WELL_INSET = 12
 local WELL_W     = 118
 local COL2_R     = COL_CAP - WELL_INSET - 18                  -- storage, clear of the well
 local COL_CAP_R  = COL_CAP - WELL_INSET + WELL_W - WELL_INSET -- inside the well
--- The picker is a grid, and these are what make it one. Eight across is
--- Creative Menu's shape and it is a good one: wide enough that a page is
--- worth paging to, narrow enough that a tile stays big enough to recognise.
--- Ten across rather than eight, because the grid was 664px wide inside a
--- 1014px panel and the 350px to its right was doing nothing.
---
--- A tile is taller than it is wide now: the icon keeps its square and the
--- name goes underneath. Icon-only tiles were unusable. Two of them read "2k"
--- and could not be told apart, two spheres differed only in hue, and the
--- filter searched by a name the grid never showed, so it only worked for
--- somebody who already knew every item id by heart.
--- Twelve, which is what the footer bars' width actually holds. At ten the
--- grid ended 176 pixels short of the bars directly beneath it and the gap
--- read as a rendering fault rather than as margin.
-local COLS = 12
-local TILE = 76          -- width, and the icon's square
-local ICON = 48          -- the picture, in the tile's top band
-local TILE_H = 84        -- the icon, and its count beneath
-local GAP = 8
-local GRID_ROWS = 4
 
-local PER_PAGE = COLS * GRID_ROWS
+-- The picker as a list of named rows, not a grid of pictures.
+--
+-- The grid was the right shape for a shelf you already know and the wrong one
+-- for finding something. Eleven unlabelled 40px icons mean hover, read the
+-- name 877 pixels away at the top of the panel, move, repeat - and the two
+-- most common targets, Stone and Wood, are both grey-brown lumps at that
+-- size. Tick "show every item" and it becomes 233 items over five pages of
+-- the same. A name column answers it: three across so a page still holds
+-- eighteen, names read in parallel instead of one per hover, and the search
+-- field above finally filters something a reader can see.
+--
+-- The objection to names on TILES was that they clipped, wrapped and broke
+-- words across lines in a 76 pixel square. That objection is about the square,
+-- not about names: here a name gets 210 pixels of its own column.
+local LIST_COLS    = 3
+local LIST_GUTTER  = 12
+local LIST_W       = math.floor((W - PAD * 2 - LIST_GUTTER * (LIST_COLS - 1))
+                                / LIST_COLS)
+local LIST_H       = 36
+local LIST_PITCH   = LIST_H + 4
+local LIST_ROWS    = 6
+local LIST_PER_PAGE = LIST_COLS * LIST_ROWS
+local LIST_ICON    = 28
+local LIST_NAME_X  = 44
+local LIST_COUNT_R = LIST_W - 10
+-- The name's budget is worked out per row from what the count leaves, so
+-- there is no fixed character count here any more.
 
 -- No minimum height, deliberately. Padding the list up to the picker's height
 -- was tried to stop the panel resizing on a tab switch, and it is the wrong
@@ -324,6 +329,12 @@ local ROW_SEL   = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
 -- The cyan edge that says "this one", independent of fill luminance. A row
 -- has the caret; a tile has no room for one and gets this instead.
 local ACCENT    = { R = 0.42,  G = 0.80,  B = 1.00,  A = 1.00 }
+-- "this one already has a rule", on the same left rail the cursor uses. It
+-- was a 6x5 pixel dot in the corner of a tile, which is under the threshold
+-- of being noticed at all and, under deuteranopia, the same colour as Remove.
+-- A full-height bar is position-encoded, so it survives any colour vision and
+-- it scans down a column.
+local RULE_RAIL = { R = 0.558, G = 0.847, B = 0.631, A = 1.00 }
 -- Inset, darker than the row it sits in, which is how every text field in
 -- every dark interface says "type here".
 -- Measurably darker than the row it sits in, not merely darker than nothing.
@@ -943,8 +954,6 @@ end
 -- When it still will not fit, the last line is kept rather than the next one
 -- along. What distinguishes these names is nearly always the tail: Gold, Mega,
 -- Seed. Dropping the tail to keep the middle would rebuild the bug.
-local NAME_COLS = 11
-local NAME_LINES = 3
 
 -- Placing text by its right edge or its centre.
 --
@@ -992,130 +1001,71 @@ local function right_x(edge, text, pt, factor)
     return edge - text_w(text, pt, factor)
 end
 
-local function name_lines(item)
-    local words = {}
+
+-- An item id as words. "Food_BerryJuice" reads "Food Berry Juice".
+--
+-- The second pattern keeps runs of capitals together, so HPMedicine breaks as
+-- HP Medicine rather than into single letters.
+local function pretty_name(item)
+    local out = {}
     for chunk in tostring(item):gmatch("[^_%s]+") do
-        -- BerrySeed becomes Berry Seed. The second pattern keeps runs of
-        -- capitals together, so HPMedicine breaks as HP Medicine rather than
-        -- into single letters.
-        chunk = chunk:gsub("(%l)(%u)", "%1%2"):gsub("(%u)(%u%l)", "%1%2")
-        for w in chunk:gmatch("[^]+") do
-            while #w > NAME_COLS do
-                words[#words + 1] = w:sub(1, NAME_COLS)
-                w = w:sub(NAME_COLS + 1)
-            end
-            if #w > 0 then words[#words + 1] = w end
-        end
+        chunk = chunk:gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2")
+        out[#out + 1] = chunk
     end
-
-    local lines = {}
-    for _, w in ipairs(words) do
-        local last = lines[#lines]
-        if last and (#last + 1 + #w) <= NAME_COLS then
-            lines[#lines] = last .. " " .. w
-        else
-            lines[#lines + 1] = w
-        end
-    end
-
-    if #lines > NAME_LINES then
-        local kept = {}
-        for n = 1, NAME_LINES - 1 do kept[n] = lines[n] end
-        kept[NAME_LINES] = lines[#lines]
-        lines = kept
-    end
-
-    if #lines == 0 then lines[1] = tostring(item) end
-    return lines
+    local name = table.concat(out, " ")
+    if name == "" then return tostring(item) end
+    return name
 end
 
--- One item: a slab, its icon, how many are in storage, and a name when there
--- is no icon to be had.
-local function tile(key, at, item, have, top, limited)
-    local col = at % COLS
-    local row = math.floor(at / COLS)
-    local px = PAD + col * (TILE + GAP)
-    local py = top + row * (TILE_H + GAP)
+local function fit_name(text, chars)
+    text = tostring(text)
+    if #text <= chars then return text end
+    return text:sub(1, chars - 2) .. ".."
+end
 
-    slab(key, px, py, TILE, TILE_H, TILE_BG)
+-- One item as a row: a left rail, its icon, its name, and how many are in
+-- storage. The rail carries two things that never collide - the cursor, and
+-- whether this item already has a rule - because the cursor is somewhere else
+-- whenever you are reading the rail for the other reason.
+local function list_row(key, at, item, have, top, limited)
+    local col = at % LIST_COLS
+    local row = math.floor(at / LIST_COLS)
+    local px = PAD + col * (LIST_W + LIST_GUTTER)
+    local py = top + row * LIST_PITCH
+
+    slab(key, px, py, LIST_W, LIST_H, TILE_BG)
     tile_face[key] = stripes[key]
 
-    -- A tile cannot carry the "> " caret a row does, so the selection gets an
-    -- edge instead. Always drawn, in the tile's own colour when it is not the
-    -- current one, so there is nothing to retire when the cursor moves on.
-    slab("selbar:" .. key, px, py, 3, TILE_H,
-        row_is_current(key) and ACCENT or TILE_BG)
+    slab("rail:" .. key, px, py, 3, LIST_H,
+        (row_is_current(key) and ACCENT)
+            or (limited and RULE_RAIL)
+            or TILE_BG)
 
-    item_of[key] = item
+    picture(key, px + 8, py + math.floor((LIST_H - LIST_ICON) / 2), LIST_ICON,
+        item, item .. (icons.ready(item) and "+" or "-"))
 
-    -- The icon keeps the top square of the tile; the name sits under it.
-    -- The icon gets the top band only. Sized to leave room below rather than
-    -- filling the tile, because the count and the name were being drawn over
-    -- the bottom of the picture.
-    local has_icon = icons.ready(item)
-    picture(key, px + 14, py + 4, ICON, item,
-        item .. (has_icon and "+" or "-"))
-
-    -- The name, always, not only when the icon is missing.
+    -- The name takes whatever the count is not using.
     --
-    -- This is the fix the review was most insistent about: a grid of pictures
-    -- with no words cannot be read, cannot be searched, and cannot be learned.
-    -- Two tiles showed a brown log and a blue crystal, both labelled 2k, and
-    -- nothing on screen could tell you which was which.
-    -- No name while there is a picture. Item ids do not fit a 76 pixel
-    -- square: they wrapped, broke a word across two lines, and ran past the
-    -- tile's own edge, and shrinking them until they fit made the name the
-    -- smallest text on the panel. The picker already names whatever the
-    -- pointer is over, in full, at the top of the screen.
-    --
-    -- Without a picture it is the only thing there is, though. Dropping it
-    -- outright left rows of blank grey squares for every icon still queued,
-    -- which is worse than a clipped word.
-    -- Named only when there is no picture.
-    --
-    -- Both halves of this were learned the hard way. Names on every tile
-    -- clutter a grid whose whole point is recognising things at a glance, and
-    -- the panel already names whatever the pointer is over, in full, at the
-    -- top. But dropping them outright left nine of fifteen search results as
-    -- bare grey squares, because a search returns items the base owns none
-    -- of: no count, and often no icon loaded yet either.
-    --
-    -- So the name is the fallback it always should have been. An icon speaks
-    -- for itself; nothing else does.
-    if not has_icon then
-        local lines = name_lines(item)
-        local first = py + 14
-        for n = 1, math.min(#lines, 3) do
-            text_at("n" .. n .. ":" .. key,
-                centre_x(px, TILE, lines[n], 11), first + (n - 1) * 13,
-                lines[n], "item", 11, true)
-        end
-    end
+    -- A fixed budget cut every name to sixteen characters, which on the full
+    -- list produced three rows reading "Baked Meat Ice.." that could not be
+    -- told apart - the exact failure the names were added to fix. Most items
+    -- on that list are not in storage at all and so have no count, and their
+    -- names should have the whole row.
+    local count = have > 0 and group_digits(have) or nil
+    local room = LIST_COUNT_R - LIST_NAME_X - 8
+    if count then room = room - text_w(count, 14, DIGIT_W) - 10 end
 
-    -- The count, exact. The picker said 8k where the rules list said 8299, so
-    -- the two screens disagreed about the number you were about to set a limit
-    -- against, and two different piles both read 2k.
-    -- Centred under the icon, which is itself centred at px + (TILE-ICON)/2.
-    -- Pinned at px + 7 before, so a one-digit count sat 27 pixels left of the
-    -- picture above it and every tile in the row leaned differently depending
-    -- on how many digits it happened to have. It read as a rendering fault,
-    -- because it was one.
-    if have > 0 then
-        -- Grouped, like the same figure on the rules list. The picker said
-        -- 16600 while the row it feeds said 16,600, so the two screens wrote
-        -- the same number two different ways.
-        local count = group_digits(have)
-        text_at("q:" .. key, centre_x(px, TILE, count, 13, DIGIT_W),
-            py + ICON + 6, count, "title", 13, true)
-    end
+    -- Green while a rule already exists, so the rail and the name agree.
+    text_at("n:" .. key, px + LIST_NAME_X, py + 7,
+        fit_name(pretty_name(item), math.max(6, math.floor(room / (15 * GLYPH_W)))),
+        limited and "atlimit" or "item", 15, true)
 
-    -- Already has a rule. Without this the picker offers items that are
-    -- already limited, identically to ones that are not, and clicking one
-    -- silently resets its limit to the bottom of the ladder.
-    if limited then
-        text_at("lim:" .. key, px + TILE - 20, py + 4, "•", "atlimit", 16, true)
+    if count then
+        text_at("q:" .. key, px + right_x(LIST_COUNT_R, count, 14, DIGIT_W),
+            py + 8, count, "limit", 14, true)
     end
 end
+
 
 
 -- Anything not drawn this frame is emptied rather than destroyed. A destroyed
@@ -2041,7 +1991,7 @@ local function draw_item_picker(cfg, totals)
     icons.new_frame()
 
     local source, everything = picker_source(totals)
-    local pages = math.max(1, math.ceil(#source / PER_PAGE))
+    local pages = math.max(1, math.ceil(#source / LIST_PER_PAGE))
     if page >= pages then page = pages - 1 end
     if page < 0 then page = 0 end
 
@@ -2081,7 +2031,7 @@ local function draw_item_picker(cfg, totals)
     line("sub", 5, PAD, caption, "dim", 13)
 
     local top = 6 * LINE
-    local from = page * PER_PAGE + 1
+    local from = page * LIST_PER_PAGE + 1
 
     grid_from, grid_count = #order + 1, 0
 
@@ -2089,11 +2039,11 @@ local function draw_item_picker(cfg, totals)
     local has_rule = {}
     for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
 
-    for i = from, math.min(from + PER_PAGE - 1, #source) do
+    for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
 
-        tile(key, i - from, id, totals[id] or 0, top, has_rule[id])
+        list_row(key, i - from, id, totals[id] or 0, top, has_rule[id])
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
     end
@@ -2102,8 +2052,8 @@ local function draw_item_picker(cfg, totals)
     -- from the page size. Reserving all five rows for ten items left the
     -- panel with an empty half and everything below it stranded at the
     -- bottom of a box nothing filled.
-    local tall = math.max(1, math.ceil(grid_count / COLS))
-    local row = 6 + math.ceil((tall * (TILE_H + GAP)) / LINE) + 1
+    local tall = math.max(1, math.ceil(grid_count / LIST_COLS))
+    local row = 6 + math.ceil((tall * LIST_PITCH) / LINE) + 1
 
     if pages > 1 then
         line("prev", row, PAD + 10, "<   Previous",
@@ -2429,11 +2379,12 @@ function M.nav(cfg, what)
         if what == "left" then return M.move(-1) end
         if what == "right" then return M.move(1) end
 
-        -- Up and down cross a whole row of tiles. Only while the selection is
-        -- among them: on the buttons underneath, a row is one step.
+        -- Up and down cross a whole row of the list. Only while the
+        -- selection is among them: on the buttons underneath, a row is one
+        -- step.
         local at = sel - grid_from
         if grid_count > 0 and at >= 0 and at < grid_count then
-            local to = at + (what == "up" and -COLS or COLS)
+            local to = at + (what == "up" and -LIST_COLS or LIST_COLS)
             if to >= 0 and to < grid_count then
                 sel = grid_from + to
                 return true
