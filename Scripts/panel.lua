@@ -100,7 +100,7 @@ local warned = {}
 -- centred at any resolution without ever asking how big the viewport is,
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
-local W = 1010
+local W = 1050
 -- Derived, never typed. X was left at -410 when W grew from 820 to 1010, so
 -- the panel stopped being centred and its right edge slid under the game's
 -- own Base Info panel. A width and a left edge that have to be kept in step
@@ -134,9 +134,10 @@ local PAD = 18
 local ROW_PT     = 17
 local ITEM_CHARS = 16
 local COL_ITEM = 210
-local COL2     = 520
-local COL_DONE = 780
-local COL3     = 880
+local COL2     = 480      -- what storage holds
+local COL_CAP  = 650      -- the limit it stops at
+local COL_DONE = 810      -- working or paused
+local COL3     = 920
 local TAB_H = 34
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
@@ -160,6 +161,15 @@ local COLOUR = {
     -- Readable on a pale field rather than on the panel, which is the one
     -- place in here that is not dark.
     hint   = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 },
+    -- Column headings, quieter than the data under them.
+    faint  = { R = 0.46, G = 0.51, B = 0.58, A = 1.00 },
+    -- The limit, so it never reads as the same kind of number as storage.
+    limit  = { R = 0.72, G = 0.78, B = 0.88, A = 1.00 },
+    -- Amber for stopped, which is a warning colour rather than a success one,
+    -- and readable as different from Working without relying on hue alone
+    -- since the words differ too.
+    paused = { R = 1.00, G = 0.72, B = 0.28, A = 1.00 },
+    working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -961,7 +971,7 @@ local function ensure_amount_box()
     pcall(function() slot = amount_box.Slot end)
     if alive(slot) then
         pcall(function()
-            slot:SetPosition({ X = X + COL2 - 6, Y = Y + editing.row * LINE - 4 })
+            slot:SetPosition({ X = X + COL_CAP - 6, Y = Y + editing.row * LINE - 4 })
         end)
         pcall(function() slot:SetSize({ X = 210, Y = 30 }) end)
     end
@@ -1113,7 +1123,11 @@ local function draw_tabs(active)
     -- stopped another pad short of that, so nothing lined up with anything.
     -- A header bar reads as a title bar when it runs the full width and as a
     -- mistake when it runs almost the full width.
-    stripe("tabbar", 0, -PAD, W + PAD * 2)
+    -- Placed with slab, not stripe. stripe() subtracts 6 from its x for the
+    -- row insets, which put the header band six pixels left of the panel it
+    -- sits in, so a strip of chrome hung over the edge onto the 3D world.
+    -- Measured off a screenshot: band at 431, panel at 437.
+    slab("tabbar", -PAD, -3, W + PAD * 2, ROW_H)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
@@ -1155,6 +1169,14 @@ local function draw_tabs(active)
 
     hit("tab_close", { kind = "close" })
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
+
+    -- What this is and what it does, which the panel never said. Opening it
+    -- cold gave you two tabs, a caption about clicking things, and numbers
+    -- with no stated meaning.
+    line("title", 1, PAD, "Pal Work Priority", "title", 22)
+    line("why", 2, PAD,
+        "Your Pals stop a job once base storage reaches the limit you set.",
+        "dim", 14)
 
     -- Counted rather than assumed. The keyboard cursor starts at order[1],
     -- which is whatever the tab bar registered first, so switching screens
@@ -1204,7 +1226,7 @@ local function draw_list(cfg, totals)
     local rules = rule_list(cfg)
 
     draw_tabs("list")
-    local row = 2
+    local row = 3
 
     -- The instruction line doubles as the editor's label. A text field that
     -- appears over a number with no caption leaves you guessing which of the
@@ -1217,11 +1239,22 @@ local function draw_list(cfg, totals)
             "action", 13)
     else
         line("sub", row, PAD,
-            "Click a number to type a new ceiling, a job to change it, " ..
-            "remove to delete",
+            "Click the limit to change it, the job to swap it, " ..
+            "Remove to delete the rule.",
             "dim", 13)
     end
     row = row + 1
+
+    -- Names both numbers. Without this the pair reads as progress towards a
+    -- goal, which is the opposite of what it means.
+    if #rules > 0 then
+        line("h_job",  row, PAD,      "JOB",        "faint", 12)
+        line("h_item", row, COL_ITEM, "ITEM",       "faint", 12)
+        line("h_have", row, COL2,     "IN STORAGE", "faint", 12)
+        line("h_cap",  row, COL_CAP,  "LIMIT",      "faint", 12)
+        line("h_st",   row, COL_DONE, "STATUS",     "faint", 12)
+        row = row + 1
+    end
 
     if #rules == 0 then
         line("empty", row, PAD, "No rules yet. Every job runs unlimited", "dim")
@@ -1242,11 +1275,25 @@ local function draw_list(cfg, totals)
             local editing_this = editing ~= nil
                 and editing.work == rule.work and editing.item == rule.item
 
+            -- Two named columns, not "8212 / 8000".
+            --
+            -- That pair, in green, beside the word Done, is exactly how a
+            -- game writes quest progress, so it read as "8212 of 8000
+            -- gathered, complete" when it means "you are 212 over the limit
+            -- and Lumbering has stopped". The panel was teaching the opposite
+            -- of what it does. Storage is neutral, the limit is its own
+            -- column under its own heading, and the status says which of the
+            -- two states you are in rather than congratulating you.
             line("amt" .. i, row, COL2,
-                editing_this and ""
-                    or (short_amount(have) .. " / " .. short_amount(rule.amount)),
-                met and "met" or "unmet", ROW_PT)
-            line("done" .. i, row, COL_DONE, met and "Done" or "", "met", ROW_PT)
+                short_amount(have), "title", ROW_PT)
+
+            line("cap" .. i, row, COL_CAP,
+                editing_this and "" or short_amount(rule.amount),
+                "limit", ROW_PT)
+
+            line("done" .. i, row, COL_DONE,
+                met and "PAUSED" or "Working",
+                met and "paused" or "working", ROW_PT)
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to
@@ -1265,7 +1312,11 @@ local function draw_list(cfg, totals)
     stripe("new", row, PAD, W - PAD * 2)
     line("new", row, PAD, "+   Add a rule", "action")
 
-    return row + 2
+    -- One row of breathing space, not two. The panel is sized from what it
+    -- draws, so a spare row is 34 pixels of empty backdrop; with the top
+    -- padding at 15 that left the bottom nearly four times deeper than the
+    -- top and the whole thing looked bottom-heavy.
+    return row + 1
 end
 
 -- A rule caps what a base produces, so an item the base cannot produce has
@@ -1376,23 +1427,24 @@ local function draw_item_picker(cfg, totals)
     -- Ore, so the name has to be somewhere, and Creative Menu puts it here.
     local current = hover_key or was_sel
     local under = current and was_hit[current]
-    line("naming", 1, PAD,
-        (under and under.kind == "item") and under.item or "", "title", 22)
+    line("naming", 3, PAD,
+        (under and under.kind == "item") and under.item or "", "title", 18)
 
-    ensure_search(2)
+    ensure_search(4)
 
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
-    line("hint", 2, PAD + 10,
+    line("hint", 4, PAD + 10,
         search_text == "" and "Type to filter" or "", "hint", 15)
 
-    line("sub", 3, PAD, string.format("%s,  %d item(s),  page %d of %d",
+    line("sub", 5, PAD, string.format("%s,  %d %s,  page %d of %d",
         search_text ~= "" and ("Matching " .. search_text)
             or (everything and "Every item with a job"
                 or "What your storage holds"),
-        #source, page + 1, pages), "dim", 13)
+        #source, #source == 1 and "item" or "items",
+        page + 1, pages), "dim", 13)
 
-    local top = 4 * LINE
+    local top = 6 * LINE
     local from = page * PER_PAGE + 1
 
     grid_from, grid_count = #order + 1, 0
@@ -1411,7 +1463,7 @@ local function draw_item_picker(cfg, totals)
     -- panel with an empty half and everything below it stranded at the
     -- bottom of a box nothing filled.
     local tall = math.max(1, math.ceil(grid_count / COLS))
-    local row = 4 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
+    local row = 6 + math.ceil((tall * (TILE + GAP)) / LINE) + 1
 
     if pages > 1 then
         line("prev", row, PAD + 10, "<   Previous",
