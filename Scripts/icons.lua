@@ -142,22 +142,48 @@ local function pump_one()
         -- apart from a screenshot has not been possible once.
         local landed
         pcall(function() landed = StaticFindObject(path) end)
-        log.say(string.format("icon load %-28s %s", name,
-            real(landed) and "arrived" or "did not arrive"))
+        -- Debug, not say. log.say always writes to file, and to_file does an
+        -- open/write/close per line - so filling one page of the picker was
+        -- eight file opens per beat alongside eight blocking loads, on the
+        -- game thread. Issue #1372's reporter mitigated this very crash class
+        -- by taking file I/O out of hot callbacks. A load that fails is worth
+        -- shouting about; a load that works is not.
+        if real(landed) then
+            log.debug(string.format("icon load %-28s arrived", name))
+        else
+            log.say(string.format("icon load %-28s did not arrive", name))
+        end
     end
 
 end
+
+-- The pump rides a NAMED clock entry rather than a chain of one-shots.
+--
+-- A one-shot chain cannot be cancelled, and this module hot-reloads: the old
+-- pump kept firing after the swap, draining the OLD queue at eight blocking
+-- LoadAsset calls per beat and writing a log line each, on behalf of a module
+-- that had already been thrown away. reload.lua's own rule says a module
+-- holding a timer must not be swapped, and this was the module breaking it.
+-- A name is something M.shutdown can cancel.
+local PUMP_ENTRY = "icons_pump"
 
 local function pump()
     for _ = 1, PUMP_BATCH do
         pump_one()
     end
 
-    if #queue > 0 then
-        clock.once(PUMP_MS, pump)
-    else
+    if #queue == 0 then
         pumping = false
+        clock.cancel(PUMP_ENTRY)
     end
+end
+
+-- Called by the reloader before this module is replaced, so the outgoing copy
+-- takes its queue and its timer with it.
+function M.shutdown()
+    queue, queued = {}, {}
+    pumping = false
+    clock.cancel(PUMP_ENTRY)
 end
 
 local function want(name)
@@ -168,7 +194,7 @@ local function want(name)
 
     if not pumping then
         pumping = true
-        clock.once(PUMP_MS, pump)
+        clock.every(PUMP_ENTRY, PUMP_MS, pump)
     end
 end
 
@@ -261,14 +287,32 @@ end
 -- while the panel is open, and a world change clears this with everything else.
 local ready_ids = {}
 
+-- Icons whose lookup came back empty, and the beat it was asked on.
+--
+-- Only the positive answer was remembered. A "no" fell through to M.get ->
+-- find -> StaticFindObject, measured at about 10ms, once per tile per frame -
+-- and an item that is named but not yet loaded answers no for as long as it
+-- takes to load. Eighteen rows at ten frames a second is the whole budget
+-- spent asking a question that cannot change within a second.
+local not_ready = {}
+local NOT_READY_S = 1.0
+
 function M.ready(item_id)
     if type(item_id) ~= "string" or item_id == "" then return false end
     if ready_ids[item_id] then return true end
 
+    -- A "no" is only ever "not yet", so it expires rather than sticking.
+    local asked = not_ready[item_id]
+    local now = os.clock()
+    if asked and (now - asked) < NOT_READY_S then return false end
+
     if M.get(item_id) ~= nil then
         ready_ids[item_id] = true
+        not_ready[item_id] = nil
         return true
     end
+
+    not_ready[item_id] = now
     return false
 end
 
@@ -309,6 +353,7 @@ end
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()
     ready_ids = {}
+    not_ready = {}
     resolved, requested, waited = {}, {}, {}
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0

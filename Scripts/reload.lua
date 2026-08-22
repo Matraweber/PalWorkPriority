@@ -58,6 +58,7 @@ local kept = {}
 function M.now()
     local panel = package.loaded["panel"]
     local overlay = package.loaded["overlay"]
+    local icons = package.loaded["icons"]
 
     -- Down before out. A widget whose module has been replaced is a widget
     -- nothing can reach to close, and it stays on screen for the session.
@@ -65,6 +66,14 @@ function M.now()
     pcall(function() if panel and panel.reset then panel.reset() end end)
     pcall(function() if overlay and overlay.hide then overlay.hide() end end)
     pcall(function() if overlay and overlay.reset then overlay.reset() end end)
+
+    -- The outgoing icons module takes its queue and its clock entry with it.
+    -- Read here, while package.loaded still names the OLD module: below this
+    -- point the table has been replaced, and shutting down the new one would
+    -- stop the pump that is about to be needed. Without it the old pump kept
+    -- beating against a module that had already been discarded, doing eight
+    -- blocking loads a beat on its behalf.
+    pcall(function() if icons and icons.shutdown then icons.shutdown() end end)
 
     for _, name in ipairs(SWAPPED) do
         local old = package.loaded[name]
