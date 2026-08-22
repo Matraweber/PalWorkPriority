@@ -852,6 +852,8 @@ end
 -- panel and overlay are held here as locals, so a swap has to hand them back
 -- or this file keeps calling the code that was just discarded. remote holds
 -- one too and is not itself swapped, so it is told at the same time.
+reload.scripts_dir = SCRIPT_DIR
+
 reload.rewire = function()
     panel = require("panel")
     overlay = require("overlay")

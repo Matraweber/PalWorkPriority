@@ -83,7 +83,7 @@ local warned = {}
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
 local X = -410
-local W = 820
+local W = 900
 
 -- Vertical offset, recomputed from the drawn height so the panel sits in the
 -- middle of the screen whichever screen it is showing. Fixed before, which
@@ -92,8 +92,22 @@ local Y = -300
 local LINE = 34
 local ROW_H = 30
 local PAD = 18
-local COL2 = 470
-local COL3 = 690
+-- Rule row columns.
+--
+-- These were 18 / 190 / 470 / 690 and two pairs collided on screen: a long
+-- work label ran into the item beside it, so "Lumbering" and "Wood" read as
+-- "LumberingWood", and the amount text reached the delete column, printing
+-- "done" and "remove" on top of each other.
+--
+-- The font is nearer 20px per character than the 8 the old numbers assumed,
+-- measured off a screenshot rather than guessed at again. "done" also gets a
+-- column of its own instead of being glued onto the end of the amount string,
+-- because a marker whose position depends on how many digits precede it will
+-- collide again the moment a base gets richer.
+local COL_ITEM = 260
+local COL2     = 520
+local COL_DONE = 700
+local COL3     = 800
 local TAB_H = 34
 -- The picker is a grid, and these are what make it one. Eight across is
 -- Creative Menu's shape and it is a good one: wide enough that a page is
@@ -868,10 +882,11 @@ local function draw_list(cfg, totals)
 
             stripe(key, row, PAD, W - PAD * 2)
             line(key, row, PAD, workdefs.label(rule.work), "action")
-            line("itm" .. i, row, 190, rule.item, "item")
-            line("amt" .. i, row, COL2, string.format("%d / %d%s",
-                have, rule.amount, met and "   done" or ""),
+            line("itm" .. i, row, COL_ITEM, rule.item, "item")
+            line("amt" .. i, row, COL2,
+                string.format("%d / %d", have, rule.amount),
                 met and "met" or "unmet")
+            line("done" .. i, row, COL_DONE, met and "done" or "", "met")
 
             -- The job is clickable separately from the amount. Rules no
             -- longer ask which job makes a thing, they guess, so there has to

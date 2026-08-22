@@ -65,11 +65,37 @@ function M.now()
         package.loaded[name] = nil
     end
 
+    -- loadfile, not require.
+    --
+    -- Clearing package.loaded and calling require again looks like it works:
+    -- it returns a table, reports no error, and resets every bit of module
+    -- state. It does not read the file. UE4SS keeps the compiled chunk of its
+    -- own accord, so require hands back the same code it compiled at startup,
+    -- and a reload has therefore never once loaded an edit. Proven rather than
+    -- suspected: a log line put at the top of panel.lua, deployed, reloaded,
+    -- and never printed, while the file on disk plainly contained it.
+    --
+    -- That also explains why this feature felt useless enough to be deleted
+    -- in a rollback and blamed twice for crashes: it was doing half its job
+    -- silently.
+    --
+    -- Reading the file and running the chunk is the whole fix.
     local broken = {}
     for _, name in ipairs(SWAPPED) do
-        local ok, err = pcall(require, name)
-        if not ok then
-            broken[#broken + 1] = name .. ": " .. tostring(err)
+        local path = (M.scripts_dir or "") .. name .. ".lua"
+        local chunk, load_err = loadfile(path)
+        if not chunk then
+            broken[#broken + 1] = name .. ": " .. tostring(load_err)
+        else
+            local ok, result = pcall(chunk)
+            if not ok then
+                broken[#broken + 1] = name .. ": " .. tostring(result)
+            else
+                -- A module returns its table; require would have stored it,
+                -- so this stores it in the same place for anything that
+                -- requires it later.
+                package.loaded[name] = result
+            end
         end
     end
 
@@ -95,5 +121,9 @@ end
 -- Set by main.lua, which holds panel as a local and has to be told to look
 -- the module up again.
 M.rewire = nil
+
+-- Set by main.lua: where the .lua files actually live, so the chunk can be
+-- read from disk rather than taken from UE4SS's cache.
+M.scripts_dir = nil
 
 return M
