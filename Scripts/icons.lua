@@ -81,6 +81,11 @@ local waited = {}
 local retried = {}
 local alternates = {}
 
+-- A whole-session budget for speculative loads, so a list full of unknown
+-- items cannot turn into hundreds of them.
+local RETRY_BUDGET = 24
+local retries_left = RETRY_BUDGET
+
 -- The category prefixes the shipped index actually uses. Ordered by how many
 -- entries carry each, so the likeliest is asked for first.
 local CATEGORIES = {
@@ -368,7 +373,17 @@ function M.get(item_id)
         --
         -- Bounded twice over: only for ids that have provably failed, and
         -- only across the categories the table already uses.
-        if not retried[key] then
+        -- Only while nothing real is waiting, and not for ever.
+        --
+        -- Each retry queues one speculative load per category, and the pump
+        -- is a shared queue running eight blocking loads per beat. Firing
+        -- them as soon as an item failed buried the icons the player was
+        -- actually looking at under a backlog of guesses: a page that had
+        -- drawn every icon a minute earlier came up almost entirely blank.
+        -- Guesses wait for the queue to be empty, which is the definition of
+        -- "nothing better to do", and stop after a bounded number.
+        if not retried[key] and #queue == 0 and retries_left > 0 then
+            retries_left = retries_left - 1
             retried[key] = true
             local base = tostring(name):match("^[^_]+_(.+)$")
             if base then
@@ -408,6 +423,7 @@ function M.reset()
     not_ready = {}
     resolved, requested, waited = {}, {}, {}
     retried, alternates = {}, {}
+    retries_left = RETRY_BUDGET
     queue, queued = {}, {}
     sighted, sighted_at = nil, 0
 end

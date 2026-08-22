@@ -1876,7 +1876,13 @@ local function draw_list(cfg, totals)
             local choosable = #works > 1
             line(key, row, PAD + MARK_W, workdefs.label(rule.work),
                 choosable and "action" or "item", ROW_PT)
-            line("itm" .. i, row, COL_ITEM, short_item(rule.item), "item", ROW_PT)
+            -- The same words the picker used to offer it. This column showed
+            -- the raw id, so an item chosen from a list reading "Baked
+            -- Berries" turned into "Baked_Berries" the moment it became a
+            -- rule, and the two screens disagreed about the name of the thing
+            -- you had just picked.
+            line("itm" .. i, row, COL_ITEM,
+                short_item(pretty_name(rule.item)), "item", ROW_PT)
             -- Blank while its box is open. The box does not fully cover the
             -- text beneath it, so both were drawing at once and the reading
             -- was "8155 | 8000" over "8155 / 8000": a field that looks like
