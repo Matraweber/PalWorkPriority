@@ -206,6 +206,12 @@ local TAB_H = 34
 local ROW_INSET = PAD - 6
 local ROW_W     = W - ROW_INSET * 2
 
+-- How far a control set inside a row band stops short of the band's own edge.
+-- Remove used to finish exactly where the band did, so it read as sitting ON
+-- the end of the row rather than IN it. A band has to be visibly longer than
+-- anything it contains or it is not a band.
+local ROW_PAD   = 10
+
 -- The filter field is taller than a row on purpose: it is the one thing on
 -- the picker you type into, and it reads as a field rather than a band.
 local SEARCH_H  = 36
@@ -1270,6 +1276,23 @@ local function style_box(box, which)
     -- near-invisible mid grey it defaults to. A missing method is a Lua
     -- error, which pcall does catch - unlike an access violation, which it
     -- never could - so this cannot cost anything but the attempt.
+    -- The font size, which is what was actually clipping the digits.
+    --
+    -- set_size works on a TextBlock's own .Font; an EditableTextBox keeps
+    -- its font inside the style struct instead, so it kept UMG's default 24
+    -- while the row around it drew at 17. A 24pt line does not fit a 30 pixel
+    -- box, so the number showed its top two thirds and had its feet cut off -
+    -- growing the box only moved where the cut fell.
+    pcall(function()
+        local st = box.WidgetStyle
+        if st == nil then return end
+        if st.TextStyle ~= nil and st.TextStyle.Font ~= nil then
+            st.TextStyle.Font.Size = ROW_PT
+        end
+        if st.Font ~= nil then st.Font.Size = ROW_PT end
+        pcall(function() box:SetStyle(st) end)
+    end)
+
     local fore = (which == "ceiling")
         and { R = 0.06, G = 0.08, B = 0.11, A = 1.00 }
         or { R = 0.90, G = 0.93, B = 0.97, A = 1.00 }
@@ -1412,13 +1435,19 @@ local function ensure_amount_box()
         -- four digit number ran 90 pixels past the LIMIT column and sat on
         -- top of PALS - the row read "8000  Stopped" with the two overlapping
         -- and neither belonging to the box.
+        -- The band's full height, not four pixels short of it.
+        --
+        -- An EditableTextBox adds its own padding around the text, so a 26
+        -- pixel box holding 17pt digits clipped them across the middle - the
+        -- number showed its top half and nothing else. It matches the well
+        -- exactly, and the well grew with it.
         pcall(function()
             slot:SetPosition({
                 X = X + COL_CAP - WELL_INSET,
-                Y = Y + editing.row * LINE - 1,
+                Y = Y + editing.row * LINE - 3,
             })
         end)
-        pcall(function() slot:SetSize({ X = WELL_W, Y = ROW_H - 4 }) end)
+        pcall(function() slot:SetSize({ X = WELL_W, Y = ROW_H }) end)
         -- Right aligned, to sit where the number it replaces sat. The digits
         -- started hard against the left edge of a box drawn around a column
         -- whose values are set from their right.
@@ -1459,7 +1488,35 @@ local function poll_amount(cfg)
     -- pressing enter and clicking away, without binding either.
     local focused = true
     pcall(function() focused = amount_box:HasKeyboardFocus() end)
-    if focused then return end
+    if focused then
+        editing.had_focus = true
+        return
+    end
+
+    -- Not focused, and never has been.
+    --
+    -- The box is reused rather than rebuilt, so it still holds the previous
+    -- edit's text, and there are frames between the editor opening and the
+    -- keyboard actually arriving. Committing in that window reads that stale
+    -- text and writes it as the new limit: a Wood ceiling of 8000 came back
+    -- as 7500 one second after the box opened, with nothing typed and nothing
+    -- said. A limit changing on its own is the same failure that once wiped a
+    -- Stone ceiling of 15000, so it is closed rather than narrowed - nothing
+    -- commits until the box has genuinely held the keyboard at least once.
+    --
+    -- Abandoned, not committed, if the keyboard never arrives at all. An edit
+    -- that never took focus cannot contain anything worth saving.
+    if not editing.had_focus then
+        editing.waiting = (editing.waiting or 0) + 1
+        if editing.waiting > 30 then
+            log.say("the ceiling box never took the keyboard, so the " ..
+                workdefs.label(editing.work) .. " limit on " ..
+                editing.item .. " is unchanged")
+            editing = nil
+            pcall(function() amount_box:SetVisibility(1) end)
+        end
+        return
+    end
 
     local want = tonumber((text:gsub("[^%d]", "")))
     local job, item = editing.work, editing.item
@@ -1861,8 +1918,8 @@ local function draw_list(cfg, totals)
                 -- It is drawn to say "type here" and was not the thing that
                 -- could be pressed: a four digit number is about a fifty
                 -- pixel target inside a 118 pixel box.
-                slab("capbox" .. i, COL_CAP - WELL_INSET, row * LINE - 1,
-                    WELL_W, ROW_H - 4, FIELD_WELL, true)
+                slab("capbox" .. i, COL_CAP - WELL_INSET, row * LINE - 3,
+                    WELL_W, ROW_H, FIELD_WELL, true)
                 tile_face["cap" .. i] = stripes["capbox" .. i]
             end
 
@@ -1970,14 +2027,14 @@ local function draw_list(cfg, totals)
             -- the row band and the table, so the one control that destroys
             -- something looked pasted on top of the list rather than in it.
             slab("delbox" .. i, COL3 - 10, row * LINE - 1,
-                (W - ROW_INSET) - (COL3 - 10), ROW_H - 4,
+                (W - ROW_INSET - ROW_PAD) - (COL3 - 10), ROW_H - 4,
                 asking and DANGER_WELL_ON or DANGER_WELL, true)
             tile_face["del" .. i] = stripes["delbox" .. i]
             -- Centred in the box, not started at its left edge. "Remove"
             -- is wider than the space that was left for it, so the word ran
             -- out past the red surface and past the row itself.
             local del_text = asking and "Sure?" or "Remove"
-            local del_x, del_w = COL3 - 10, (W - ROW_INSET) - (COL3 - 10)
+            local del_x, del_w = COL3 - 10, (W - ROW_INSET - ROW_PAD) - (COL3 - 10)
             line("del" .. i, row, centre_x(del_x, del_w, del_text, ROW_PT),
                 del_text, asking and "danger" or "quiet", ROW_PT)
 
