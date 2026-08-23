@@ -556,6 +556,13 @@ end
 -- Returns how many toggles it still owes, because MAX_TOGGLES_PER_PASS bounds
 -- one sweep and a real base needs several. The caller loops.
 function M.restore(cfg)
+    -- Gated here as well as at the caller, and deliberately not only there.
+    -- base_allowed below asks every pal for its suitability rank, which is
+    -- fatal on a client rather than merely wrong, and this function is public.
+    -- A dangerous primitive that every caller has to remember to guard is
+    -- exactly the shape of the bug this gate closes.
+    if not api.has_authority() then return M.blank_stats() end
+
     local stats = M.blank_stats()
     pass_comp = api.owned_network_component() or api.network_component()
     local camps = api.base_camps()

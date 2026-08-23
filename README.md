@@ -1,7 +1,8 @@
 # Pal Work Priority
 
 Numeric work priorities for base Pals in Palworld. You decide that Transporting gets staffed
-before Mining, and the mod hands each job to the best-suited Pal that is still free.
+before Mining, and the mod makes that stick by allowing each Pal only the work it should be on
+right now, leaving the game's own AI to choose within what is left.
 
 Vanilla only lets you tick a work type on or off per Pal. This adds an ordering on top. Priority
 1 work is filled first from the whole roster, priority 5 gets whatever is left over.
@@ -378,20 +379,34 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp guilds` | write `Guilds.txt`: which guild owns each camp and which you are in |
 | `!pwp worksuit` | write `WorkSuit.txt`: what the work suitability read and write sides hold |
 | `!pwp net` | report the transport: hooks, role, counters, and which component a send uses |
+| `!pwp restore` | give every Pal back every work it can do, and unfence the base |
+| `!pwp panel` | drive the rules panel from chat, for scripting and for testing |
+| `!pwp help` | list the commands |
+| `!pwp sweep` / `!pwp trace` | diagnostics: what the storage sweep sees, and what a pass decided |
 
-Single player has no chat box, so everything that changes what the mod does has a key as well.
-Ctrl does a thing, Alt changes a setting.
+`!pwp restore` is the one to remember. The fences are the game's own saved data, so they outlive
+the mod: uninstalling while a base is fenced leaves Pals with most of their work switched off and
+no way back but the stand, by hand. Run it before you remove anything. `!pwp off` does it for you.
+
+Keys, for the same actions. Ctrl does a thing, Alt changes a setting.
 
 | key | does |
 | --- | --- |
 | `Ctrl+F9` | open and close the work rules panel |
+| arrows, `Enter` | move around the panel and confirm, while it is open |
+| `Ctrl+F7` | probe the overlay icons, and write what they resolved to |
+| `Ctrl+F8` | run the transport test |
 | `Ctrl+F10` | run a pass now |
 | `Ctrl+F11` | write `Discovery.txt` |
 | `Ctrl+F12` | print base storage |
-| `Ctrl+F8` | run the transport test |
 | `Alt+F10` | toggle spread/fill |
 | `Alt+F11` | cycle the cap |
 | `Alt+F12` | switch storage scope between one base and all loaded bases |
+
+Not everything has one. `!pwp dry`, `!pwp live`, `!pwp on`, `!pwp off`, `!pwp reload` and
+`!pwp restore` are chat only, and a single player save has no chat box, so on one they cannot be
+reached at all. That matters most for dry run: if you set `dry_run = true` in `config.lua` there
+is no way back from inside the game, so edit the file again and restart.
 
 `!pwp discover` *calls* into live Pals, which only the machine running the world can do safely -
 on a client those are replicated proxies and `GetWorkSuitabilityRank` on one takes the game down
@@ -477,11 +492,12 @@ The game-side symbols were learned by reading mods that already run on this buil
   that a work's `OverrideWorkType` is `EPalWorkType` rather than `EPalWorkSuitability`, that it
   has to outrank the class name, and for `GetWorkSuitabilityRankWithCharacterRank`
 
-This is an independent implementation and shares no code with PalPriority. The two take different
-approaches: PalPriority flips the vanilla per-Pal work toggles through
-`RequestChangeWorkSuitability_ToServer`, while this drives fixed assignments through
-`RequestFixedAssignWorkInBaseCamp_ToServer`. What was taken from it is factual, which engine
-symbol means what, not implementation. `WORKTYPE_TO_SUIT` is built from a `EPalWorkType` dump of
+This is an independent implementation and shares no code with PalPriority. What was taken from it
+is factual, which engine symbol means what, not implementation. This mod works by fencing: it
+writes the same per-Pal permissions the vanilla checkboxes write, through
+`RequestChangeWorkSuitability_ToServer`, and lets the game's AI choose within them. An earlier
+version drove `RequestFixedAssignWorkInBaseCamp_ToServer` instead and was replaced, for the
+reason given under How it works. `WORKTYPE_TO_SUIT` is built from a `EPalWorkType` dump of
 the running build rather than copied.
 
 ## License

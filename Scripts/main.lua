@@ -605,6 +605,24 @@ end
 -- needs several. Bounded itself so a pal whose permissions cannot be read
 -- cannot spin here for ever.
 local function restore_all(why)
+    -- The fences belong to whoever set them, and a client never set any: the
+    -- passes run on the authority, for the reason given at run_pass. So there
+    -- is nothing here to give back.
+    --
+    -- It is worse than merely pointless. base_allowed asks every pal for its
+    -- suitability rank, and GetWorkSuitabilityRank on a replicated proxy is an
+    -- access violation rather than an error, so no pcall on the way down
+    -- catches it. That is what killed the game from the discovery probe on
+    -- 23 August, which is why THAT probe has been gated ever since - but the
+    -- same call sat one branch away behind '!pwp off', unguarded, where a
+    -- 14 pal base would have reached it a couple of thousand times before the
+    -- first sweep finished.
+    if not api.has_authority() then
+        log.say(why .. ": this is a client, so it has no fences to undo. " ..
+            "Run '" .. cfg.chat_prefix .. " restore' on the server.")
+        return
+    end
+
     local sent, rounds = 0, 0
 
     repeat
