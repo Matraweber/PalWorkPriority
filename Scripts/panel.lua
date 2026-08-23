@@ -1693,7 +1693,7 @@ local function poll_amount(cfg)
     end
 
     local want = tonumber((text:gsub("[^%d]", "")))
-    local job, item = editing.work, editing.item
+    local job, item, was = editing.work, editing.item, editing.was
     editing = nil
     pcall(function() amount_box:SetVisibility(1) end)
 
@@ -1714,6 +1714,22 @@ local function poll_amount(cfg)
             item .. " is unchanged")
         return
     end
+
+    -- Unchanged means nobody typed here, whatever took the keyboard away.
+    --
+    -- The box commits when it stops holding the keyboard, which is what makes
+    -- "type it and click away" work, and it fires just as readily when the
+    -- whole game loses focus - alt tabbing with a ceiling open, or another
+    -- window stealing it. That wrote the number already showing: a request to
+    -- the server, a rule change pass and a log line, for a change nobody
+    -- made. Measured on 23 August, the server logged "Deforest set Wood to
+    -- 1200 by a player" for a box that had never been typed in.
+    --
+    -- This does not rescue a half typed number - a box holding "1" of "15000"
+    -- when focus is lost still commits 1, and from here that cannot be told
+    -- from someone who meant 1. It removes the case that costs nothing to
+    -- remove.
+    if want == was then return end
 
     caps.set(job, item, want, mine())
     M.wants_pass = true
@@ -1743,6 +1759,10 @@ local function begin_edit(rule, row)
         item = rule.item,
         row = row,
         seed = tostring(rule.amount or ""),
+        -- Kept as a number and never cleared, unlike seed, which the first
+        -- draw consumes. The commit compares against it to tell a real edit
+        -- from a box that merely lost the keyboard.
+        was = rule.amount,
     }
     edit_focus = true
 end
@@ -3512,6 +3532,17 @@ function M.apply(cfg, what, dir, from_mouse)
                 " " .. rule.item)
         else
             caps.set(rule.work, rule.item, next_amount, mine())
+            -- Announced, like every other way a rule can change.
+            --
+            -- Typing a ceiling says so, removing one says so, and stepping
+            -- the ladder said nothing at all - the limit moved and the only
+            -- evidence was the number redrawing. That matters most for the
+            -- case it hides: these steps are bound to the mouse buttons
+            -- globally, with no modifier list, so they fire whenever the
+            -- panel is open and the cursor is over a row. A rule that changes
+            -- without the player meaning it should at least be traceable.
+            log.say(string.format("%s %s limit stepped to %d",
+                workdefs.label(rule.work), rule.item, next_amount))
         end
         M.wants_pass = true
         return true
