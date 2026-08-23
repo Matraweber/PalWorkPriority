@@ -9,7 +9,7 @@ trusting a UE4SS property read, so this asks the object itself.
 It creates a throwaway widget, tries every route to its tree, and reports.
 Nothing here is kept; the asset is deleted at the end.
 
-    py "C:/Users/user/Desktop/palworld-priority-mod/tools/ue_probe2.py"
+    py "<repo>/tools/ue_probe2.py"
 """
 
 import unreal

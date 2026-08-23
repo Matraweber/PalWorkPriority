@@ -23,8 +23,14 @@ import os
 import subprocess
 import sys
 
-KIT = r"C:\Users\user\Desktop\PalworldModdingKit"
-ENGINE = r"D:\Program Files (x86)\Epic Games\UE_5.1"
+# Overridable, and not one machine's layout.
+#
+# These were absolute paths on the developer's own disk, which is both useless
+# to anyone else and a way of publishing a user name. Set PWP_MODDING_KIT and
+# PWP_UE to point at your own copies; the defaults are only the usual install
+# locations.
+KIT = os.environ.get("PWP_MODDING_KIT", r"C:\PalworldModdingKit")
+ENGINE = os.environ.get("PWP_UE", r"C:\Program Files\Epic Games\UE_5.1")
 
 UNREALPAK = os.path.join(ENGINE, "Engine", "Binaries", "Win64", "UnrealPak.exe")
 COOKED = os.path.join(KIT, "Saved", "Cooked", "Windows", "Pal", "Content",

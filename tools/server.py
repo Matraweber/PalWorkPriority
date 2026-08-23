@@ -13,6 +13,7 @@ is only needed to look at the panel.
 The world is a copy of the singleplayer save; the original is never written.
 """
 
+import glob
 import io
 import os
 import re
@@ -23,8 +24,29 @@ import time
 
 from paths import resolve
 
-SP_WORLD = (r"C:\Users\user\AppData\Local\Pal\Saved\SaveGames"
-            r"\STEAMID64\31141B9948FE8B9A8B4CC399974DDDF1")
+# Found rather than written down.
+#
+# This used to be one developer's own save path, which carried their Windows
+# user name and their SteamID64 into a public repository. Neither belongs in a
+# file anyone else clones. The newest world under the local save directory is
+# what someone running this wants anyway - it is the one they were just
+# playing - and PWP_SP_WORLD overrides when it is not.
+def _newest_sp_world():
+    root = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                        "Pal", "Saved", "SaveGames")
+    best, best_at = None, -1
+    for account in glob.glob(os.path.join(root, "*")):
+        for world in glob.glob(os.path.join(account, "*")):
+            level = os.path.join(world, "Level.sav")
+            if not os.path.isfile(level):
+                continue
+            at = os.path.getmtime(level)
+            if at > best_at:
+                best, best_at = world, at
+    return best
+
+
+SP_WORLD = os.environ.get("PWP_SP_WORLD") or _newest_sp_world()
 
 
 def ps(cmd):

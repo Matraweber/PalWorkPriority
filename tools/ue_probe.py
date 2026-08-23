@@ -7,7 +7,7 @@ middle, this asks first and reports.
 
 Run it from the editor's Output Log:
 
-    py "C:/Users/user/Desktop/palworld-priority-mod/tools/ue_probe.py"
+    py "<repo>/tools/ue_probe.py"
 
 or headless with the editor closed:
 
