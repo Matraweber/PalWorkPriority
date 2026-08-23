@@ -258,7 +258,15 @@ local COL_CAP_R  = COL_CAP - WELL_INSET + WELL_W - WELL_INSET -- inside the well
 -- not about names: here a name gets 210 pixels of its own column.
 local LIST_COLS    = 3
 local LIST_GUTTER  = 12
-local LIST_W       = math.floor((W - PAD * 2 - LIST_GUTTER * (LIST_COLS - 1))
+-- Measured from the row band's inset, not the text inset.
+--
+-- The list was built from PAD while every other surface in the panel - the
+-- search field above it, both footer bars below it, the rules rows and the
+-- primary button - is built from ROW_INSET, six pixels wider. So the list sat
+-- visibly pinched between two wider slabs, top and bottom, on the screen a
+-- player spends the most time on, and the whole block stepped six pixels
+-- sideways on every tab switch.
+local LIST_W       = math.floor((ROW_W - LIST_GUTTER * (LIST_COLS - 1))
                                 / LIST_COLS)
 local LIST_H       = 36
 local LIST_PITCH   = LIST_H + 4
@@ -309,7 +317,10 @@ local COLOUR = {
     -- in the panel, on the one control that destroys something, which is
     -- exactly backwards.
     quiet  = { R = 0.94, G = 0.64, B = 0.60, A = 1.00 },
-    working = { R = 0.55, G = 0.62, B = 0.70, A = 1.00 },
+    -- Lifted from 4.34:1, which failed the floor. The healthy state was the
+    -- least legible text on the rules screen while the state you want people
+    -- to notice less, Stopped, was the brightest - exactly backwards.
+    working = { R = 0.72, G = 0.78, B = 0.85, A = 1.00 },
     -- On the filled primary button, where cyan-on-tint measured 3.94 and was
     -- the lowest contrast text in the panel while being its main action.
     primary = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
@@ -319,7 +330,10 @@ local COLOUR = {
     -- A control that exists but has nothing left to do. Quieter than an
     -- active one and darker than the prose, so "no more pages" cannot be
     -- mistaken for a sentence.
-    spent  = { R = 0.34, G = 0.38, B = 0.44, A = 1.00 },
+    -- A spent control still has to be readable. At 2.15:1 on its own flat
+    -- bar this was the least legible thing in the panel by a wide margin -
+    -- well under the 3:1 that anything visible needs, never mind text.
+    spent  = { R = 0.62, G = 0.67, B = 0.73, A = 1.00 },
 }
 
 -- Nearly opaque on purpose. At 0.94 a bright afternoon base read straight
@@ -340,7 +354,14 @@ local BACKDROP  = { R = 0.035, G = 0.050, B = 0.075, A = 0.985 }
 -- is not a tone, it is a rounding error. Now genuinely darker, at 1.40.
 local CHROME_BG = { R = 0.014, G = 0.021, B = 0.035, A = 1.00 }
 local ROW_BG    = { R = 0.080, G = 0.105, B = 0.140, A = 1.00 }
-local BUTTON_BG = { R = 0.120, G = 0.152, B = 0.196, A = 1.00 }
+-- Darker than a data row, not lighter.
+--
+-- At its old value the cyan label on these bars measured 3.94:1 - four
+-- controls under the 4.5 floor, including both pager buttons - and the bar
+-- itself was lighter than the list rows above it, so the two least important
+-- controls on the screen carried the strongest surface in the panel. Darker
+-- fixes the label to 6.9 and puts the hierarchy back the right way up.
+local BUTTON_BG = { R = 0.048, G = 0.065, B = 0.093, A = 1.00 }
 -- Tiles are pressable, so they wear the pressable tone rather than the
 -- read-only one. They used to fall through to ROW_BG, which made a tile in
 -- the picker byte-identical to a data row on the rules list: the surface was
@@ -639,7 +660,15 @@ end
 -- icon, and a row whose icon had not loaded could not be hovered at all.
 -- The tab bar had the same shape: the target was the word ADD and nothing
 -- else, about 50 pixels wide.
-local function slab(key, px, py, w, h, colour, hittable)
+-- current: force the selected tone regardless of the key.
+--
+-- A row owns several hit keys and the stripe owns none of them, so matching
+-- the stripe's own key against the cursor only worked while the row's first
+-- column happened to be a hit target. Once the job stopped being clickable
+-- for single-job items the cursor key became the limit, the stripe stopped
+-- matching, and the selected row lost its fill entirely - leaving a 10px ">"
+-- as the whole cursor on that screen, while ADD had a rail and a fill.
+local function slab(key, px, py, w, h, colour, hittable, current)
     local host = ensure_root()
     if not host then return end
 
@@ -688,13 +717,13 @@ local function slab(key, px, py, w, h, colour, hittable)
     -- there was no way to see where the keyboard was while the mouse was over
     -- something else.
     local want = (key == hover_key and "hot")
-        or (key == was_sel and "sel")
+        or ((current or key == was_sel) and "sel")
         or "cold"
 
     -- The token written has to be the token compared. It was writing `want`
     -- and comparing `want .. colour`, so every slab failed its own cache check
     -- and repainted on every frame.
-    local token = want .. tostring(colour)
+    local token = want .. tostring(colour) .. tostring(current)
     if drawn["s:" .. key] ~= token then
         pcall(function()
             -- State first, base colour second. It read `colour or hot or sel
@@ -714,8 +743,8 @@ local function slab(key, px, py, w, h, colour, hittable)
 end
 
 -- A full width row, which is what the rules list is made of.
-local function stripe(key, row, from, width, colour, hittable)
-    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable)
+local function stripe(key, row, from, width, colour, hittable, current)
+    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable, current)
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -1168,6 +1197,16 @@ local function pretty_name(item)
     return name
 end
 
+-- How many characters of this string fit in `width` pixels at `pt`.
+--
+-- Elision was budgeted in CHARACTERS against a proportional font, so it cut
+-- by length rather than by width: a 214px name survived while a 201px one was
+-- elided, and at least 54 pixels per column went unused while names were
+-- being cut. Measuring turns the budget into what it was always meant to be.
+local function fits(text, width, pt)
+    return math.max(4, math.floor(width / (pt * GLYPH_W)))
+end
+
 local function fit_name(text, chars)
     text = tostring(text)
     if #text <= chars then return text end
@@ -1197,7 +1236,7 @@ end
 local function list_row(key, at, item, have, top, limited)
     local col = at % LIST_COLS
     local row = math.floor(at / LIST_COLS)
-    local px = PAD + col * (LIST_W + LIST_GUTTER)
+    local px = ROW_INSET + col * (LIST_W + LIST_GUTTER)
     local py = top + row * LIST_PITCH
 
     -- The row itself is the target. Its hit key owns no text - the name is
@@ -1227,6 +1266,21 @@ local function list_row(key, at, item, have, top, limited)
     picture(key, px + 8, py + math.floor((LIST_H - LIST_ICON) / 2), LIST_ICON,
         item, item)
 
+    -- "Already limited" said in a second channel, not only in green.
+    --
+    -- The green name measured 1.14:1 in luminance against a plain white one -
+    -- no lightness difference at all - and under deuteranopia the two
+    -- simulate to a pair of near-identical off-whites. It is the state that
+    -- stops a player creating a rule they already have, and roughly one man
+    -- in twelve could not see it. A word carries the same fact at any colour
+    -- vision, and the count column is empty for these rows more often than
+    -- not.
+    if limited then
+        text_at("set:" .. key,
+            px + right_x(LIST_COUNT_R, "LIMIT SET", 11, CAPS_W),
+            py + 3, "LIMIT SET", "atlimit", 11, true)
+    end
+
     -- The name takes whatever the count is not using.
     --
     -- A fixed budget cut every name to sixteen characters, which on the full
@@ -1236,16 +1290,20 @@ local function list_row(key, at, item, have, top, limited)
     -- names should have the whole row.
     local count = have > 0 and group_digits(have) or nil
     local room = LIST_COUNT_R - LIST_NAME_X
-    if count then room = room - text_w(count, 14, DIGIT_W) - 10 end
+    if limited then
+        room = room - text_w("LIMIT SET", 11, CAPS_W) - 10
+    elseif count then
+        room = room - text_w(count, 14, DIGIT_W) - 10
+    end
 
     -- Green while a rule already exists, so the rail and the name agree.
     text_at("n:" .. key, px + LIST_NAME_X, py + 7,
-        fit_name(pretty_name(item), math.max(6, math.floor(room / (15 * GLYPH_W)))),
+        fit_name(pretty_name(item), fits(item, room, 15)),
         limited and "atlimit" or "item", 15, true)
 
     if count then
         text_at("q:" .. key, px + right_x(LIST_COUNT_R, count, 14, DIGIT_W),
-            py + 8, count, "limit", 14, true)
+            py + (limited and 17 or 8), count, "limit", 14, true)
     end
 end
 
@@ -1949,15 +2007,16 @@ local function draw_list(cfg, totals)
             local met = have >= rule.amount
             local key = "rule" .. i
 
-            stripe(key, row, PAD, ROW_W)
+            -- One answer for the whole row, used by both the fill and the
+            -- caret, so the two can never disagree about which row is current.
+            local here = row_is_current(key, "amt" .. i, "cap" .. i, "del" .. i)
+
+            stripe(key, row, PAD, ROW_W, nil, false, here)
 
             -- One caret for the whole row, in the slot the layout already
             -- reserved for it. Every column after this one is placed from a
             -- fixed x and never moves, whether the row is current or not.
-            line("mk" .. i, row, PAD,
-                row_is_current(key, "amt" .. i, "cap" .. i, "del" .. i)
-                    and ">" or "",
-                "hover", ROW_PT)
+            line("mk" .. i, row, PAD, here and ">" or "", "hover", ROW_PT)
             -- Cyan only when it can be changed.
             --
             -- The job cycled through all fourteen work types, so a Wood rule
@@ -2339,21 +2398,41 @@ end
 picker_key = nil
 picker_hit = nil
 
+-- How many distinct items storage holds.
+--
+-- The order is by quantity, and quantities change constantly while Pals work
+-- - so keying the list on the totals TABLE meant it was rebuilt and re-sorted
+-- every time the scheduler published, and rows physically swapped places
+-- under the cursor. Berries fell below Fiber between two captures a minute
+-- apart and the two traded cells. On a screen driven by arrow keys, the row
+-- you read and the row you press Enter on can then be different items.
+--
+-- Counting ids instead holds the order steady while the numbers move, and
+-- still rebuilds when an item appears or runs out - which is the one moment a
+-- re-sort is expected.
+local function id_count(totals)
+    local n = 0
+    for _ in pairs(totals or {}) do n = n + 1 end
+    return n
+end
+
 local function picker_source(totals)
     -- The fourth term is how many ids the icon loader has written off. It
     -- only ever grows, and when it does the filtered list is stale.
     local gave_up = icons.gave_up_n or 0
+    local ids_now = id_count(totals)
+
     if picker_key ~= nil
         and picker_key[1] == search_text
         and picker_key[2] == show_all
-        and picker_key[3] == totals
+        and picker_key[3] == ids_now
         and picker_key[4] == gave_up
     then
         return picker_hit[1], picker_hit[2]
     end
 
     local list, everything = build_picker_source(totals)
-    picker_key = { search_text, show_all, totals, gave_up }
+    picker_key = { search_text, show_all, ids_now, gave_up }
     picker_hit = { list, everything }
     return list, everything
 end
@@ -2373,10 +2452,15 @@ local function draw_item_picker(cfg, totals)
     -- Ore, so the name has to be somewhere, and Creative Menu puts it here.
     local current = hover_key or was_sel
     local under = current and was_hit[current]
-    line("naming", 3, PAD,
-        (under and under.kind == "item") and under.item or "", "title", 18)
-
-    ensure_search(4)
+    -- The echo of the cursor's item used to sit on the row above the search
+    -- field, bold and white, at the exact x a field label would use - so it
+    -- read as the LABEL of that box ("searching within Stone"), and it
+    -- blinked out entirely whenever the cursor moved to a footer bar. The
+    -- rail already says which row is current and the row says its own name in
+    -- full, so the line is gone and everything below moved up into the space
+    -- it was holding. That is where the column headings now sit, and the
+    -- panel is no taller than it was.
+    ensure_search(3)
 
     -- Ours, in a colour the panel controls, and only while the field is
     -- empty. The bar was otherwise flat dark with no border and no words,
@@ -2388,7 +2472,7 @@ local function draw_item_picker(cfg, totals)
     -- tall and inset three, so a hint placed by row sat about eight pixels
     -- high in it - which is what "not properly in the middle" was.
     text_at("hint", ROW_INSET + 13,
-        4 * LINE + (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
+        3 * LINE + (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
         search_text == "" and "Search for an item to limit" or "",
         "hint_on_field", ROW_PT, true)
 
@@ -2413,7 +2497,26 @@ local function draw_item_picker(cfg, totals)
     -- the moment anything was typed, which is precisely when somebody is
     -- about to click a tile for the first time.
     caption = caption .. "   |   Click an item to limit it"
-    line("sub", 5, PAD, caption, "dim", 13)
+    line("sub", 4, PAD, caption, "dim", 13)
+
+    -- Names the only number on this screen.
+    --
+    -- Each row read "Stone .... 17,114" with nothing anywhere saying what
+    -- 17,114 was - on a screen titled Production Limits, where a bare number
+    -- beside an item name reads as the limit. A player's first act was to
+    -- click an item believing they were confirming a limit that already
+    -- existed, when they were opening a blank one. The rules table labels its
+    -- numbers; this one did not.
+    --
+    -- Repeated over each of the three columns, because each column is its own
+    -- little table.
+    for c = 0, LIST_COLS - 1 do
+        local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
+        line("h_it" .. c, 5, cx + LIST_NAME_X, "ITEM", "faint", 12)
+        line("h_st" .. c,
+            5, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
+            "IN STORAGE", "faint", 12)
+    end
 
     local top = 6 * LINE
     local from = page * LIST_PER_PAGE + 1
