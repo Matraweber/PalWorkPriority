@@ -1039,6 +1039,37 @@ net.install()
 -- Everything below follows from that and nothing else needs configuring.
 
 -- Server side. A client asked for a change; apply it and tell everyone.
+-- How often one client may change the rules.
+--
+-- Every accepted change writes caps.txt, broadcasts to every other client and
+-- forces a scheduler pass, so the cost of a request is not small and it is
+-- paid by the host. Ten in ten seconds is far more than a person clicking a
+-- panel will ever need and far less than a loop can do damage with. Per
+-- sender, so one bad client cannot stop everybody else editing.
+local RULE_CHANGES = 10
+local RULE_WINDOW = 10.0
+local rule_budget = {}
+
+local function may_change(comp)
+    local who = net.who and net.who(comp) or "unknown"
+    local now = os.clock()
+    local b = rule_budget[who]
+
+    if b == nil or (now - b.at) > RULE_WINDOW then
+        rule_budget[who] = { at = now, n = 1 }
+        return true
+    end
+
+    b.n = b.n + 1
+    if b.n > RULE_CHANGES then
+        if b.n == RULE_CHANGES + 1 then
+            log.warn("ignoring rule changes from one player, too many at once")
+        end
+        return false
+    end
+    return true
+end
+
 net.on_command = function(command, _, comp)
     local parts = net.split(command)
     local verb = parts[1]
@@ -1052,8 +1083,16 @@ net.on_command = function(command, _, comp)
         return
     end
 
+    -- Nothing below writes to disk, broadcasts, or runs a pass until the
+    -- request has been checked. It used to do all three unconditionally on
+    -- whatever arrived: caps.apply_set took the strings straight into the
+    -- rules table and saved, so anything able to send the FName could fill
+    -- the host's caps.txt with keys of its choosing - and an amount of zero
+    -- reads as "capped at zero", which suspends that work type for good.
     if verb == net.PREFIX .. "Set" and #parts >= 4 then
-        caps.apply_set(parts[2], parts[3], tonumber(parts[4]) or 0)
+        if not may_change(comp) then return end
+        if not caps.apply_set(parts[2], parts[3], parts[4]) then return end
+
         log.say(string.format("%s set %s to %s by a player",
             parts[2], parts[3], parts[4]))
         net.push_rules(caps, cfg, nil)
@@ -1062,7 +1101,9 @@ net.on_command = function(command, _, comp)
     end
 
     if verb == net.PREFIX .. "Clear" and #parts >= 3 then
-        caps.apply_clear(parts[2], parts[3])
+        if not may_change(comp) then return end
+        if not caps.apply_clear(parts[2], parts[3]) then return end
+
         log.say(string.format("%s %s cleared by a player", parts[2], parts[3]))
         net.push_rules(caps, cfg, nil)
         run_pass("rule change")
@@ -1083,9 +1124,18 @@ net.on_state = function(message)
     end
 
     if verb == net.PREFIX .. "Rule" and #parts >= 4 and incoming then
-        incoming[#incoming + 1] = {
-            work = parts[2], item = parts[3], amount = tonumber(parts[4]) or 0,
-        }
+        -- Bounded while it accumulates, not only when it is applied.
+        --
+        -- replace_all caps what it keeps, but the batch is built here first -
+        -- so a server that never sends Done can grow this table until the
+        -- client runs out of memory, and nothing would have stopped it. The
+        -- ceiling is caps.MAX_RULES with slack, since anything past it is
+        -- dropped anyway.
+        if #incoming < (caps.MAX_RULES or 500) * 2 then
+            incoming[#incoming + 1] = {
+                work = parts[2], item = parts[3], amount = parts[4],
+            }
+        end
         return
     end
 

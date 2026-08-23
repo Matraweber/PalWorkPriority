@@ -9,8 +9,47 @@
 -- instead of producing something nobody needs.
 
 local log = require("log")
+local workdefs = require("workdefs")
 
 local M = {}
+
+-- What a rule is allowed to be, in one place.
+--
+-- Everything that can write a ceiling goes through this: the chat command,
+-- the panel, a client's request arriving over the network, and a server's
+-- push arriving at a client. Before, the network paths went straight into
+-- M.data and then to disk, so anything that could send the FName could put
+-- arbitrary keys into the host's caps.txt - and an amount of zero read as
+-- "capped at zero", which suspends that work type permanently.
+--
+-- The bounds are deliberately generous. This is not trying to guess what a
+-- sensible limit is; it is refusing values that could not have come from a
+-- person using the mod.
+M.MAX_CEILING = 9999999
+M.MAX_ID_LEN = 64
+
+-- Returns ok, why, and the ceiling as a clean integer.
+function M.valid_rule(work_name, item, ceiling)
+    if not workdefs.is_known(work_name) then
+        return false, "unknown work type '" .. tostring(work_name) .. "'"
+    end
+
+    if type(item) ~= "string" or item == "" or #item > M.MAX_ID_LEN
+        or item:find("[^%w_%.%-]") ~= nil then
+        return false, "implausible item id '" .. tostring(item) .. "'"
+    end
+
+    local n = tonumber(ceiling)
+    if n == nil or n ~= math.floor(n) or n < 1 or n > M.MAX_CEILING then
+        -- Zero is refused rather than clamped. It is the one value that looks
+        -- like a limit and behaves like a permanent shutdown of the work
+        -- type, and nothing in the UI can produce it - the ladder starts at
+        -- 100 and a typed zero already cancels.
+        return false, "ceiling out of range: " .. tostring(ceiling)
+    end
+
+    return true, nil, math.floor(n)
+end
 
 -- What a click or an arrow key walks a ceiling through. Ceilings run into the
 -- thousands, so a step of one would be useless, and the steps coarsen as the
@@ -107,9 +146,13 @@ end
 -- drift apart and a client cannot invent rules the server never agreed to.
 M.submit = nil
 
+-- Returns whether the rule was taken. The authority path used to discard
+-- apply_set's answer, so a refused rule looked exactly like an accepted one
+-- to every caller - including the panel, which then reported a limit it had
+-- not set.
 function M.set(work_name, item, ceiling)
     if M.submit then return M.submit("set", work_name, item, ceiling) end
-    M.apply_set(work_name, item, ceiling)
+    return M.apply_set(work_name, item, ceiling)
 end
 
 function M.clear(work_name, item)
@@ -120,13 +163,31 @@ end
 -- The write itself, with no opinion about who asked for it. The authority
 -- calls these directly; a client only ever reaches them through a message
 -- coming back down.
+-- Applies a rule that came from somewhere else - a client's request on the
+-- host, or the host's push on a client. Refuses anything that does not pass
+-- M.valid_rule, and says why.
 function M.apply_set(work_name, item, ceiling)
+    local ok, why, clean = M.valid_rule(work_name, item, ceiling)
+    if not ok then
+        log.warn("refused a rule from the network: " .. why)
+        return false
+    end
+
     M.data[work_name] = M.data[work_name] or {}
-    M.data[work_name][item] = ceiling
+    M.data[work_name][item] = clean
     M.save()
+    return true
 end
 
 function M.apply_clear(work_name, item)
+    -- A clear cannot invent data, but it can still be junk, and letting junk
+    -- through means the log reports work types that do not exist.
+    if not workdefs.is_known(work_name) or type(item) ~= "string" then
+        log.warn("refused a clear from the network: " ..
+            tostring(work_name) .. " / " .. tostring(item))
+        return false
+    end
+
     local by_work = M.data[work_name]
     if by_work == nil or by_work[item] == nil then return false end
 
@@ -140,12 +201,39 @@ end
 -- written to disk on a client: the file belongs to the machine with
 -- authority, and a client keeping its own copy is how the two versions of
 -- the truth start.
+-- The client's whole view, replaced by what the server pushed.
+--
+-- Validated the same way an inbound request is. A client trusting a server
+-- unconditionally sounds reasonable right up until the "server" is anything
+-- that can send the FName, and the client then draws a panel full of rules
+-- its own host never set. Bounded as well: a push is a batch, and a batch is
+-- the easy way to make a client allocate until it dies.
+M.MAX_RULES = 500
+
 function M.replace_all(rows)
     M.data = {}
+
+    local kept, refused = 0, 0
     for _, row in ipairs(rows or {}) do
-        M.data[row.work] = M.data[row.work] or {}
-        M.data[row.work][row.item] = row.amount
+        if kept >= M.MAX_RULES then
+            refused = refused + 1
+        else
+            local ok, _, clean = M.valid_rule(row.work, row.item, row.amount)
+            if ok then
+                M.data[row.work] = M.data[row.work] or {}
+                M.data[row.work][row.item] = clean
+                kept = kept + 1
+            else
+                refused = refused + 1
+            end
+        end
     end
+
+    if refused > 0 then
+        log.warn("dropped " .. refused ..
+            " rule(s) the server sent that do not look like rules")
+    end
+    return kept
 end
 
 -- ---------------------------------------------------------------------------

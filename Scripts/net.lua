@@ -207,6 +207,16 @@ end
 -- Receiving
 -- ---------------------------------------------------------------------------
 
+-- Which client a message arrived on, as a string.
+--
+-- Exposed so the command handler can rate-limit per sender instead of
+-- globally: one client hammering the channel should not stop everybody
+-- else's edits from landing.
+function M.who(comp)
+    if not api.valid(comp) then return nil end
+    return full_name(comp)
+end
+
 local function remember(context)
     local comp
     pcall(function() comp = context:get() end)
