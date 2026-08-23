@@ -206,6 +206,68 @@ end
 -- OnRequiredAssignWork_ServerInternal, which by definition only runs on the
 -- authority, so a client registers that hook successfully and then never
 -- receives a single pulse.
+-- The base camp component owned by this machine's player.
+--
+-- Every RequestX_ToServer on this component is a client to server RPC, and
+-- Unreal drops one before it reaches the wire unless the object carrying it
+-- belongs to the caller's connection - silently, so the call returns and
+-- nothing happens.
+--
+-- There are always exactly two candidates, each the BaseCamp component of a
+-- PalNetworkTransmitter: one transmitter owned by the local
+-- BP_PalPlayerController_C, one owned by BP_PalGameStateInGame_C. FindFirstOf
+-- answers with whichever the engine lists first, and that order is not stable
+-- across a reconnect. Measured on 23 August: it broke the rule transport
+-- outright, and the same coin flip is why work suitability toggles were
+-- re-sent every pass for the life of the mod without ever landing.
+--
+-- Transmitters are read from FindAllOf and matched by name rather than
+-- reached through the component's outer: GetOuter hands back a wrapper
+-- without the actor function table, so GetOwner on it silently fails.
+--
+-- Resolved per call and never stored. nil when nothing owned is found, and
+-- callers fall back to the old answer rather than sending nothing at all.
+function M.owned_network_component()
+    local pc = M.player_controller()
+    if not valid(pc) then return nil end
+
+    local mine
+    pcall(function() mine = pc:GetFullName() end)
+    if type(mine) ~= "string" then return nil end
+
+    local wanted
+    local tx
+    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
+    for _, t in ipairs(tx or {}) do
+        if valid(t) then
+            local owner, oname
+            pcall(function() owner = t:GetOwner() end)
+            if valid(owner) then
+                pcall(function() oname = owner:GetFullName() end)
+                if oname == mine then
+                    pcall(function() wanted = t:GetFullName() end)
+                    break
+                end
+            end
+        end
+    end
+    if type(wanted) ~= "string" then return nil end
+
+    local all
+    pcall(function() all = FindAllOf("PalNetworkBaseCampComponent") end)
+    for _, comp in ipairs(all or {}) do
+        if valid(comp) then
+            local outer, oname
+            pcall(function() outer = comp:GetOuter() end)
+            if valid(outer) then
+                pcall(function() oname = outer:GetFullName() end)
+                if oname == wanted then return comp end
+            end
+        end
+    end
+    return nil
+end
+
 function M.has_authority()
     local gm
     pcall(function() gm = FindFirstOf("PalGameMode") end)
@@ -247,6 +309,53 @@ function M.camp_id(camp)
     local id
     pcall(function() id = camp:GetId() end)
     return id
+end
+
+-- The guild a base camp belongs to, as a stable string key.
+--
+-- Measured on 23 August rather than assumed. PalBaseCampModel declares
+-- GetGroupIdBelongTo, and the FGuid it answers with is the same value a
+-- player's PalGroupGuild reports as its Id: both camps in the test world and
+-- the player all answered -758686034-1314655308-1294252187-537966059. That
+-- shared id is what lets a ceiling set by one guild stay off another's base.
+--
+-- nil when the camp will not say. Callers must read that as "no scope known",
+-- never as "applies everywhere" - guessing wide is how one guild's rule ends
+-- up capping the whole server, which is the bug this exists to fix.
+function M.camp_guild(camp)
+    local gid
+    pcall(function() gid = camp:GetGroupIdBelongTo() end)
+    return M.guid_key(gid)
+end
+
+-- The guild this machine's player belongs to, in the same key space.
+--
+-- Three hops, because GuildBelongTo is an OBJECT and not an id:
+--   controller -> PlayerState -> GuildBelongTo -> Id
+--
+-- Resolved per call and never stored, like everything else that touches an
+-- engine object. nil before the world has settled, and off a guild entirely,
+-- which is a real state: a player with no guild owns no bases and so has no
+-- rules to see.
+function M.guild_of(pc)
+    if not valid(pc) then return nil end
+
+    local ps = prop(pc, "PlayerState")
+    if not valid(ps) then return nil end
+
+    local guild = prop(ps, "GuildBelongTo")
+    if not valid(guild) then return nil end
+
+    return M.guid_key(prop(guild, "Id"))
+end
+
+-- The same question about this machine's own player.
+--
+-- Split from guild_of because the server needs to ask it about somebody else:
+-- a rule arriving from a client is filed under the guild of whoever sent it,
+-- resolved from the object it came in on, never from what the client claims.
+function M.my_guild()
+    return M.guild_of(M.player_controller())
 end
 
 -- ---------------------------------------------------------------------------
@@ -764,7 +873,12 @@ end
 function M.set_work_enabled(raw_id, work_value, on, comp)
     if raw_id == nil or type(work_value) ~= "number" then return false end
 
-    if comp == nil then comp = M.network_component() end
+    -- Owned first. An unowned component is not a slower path for a server
+    -- RPC, it is a silent no-op, which is exactly what made every toggle
+    -- repeat forever.
+    if comp == nil then
+        comp = M.owned_network_component() or M.network_component()
+    end
     if not valid(comp) then return false, "PalNetworkBaseCampComponent unavailable" end
 
     local ok, err = pcall(function()

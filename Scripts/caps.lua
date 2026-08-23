@@ -68,18 +68,54 @@ M.LADDER = {
 }
 
 M.path = nil
-M.data = {}          -- work name -> { [item id] = ceiling }
 
--- One record per line: WorkType|ItemId|Ceiling. Flat text for the same
--- reason priorities.txt is flat: a truncated line costs one ceiling where
--- half a written Lua table costs the whole file.
+-- guild key -> work name -> { [item id] = ceiling }
+--
+-- Guild keyed since 23 August. Before that it was work -> item -> ceiling for
+-- the whole machine, which is right in single player and wrong the moment two
+-- guilds share a server: a ceiling one guild set suspended that work at every
+-- base on the box, including bases its guild had never seen.
+--
+-- The key is api.guid_key of the guild's FGuid, which a camp answers with
+-- through GetGroupIdBelongTo and a player through
+-- PlayerState.GuildBelongTo.Id. Both were measured returning the same value
+-- for the same guild, and that shared id is the whole basis of the scoping.
+M.data = {}
+
+-- Rules that predate guild scoping, and rules from a machine that cannot say
+-- which guild it is acting for.
+--
+-- These apply to every guild that has not set its own ceiling for the same
+-- work and item, so upgrading does not silently drop limits somebody was
+-- relying on - an existing caps.txt keeps working, and the first guild edit
+-- for a given item takes over from it. A wildcard is the conservative choice
+-- here: adopting the old lines into whichever guild happened to load first
+-- would hand one guild's settings to another.
+M.ANY_GUILD = "*"
+
+-- One record per line: Guild|WorkType|ItemId|Ceiling, and the three field
+-- form that predates guilds is still read. Flat text for the same reason
+-- priorities.txt is flat: a truncated line costs one ceiling where half a
+-- written Lua table costs the whole file.
 local function parse_line(line)
-    local work, item, ceiling = line:match("^(%a+)|([%w_%.%-]+)|(%d+)$")
+    local guild, work, item, ceiling =
+        line:match("^([%w%*%-]+)|(%a+)|([%w_%.%-]+)|(%d+)$")
+
+    if not guild then
+        work, item, ceiling = line:match("^(%a+)|([%w_%.%-]+)|(%d+)$")
+        guild = M.ANY_GUILD
+    end
     if not work then return nil end
 
     ceiling = tonumber(ceiling)
     if not ceiling or ceiling < 1 then return nil end
-    return work, item, math.floor(ceiling)
+    return guild, work, item, math.floor(ceiling)
+end
+
+local function put(guild, work, item, ceiling)
+    M.data[guild] = M.data[guild] or {}
+    M.data[guild][work] = M.data[guild][work] or {}
+    M.data[guild][work][item] = ceiling
 end
 
 function M.load(path)
@@ -89,20 +125,24 @@ function M.load(path)
     local f = io.open(path, "r")
     if not f then return 0 end
 
-    local count = 0
+    local count, legacy = 0, 0
     for line in f:lines() do
         if line ~= "" and line:sub(1, 1) ~= "#" then
-            local work, item, ceiling = parse_line(line)
+            local guild, work, item, ceiling = parse_line(line)
             if work then
-                M.data[work] = M.data[work] or {}
-                M.data[work][item] = ceiling
+                put(guild, work, item, ceiling)
                 count = count + 1
+                if guild == M.ANY_GUILD then legacy = legacy + 1 end
             end
         end
     end
     f:close()
 
     log.debug("loaded " .. count .. " stock limit(s)")
+    if legacy > 0 then
+        log.debug(legacy .. " of them predate guild scoping and apply to " ..
+            "any guild that has not set its own")
+    end
     return count
 end
 
@@ -120,20 +160,31 @@ function M.save()
     end
 
     f:write("# Pal Work Priority - stock limits set with !pwp limit.\n")
-    f:write("# WorkType|ItemId|Ceiling\n")
+    f:write("# Guild|WorkType|ItemId|Ceiling\n")
+    f:write("# A guild of " .. M.ANY_GUILD .. " applies to any guild that " ..
+        "has not set its own.\n")
 
     -- Sorted so the file does not reshuffle on every write.
-    local works = {}
-    for work in pairs(M.data) do works[#works + 1] = work end
-    table.sort(works)
+    local guilds = {}
+    for guild in pairs(M.data) do guilds[#guilds + 1] = guild end
+    table.sort(guilds)
 
-    for _, work in ipairs(works) do
-        local items = {}
-        for item in pairs(M.data[work]) do items[#items + 1] = item end
-        table.sort(items)
+    for _, guild in ipairs(guilds) do
+        local works = {}
+        for work in pairs(M.data[guild]) do works[#works + 1] = work end
+        table.sort(works)
 
-        for _, item in ipairs(items) do
-            f:write(string.format("%s|%s|%d\n", work, item, M.data[work][item]))
+        for _, work in ipairs(works) do
+            local items = {}
+            for item in pairs(M.data[guild][work]) do
+                items[#items + 1] = item
+            end
+            table.sort(items)
+
+            for _, item in ipairs(items) do
+                f:write(string.format("%s|%s|%s|%d\n", guild, work, item,
+                    M.data[guild][work][item]))
+            end
         end
     end
 
@@ -146,40 +197,60 @@ end
 -- drift apart and a client cannot invent rules the server never agreed to.
 M.submit = nil
 
+-- A write with no guild is refused rather than widened.
+--
+-- Every write names the guild it is for. When the caller cannot say which
+-- guild it is acting for, the answer is to refuse and say so - NOT to fall
+-- back to the wildcard, which would apply the ceiling to every guild on the
+-- server. That widening is exactly the bug guild scoping exists to fix, and a
+-- silent fallback would reintroduce it at the one moment nobody is watching.
+local function writable_guild(guild, what)
+    if type(guild) == "string" and guild ~= "" then return guild end
+    log.warn("refused to " .. what ..
+        " a rule with no guild: this machine cannot say which guild it is " ..
+        "acting for, and a rule without one would cap every base on the server")
+    return nil
+end
+
 -- Returns whether the rule was taken. The authority path used to discard
 -- apply_set's answer, so a refused rule looked exactly like an accepted one
 -- to every caller - including the panel, which then reported a limit it had
 -- not set.
-function M.set(work_name, item, ceiling)
-    if M.submit then return M.submit("set", work_name, item, ceiling) end
-    return M.apply_set(work_name, item, ceiling)
+function M.set(work_name, item, ceiling, guild)
+    if M.submit then
+        return M.submit("set", work_name, item, ceiling, guild)
+    end
+    return M.apply_set(work_name, item, ceiling, guild)
 end
 
-function M.clear(work_name, item)
-    if M.submit then return M.submit("clear", work_name, item, 0) end
-    return M.apply_clear(work_name, item)
+function M.clear(work_name, item, guild)
+    if M.submit then return M.submit("clear", work_name, item, 0, guild) end
+    return M.apply_clear(work_name, item, guild)
 end
 
 -- The write itself, with no opinion about who asked for it. The authority
 -- calls these directly; a client only ever reaches them through a message
 -- coming back down.
+--
 -- Applies a rule that came from somewhere else - a client's request on the
 -- host, or the host's push on a client. Refuses anything that does not pass
 -- M.valid_rule, and says why.
-function M.apply_set(work_name, item, ceiling)
+function M.apply_set(work_name, item, ceiling, guild)
     local ok, why, clean = M.valid_rule(work_name, item, ceiling)
     if not ok then
         log.warn("refused a rule from the network: " .. why)
         return false
     end
 
-    M.data[work_name] = M.data[work_name] or {}
-    M.data[work_name][item] = clean
+    guild = writable_guild(guild, "set")
+    if not guild then return false end
+
+    put(guild, work_name, item, clean)
     M.save()
     return true
 end
 
-function M.apply_clear(work_name, item)
+function M.apply_clear(work_name, item, guild)
     -- A clear cannot invent data, but it can still be junk, and letting junk
     -- through means the log reports work types that do not exist.
     if not workdefs.is_known(work_name) or type(item) ~= "string" then
@@ -188,19 +259,20 @@ function M.apply_clear(work_name, item)
         return false
     end
 
-    local by_work = M.data[work_name]
+    guild = writable_guild(guild, "clear")
+    if not guild then return false end
+
+    local by_guild = M.data[guild]
+    local by_work = by_guild and by_guild[work_name]
     if by_work == nil or by_work[item] == nil then return false end
 
     by_work[item] = nil
-    if next(by_work) == nil then M.data[work_name] = nil end
+    if next(by_work) == nil then by_guild[work_name] = nil end
+    if next(by_guild) == nil then M.data[guild] = nil end
     M.save()
     return true
 end
 
--- Replaces everything, for a client receiving a full state push. Never
--- written to disk on a client: the file belongs to the machine with
--- authority, and a client keeping its own copy is how the two versions of
--- the truth start.
 -- The client's whole view, replaced by what the server pushed.
 --
 -- Validated the same way an inbound request is. A client trusting a server
@@ -208,6 +280,10 @@ end
 -- that can send the FName, and the client then draws a panel full of rules
 -- its own host never set. Bounded as well: a push is a batch, and a batch is
 -- the easy way to make a client allocate until it dies.
+--
+-- The server pushes only the receiving guild's rules, so a row without a
+-- guild belongs to the guild being pushed to, and lands under the wildcard
+-- where the client's own reads will still find it.
 M.MAX_RULES = 500
 
 function M.replace_all(rows)
@@ -220,8 +296,11 @@ function M.replace_all(rows)
         else
             local ok, _, clean = M.valid_rule(row.work, row.item, row.amount)
             if ok then
-                M.data[row.work] = M.data[row.work] or {}
-                M.data[row.work][row.item] = clean
+                local guild = row.guild
+                if type(guild) ~= "string" or guild == "" then
+                    guild = M.ANY_GUILD
+                end
+                put(guild, row.work, row.item, clean)
                 kept = kept + 1
             else
                 refused = refused + 1
@@ -240,40 +319,15 @@ end
 -- The merged view the scheduler reads
 -- ---------------------------------------------------------------------------
 
--- Ceilings for one work type, config first and in-game edits over the top.
--- Returns nil when nothing caps this work type at all, so the caller can
--- skip the check entirely rather than walking an empty table.
-function M.for_work(cfg, work_name)
-    local from_cfg = (cfg.work_caps or {})[work_name]
-    local from_edit = M.data[work_name]
-
-    if from_edit == nil then
-        return type(from_cfg) == "table" and from_cfg or nil
-    end
-    if type(from_cfg) ~= "table" then
-        return from_edit
-    end
-
-    local merged = {}
-    for item, ceiling in pairs(from_cfg) do merged[item] = ceiling end
-    for item, ceiling in pairs(from_edit) do merged[item] = ceiling end
-    return merged
-end
-
--- Whether anything caps anything at all.
+-- Every ceiling in force for one guild, in precedence order:
 --
--- The scheduler only pays to read chest contents when this is true, so a
--- limit set in game has to be visible here. Reading only cfg.work_caps would
--- leave totals empty and the new ceiling would never fire, which looks
--- exactly like the ceiling being broken.
-function M.any(cfg)
-    if next(M.data) ~= nil then return true end
-    local from_cfg = cfg.work_caps
-    return type(from_cfg) == "table" and next(from_cfg) ~= nil
-end
-
--- Every ceiling in force, work name -> item -> ceiling, for listing.
-function M.all(cfg)
+--   cfg.work_caps        written into config.lua, applies to the whole server
+--   M.data[ANY_GUILD]    set before guild scoping existed
+--   M.data[guild]        set by that guild, and wins
+--
+-- A nil guild sees only the first two. That is deliberate: a camp whose guild
+-- cannot be read must not inherit some other guild's ceilings.
+local function merged_for(cfg, guild)
     local out = {}
 
     for work, items in pairs((cfg or {}).work_caps or {}) do
@@ -283,12 +337,48 @@ function M.all(cfg)
         end
     end
 
-    for work, items in pairs(M.data) do
-        out[work] = out[work] or {}
-        for item, ceiling in pairs(items) do out[work][item] = ceiling end
+    local function layer(key)
+        for work, items in pairs(M.data[key] or {}) do
+            out[work] = out[work] or {}
+            for item, ceiling in pairs(items) do out[work][item] = ceiling end
+        end
     end
 
+    layer(M.ANY_GUILD)
+    if type(guild) == "string" and guild ~= M.ANY_GUILD then layer(guild) end
+
     return out
+end
+
+-- Ceilings for one work type in one guild. Returns nil when nothing caps this
+-- work type at all, so the caller can skip the check entirely rather than
+-- walking an empty table.
+function M.for_work(cfg, work_name, guild)
+    local all = merged_for(cfg, guild)
+    local items = all[work_name]
+    if items == nil or next(items) == nil then return nil end
+    return items
+end
+
+-- Whether anything caps anything at all.
+--
+-- The scheduler only pays to read chest contents when this is true, so a
+-- limit set in game has to be visible here. Reading only cfg.work_caps would
+-- leave totals empty and the new ceiling would never fire, which looks
+-- exactly like the ceiling being broken.
+--
+-- Asked across every guild on purpose: this decides whether the pass reads
+-- storage at all, and the pass covers every camp on the machine.
+function M.any(cfg)
+    if next(M.data) ~= nil then return true end
+    local from_cfg = cfg.work_caps
+    return type(from_cfg) == "table" and next(from_cfg) ~= nil
+end
+
+-- Every ceiling in force for one guild, work name -> item -> ceiling, for
+-- listing and for drawing the panel.
+function M.all(cfg, guild)
+    return merged_for(cfg, guild)
 end
 
 return M

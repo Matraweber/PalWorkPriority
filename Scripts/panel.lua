@@ -27,6 +27,22 @@ local overlay = require("overlay")
 local trace = require("trace")
 local scheduler = require("scheduler")
 
+-- The guild this panel speaks for.
+--
+-- Every rule the panel reads or writes is scoped to it, so a player editing
+-- limits on a shared server changes their own guild's bases and nothing else.
+-- Before this, one rule set covered the whole machine and a ceiling set by one
+-- guild suspended that work at every base on the server.
+--
+-- Resolved per call rather than kept. It is three engine reads, the panel
+-- already pays more than that on every refresh, and holding the objects across
+-- frames is the use-after-free this codebase is built to avoid. nil when the
+-- player is in no guild, which caps treats as "no scope" and refuses to write
+-- under rather than widening to everyone.
+local function mine()
+    return api.my_guild()
+end
+
 local M = {}
 
 M.open = false
@@ -1699,7 +1715,7 @@ local function poll_amount(cfg)
         return
     end
 
-    caps.set(job, item, want)
+    caps.set(job, item, want, mine())
     M.wants_pass = true
 
     -- Says so when the new limit is already passed, because that stops the
@@ -1893,7 +1909,7 @@ end
 
 local function rule_list(cfg)
     local out = {}
-    for work, by_item in pairs(caps.all(cfg)) do
+    for work, by_item in pairs(caps.all(cfg, mine())) do
         for item, amount in pairs(by_item) do
             out[#out + 1] = { work = work, item = item, amount = amount }
         end
@@ -2139,7 +2155,7 @@ local function draw_list(cfg, totals)
             -- a wrong word beats a nil call that takes the whole refresh out.
             local capped
             if scheduler.cap_state then
-                capped = scheduler.cap_state(cfg, rule.work, totals)
+                capped = scheduler.cap_state(cfg, rule.work, totals, mine())
             else
                 capped = met
             end
@@ -3177,9 +3193,9 @@ function M.command(cfg, args)
         editing = nil
         pcall(function() amount_box:SetVisibility(1) end)
         if n <= 0 then
-            caps.clear(job, item)
+            caps.clear(job, item, mine())
         else
-            caps.set(job, item, n)
+            caps.set(job, item, n, mine())
         end
         M.wants_pass = true
         return string.format("%s %s set to %d", workdefs.label(job), item, n)
@@ -3380,7 +3396,7 @@ function M.apply(cfg, what, dir, from_mouse)
         -- place instead of on a dead end.
         local work = workdefs.work_for_item(what.item) or workdefs.DEFAULT_WORK
 
-        caps.set(work, what.item, LADDER[1])
+        caps.set(work, what.item, LADDER[1], mine())
         log.say(string.format("rule added: %s until %d %s",
             workdefs.label(work), LADDER[1], what.item))
         M.wants_pass = true
@@ -3416,8 +3432,8 @@ function M.apply(cfg, what, dir, from_mouse)
         if at < 1 then at = #works end
 
         local moved = works[at]
-        caps.clear(rule.work, rule.item)
-        caps.set(moved, rule.item, rule.amount)
+        caps.clear(rule.work, rule.item, mine())
+        caps.set(moved, rule.item, rule.amount, mine())
         log.say(rule.item .. " is now made by " .. workdefs.label(moved))
         M.wants_pass = true
         return true
@@ -3440,7 +3456,7 @@ function M.apply(cfg, what, dir, from_mouse)
         end
 
         pending_drop = nil
-        caps.clear(what.rule.work, what.rule.item)
+        caps.clear(what.rule.work, what.rule.item, mine())
         log.say("rule removed: " .. workdefs.label(what.rule.work) ..
             " " .. what.rule.item)
         M.wants_pass = true
@@ -3462,11 +3478,11 @@ function M.apply(cfg, what, dir, from_mouse)
         local next_amount = step(rule.amount, dir)
 
         if next_amount == nil then
-            caps.clear(rule.work, rule.item)
+            caps.clear(rule.work, rule.item, mine())
             log.say("rule removed: " .. workdefs.label(rule.work) ..
                 " " .. rule.item)
         else
-            caps.set(rule.work, rule.item, next_amount)
+            caps.set(rule.work, rule.item, next_amount, mine())
         end
         M.wants_pass = true
         return true

@@ -421,6 +421,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
+    log.say("  " .. p .. " guilds    write Guilds.txt")
     log.say("keys, Ctrl does a thing:")
     log.say("  Ctrl+F8 transport test   Ctrl+F9  work rules")
     log.say("  Ctrl+F10 run a pass      Ctrl+F11 Discovery.txt")
@@ -673,6 +674,25 @@ COMMANDS.discover = function()
     end)
 end
 
+-- The guild half of the reconnaissance, on its own.
+--
+-- Worth a second command rather than a flag on the first: the full dump reads
+-- pals, which is authority only, and the guild answers are wanted precisely
+-- where that is unsafe - on a client, where a rule set by one guild must not
+-- reach another guild's base.
+COMMANDS.guilds = function()
+    run_now(function()
+        discover.guilds(DIR .. "Guilds.txt")
+    end)
+end
+
+-- Why the same work suitability toggles repeat every pass.
+COMMANDS.worksuit = function()
+    run_now(function()
+        discover.worksuit(DIR .. "WorkSuit.txt")
+    end)
+end
+
 -- Prints what the base is actually holding, by internal item id. Those ids
 -- are what work_caps keys on, and guessing their spelling is the easiest way
 -- to write a ceiling that silently never triggers.
@@ -858,7 +878,7 @@ local function match_stock_id(totals, wanted)
 end
 
 local function show_limits()
-    local all = caps.all(cfg)
+    local all = caps.all(cfg, api.my_guild())
 
     local works = {}
     for work in pairs(all) do works[#works + 1] = work end
@@ -945,7 +965,7 @@ COMMANDS.limit = function(args)
 
         if clearing then
             local id = match_stock_id(totals, item_text) or item_text
-            if caps.clear(work, id) then
+            if caps.clear(work, id, api.my_guild()) then
                 log.say("limit removed: " .. workdefs.label(work) .. " " .. id)
             else
                 log.say("no limit was set for " .. workdefs.label(work) .. " " .. id)
@@ -962,7 +982,7 @@ COMMANDS.limit = function(args)
                     "now, so check the spelling with " .. cfg.chat_prefix .. " stock")
             end
 
-            caps.set(work, id, math.floor(ceiling))
+            caps.set(work, id, math.floor(ceiling), api.my_guild())
             log.say(string.format("limit set: %s pauses at %d %s, base holds %d",
                 workdefs.label(work), math.floor(ceiling), id, totals[id] or 0))
         end
@@ -1089,9 +1109,17 @@ net.on_command = function(command, _, comp)
     -- rules table and saved, so anything able to send the FName could fill
     -- the host's caps.txt with keys of its choosing - and an amount of zero
     -- reads as "capped at zero", which suspends that work type for good.
+    -- The guild comes from the object the message arrived on, never from the
+    -- message. A client naming its own guild could name one it is not in, and
+    -- the ceiling would then stop work at bases it has nothing to do with.
+    -- Unresolvable means the rule is refused, not filed somewhere convenient:
+    -- caps refuses a write with no guild rather than widening it to everyone.
     if verb == net.PREFIX .. "Set" and #parts >= 4 then
         if not may_change(comp) then return end
-        if not caps.apply_set(parts[2], parts[3], parts[4]) then return end
+        local guild = net.guild_of_sender(comp)
+        if not caps.apply_set(parts[2], parts[3], parts[4], guild) then
+            return
+        end
 
         log.say(string.format("%s set %s to %s by a player",
             parts[2], parts[3], parts[4]))
@@ -1102,7 +1130,10 @@ net.on_command = function(command, _, comp)
 
     if verb == net.PREFIX .. "Clear" and #parts >= 3 then
         if not may_change(comp) then return end
-        if not caps.apply_clear(parts[2], parts[3]) then return end
+        if not caps.apply_clear(parts[2], parts[3],
+            net.guild_of_sender(comp)) then
+            return
+        end
 
         log.say(string.format("%s %s cleared by a player", parts[2], parts[3]))
         net.push_rules(caps, cfg, nil)
@@ -1172,7 +1203,10 @@ local function decide_write_or_send()
         return
     end
 
-    caps.submit = function(kind, work, item, amount)
+    caps.submit = function(kind, work, item, amount, _guild)
+        -- The guild is deliberately not sent. The server files the rule under
+        -- whichever guild the message arrived from, which a client cannot
+        -- forge; a guild named in the payload could be any guild at all.
         if not net.request(kind, work, item, amount) then
             log.say("could not reach the server, that change was not made")
             return false

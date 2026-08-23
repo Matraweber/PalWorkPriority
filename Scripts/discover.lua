@@ -339,6 +339,161 @@ end
 -- destination as the SECOND argument, RowMap is not readable at all, and the
 -- entries come back as wrappers needing :get() then :ToString(). All of that
 -- now lives in items.lua, so this only checks the result.
+-- Guild scoping reconnaissance.
+--
+-- Settled by earlier runs of this:
+--   camp  -> guild   PalBaseCampModel:GetGroupIdBelongTo(), a real FGuid
+--   player-> guild   PalPlayerState:GuildBelongTo, an OBJECT not an id
+--
+-- What is left is the id on that guild object, so a player can be matched to
+-- the guild a camp belongs to. Reading a property is safe even when the name
+-- is absent - api.prop is pcall wrapped and guid_key returns nil on anything
+-- that is not a real FGuid - so candidate ids are read rather than called.
+-- CALLING an unverified name is what killed the game twice on 23 August.
+--
+-- Unbuffered with a marker before every step; a buffered probe that crashes
+-- leaves a zero byte file and no clue where it died.
+local function probe_guilds(f)
+    pcall(function() f:setvbuf("no") end)
+
+    local function step(label)
+        f:write("[step] " .. label .. "\n")
+    end
+
+    local function classname(o)
+        local n
+        pcall(function() n = o:GetClass():GetFullName() end)
+        return n or "?"
+    end
+
+    step("start")
+    f:write("=== guild scoping\n")
+
+    step("camp guilds")
+    for ci, camp in ipairs(api.base_camps()) do
+        local gid
+        pcall(function() gid = camp:GetGroupIdBelongTo() end)
+        f:write(string.format(" camp %d guild=%s\n", ci,
+            tostring(api.guid_key(gid))))
+    end
+
+    step("controller -> player state")
+    local pc = api.player_controller()
+    local ps = pc and api.prop(pc, "PlayerState") or nil
+    f:write(" player state: " ..
+        (api.valid(ps) and classname(ps) or "unreadable") .. "\n")
+
+    step("player state -> GuildBelongTo")
+    local guild = api.valid(ps) and api.prop(ps, "GuildBelongTo") or nil
+    f:write(" guild object: " ..
+        (api.valid(guild) and classname(guild) or "unreadable") .. "\n")
+
+    if api.valid(guild) then
+        step("guild id candidates")
+        for _, name in ipairs({ "GroupId", "GroupID", "Id", "ID", "GuildId",
+                                "GroupName", "GuildName" }) do
+            local v = api.prop(guild, name)
+            local asguid = api.guid_key(v)
+            if asguid then
+                f:write(string.format("   %s -> guid %s\n", name, asguid))
+            elseif type(v) == "string" or type(v) == "number" then
+                f:write(string.format("   %s -> %s\n", name, tostring(v)))
+            end
+        end
+
+        step("guild class schema")
+        local shown = 0
+        pcall(function()
+            local cur = guild:GetClass()
+            if not api.valid(cur) then return end
+            cur:ForEachProperty(function(pr)
+                local n = ""
+                pcall(function() n = pr:GetFullName() end)
+                local low = n:lower()
+                if low:find("id") or low:find("group") or low:find("name") then
+                    f:write("   prop " .. n .. "\n")
+                    shown = shown + 1
+                end
+            end)
+        end)
+        if shown == 0 then f:write("   no id shaped properties found\n") end
+    end
+
+    step("done")
+end
+
+-- Why the same toggles repeat every pass.
+--
+-- The scheduler diffs what it wants against
+-- SaveParameter.WorkSuitabilityOptionInfo.OffWorkSuitabilityList and sends
+-- RequestChangeWorkSuitability_ToServer for each difference. Measured on
+-- 23 August, the identical pal/work/direction triples come back every single
+-- pass, so the write is not landing where the read looks. This lists what the
+-- component actually offers and what the read side actually contains, so the
+-- pairing can be chosen from evidence instead of from the name looking right.
+--
+-- Schema only plus safe property reads. Nothing here calls an unverified name.
+local function probe_worksuit(f)
+    pcall(function() f:setvbuf("no") end)
+    local function step(l) f:write("[step] " .. l .. "\n") end
+
+    step("start")
+    f:write("=== work suitability write and read\n")
+
+    step("component functions")
+    pcall(function()
+        local cur = StaticFindObject("/Script/Pal.PalNetworkBaseCampComponent")
+        if not api.valid(cur) then
+            f:write(" component class not found\n")
+            return
+        end
+        cur:ForEachFunction(function(fn)
+            local n = ""
+            pcall(function() n = fn:GetFName():ToString() end)
+            local low = n:lower()
+            if low:find("work") or low:find("suit") then
+                f:write("   func " .. n .. "\n")
+            end
+        end)
+    end)
+
+    step("what the read side holds")
+    for ci, camp in ipairs(api.base_camps()) do
+        local pals = api.camp_pals(camp) or {}
+        for pi, pal in ipairs(pals) do
+            if pi > 3 then break end
+            local param = pal.param
+            local off = param and api.work_off_set(param) or nil
+            local names = {}
+            for v in pairs(off or {}) do
+                names[#names + 1] = tostring(workdefs.name(v) or v)
+            end
+            table.sort(names)
+            f:write(string.format(" camp %d pal %s  off=[%s]\n", ci,
+                tostring(pal.name), table.concat(names, " ")))
+        end
+    end
+
+    step("option info shape")
+    pcall(function()
+        local camps = api.base_camps()
+        local pals = camps[1] and api.camp_pals(camps[1]) or {}
+        local param = pals[1] and pals[1].param or nil
+        if not api.valid(param) then
+            f:write(" no pal to read\n")
+            return
+        end
+        local save = api.prop(param, "SaveParameter")
+        f:write(" SaveParameter: " ..
+            (api.valid(save) and "ok" or "unreadable") .. "\n")
+        local info = save and api.prop(save, "WorkSuitabilityOptionInfo") or nil
+        f:write(" WorkSuitabilityOptionInfo: " ..
+            (info ~= nil and "present" or "absent") .. "\n")
+    end)
+
+    step("done")
+end
+
 local function probe_item_tables(f)
     f:write("=== item list\n")
 
@@ -441,15 +596,33 @@ function M.run(out_path)
     f:write("\n")
     pcall(function() ui.dump(f) end)
     f:write("\n")
-    pcall(function() probe_ranks(f) end)
+    -- The live pal probes are authority only.
+    --
+    -- probe_ranks calls GetWorkSuitabilityRank on every pal it can reach. On a
+    -- client those pals are replicated proxies and the call faults outright:
+    -- "pwp discover" on a dedicated server client killed the game on 23 August
+    -- mid write, with the dump ending inside the rank sweep. That is an access
+    -- violation, so the pcall around it caught nothing and the whole process
+    -- went. Anything reaching into a pal stays behind this gate; the schema
+    -- dumps and the guild probe read classes and replicated ids, which a client
+    -- answers safely.
+    local live = api.has_authority()
+    if not live then
+        f:write("=== live pal probes skipped\n")
+        f:write("  no authority here, so this is a client, and reading pal\n")
+        f:write("  ranks from replicated proxies crashes the game\n\n")
+    end
+
+    if live then pcall(function() probe_ranks(f) end) end
     f:write("\n")
-    pcall(function() probe_demand(f) end)
+    if live then pcall(function() probe_demand(f) end) end
     f:write("\n")
-    pcall(function() probe_readiness(f) end)
+    if live then pcall(function() probe_readiness(f) end) end
     f:write("\n")
-    pcall(function() probe_works(f) end)
+    if live then pcall(function() probe_works(f) end) end
     f:write("\n")
     pcall(function() probe_item_tables(f) end)
+    pcall(function() probe_guilds(f) end)
     f:write("\n")
     for _, c in ipairs(CLASSES) do
         pcall(function() dump_schema(f, c) end)
@@ -458,6 +631,37 @@ function M.run(out_path)
 
     f:close()
     log.say("discovery written to " .. out_path)
+    return true
+end
+
+-- The guild probe on its own, because the full dump is not safe on a client
+-- and the guild answers are exactly what a client can give.
+function M.guilds(out_path)
+    local f, open_err = io.open(out_path, "w")
+    if not f then
+        log.error("could not write " .. out_path .. ": " .. tostring(open_err))
+        return false
+    end
+    f:write("Pal Work Priority guild probe\n")
+    f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
+    pcall(function() probe_guilds(f) end)
+    f:close()
+    log.say("guild probe written to " .. out_path)
+    return true
+end
+
+-- The work suitability probe on its own; safe on a client.
+function M.worksuit(out_path)
+    local f, open_err = io.open(out_path, "w")
+    if not f then
+        log.error("could not write " .. out_path .. ": " .. tostring(open_err))
+        return false
+    end
+    f:write("Pal Work Priority work suitability probe\n")
+    f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
+    pcall(function() probe_worksuit(f) end)
+    f:close()
+    log.say("work suitability probe written to " .. out_path)
     return true
 end
 

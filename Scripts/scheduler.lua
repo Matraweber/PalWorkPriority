@@ -107,8 +107,13 @@ end
 -- stopped while Mining carried on digging for Ore - the panel stating the
 -- opposite of what the mod was doing. Exported so there is one answer to the
 -- question instead of two.
-function M.cap_state(cfg, work_name, totals)
-    local ceilings = caps.for_work(cfg, work_name)
+--
+-- The guild decides whose ceilings apply. A camp is only ever suspended by a
+-- rule its own guild set, plus anything written in config or left over from
+-- before guild scoping - never by another guild's ceiling, which used to
+-- happen because there was one rule set for the whole machine.
+function M.cap_state(cfg, work_name, totals, guild)
+    local ceilings = caps.for_work(cfg, work_name, guild)
     if ceilings == nil then return false, nil end
 
     local listed, short = false, nil
@@ -130,8 +135,8 @@ function M.cap_state(cfg, work_name, totals)
     return short == nil, short
 end
 
-local function cap_reached(cfg, work_name, totals)
-    return (M.cap_state(cfg, work_name, totals))
+local function cap_reached(cfg, work_name, totals, guild)
+    return (M.cap_state(cfg, work_name, totals, guild))
 end
 
 -- Pending jobs per work type. A type whose resource ceiling is met
@@ -140,7 +145,7 @@ end
 --
 -- Only reached by the estimated fallback, where `works` is every work object
 -- the camp owns. That overstates demand badly: a cold campfire has one.
-local function build_demand(cfg, works, totals, stats)
+local function build_demand(cfg, works, totals, stats, guild)
     local demand = {}
 
     for _, w in ipairs(works) do
@@ -155,7 +160,7 @@ local function build_demand(cfg, works, totals, stats)
             end
         elseif cfg.work_priority[name] == nil then
             stats.unconfigured = stats.unconfigured + 1
-        elseif cap_reached(cfg, name, totals) then
+        elseif cap_reached(cfg, name, totals, guild) then
             stats.capped = stats.capped + 1
         else
             -- A work with no assignable slot left is already covered and
@@ -405,7 +410,19 @@ end
 -- cleared when they finish, so nothing here holds it between passes.
 local pass_comp = nil
 
+-- The work types this pal is being iterated over, by name, for the diagnostic
+-- below. Built only when something is about to be logged.
+local function capable_names(pal)
+    local out = {}
+    for v in pairs(pal.capable or pal.base or {}) do
+        out[#out + 1] = tostring(workdefs.name(v) or v)
+    end
+    table.sort(out)
+    return out
+end
+
 local function apply_pal(cfg, pal, want, stats)
+    local said_off = false
     -- The game's own record is the only ground truth. Diffing against what we
     -- believe we set last time would drift the moment anything else touched a
     -- toggle, including the player.
@@ -466,6 +483,30 @@ local function apply_pal(cfg, pal, want, stats)
                     should_be_on and "on" or "off"))
             elseif api.set_work_enabled(pal.id, value, should_be_on, pass_comp) then
                 stats.toggles = stats.toggles + 1
+                -- Named so a repeat can be seen. The pass reports a count,
+                -- and a count cannot tell "twelve pals each corrected once"
+                -- from "the same three pals corrected every eleven seconds
+                -- because the write is not landing where the read looks".
+                log.debug(string.format("toggle %s %s -> %s", pal.name,
+                    workdefs.label(workdefs.name(value)),
+                    should_be_on and "on" or "off"))
+
+                -- The off set this decision was made against, printed once
+                -- per pal per pass. A repeated toggle can mean the write is
+                -- refused, or that the pal cannot do that work at all and so
+                -- never appears in the off list however often it is set - the
+                -- two look identical from a count and are told apart here.
+                if not said_off then
+                    said_off = true
+                    local names = {}
+                    for v in pairs(off) do
+                        names[#names + 1] = tostring(workdefs.name(v) or v)
+                    end
+                    table.sort(names)
+                    log.debug(string.format("   %s off=[%s] capable=[%s]",
+                        pal.name, table.concat(names, " "),
+                        table.concat(capable_names(pal), " ")))
+                end
             else
                 stats.failed = stats.failed + 1
             end
@@ -508,7 +549,7 @@ end
 -- one sweep and a real base needs several. The caller loops.
 function M.restore(cfg)
     local stats = M.blank_stats()
-    pass_comp = api.network_component()
+    pass_comp = api.owned_network_component() or api.network_component()
     local camps = api.base_camps()
 
     for _, camp in ipairs(camps) do
@@ -564,6 +605,13 @@ local function run_camp(cfg, camp, stats)
         log.debug("skipping a camp with no readable id")
         return
     end
+
+    -- Resolved once for the camp, because every ceiling check below needs it
+    -- and it costs an engine call. nil when the camp will not say which guild
+    -- owns it, and that is left as nil rather than widened: a camp with no
+    -- readable guild gets config and pre-scoping rules only, never another
+    -- guild's ceilings.
+    local camp_guild = api.camp_guild(camp)
 
     trace.at("camp: camp_pals")
     local pals, pal_err = api.camp_pals(camp)
@@ -655,7 +703,7 @@ local function run_camp(cfg, camp, stats)
             api.request_work_replication(camp_id, true)
             return
         end
-        demand = build_demand(cfg, all, totals, stats)
+        demand = build_demand(cfg, all, totals, stats, camp_guild)
         counted = #all
         stats.demand_estimated = true
     else
@@ -668,7 +716,7 @@ local function run_camp(cfg, camp, stats)
             elseif cfg.work_priority[name] == nil then
                 stats.unconfigured = stats.unconfigured + 1
                 demand[value] = nil
-            elseif cap_reached(cfg, name, totals) then
+            elseif cap_reached(cfg, name, totals, camp_guild) then
                 stats.capped = stats.capped + 1
                 demand[value] = nil
             end
@@ -681,7 +729,8 @@ local function run_camp(cfg, camp, stats)
     local capped = {}
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
-        if name ~= workdefs.ANYONE and cap_reached(cfg, name, totals) then
+        if name ~= workdefs.ANYONE
+            and cap_reached(cfg, name, totals, camp_guild) then
             capped[workdefs.value(name)] = true
         end
     end
@@ -768,7 +817,7 @@ function M.run_pass(cfg)
     local stats = M.blank_stats()
 
     -- One lookup for the whole pass. See the note on set_work_enabled.
-    pass_comp = api.network_component()
+    pass_comp = api.owned_network_component() or api.network_component()
 
     trace.at("pass: base_camps sweep")
     local camps = api.base_camps()

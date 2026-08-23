@@ -18,6 +18,13 @@
 --   outgoing messages. Every handler checks its role before acting or a
 --   client cheerfully answers its own requests.
 --
+--   Measured on 23 August, this last one did not hold: a client that had
+--   just sent two messages reported saw_up 0, counted above the role gate,
+--   so its own outgoing calls never reached its own hook. The role checks
+--   stay - they cost nothing and the claim may hold on other builds or for
+--   the down call - but nothing should be inferred from a client's own
+--   up-hook firing, because here it does not.
+--
 --   Any custom message proves the component it arrived on belongs to a real
 --   modded player, which is the only reliable way to find one worth pushing
 --   state back to. A component found by FindFirstOf at boot may be a dud
@@ -56,6 +63,19 @@ M.stats = {
     got_up = 0, got_down = 0,
     echo_sent = 0, echo_returned = 0,
     last_error = nil,
+
+    -- Counted before the role gate below, and separate from got_up for a
+    -- reason. A hook fires on the machine that MAKES the call, so a client
+    -- sees its own outgoing message - but got_up sits under the authority
+    -- check, so a client reports zero whether the call was made or not.
+    -- That left "the RPC was never issued" and "the RPC was issued and
+    -- vanished" looking identical from the client, and they want opposite
+    -- fixes: the first is a bad component, the second is ownership.
+    saw_up = 0,
+
+    -- Which resolution produced the component the last send went through,
+    -- so a working round trip says what fixed it rather than just working.
+    owner_route = nil,
 }
 
 -- ---------------------------------------------------------------------------
@@ -101,11 +121,86 @@ end
 
 local ZERO_GUID = { A = 0, B = 0, C = 0, D = 0 }
 
+-- The component a client is allowed to send a server RPC through.
+--
+-- Measured on 23 August rather than guessed, because the first guess was
+-- wrong. There are always exactly two PalNetworkBaseCampComponents on a
+-- client, and each is the BaseCamp component of a PalNetworkTransmitter:
+--
+--   PalNetworkTransmitter_A  owner: BP_PalPlayerController_C   <- this player
+--   PalNetworkTransmitter_B  owner: BP_PalGameStateInGame_C    <- the world
+--
+-- Only the first can carry a client to server RPC. A client does not own the
+-- game state, so Unreal drops anything sent through the second before it
+-- reaches the wire, and drops it silently: the call returns, the pcall
+-- succeeds, and sent_up counts a message that never left.
+--
+-- api.network_component answers with FindFirstOf, which returns whichever of
+-- the two the engine lists first. That ordering is not stable across a
+-- reconnect. Leaving to the menu and rejoining happened to leave the player's
+-- transmitter first and everything worked; rejoining after the SERVER
+-- restarted left the game state's first and every send vanished. Same two
+-- objects, different order - which is why this looked like a client going
+-- stale over hours when it was really a coin flip resolved at reconnect.
+--
+-- So the owner is checked instead of trusting the order. Resolved per call
+-- and never stored; this runs on a rule change, not in the pass.
+local function owned_component()
+    local pc = api.player_controller()
+    if not api.valid(pc) then return nil, nil end
+
+    local mine = full_name(pc)
+    if not mine then return nil, nil end
+
+    -- The transmitters are read from FindAllOf, not reached through the
+    -- component's outer. Both routes name the same object, but GetOuter hands
+    -- back a plain wrapper without the actor function table, so GetOwner on it
+    -- silently fails inside the pcall and every candidate looks unowned. The
+    -- first version of this did exactly that and reported "none" while the
+    -- probe alongside it printed the very owner it was looking for.
+    local wanted
+    local tx
+    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
+    for _, t in ipairs(tx or {}) do
+        if api.valid(t) then
+            local owner
+            pcall(function() owner = t:GetOwner() end)
+            if api.valid(owner) and full_name(owner) == mine then
+                wanted = full_name(t)
+                break
+            end
+        end
+    end
+    if not wanted then return nil, nil end
+
+    local all
+    pcall(function() all = FindAllOf("PalNetworkBaseCampComponent") end)
+    for _, comp in ipairs(all or {}) do
+        if api.valid(comp) then
+            local outer
+            pcall(function() outer = comp:GetOuter() end)
+            if api.valid(outer) and full_name(outer) == wanted then
+                return comp, "owner"
+            end
+        end
+    end
+
+    return nil, nil
+end
+
 -- Client to server. Returns false when there is no component to send through,
 -- which happens before the world has settled and is not an error.
 function M.to_server(command, value)
-    local comp = api.network_component()
+    -- The owned one when this is a client, because an unowned component is
+    -- not a slower path here, it is a silent no-op. The old answer stays as
+    -- the fallback so the authority - where ownership is not a question -
+    -- behaves exactly as before.
+    local comp, route = owned_component()
+    if not api.valid(comp) then
+        comp, route = api.network_component(), "findfirst"
+    end
     if not api.valid(comp) then return false end
+    M.stats.owner_route = route
 
     local ok, err = pcall(function()
         comp:Request_Server_int32(ZERO_GUID, FName(command), value or 0)
@@ -212,6 +307,39 @@ end
 -- Exposed so the command handler can rate-limit per sender instead of
 -- globally: one client hammering the channel should not stop everybody
 -- else's edits from landing.
+-- The guild a message belongs to, resolved from the object it arrived on.
+--
+-- Never from what the client says. A client that could name its own guild
+-- could name one it is not in, and a ceiling filed under that guild would
+-- suspend work at bases it has no business touching - griefing that looks
+-- exactly like the mod misbehaving. So the sender is traced back through the
+-- component the RPC actually came in on: component -> its transmitter ->
+-- that transmitter's owning controller -> that player's guild.
+--
+-- Transmitters are read from FindAllOf and matched by name rather than
+-- reached through the component's outer, because GetOuter hands back a
+-- wrapper without the actor function table and GetOwner on it silently fails.
+-- That cost an afternoon once already.
+function M.guild_of_sender(comp)
+    if not api.valid(comp) then return nil end
+
+    local outer
+    pcall(function() outer = comp:GetOuter() end)
+    local want = api.valid(outer) and full_name(outer) or nil
+    if not want then return nil end
+
+    local tx
+    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
+    for _, t in ipairs(tx or {}) do
+        if api.valid(t) and full_name(t) == want then
+            local owner
+            pcall(function() owner = t:GetOwner() end)
+            if api.valid(owner) then return api.guild_of(owner) end
+        end
+    end
+    return nil
+end
+
 function M.who(comp)
     if not api.valid(comp) then return nil end
     return full_name(comp)
@@ -244,6 +372,8 @@ function M.install()
                     local command = read_name(B, A)
                     if type(command) ~= "string" then return end
                     if command:sub(1, #PREFIX) ~= PREFIX then return end
+
+                    M.stats.saw_up = M.stats.saw_up + 1
 
                     -- Our own outgoing call, seen on the way out. Only the
                     -- authority answers.
@@ -339,45 +469,70 @@ end
 -- Called on the authority to push every rule to one client, or to all of
 -- them when comp is nil.
 function M.push_rules(caps, cfg, comp)
-    local all = caps.all(cfg)
+    -- One batch per guild, built on demand and reused.
+    --
+    -- Each client is sent only its own guild's ceilings, so a player never
+    -- sees - or has their bases stopped by - a rule another guild set. Two
+    -- clients in the same guild get identical lines, so the batch is cached
+    -- by guild rather than rebuilt per recipient.
+    --
+    -- A nil guild is a real case, not an error: a player in no guild, or one
+    -- the server cannot resolve yet. They get the unscoped rules only, which
+    -- is what caps.all answers for nil, and never another guild's.
+    local built = {}
+    local function batch_for(guild)
+        local key = guild or "<none>"
+        if built[key] then return built[key] end
 
-    -- Collected first, sent second, so each recipient is resolved once
-    -- instead of once per line.
-    local batch = {}
-    local send = function(msg)
-        batch[#batch + 1] = msg
-        return true
-    end
-
-    send(PREFIX .. "Reset")
-    for work, items in pairs(all) do
-        for item, amount in pairs(items) do
-            send(string.format("%sRule|%s|%s|%d", PREFIX, work, item, amount))
+        local batch = { PREFIX .. "Reset" }
+        for work, items in pairs(caps.all(cfg, guild)) do
+            for item, amount in pairs(items) do
+                batch[#batch + 1] =
+                    string.format("%sRule|%s|%s|%d", PREFIX, work, item, amount)
+            end
         end
+        batch[#batch + 1] = PREFIX .. "Done"
+
+        built[key] = batch
+        return batch
     end
-    send(PREFIX .. "Done")
 
     -- One named target: a component the caller obtained inside the hook
     -- callback that is still on the stack. Used as given and never stored.
     if comp then
-        for _, msg in ipairs(batch) do
+        for _, msg in ipairs(batch_for(M.guild_of_sender(comp))) do
             if not M.to_client(comp, msg) then return false end
         end
         return true
     end
 
-    -- Everyone we have heard from, each resolved exactly once for the whole
-    -- batch. Dropping a key during pairs is defined behaviour in Lua; adding
-    -- one is not, and nothing here adds.
+    -- Everyone we have heard from. Each is resolved exactly once and then
+    -- both asked its guild and sent to, rather than going through send_batch
+    -- which would resolve it a second time. Dropping a key during pairs is
+    -- defined behaviour in Lua; adding one is not, and nothing here adds.
     local now = os.clock()
     local sent = 0
     for name, entry in pairs(M.clients) do
         if (now - entry.at) > CLIENT_TTL then
             M.clients[name] = nil
-        elseif M.send_batch(name, batch) then
-            sent = sent + 1
         else
-            M.clients[name] = nil
+            local live = live_client(name)
+            if not api.valid(live) then
+                M.clients[name] = nil
+            else
+                local ok = true
+                for _, msg in ipairs(batch_for(M.guild_of_sender(live))) do
+                    if not M.to_client(live, msg) then
+                        ok = false
+                        break
+                    end
+                end
+                if ok then
+                    sent = sent + 1
+                else
+                    M.clients[name] = nil
+                end
+            end
         end
     end
     return sent > 0
@@ -427,8 +582,10 @@ function M.report()
     log.say("transport:")
     log.say("  hooks installed: " .. tostring(M.installed))
     log.say("  role: " .. (api.has_authority() and "authority" or "client"))
-    log.say(string.format("  sent up %d, received up %d",
-        M.stats.sent_up, M.stats.got_up))
+    log.say(string.format("  sent up %d, received up %d, seen leaving %d",
+        M.stats.sent_up, M.stats.got_up, M.stats.saw_up))
+    log.say("  last send went through: " ..
+        (M.stats.owner_route or "nothing yet"))
     log.say(string.format("  sent down %d, received down %d",
         M.stats.sent_down, M.stats.got_down))
     log.say(string.format("  echo sent %d, returned %d",
@@ -438,13 +595,72 @@ function M.report()
     for _ in pairs(M.clients) do known = known + 1 end
     log.say("  modded clients heard from: " .. known)
 
+    -- Which object a send would actually go through, and how many are on
+    -- offer. This is here to settle why a long-lived client stops being able
+    -- to send: the suspicion is that a reconnect leaves the previous
+    -- session's components in memory, FindFirstOf keeps answering with a dead
+    -- one, and the RPC is dropped on an object whose connection is gone.
+    -- If that is right, the count climbs across reconnects and the name below
+    -- changes to one that no longer works. If the count and name hold steady
+    -- while sending stops, the fault is elsewhere and this rules it out.
+    local seen = 0
+    pcall(function()
+        local all = FindAllOf("PalNetworkBaseCampComponent")
+        seen = #(all or {})
+    end)
+    local pick, owned_pick = nil, nil
+    pcall(function() pick = full_name(api.network_component()) end)
+    pcall(function() owned_pick = full_name((owned_component())) end)
+    log.say("  base camp components in memory: " .. seen)
+    log.say("  a send would use: " .. (pick or "none"))
+    log.say("  owned lookup finds: " .. (owned_pick or "none"))
+
+    -- The object graph, because the first guess at it was wrong. The
+    -- component is not on the player: it is the BaseCamp component of a
+    -- PalNetworkTransmitter actor sitting in the persistent level, and there
+    -- is more than one. Which transmitter belongs to this player is the whole
+    -- question, so the owner of each is printed next to the local
+    -- controller's name rather than assumed.
+    local pcname
+    pcall(function() pcname = full_name(api.player_controller()) end)
+    log.say("  local controller: " .. (pcname or "none"))
+
+    local tx
+    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
+    for i, t in ipairs(tx or {}) do
+        if api.valid(t) then
+            local owner, tname
+            pcall(function() tname = full_name(t) end)
+            pcall(function() owner = full_name(t:GetOwner()) end)
+            log.say(string.format("  transmitter %d: %s", i, tname or "?"))
+            log.say(string.format("     owner: %s", owner or "none"))
+        end
+    end
+
+    local comps
+    pcall(function() comps = FindAllOf("PalNetworkBaseCampComponent") end)
+    for i, c in ipairs(comps or {}) do
+        if api.valid(c) then
+            local cname, couter
+            pcall(function() cname = full_name(c) end)
+            pcall(function() couter = full_name(c:GetOuter()) end)
+            log.say(string.format("  component %d: %s", i, cname or "?"))
+            log.say(string.format("     outer: %s", couter or "none"))
+        end
+    end
+
     if M.stats.last_error then
         log.say("  last error: " .. M.stats.last_error)
     end
 
     if M.stats.echo_sent > 0 and M.stats.echo_returned == 0 then
-        log.say("  the echo has not come back. Either the RPC does not reach " ..
-            "the server, or the reply does not reach here.")
+        if M.stats.saw_up == 0 then
+            log.say("  the echo never even left: the call was made on a " ..
+                "component the engine did not run it on.")
+        else
+            log.say("  the echo left this machine and did not come back, so " ..
+                "it is the wire or the reply, not the call.")
+        end
     end
 end
 
