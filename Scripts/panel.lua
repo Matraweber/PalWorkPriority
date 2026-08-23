@@ -3155,9 +3155,22 @@ function M.command(cfg, args)
                         end
                         seen[cname] = seen[cname] + 1
 
+                        -- Named, or asked for, rather than guessed at.
+                        --
+                        -- The first version took whichever class matched any
+                        -- of product, craft, work or recipe first, and
+                        -- "PalMapObjectBaseCampPassiveWorkHardModel" matches
+                        -- on "work" - so it probed a passive work station
+                        -- while four PalMapObjectProductItemModel benches,
+                        -- the things that actually hold a craft queue, sat
+                        -- right beside it in the same sweep.
                         local low = cname:lower()
-                        if sample == nil and (low:find("product") or low:find("craft")
-                            or low:find("work") or low:find("recipe")) then
+                        local want = rest
+                        if want then
+                            if sample == nil and low == want:lower() then
+                                sample = o
+                            end
+                        elseif sample == nil and low:find("productitem") then
                             sample = o
                         end
                     end
@@ -3193,6 +3206,60 @@ function M.command(cfg, args)
                 if n then log.say("  func " .. n) end
             end)
         end)
+
+        -- The inheritance chain is not worth walking; it was, once, and it
+        -- answered. PalMapObjectProductItemModel derives from
+        -- PalMapObjectConcreteModelBase and then straight from Object, and
+        -- neither declares anything matching product, craft, recipe, set or
+        -- request. Nothing inherited can change what a bench makes.
+        --
+        -- That walk also took the game down on 23 August: the loop stopped on
+        -- a nil or self-referencing super but never checked the answer was a
+        -- VALID object, so one step past Object it called ForEachFunction on
+        -- something that was neither. The rule this whole codebase is built
+        -- on - validate before you touch - applies to a probe exactly as much
+        -- as to a pass.
+
+        -- And whatever the crafting UI actually sends through.
+        --
+        -- Setting a bench's product is a player action, and every other base
+        -- camp action this mod uses turns out to be a RequestX_ToServer on a
+        -- native class rather than a call on the model.
+        --
+        -- Asked of the NATIVE classes by path, not of pc:GetClass(). The
+        -- first version did the latter and got an empty list, which reads as
+        -- "no such function" and is not: pc:GetClass() is
+        -- BP_PalPlayerController_C, and the RPCs are declared on the
+        -- /Script/Pal parent it derives from. An enumeration is only as
+        -- honest as the thing it enumerates.
+        for _, path in ipairs({
+            "/Script/Pal.PalPlayerController",
+            "/Script/Pal.PalNetworkBaseCampComponent",
+            "/Script/Pal.PalPlayerState",
+        }) do
+            log.say("[" .. path .. "]")
+            local hits = 0
+            pcall(function()
+                local cls = StaticFindObject(path)
+                if not api.valid(cls) then
+                    log.say("    class not found")
+                    return
+                end
+                cls:ForEachFunction(function(fn)
+                    local fname
+                    pcall(function() fname = fn:GetFName():ToString() end)
+                    if fname then
+                        local l = fname:lower()
+                        if l:find("product") or l:find("craft")
+                            or l:find("recipe") then
+                            log.say("    func " .. fname)
+                            hits = hits + 1
+                        end
+                    end
+                end)
+            end)
+            if hits == 0 then log.say("    nothing craft shaped") end
+        end
 
         return "probed " .. tostring(sname)
     end
