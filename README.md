@@ -205,6 +205,36 @@ one. `0` removes a limit rather than
 being read literally: taken at face value it would mean "you already have at least none of
 these" and suspend the work type for good, which is what priority `X` on the stand is for.
 
+### Keeping a stock topped up
+
+A limit is a ceiling: it stops a job when storage is full enough. The obvious
+companion is a floor - "always keep 100 Pal Spheres" - and that is worth saying
+plainly: **the mod cannot queue a craft.** Nothing in this build lets a mod set
+what a workbench produces. `PalMapObjectProductItemModel` exposes
+`GetProductItemId`, `GetItemContainer` and `CalcRequiredAmount` and no setter at
+all; its whole inheritance is `PalMapObjectConcreteModelBase` and then `Object`,
+neither of which adds one; and no queue count is exposed anywhere, so there is
+nothing to write even if there were somewhere to write it. `!pwp panel craft`
+reprints that finding against your own game if you want to check it.
+
+What does work is the other half of the same idea. Queue a large standing order
+at the bench once, by hand, then put a ceiling on what it makes:
+
+```
+!pwp limit Handiwork PalSphere 100
+```
+
+Pals work the bench until storage reaches 100, stop, and start again when it
+falls. The standing order is what the mod cannot create; the topping up is
+exactly what a ceiling already does.
+
+Two things to know before relying on it. **Only chests are counted** - spheres
+sitting in your own inventory or on the ground are invisible to a ceiling, and
+`!pwp stock` lists what is holding stock that does not count. And a ceiling
+gates the whole work type, so if your Pals do other Handiwork it stops too -
+unless you list those items as well, because a job only stops once *every*
+item listed for it has reached its ceiling.
+
 The equivalent in `config.lua`, for anyone who would rather keep it in a file:
 
 ```lua
