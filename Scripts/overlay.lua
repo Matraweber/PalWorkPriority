@@ -367,6 +367,42 @@ function M.hide()
     M.open = false
 end
 
+-- Take the cursor back when something else has helped itself to it.
+--
+-- Measured on 24 August, over an open panel: Esc opens the game's own menu and
+-- changes nothing here, cursor included. The SECOND Esc, the one that closes
+-- that menu, sets bShowMouseCursor to false - and set_input_now runs on show
+-- and on hide and at no other time, so nothing noticed. The panel was left on
+-- screen holding a UI-only input route with no pointer to drive it, and the
+-- only way back was to close and reopen it.
+--
+-- The condition is deliberately "open AND the cursor is gone", not "open".
+-- That same measurement is what makes it safe: while the game's menu is up the
+-- cursor is ON, so this cannot be true then, and this cannot end up fighting
+-- that menu for the pointer. A blunter re-assert on every tick would, and
+-- would trade a lost cursor for an unusable pause menu.
+--
+-- Polled rather than hooked because there is no event for "someone took your
+-- input mode away". Once a second, off the refresh that already runs.
+function M.reassert_input()
+    if not M.open then return false end
+
+    local pc = api.player_controller()
+    if not alive(pc) then return false end
+
+    local cursor
+    pcall(function() cursor = pc.bShowMouseCursor end)
+    if cursor ~= false then return false end
+
+    -- set_input_now leaves cursor_was alone when it is already set, so the
+    -- state to restore on close is still the one captured when the panel
+    -- opened, not the false the game just wrote.
+    log.debug("overlay: the cursor was taken, putting it back")
+    set_input_now(true)
+    pcall(function() if alive(widget) then widget:SetKeyboardFocus() end end)
+    return true
+end
+
 
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
@@ -382,6 +418,38 @@ end
 -- Diagnostics
 -- ---------------------------------------------------------------------------
 
+-- What the input state IS, as against what this module last set it to.
+--
+-- The two come apart whenever something else takes the mode away, and the
+-- game's own menus do exactly that. set_input_now runs on show and on hide and
+-- at no other time, so nothing here notices the theft or puts it back: the
+-- panel is left on screen with no cursor and no route for a click, which is
+-- the reported symptom of Esc pressed twice over an open panel.
+--
+-- Reads only, and only reads already proven on this build. bShowMouseCursor is
+-- the same property set_input_now writes three lines apart. Deliberately does
+-- NOT call widget:GetVisibility(): it is very likely fine, and an unverified
+-- name is exactly what has taken this game down before, so a diagnostic is the
+-- last place to spend that risk.
+function M.input_report()
+    local pc = api.player_controller()
+
+    local cursor = "no controller"
+    if alive(pc) then
+        cursor = "unreadable"
+        pcall(function() cursor = tostring(pc.bShowMouseCursor) end)
+    end
+
+    log.say("overlay input:")
+    log.say("  overlay.open:     " .. tostring(M.open))
+    log.say("  widget alive:     " .. tostring(alive(widget)))
+    log.say("  bShowMouseCursor: " .. cursor)
+    log.say("  cursor_was:       " .. tostring(cursor_was))
+    log.say("  input_route:      " .. tostring(input_route))
+
+    return string.format("open=%s cursor=%s route=%s",
+        tostring(M.open), cursor, tostring(input_route))
+end
 
 
 -- Where item icons live, and what they are called.

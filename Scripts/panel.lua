@@ -2797,6 +2797,14 @@ function M.refresh(cfg)
     local rooted = ensure_root()
     perf_setup = os.clock() - tsetup
 
+    -- Closing the game's own menu hands the cursor back to the world without
+    -- caring that this panel is still open. Guarded like every other call into
+    -- a sibling that hot reloads: a reload into a session whose overlay
+    -- predates this would take the refresh down once a second.
+    if rooted and overlay.reassert_input then
+        pcall(function() overlay.reassert_input() end)
+    end
+
     -- The typed-ceiling box, when one is open: placed, then read.
     if rooted and editing ~= nil then
         ensure_amount_box()
@@ -3163,6 +3171,15 @@ function M.command(cfg, args)
         page = math.max(0, math.floor(n) - 1)
         want_first_row = true
         return "page " .. (page + 1)
+    end
+
+    -- Whether the input mode is still ours. Lives here for the same reason
+    -- `icons` does, and is guarded the same way: this module reloads, and a
+    -- reload into a session whose overlay predates input_report would take the
+    -- command down rather than answer it.
+    if verb == "input" then
+        if not overlay.input_report then return "this build cannot report that" end
+        return overlay.input_report()
     end
 
     -- What has no icon, from the inside. Lives here rather than in main.lua's
