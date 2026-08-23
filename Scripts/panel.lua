@@ -1423,6 +1423,18 @@ local function style_box(box, which)
             ColorUseRule = 0,
         }
 
+        -- Sized to the row it covers.
+        --
+        -- Nothing set this before, so the box took the engine default while
+        -- the row around it draws at ROW_PT - the number visibly grew when
+        -- clicked and shrank again on commit. Set through the same style
+        -- struct as the background, which UE4SS hands out by reference, and
+        -- left alone if the build will not take it: a wrong size is untidy,
+        -- a throw here would cost the whole field.
+        pcall(function()
+            if st.Font ~= nil then st.Font.Size = ROW_PT end
+        end)
+
         -- Only the background. The four foreground colours an
         -- EditableTextBox carries were all set and none of them moved the
         -- text, so they are not pretended at here.
@@ -1758,7 +1770,11 @@ local function begin_edit(rule, row)
         work = rule.work,
         item = rule.item,
         row = row,
-        seed = tostring(rule.amount or ""),
+        -- Grouped, like the cell it opens on top of. The column reads
+        -- 15,000 and the box used to open on 15000, so the number appeared to
+        -- change the instant it was clicked. The commit strips everything
+        -- that is not a digit, so the commas cost nothing to carry.
+        seed = rule.amount and group_digits(rule.amount) or "",
         -- Kept as a number and never cleared, unlike seed, which the first
         -- draw consumes. The commit compares against it to tell a real edit
         -- from a box that merely lost the keyboard.
@@ -2030,7 +2046,11 @@ local function draw_list(cfg, totals)
         -- three things it could plausibly be the status OF - the job, the
         -- item, or the rule - and readers picked the rule. Naming the subject
         -- in the heading makes "Stopped" mean the pals stopped.
-        line("h_st",   row, COL_DONE, "PALS",       "faint", 12)
+        -- STATUS, not PALS. The column holds Working, Waiting and Stopped,
+        -- which is the state of the job, and a heading reading PALS over
+        -- those invites reading them as a count of pals. Wider than PALS but
+        -- narrower than the values already under it, so the layout is unmoved.
+        line("h_st",   row, COL_DONE, "STATUS",     "faint", 12)
         row = row + 1
     end
 
