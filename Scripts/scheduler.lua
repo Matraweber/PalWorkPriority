@@ -215,15 +215,24 @@ local function base_allowed(cfg, pal, capped)
         local name = workdefs.ORDER[i]
         local value = workdefs.value(name)
 
-        -- Anyone names no skill, so there is no rank to pass. workdefs says
-        -- as much in as many words and nothing acted on it: the gate below
-        -- asked for a rank in a value that is not a real EPalWorkSuitability,
-        -- so capable was never set, Anyone never entered a pal's order, and
-        -- work_priority.Anyone was inert - while run_camp already made a
-        -- special case to keep it out of the capped set, which only makes
-        -- sense if it was expected to work.
-        if name == workdefs.ANYONE
-            or api.suitability_rank(pal.param, value) >= 1 then
+        -- Anyone is deliberately NOT in here, and the previous attempt to
+        -- put it in made things worse.
+        --
+        -- `capable` is the domain apply_pal iterates to send toggles, so
+        -- adding Anyone meant every fenced pal was sent "turn Anyone off" on
+        -- every pass, for ever. Letting it through the rank gate as well
+        -- would not have helped: nothing ever resolves a work object to
+        -- suitability 14 - it appears in no entry of WORKTYPE_TO_SUIT or
+        -- KEYWORDS - so demand[14] is always zero, the type is never wanted,
+        -- and the fence never covers it. A permission that can never be
+        -- granted and is withdrawn every pass is pure RPC churn, and it ate
+        -- the toggle budget before X or a real fence change could use it.
+        --
+        -- Making Anyone work needs demand resolution for value 14, not a
+        -- change here. Until something produces that demand,
+        -- config.work_priority.Anyone is inert and this is the honest
+        -- behaviour rather than a busy imitation of it.
+        if api.suitability_rank(pal.param, value) >= 1 then
             capable[value] = true
 
             -- X bars a pal outright, and a met ceiling bars the work for
@@ -406,7 +415,14 @@ local function apply_pal(cfg, pal, want, stats)
     -- dropped exactly when a pass was busiest. With the pass gone, so is the
     -- hole: X is enforced by the loop below, under the budget, every time.
     for value in pairs(pal.capable or pal.base or {}) do
-        if stats.toggles + stats.would_toggle >= MAX_TOGGLES_PER_PASS then
+        -- Budgeted per CAMP, not per pass.
+        --
+        -- One counter shared across every camp meant the first base could
+        -- spend the whole allowance and the second was never touched - and
+        -- camps arrive in FindAllOf order, which does not rotate, so the same
+        -- base loses every time. The only sign was a "deferred" count in a
+        -- line nobody reads. Whatever is skipped is still picked up next tick.
+        if (stats.camp_toggles or 0) >= MAX_TOGGLES_PER_PASS then
             stats.deferred = stats.deferred + 1
             return
         end
@@ -415,6 +431,8 @@ local function apply_pal(cfg, pal, want, stats)
         local is_on = not off[value]
 
         if should_be_on ~= is_on then
+            stats.camp_toggles = (stats.camp_toggles or 0) + 1
+
             if cfg.dry_run then
                 stats.would_toggle = stats.would_toggle + 1
                 log.info(string.format("[dry run] %s %s -> %s",
@@ -430,7 +448,63 @@ local function apply_pal(cfg, pal, want, stats)
 
 end
 
+-- One pass's tally. Shared by run_pass and restore so a restore reports the
+-- same numbers in the same words.
+function M.blank_stats()
+    return {
+        camps = 0, pals = 0, works = 0, chests = 0,
+        fenced = 0, free = 0,
+        toggles = 0, would_toggle = 0, failed = 0, deferred = 0, unreadable = 0,
+        demand_types = 0,
+        unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
+        demand_estimated = false,
+        needed = 0, covered = 0, idle_skipped = 0, held = 0,
+        demand_by_name = {},
+        lines = {},
+    }
+end
+
+-- Give every pal back everything it can do, and stop.
+--
+-- The mod withdraws permissions and, until now, had no way to hand them back.
+-- Turning it off only set a flag: run_pass returned early and every pal stayed
+-- fenced exactly as the last pass left it. Deleting the mod was worse - the
+-- fences outlive it, because they are the game's own saved data. The only
+-- recovery was re-ticking twelve checkboxes per pal by hand on the stand, and
+-- a config.lua typo produced the same state.
+--
+-- "Restore" here means the same thing the header means by stateless: capable
+-- AND not X. It deliberately still honours X, because X is the player's own
+-- instruction rather than something this mod invented - a pal they barred
+-- from Mining should stay barred after they switch the mod off.
+--
+-- Returns how many toggles it still owes, because MAX_TOGGLES_PER_PASS bounds
+-- one sweep and a real base needs several. The caller loops.
+function M.restore(cfg)
+    local stats = M.blank_stats()
+    local camps = api.base_camps()
+
+    for _, camp in ipairs(camps) do
+        local camp_id = api.camp_id(camp)
+        if camp_id ~= nil then
+            stats.camp_toggles = 0
+            for _, pal in ipairs(api.camp_pals(camp) or {}) do
+                -- No plan and no ceilings: base_allowed then returns capable
+                -- minus X, which is precisely the vanilla state this mod
+                -- started from.
+                local capable, base = base_allowed(cfg, pal, {})
+                pal.capable, pal.base = capable, base
+                apply_pal(cfg, pal, base, stats)
+                pal.capable, pal.base, pal.param = nil, nil, nil
+            end
+        end
+    end
+
+    return stats
+end
+
 -- ---------------------------------------------------------------------------
+-- One camp, one pass-- ---------------------------------------------------------------------------
 -- One camp, one pass
 -- ---------------------------------------------------------------------------
 
@@ -452,6 +526,9 @@ local function needs_totals(cfg)
 end
 
 local function run_camp(cfg, camp, stats)
+    -- Each camp gets the full allowance. See the note in apply_pal.
+    stats.camp_toggles = 0
+
     trace.at("camp: GetId")
     local camp_id = api.camp_id(camp)
     trace.done()
@@ -600,7 +677,23 @@ local function run_camp(cfg, camp, stats)
     -- dozen to put back, so the existing fences are left exactly as they are.
     -- An idle base loses nothing by staying fenced; there is no work either
     -- way.
-    if next(demand) == nil then
+    -- Idle means nothing to do AND nothing to withdraw.
+    --
+    -- This returned on empty demand alone, before plan_fences - which is the
+    -- only thing that consumes `capped`. So the moment a ceiling suppressed
+    -- the last type that was pulsing, the camp was declared idle and the
+    -- permission was never taken away: the wood limit was reached and the
+    -- lumberjacks carried on, while the log said the base was idle.
+    --
+    -- That is not a corner case. Pulses only come from work that wants a
+    -- worker, so "the capped type is the only one pulsing" is the ordinary
+    -- shape of a base that has just hit its limit - which is exactly the
+    -- moment the feature is supposed to act.
+    --
+    -- With empty demand plan_fences fences nobody, every pal falls through to
+    -- pal.base, and base_allowed's `not capped[value]` withdraws the capped
+    -- types. A genuinely idle base with no ceilings still costs nothing.
+    if next(demand) == nil and next(capped or {}) == nil then
         stats.idle_skipped = stats.idle_skipped + 1
         return
     end
@@ -644,17 +737,7 @@ local function run_camp(cfg, camp, stats)
 end
 
 function M.run_pass(cfg)
-    local stats = {
-        camps = 0, pals = 0, works = 0, chests = 0,
-        fenced = 0, free = 0,
-        toggles = 0, would_toggle = 0, failed = 0, deferred = 0, unreadable = 0,
-        demand_types = 0,
-        unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
-        demand_estimated = false,
-        needed = 0, covered = 0, idle_skipped = 0, held = 0,
-        demand_by_name = {},
-        lines = {},
-    }
+    local stats = M.blank_stats()
 
     trace.at("pass: base_camps sweep")
     local camps = api.base_camps()

@@ -569,9 +569,47 @@ COMMANDS.on = function()
     log.say("enabled")
 end
 
+-- Hands every pal back everything it can do, and says so.
+--
+-- Looped, because one sweep is bounded to MAX_TOGGLES_PER_PASS and a real base
+-- needs several. Bounded itself so a pal whose permissions cannot be read
+-- cannot spin here for ever.
+local function restore_all(why)
+    local sent, rounds = 0, 0
+
+    repeat
+        rounds = rounds + 1
+        local stats = scheduler.restore(cfg)
+        sent = sent + stats.toggles
+        local owed = stats.deferred
+    until owed == 0 or rounds >= 12
+
+    log.say(string.format(
+        "%s: gave every pal its work back (%d change(s) over %d sweep(s))",
+        why, sent, rounds))
+    if rounds >= 12 then
+        log.warn("stopped after 12 sweeps, run '" .. cfg.chat_prefix ..
+            " restore' again if any pal still looks fenced")
+    end
+end
+
+-- Switching off now actually switches off.
+--
+-- It used to set a flag and stop there: run_pass returned early and every pal
+-- stayed fenced exactly as the last pass left it, for ever. The fences are the
+-- game's own saved data, so they outlive the mod - deleting it left a save
+-- with twelve of thirteen work suitabilities unchecked on every base pal and
+-- no way back but the stand, by hand, one checkbox at a time.
 COMMANDS.off = function()
     cfg.enabled = false
     log.say("disabled")
+    restore_all("disabled")
+end
+
+-- The same thing on demand, for a save that has been left fenced by a crash,
+-- a config error, or an uninstall that is about to happen.
+COMMANDS.restore = function()
+    restore_all("restore")
 end
 
 COMMANDS.reload = function()
