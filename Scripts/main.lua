@@ -134,11 +134,40 @@ local function validate(c)
 end
 
 local function load_config()
-    package.loaded["config"] = nil
-    local ok, loaded = pcall(require, "config")
-    if not ok or type(loaded) ~= "table" then
-        log.error("config.lua failed to load: " .. tostring(loaded))
-        return false
+    -- loadfile, not require.
+    --
+    -- reload.lua proved this by experiment and wrote it down: clearing
+    -- package.loaded and calling require again returns a table, reports no
+    -- error, and does not read the file - UE4SS keeps the compiled chunk of
+    -- its own accord, so require hands back the code it compiled at startup.
+    -- reload.now() was fixed; this was not.
+    --
+    -- So "pwp reload" re-ran the ORIGINAL chunk: it threw away any runtime
+    -- change made with pwp dry / mode / cap / scope, put the shipped values
+    -- back, printed "config reloaded", and never once picked up an edit to
+    -- config.lua - which the file's own header tells the user it does.
+    local loaded
+    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua")
+
+    if chunk then
+        local ok_chunk, result = pcall(chunk)
+        if not ok_chunk or type(result) ~= "table" then
+            log.error("config.lua failed to load: " .. tostring(result))
+            return false
+        end
+        loaded = result
+    else
+        -- Only if the file cannot be read at all. Keeps first boot working if
+        -- the path is ever wrong, at the cost of the staleness described above.
+        log.warn("could not read config.lua (" .. tostring(load_err) ..
+            "), falling back to the compiled copy")
+        package.loaded["config"] = nil
+        local ok_req, result = pcall(require, "config")
+        if not ok_req or type(result) ~= "table" then
+            log.error("config.lua failed to load: " .. tostring(result))
+            return false
+        end
+        loaded = result
     end
 
     cfg = validate(loaded)

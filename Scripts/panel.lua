@@ -2575,19 +2575,28 @@ function M.refresh(cfg)
     frame_id = frame_id + 1
     icon_budget = ICONS_PER_FRAME
 
-    -- The typed-ceiling box, when one is open: placed, then read.
-    if editing ~= nil then
-        ensure_amount_box()
-        poll_amount(cfg)
-    elseif alive(amount_box) then
-        pcall(function() amount_box:SetVisibility(1) end)
-    end
-
-    if not M.open then return end
-
+    -- The root is validated FIRST, before anything touches a stored widget.
+    --
+    -- ensure_root is the only thing that drops amount_box when the overlay is
+    -- rebuilt, and the editing block below used to run ahead of it - including
+    -- on the once-a-second tick while the panel is CLOSED, where ensure_root
+    -- was never reached at all. So an overlay rebuilt without a world switch
+    -- left a freed box, and alive() on it is the crash rather than a check
+    -- against it, once a second, for the rest of the session.
+    --
+    -- It is frame-cached, so asking here costs nothing that was not going to
+    -- be paid anyway.
     local tsetup = os.clock()
     local rooted = ensure_root()
     perf_setup = os.clock() - tsetup
+
+    -- The typed-ceiling box, when one is open: placed, then read.
+    if rooted and editing ~= nil then
+        ensure_amount_box()
+        poll_amount(cfg)
+    end
+
+    if not M.open then return end
     if not rooted then return end
 
     -- Which row the mouse is on, decided from last frame's map before it is
@@ -2682,6 +2691,13 @@ function M.refresh(cfg)
 end
 
 local function blank_everything()
+    -- Same rule as refresh: nothing here touches a stored widget until the
+    -- root has been validated this frame. M.toggle reaches this directly.
+    if not ensure_root() then
+        blocks, stripes, images, backdrop = {}, {}, {}, nil
+        return
+    end
+
     for key, tb in pairs(blocks) do
         if alive(tb) then
             local ft = make_ftext("")

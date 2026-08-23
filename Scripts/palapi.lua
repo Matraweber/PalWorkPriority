@@ -749,10 +749,22 @@ end
 --
 -- raw_id carries the unmasked guid ints straight from GetIndividualID; the
 -- hex key used everywhere else is lossy for this purpose.
-function M.set_work_enabled(raw_id, work_value, on)
+-- comp: the network component, resolved by the caller for this pass.
+--
+-- This used to call M.network_component() itself, which is an uncached
+-- FindFirstOf measured at 9ms - once per toggle. A 40-toggle pass spent well
+-- over a third of a second re-answering one question, and every "pwp mode",
+-- "cap", "limit" and "scope" command forces a pass, so it landed on a
+-- keypress. The component is the same for every toggle in a pass, and one
+-- synchronous pass is one call, which is the age at which an engine object is
+-- safe to hold.
+--
+-- Still resolved here when the caller passes nothing, so single callers and
+-- the console commands keep working.
+function M.set_work_enabled(raw_id, work_value, on, comp)
     if raw_id == nil or type(work_value) ~= "number" then return false end
 
-    local comp = M.network_component()
+    if comp == nil then comp = M.network_component() end
     if not valid(comp) then return false, "PalNetworkBaseCampComponent unavailable" end
 
     local ok, err = pcall(function()

@@ -70,15 +70,27 @@ local built_under = nil
 -- check is to be ahead of the next beat rather than the next microsecond.
 local owner_cached = nil
 local owner_at = -1
--- Five seconds, not one.
+-- No cache at all. This was 1.0, then 5.0, and both were wrong.
 --
--- The check is a FindFirstOf plus a GetFullName, measured at 9ms - which was
--- showing up as the worst frame of every second the panel was open, for a
--- question whose answer changes only on a world switch. It is not the only
--- thing standing between the panel and a dead widget either: host() validates
--- the canvas, the tree and the widget on every call, so this is the early
--- warning rather than the guard.
-local OWNER_TTL = 5.0
+-- The reasoning for widening it was that host() validates the canvas, the
+-- tree and the widget anyway, so this was only an early warning. That is
+-- backwards: those validations are alive() calls on wrappers stored since an
+-- earlier frame, and alive() on a freed object IS the crash. This check is
+-- the only thing that decides whether they are safe to make, so it cannot be
+-- staler than they are.
+--
+-- A cache made the failure worse rather than rarer. The nil case - no
+-- controller yet - was already handled. What a TTL adds is a window where the
+-- controller has been freed and this still returns its NAME, so the names
+-- match, the drop is skipped, and the widget outered to that freed controller
+-- is asked whether it is valid. At a 100ms beat, five seconds of that is up
+-- to fifty attempts per world transition.
+--
+-- The price is one FindFirstOf plus one GetFullName per refresh, measured at
+-- 9ms, and only while the panel is open. That is the cost of holding widgets
+-- across frames at all; the alternative is not a cheaper check, it is an
+-- unguarded dereference.
+local OWNER_TTL = 0.0
 
 local function owner_name()
     local now = os.clock()
@@ -204,7 +216,11 @@ function M.host()
     if built_under ~= nil and now_owner ~= built_under then
         widget, tree, canvas = nil, nil, nil
         built_under = nil
+        -- The input mode goes back with it. Dropping the widget while the UI
+        -- mode was still set left the cursor forced on and the panel's own
+        -- open flag true, so reopening took two presses.
         M.open = false
+        pcall(function() M.release_input() end)
     end
 
     -- Nothing to build onto yet. Said plainly rather than falling through to
@@ -307,6 +323,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Showing
 -- ---------------------------------------------------------------------------
+
+-- Exposed so host() can hand the input mode back when it drops the widget.
+-- host() is declared above set_input_now, so it cannot call it directly.
+function M.release_input()
+    return set_input_now(false)
+end
 
 -- Three early returns, so the mark is owned by a wrapper here too.
 local function set_input(on)

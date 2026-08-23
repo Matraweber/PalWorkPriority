@@ -300,10 +300,23 @@ local function plan_fences(cfg, pals, demand, objects, stats, capped)
         if (objects[value] or 0) == 0 then return false end
 
         local h = hold_since[pal.key]
-        if h == nil or h.value ~= value then
-            hold_since[pal.key] = { value = value, since = now }
+
+        -- A hold that has not been seen for a while is a NEW hold, not an old
+        -- one still running.
+        --
+        -- This only checked whether the work type matched, and hold_since is
+        -- only touched while the pal is doing that work - so a pal that mined,
+        -- spent ten minutes elsewhere, then came back to mining arrived with a
+        -- matching entry whose clock had started ten minutes ago. It was
+        -- released on the first pass of a job it had only just started, which
+        -- is the precise thing the hold exists to prevent.
+        local gap = h and (now - (h.last or h.since)) or 0
+        if h == nil or h.value ~= value
+            or gap > (2 * (cfg.interval_seconds or 30)) then
+            hold_since[pal.key] = { value = value, since = now, last = now }
             return true
         end
+        h.last = now
 
         -- Genuine demand means the hold is not what is keeping the pal here,
         -- so the clock restarts and a busy pal never ages out.
@@ -388,6 +401,10 @@ end
 -- Applying it
 -- ---------------------------------------------------------------------------
 
+-- The network component for the pass in flight. Set by run_pass and restore,
+-- cleared when they finish, so nothing here holds it between passes.
+local pass_comp = nil
+
 local function apply_pal(cfg, pal, want, stats)
     -- The game's own record is the only ground truth. Diffing against what we
     -- believe we set last time would drift the moment anything else touched a
@@ -422,6 +439,15 @@ local function apply_pal(cfg, pal, want, stats)
         -- camps arrive in FindAllOf order, which does not rotate, so the same
         -- base loses every time. The only sign was a "deferred" count in a
         -- line nobody reads. Whatever is skipped is still picked up next tick.
+        -- Failures count against the budget too.
+        --
+        -- It counted only successes, so a pass where every send fails - no
+        -- component yet, world not settled, base not streamed - never tripped
+        -- the budget and issued one call per pal per work type instead. With
+        -- the lookup that used to sit inside each of those, twenty pals came
+        -- to well over a second of frozen game thread, repeating every
+        -- interval. A budget that only bounds the working case is not a
+        -- budget.
         if (stats.camp_toggles or 0) >= MAX_TOGGLES_PER_PASS then
             stats.deferred = stats.deferred + 1
             return
@@ -438,7 +464,7 @@ local function apply_pal(cfg, pal, want, stats)
                 log.info(string.format("[dry run] %s %s -> %s",
                     pal.name, workdefs.label(workdefs.name(value)),
                     should_be_on and "on" or "off"))
-            elseif api.set_work_enabled(pal.id, value, should_be_on) then
+            elseif api.set_work_enabled(pal.id, value, should_be_on, pass_comp) then
                 stats.toggles = stats.toggles + 1
             else
                 stats.failed = stats.failed + 1
@@ -482,6 +508,7 @@ end
 -- one sweep and a real base needs several. The caller loops.
 function M.restore(cfg)
     local stats = M.blank_stats()
+    pass_comp = api.network_component()
     local camps = api.base_camps()
 
     for _, camp in ipairs(camps) do
@@ -500,6 +527,7 @@ function M.restore(cfg)
         end
     end
 
+    pass_comp = nil
     return stats
 end
 
@@ -739,6 +767,9 @@ end
 function M.run_pass(cfg)
     local stats = M.blank_stats()
 
+    -- One lookup for the whole pass. See the note on set_work_enabled.
+    pass_comp = api.network_component()
+
     trace.at("pass: base_camps sweep")
     local camps = api.base_camps()
     trace.done()
@@ -774,6 +805,9 @@ function M.run_pass(cfg)
         log.info("fenced: " .. table.concat(who, "; "))
     end
 
+    -- Dropped with the pass that resolved it. Nothing holds an engine object
+    -- between passes.
+    pass_comp = nil
 
     return stats
 end
