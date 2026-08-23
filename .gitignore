@@ -8,3 +8,9 @@ Stock.txt
 build/
 priorities.txt
 priority.log
+
+# Python bytecode. These were tracked by accident and embed the absolute
+# source path of whoever compiled them, which is how a user name ended up in
+# the repository in a file no text search would find.
+__pycache__/
+*.pyc
