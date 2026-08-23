@@ -362,11 +362,14 @@ local function find(name)
 
     -- It was here once and it is not here now, so ask for it again.
     --
-    -- Nothing holds a reference to one of these textures except the Image
-    -- currently drawing it. Point that Image at a different item - change
-    -- page, switch to the storage view, anything - and the old texture is
-    -- unreferenced and the engine is free to collect it. Come back and the
-    -- lookup fails.
+    -- Historically nothing held a reference to one of these textures except
+    -- the Image currently drawing it: point that Image at a different item -
+    -- change page, switch to the storage view, anything - and the old texture
+    -- was unreferenced, the engine free to collect it, and the revisit found
+    -- nothing. The panel now pins every icon it has shown (see pin() in
+    -- panel.lua), so a revisit normally hits the sweep and never reaches
+    -- here. This path remains for what pinning does not cover: the pin cap,
+    -- and a world whose tree was rebuilt out from under the pins.
     --
     -- `requested` then made that permanent: it records that a load was asked
     -- for, want() returns early on it, and so the reload was never issued.

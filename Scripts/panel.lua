@@ -84,6 +84,8 @@ local was_sel = nil
 local placed = {}               -- key -> where it was last put, to skip no-op moves
 local stripes = {}              -- key -> Border drawn behind a row
 local images = {}               -- key -> Image showing an item icon
+local pinned = {}               -- item id -> true, a pin widget holds its icon
+local pin_count = 0
 
 -- Where the tiles sit inside "order", so up and down can cross a row of them
 -- instead of stepping to the neighbour.
@@ -591,6 +593,7 @@ local function ensure_root()
         root, root_tree, backdrop = nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face = {}, {}
+        pinned, pin_count = {}, 0
         search_box, amount_box, editing = nil, nil, nil
         styled_boxes = {}
         picker_key, picker_hit = nil, nil
@@ -620,6 +623,10 @@ local function ensure_root()
     -- the stored-wrapper dereference that this whole codebase is built to
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face = {}, {}
+    -- pinned holds booleans, not widgets, but the widgets those booleans
+    -- describe just went with the old tree - a flag that describes an engine
+    -- object shares its lifetime, so it clears where the widget tables clear.
+    pinned, pin_count = {}, 0
     search_box, amount_box, editing = nil, nil, nil
     -- Cleared with the boxes it describes. style_box only ever styles a given
     -- field once, keyed here, so leaving this set after the boxes are dropped
@@ -1046,6 +1053,52 @@ local function apply_texture(img, texture, size)
     end
 end
 
+-- Keep an icon resident by giving the engine a reason to.
+--
+-- This is how Creative Menu gets away with never searching: it is a cooked
+-- widget Blueprint, its tiles hold brush references, and a texture something
+-- references is a texture the engine keeps. Our tiles hold references too -
+-- but only eighteen of them, re-pointed at every page turn, so the icons of
+-- the page you left become unreferenced, get collected, and have to be
+-- LoadAsset-ed and swept for all over again when you come back. That is the
+-- revisit blank icons.lua documents, and the whole reason browsing costs
+-- anything the second time.
+--
+-- So: one extra Image per icon ever shown, Collapsed so it is never laid out
+-- or drawn, parented to the same tree as everything else so a world switch
+-- takes it too. The reference lives in the ENGINE, widget -> brush ->
+-- texture; Lua keeps only pinned[id] = true, a boolean about our own widget,
+-- which is the one kind of keeping this codebase allows itself.
+--
+-- Capped because every pin is texture memory the engine can no longer free.
+-- 400 pins at the icon sizes in this pak is a few tens of MB, about what one
+-- open Creative Menu costs, and beyond the cap the picker simply behaves as
+-- it does today - swept when resident, reloaded when not.
+local PIN_MAX = 400
+
+local function pin(texture, item_id)
+    if pinned[item_id] ~= nil or pin_count >= PIN_MAX then return end
+    if not (alive(root) and alive(root_tree)) then return end
+
+    local cls = api.cdo("/Script/UMG.Image")
+    if not cls then return end
+
+    local img
+    pcall(function() img = StaticConstructObject(cls, root_tree) end)
+    if not alive(img) then return end
+
+    if not pcall(function() root:AddChildToCanvas(img) end) then return end
+
+    -- The texture wrapper is from this same call, per the tile that is about
+    -- to draw it, so handing it to a second brush costs nothing and keeps
+    -- nothing in Lua.
+    pcall(function() img:SetBrushFromTexture(texture, false) end)
+    pcall(function() img:SetVisibility(1) end)
+
+    pinned[item_id] = true
+    pin_count = pin_count + 1
+end
+
 -- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
 -- the panel holds the input mode, which is exactly when these questions
 -- matter, so the diagnostics fire themselves the first time a tile is drawn.
@@ -1132,6 +1185,7 @@ local function picture(key, px, py, size, item_id, token)
         local texture = item_id and icons.get(item_id) or nil
         if texture then
             apply_texture(img, texture, size)
+            pin(texture, item_id)
             pcall(function() img:SetOpacity(1.0) end)
             -- Marked drawn only now. A failed resolve leaves the token stale
             -- so the next refresh tries again, which is what makes an icon
