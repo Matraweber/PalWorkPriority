@@ -817,7 +817,25 @@ function M.run_pass(cfg)
     local stats = M.blank_stats()
 
     -- One lookup for the whole pass. See the note on set_work_enabled.
-    pass_comp = api.owned_network_component() or api.network_component()
+    --
+    -- Owned only, with no fallback, because the fallback cannot carry a
+    -- change. Every edit this pass would make is a RequestX_ToServer on the
+    -- base camp component, and one sent through a component this machine does
+    -- not own is dropped before it reaches the wire, silently.
+    --
+    -- On a dedicated server with nobody connected there is no player to own
+    -- one. Measured on 23 August, the pass then re-toggled all fourteen pals
+    -- every eleven seconds and landed none of them - a flat 14 on every tick,
+    -- for as long as the server sat empty. Nothing is lost by standing down:
+    -- the same ticks report "0 work(s) in 0 type(s)", because the game does
+    -- not run base work while no player is on, so there is nothing to
+    -- schedule either.
+    pass_comp = api.owned_network_component()
+    if pass_comp == nil then
+        log.debug("no base camp component this machine owns, so nothing can " ..
+            "be changed and nothing is sent")
+        return stats
+    end
 
     trace.at("pass: base_camps sweep")
     local camps = api.base_camps()
