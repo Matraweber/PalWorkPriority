@@ -2841,6 +2841,12 @@ function M.refresh(cfg)
     local rows = redraw(cfg, totals)
     perf_draw = os.clock() - td
 
+    -- The draw is over, so drop the textures it was handed. icons builds a map
+    -- of them in one sweep to avoid a 9.4ms lookup per tile, and that map is
+    -- only safe for as long as the draw that built it - this is the closing
+    -- half of that lifetime, and the reason holding the objects is allowed.
+    icons.new_frame()
+
     -- Clamped after the draw, since the row count is only known then.
     if want_first_row and #order > tab_hits then
         want_first_row = false
@@ -3180,6 +3186,12 @@ function M.command(cfg, args)
     if verb == "input" then
         if not overlay.input_report then return "this build cannot report that" end
         return overlay.input_report()
+    end
+
+    -- One sweep against N lookups, for the picker's remaining lag.
+    if verb == "bench" then
+        if not icons.bench then return "this build cannot report that" end
+        return icons.bench()
     end
 
     -- What has no icon, from the inside. Lives here rather than in main.lua's

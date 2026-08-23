@@ -292,9 +292,57 @@ end
 
 -- The object for an icon name, if it is in memory. Never stored.
 --
+-- Every loaded icon, found in ONE pass, for the length of one draw.
+--
+-- The picker's remaining lag was never loading. Measured 24 August with the
+-- picker open: LoadAsset averages 1ms, and StaticFindObject averages 9.4ms and
+-- gets asked once per tile - 17 finds, 160ms, which is the whole of it. A full
+-- sweep of all 7072 textures in memory costs 26ms and answers for every tile
+-- at once, so the break even is three icons and the picker draws eighteen.
+--
+-- This is the one place the module holds textures rather than names, and it is
+-- allowed for exactly one reason: the map is built inside a draw and dropped
+-- when that draw returns, so nothing here is ever read on a later frame. The
+-- lifetime is enforced at both ends - draw_item_picker clears it going in, and
+-- refresh clears it coming out - because a texture kept across a frame is the
+-- use after free this file's every other rule exists to avoid.
+local frame_tex = nil
+
+local function sweep_frame()
+    local out = {}
+
+    for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
+        -- Keyed exactly as find() asks: the leaf with PREFIX taken off. Parsed
+        -- the same way look_around parses it, deliberately, so the two cannot
+        -- drift into disagreeing about what an icon is called.
+        local full
+        pcall(function() full = tex:GetFullName() end)
+
+        if type(full) == "string" then
+            local leaf = full:match("([^/.]+)$") or ""
+            if leaf:sub(1, #PREFIX) == PREFIX then
+                local rest = leaf:sub(#PREFIX + 1)
+                if out[rest] == nil then out[rest] = tex end
+            end
+        end
+    end
+
+    return out
+end
+
 -- Only ever a lookup. Wanting something loaded is a separate matter, handled
 -- above at its own pace, and a later frame is what finds it.
 local function find(name)
+    -- The sweep first, and only once per draw however many tiles ask.
+    if frame_tex == nil then frame_tex = sweep_frame() end
+
+    local hit = frame_tex[name]
+    if hit ~= nil and real(hit) then return hit end
+
+    -- A miss falls through to the old path rather than being trusted as a no.
+    -- The sweep should be authoritative - it walks the same object array - but
+    -- "should be" is not something to hand a blank picker to a user over, and
+    -- a miss is throttled by not_ready and icon_retry anyway.
     -- Timed. The note above says StaticFindObject measures about 10ms, and if
     -- that is still true then drawing eighteen icons costs a fifth of a
     -- second before anything else happens - which is where the picker's whole
@@ -369,9 +417,13 @@ local function look_around()
     return found
 end
 
--- Kept for the panel's convenience. There is no per frame ration any more,
--- now that nothing here fires eighteen speculative loads at once.
+-- Drops the frame's texture map.
+--
+-- Called on the way into a draw and again on the way out, so the textures the
+-- sweep handed round are unreferenced the moment the draw that found them
+-- ends. They are safe to use inside that draw and a use after free after it.
 function M.new_frame()
+    frame_tex = nil
 end
 
 -- The texture for an item id, or nil when there is none to be had yet.
@@ -639,6 +691,53 @@ end
 -- produce, and offering it is the same error as offering a Pal drop.
 --
 -- Better than a list of names, which would need editing every patch.
+-- Is one sweep cheaper than N lookups?
+--
+-- Measured 24 Aug with the picker open: StaticFindObject averages 9.12ms and
+-- the picker pays it 17 times, which is 155ms and the whole of the lag.
+-- LoadAsset, the thing that sounds expensive, is 1ms.
+--
+-- The alternative is to stop asking per icon. FindAllOf("Texture2D") walks the
+-- object array ONCE and can answer for every tile in the same frame, and an
+-- object obtained in the current call is safe to use in it - it is only
+-- KEEPING one that is a use after free. So the question is purely arithmetic:
+-- what does one sweep cost against 17 lookups at 9ms.
+--
+-- Reads only, and only calls this file already makes.
+function M.bench()
+    local t0 = os.clock()
+    local all = FindAllOf("Texture2D") or {}
+    local sweep = (os.clock() - t0) * 1000
+
+    -- The sweep alone is not the comparison. look_around also reads a name off
+    -- every texture, and that is where a walk like this usually spends itself.
+    local t1 = os.clock()
+    local named, icons_seen = 0, 0
+    for _, tex in ipairs(all) do
+        local full
+        pcall(function() full = tex:GetFullName() end)
+        if type(full) == "string" then
+            named = named + 1
+            if full:find("T_itemicon", 1, true) then icons_seen = icons_seen + 1 end
+        end
+    end
+    local walk = (os.clock() - t1) * 1000
+
+    log.say("icon lookup bench:")
+    log.say(string.format("  textures in memory:      %d", #all))
+    log.say(string.format("  FindAllOf sweep:         %.1fms", sweep))
+    log.say(string.format("  reading every name:      %.1fms  (%d named, %d item icons)",
+        walk, named, icons_seen))
+    log.say(string.format("  one sweep, all in:       %.1fms", sweep + walk))
+    log.say(string.format("  StaticFindObject so far: %d finds, %.2fms average, %.0fms total",
+        M.finds or 0, (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0,
+        M.find_ms or 0))
+
+    return string.format("sweep %.0fms vs %d finds at %.1fms",
+        sweep + walk, M.finds or 0,
+        (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0)
+end
+
 function M.gave_up(item_id)
     if type(item_id) ~= "string" then return false end
     return resolved[item_id:lower()] == false
