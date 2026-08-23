@@ -339,24 +339,26 @@ local function find(name)
     local hit = frame_tex[name]
     if hit ~= nil and real(hit) then return hit end
 
-    -- A miss falls through to the old path rather than being trusted as a no.
-    -- The sweep should be authoritative - it walks the same object array - but
-    -- "should be" is not something to hand a blank picker to a user over, and
-    -- a miss is throttled by not_ready and icon_retry anyway.
-    -- Timed. The note above says StaticFindObject measures about 10ms, and if
-    -- that is still true then drawing eighteen icons costs a fifth of a
-    -- second before anything else happens - which is where the picker's whole
-    -- remaining lag would be.
-    local t0 = os.clock()
-    local found
-    pcall(function() found = StaticFindObject(object_path(name)) end)
-
-    local took = (os.clock() - t0) * 1000
-    M.find_ms = M.find_ms + took
-    M.finds = M.finds + 1
-    if took > M.worst_find then M.worst_find = took end
-
-    if real(found) then return found end
+    -- A miss is a no, and taken as one. No lookup.
+    --
+    -- There WAS a StaticFindObject here, kept as a safety net on the grounds
+    -- that the sweep "should" be authoritative but that a blank picker is not
+    -- a thing to be casually right about. Then it was counted, over eight pages
+    -- of a catalogue whose icons are mostly not resident:
+    --
+    --     sweep misses: 91, of which the lookup then found: 0
+    --
+    -- Ninety one lookups, 1097ms, and not one icon rescued. It could not be
+    -- otherwise: FindAllOf and StaticFindObject read the same object array, so
+    -- if the sweep did not see it, it is not loaded, and no amount of asking a
+    -- second way will make it so. Loading it is what is needed, and want()
+    -- below is what does that, at 0.3ms.
+    --
+    -- This is the whole of the browse case. Storage, whose icons are already
+    -- resident, went 17 lookups to none as soon as the sweep landed; browsing
+    -- everything stayed slow purely because every miss still paid 12ms to be
+    -- told what the sweep had already established.
+    M.sweep_misses = (M.sweep_misses or 0) + 1
 
     -- It was here once and it is not here now, so ask for it again.
     --
@@ -732,6 +734,8 @@ function M.bench()
     log.say(string.format("  StaticFindObject so far: %d finds, %.2fms average, %.0fms total",
         M.finds or 0, (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0,
         M.find_ms or 0))
+    log.say(string.format("  sweep misses:            %d, of which the lookup then found: %d",
+        M.sweep_misses or 0, M.fallback_hits or 0))
 
     return string.format("sweep %.0fms vs %d finds at %.1fms",
         sweep + walk, M.finds or 0,
