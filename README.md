@@ -188,7 +188,20 @@ Set one from chat, no restart:
 ```
 
 Ceilings set this way live in `caps.txt` next to the mod and outrank `config.lua`, the same way
-a priority clicked on the stand outranks the configured one. `0` removes a limit rather than
+a priority clicked on the stand outranks the configured one.
+
+Each line is `Guild|WorkType|ItemId|Ceiling`, and a limit belongs to the guild that set it. On a
+shared server one guild's ceiling never touches another guild's bases: the scheduler resolves
+each camp's owning guild and applies only that guild's limits, the panel shows and edits only
+your own, and the server files an incoming rule under the guild it actually arrived from rather
+than one the client names.
+
+A guild of `*` is a limit written before guild rules existed. Those still apply, to any guild
+that has not set its own for the same job and item, so an existing `caps.txt` keeps working
+untouched. Where every base camp on the server belongs to one guild the ambiguity is not real
+and they are adopted into it on the next pass, after which every limit has an owner. Where camps
+span several guilds they stay shared, and the panel will say so rather than pretend to remove
+one. `0` removes a limit rather than
 being read literally: taken at face value it would mean "you already have at least none of
 these" and suspend the work type for good, which is what priority `X` on the stand is for.
 
@@ -330,9 +343,17 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp limit` | set, clear or list resource ceilings |
 | `!pwp scope` | measure ceilings per base, or across loaded bases |
 | `!pwp discover` | write `Discovery.txt` with live work probes |
+| `!pwp guilds` | write `Guilds.txt`: which guild owns each camp and which you are in |
+| `!pwp worksuit` | write `WorkSuit.txt`: what the work suitability read and write sides hold |
+| `!pwp net` | report the transport: hooks, role, counters, and which component a send uses |
 
 `F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles
 spread/fill and `Alt+F11` cycles the cap, for sessions where chat input is not available.
+
+`!pwp discover` reads live Pals, which only the machine running the world can do safely - on a
+client those are replicated proxies and reading them takes the game down. It detects that and
+skips those probes, writing a line saying so; `!pwp guilds` and `!pwp worksuit` read classes and
+replicated ids only and are safe anywhere.
 
 ## How a work's type is determined
 
