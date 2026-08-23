@@ -351,11 +351,10 @@ end
 -- that is not a real FGuid - so candidate ids are read rather than called.
 -- CALLING an unverified name is what killed the game twice on 23 August.
 --
--- Unbuffered with a marker before every step; a buffered probe that crashes
--- leaves a zero byte file and no clue where it died.
+-- A marker before every step; a buffered probe that crashes leaves a zero byte
+-- file and no clue where it died. The handle arrives unbuffered from whichever
+-- writer opened it - see `unbuffered` below for why it cannot be done here.
 local function probe_guilds(f)
-    pcall(function() f:setvbuf("no") end)
-
     local function step(label)
         f:write("[step] " .. label .. "\n")
     end
@@ -432,9 +431,13 @@ end
 -- component actually offers and what the read side actually contains, so the
 -- pairing can be chosen from evidence instead of from the name looking right.
 --
--- Schema only plus safe property reads. Nothing here calls an unverified name.
+-- Schema only plus safe property reads. Nothing here calls an unverified name,
+-- which is what separates this from probe_ranks: that one CALLS
+-- GetWorkSuitabilityRank on a replicated proxy and takes a client down, while
+-- reading SaveParameter off the same pal does not. Measured on 23 August, this
+-- probe read every base pal on a dedicated server client and reached its own
+-- done marker. The handle arrives unbuffered from the writer that opened it.
 local function probe_worksuit(f)
-    pcall(function() f:setvbuf("no") end)
     local function step(l) f:write("[step] " .. l .. "\n") end
 
     step("start")
@@ -582,12 +585,24 @@ local function enum_names(f)
     dump_enum(f, "/Script/Pal.EPalWorkType", 60)
 end
 
+-- Unbuffered, and unbuffered HERE rather than inside a probe. setvbuf only
+-- takes on a stream nothing has been written to yet, so a probe that sets it
+-- after its caller has already written a header sets nothing: the mode call
+-- quietly fails and a crash mid probe truncates the file at the last flush,
+-- losing exactly the breadcrumbs the markers exist to leave. Every writer in
+-- this file sets it as the first thing it does with the handle.
+local function unbuffered(f)
+    pcall(function() f:setvbuf("no") end)
+    return f
+end
+
 function M.run(out_path)
     local f, open_err = io.open(out_path, "wb")
     if not f then
         log.error("could not write " .. out_path .. ": " .. tostring(open_err))
         return false
     end
+    unbuffered(f)
 
     f:write("Pal Work Priority discovery dump\n")
     f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
@@ -642,6 +657,7 @@ function M.guilds(out_path)
         log.error("could not write " .. out_path .. ": " .. tostring(open_err))
         return false
     end
+    unbuffered(f)
     f:write("Pal Work Priority guild probe\n")
     f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
     pcall(function() probe_guilds(f) end)
@@ -650,13 +666,19 @@ function M.guilds(out_path)
     return true
 end
 
--- The work suitability probe on its own; safe on a client.
+-- The work suitability probe on its own. It reads each base pal's saved
+-- suitability, so it is not in the class of `M.guilds`, which touches nothing
+-- but classes and replicated ids. It reads rather than CALLS, which is the
+-- distinction that matters, and it has been run whole on a dedicated server
+-- client. No authority gate: gating it would remove the probe from the only
+-- machine whose write path is worth doubting.
 function M.worksuit(out_path)
     local f, open_err = io.open(out_path, "w")
     if not f then
         log.error("could not write " .. out_path .. ": " .. tostring(open_err))
         return false
     end
+    unbuffered(f)
     f:write("Pal Work Priority work suitability probe\n")
     f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
     pcall(function() probe_worksuit(f) end)

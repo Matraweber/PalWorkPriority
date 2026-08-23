@@ -104,7 +104,7 @@ stops loading after a game update or a Workshop subscription change, re-run the 
 to `true` for a session first if you would rather watch before letting it touch a base:
 
 1. load a save with a staffed base
-2. press **F10**, or type `!pwp run` in chat
+2. press **Ctrl+F10**, or type `!pwp run` in chat
 3. read the `[PalWorkPriority]` lines in `UE4SS.log`
 
 In dry run every pass logs what it *would* toggle and sends nothing. The summary line names the
@@ -284,7 +284,7 @@ counted_containers = {
 },
 ```
 
-Whatever is not in the list is still printed by `F12`, under `holding stock but NOT counted by
+Whatever is not in the list is still printed by `Ctrl+F12`, under `holding stock but NOT counted by
 ceilings`, along with what it holds. If a ceiling is not firing when you think it should, look
 there first: the resource may be sitting somewhere the count does not reach.
 
@@ -379,13 +379,28 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp worksuit` | write `WorkSuit.txt`: what the work suitability read and write sides hold |
 | `!pwp net` | report the transport: hooks, role, counters, and which component a send uses |
 
-`F10` runs a pass, `F11` writes `Discovery.txt`, `F12` prints base storage, `Alt+F10` toggles
-spread/fill and `Alt+F11` cycles the cap, for sessions where chat input is not available.
+Single player has no chat box, so everything that changes what the mod does has a key as well.
+Ctrl does a thing, Alt changes a setting.
 
-`!pwp discover` reads live Pals, which only the machine running the world can do safely - on a
-client those are replicated proxies and reading them takes the game down. It detects that and
-skips those probes, writing a line saying so; `!pwp guilds` and `!pwp worksuit` read classes and
-replicated ids only and are safe anywhere.
+| key | does |
+| --- | --- |
+| `Ctrl+F9` | open and close the work rules panel |
+| `Ctrl+F10` | run a pass now |
+| `Ctrl+F11` | write `Discovery.txt` |
+| `Ctrl+F12` | print base storage |
+| `Ctrl+F8` | run the transport test |
+| `Alt+F10` | toggle spread/fill |
+| `Alt+F11` | cycle the cap |
+| `Alt+F12` | switch storage scope between one base and all loaded bases |
+
+`!pwp discover` *calls* into live Pals, which only the machine running the world can do safely -
+on a client those are replicated proxies and `GetWorkSuitabilityRank` on one takes the game down
+outright, past any error handling. It detects that and skips those probes, writing a line saying
+so. `!pwp guilds` touches nothing but classes and replicated ids and is safe anywhere.
+`!pwp worksuit` sits between the two: it reads each base Pal's saved work suitability, which is a
+property read rather than a call, and it has been run start to finish on a dedicated server
+client. If any probe ever does take the game down, the file it was writing is unbuffered and its
+last `[step]` line names where.
 
 ## How a work's type is determined
 
