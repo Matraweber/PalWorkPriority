@@ -3071,6 +3071,76 @@ function M.command(cfg, args)
         return string.format("%d without an icon", #dead)
     end
 
+    -- Read-only reconnaissance for the crafting question.
+    --
+    -- Answers whether a workbench's production queue is reachable at all
+    -- before anything is built on the assumption that it is. Nothing here
+    -- changes game state: it sweeps the map objects the stock counter already
+    -- sweeps, reports the distinct class names, and for the first station
+    -- that looks like a producer it lists property and function NAMES only -
+    -- the same "names and types, never values" shape discover.lua uses, for
+    -- the same reason.
+    --
+    -- Lives here because panel.lua hot-reloads and discover.lua does not, so
+    -- the probe can be refined without restarting the game.
+    if verb == "craft" then
+        local seen, order_seen = {}, {}
+        local sample = nil
+
+        pcall(function()
+            for _, o in ipairs(FindAllOf("PalMapObjectConcreteModelBase") or {}) do
+                if alive(o) then
+                    local cname
+                    pcall(function() cname = o:GetClass():GetFName():ToString() end)
+                    if cname then
+                        if seen[cname] == nil then
+                            seen[cname] = 0
+                            order_seen[#order_seen + 1] = cname
+                        end
+                        seen[cname] = seen[cname] + 1
+
+                        local low = cname:lower()
+                        if sample == nil and (low:find("product") or low:find("craft")
+                            or low:find("work") or low:find("recipe")) then
+                            sample = o
+                        end
+                    end
+                end
+            end
+        end)
+
+        table.sort(order_seen)
+        log.say("map object classes in this base:")
+        for _, cname in ipairs(order_seen) do
+            log.say(string.format("  %-52s x%d", cname, seen[cname]))
+        end
+
+        if sample == nil then
+            return "no producer-looking map object found"
+        end
+
+        local sname
+        pcall(function() sname = sample:GetClass():GetFName():ToString() end)
+        log.say("looking at " .. tostring(sname) .. ":")
+
+        pcall(function()
+            sample:GetClass():ForEachProperty(function(pr)
+                local n
+                pcall(function() n = pr:GetFName():ToString() end)
+                if n then log.say("  prop " .. n) end
+            end)
+        end)
+        pcall(function()
+            sample:GetClass():ForEachFunction(function(fn)
+                local n
+                pcall(function() n = fn:GetFName():ToString() end)
+                if n then log.say("  func " .. n) end
+            end)
+        end)
+
+        return "probed " .. tostring(sname)
+    end
+
     if verb == "nav" then
         if not M.open then return "the panel is shut" end
         if rest == "up" then M.move(-1) return "moved up"
