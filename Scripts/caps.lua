@@ -264,7 +264,20 @@ function M.apply_clear(work_name, item, guild)
 
     local by_guild = M.data[guild]
     local by_work = by_guild and by_guild[work_name]
-    if by_work == nil or by_work[item] == nil then return false end
+    if by_work == nil or by_work[item] == nil then
+        -- Names the common case rather than failing mute. A rule inherited
+        -- from before guild scoping is real and visible in the panel, but it
+        -- belongs to the wildcard, so a guild scoped clear cannot reach it.
+        -- That is a different problem from a clear for a rule nobody set, and
+        -- the two used to look identical from the log.
+        local shared = M.data[M.ANY_GUILD]
+        if shared and shared[work_name] and shared[work_name][item] then
+            log.say(string.format(
+                "%s %s is a shared limit from before guild rules, so it was " ..
+                "not removed for one guild", work_name, item))
+        end
+        return false
+    end
 
     by_work[item] = nil
     if next(by_work) == nil then by_guild[work_name] = nil end
@@ -313,6 +326,54 @@ function M.replace_all(rows)
             " rule(s) the server sent that do not look like rules")
     end
     return kept
+end
+
+-- Legacy rules become the owning guild's, once it is unambiguous who that is.
+--
+-- The wildcard carries rules written before guild scoping, and it earns its
+-- keep exactly once: at the upgrade. After that it is a bucket nobody owns,
+-- which is why a guild cannot remove a rule from it - the rule is not theirs
+-- to remove, and deleting it for everyone would be the cross guild reach the
+-- scoping exists to prevent. The panel could show a limit, say it removed it,
+-- and change nothing.
+--
+-- On a machine where every base camp belongs to one guild the ambiguity is
+-- not real: those rules were that guild's all along. They are adopted, the
+-- wildcard is emptied, and from then on every rule has an owner and Remove
+-- works on all of them. Where camps span guilds nothing is moved, because
+-- there is no honest way to pick an heir - those stay shared until each guild
+-- sets its own.
+--
+-- A rule the guild has already set wins: it is the more specific of the two
+-- and was written later.
+function M.adopt_wildcard(guild)
+    local shared = M.data[M.ANY_GUILD]
+    if shared == nil or next(shared) == nil then return 0 end
+    if type(guild) ~= "string" or guild == "" or guild == M.ANY_GUILD then
+        return 0
+    end
+
+    local moved, kept = 0, 0
+    for work, items in pairs(shared) do
+        for item, ceiling in pairs(items) do
+            local own = M.data[guild] and M.data[guild][work]
+            if own and own[item] ~= nil then
+                kept = kept + 1
+            else
+                put(guild, work, item, ceiling)
+                moved = moved + 1
+            end
+        end
+    end
+
+    M.data[M.ANY_GUILD] = nil
+    M.save()
+
+    log.say(string.format(
+        "adopted %d limit(s) from before guild rules into this guild%s",
+        moved,
+        kept > 0 and (", " .. kept .. " already set here and kept") or ""))
+    return moved
 end
 
 -- ---------------------------------------------------------------------------

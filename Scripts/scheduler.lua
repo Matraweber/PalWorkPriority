@@ -827,6 +827,28 @@ function M.run_pass(cfg)
         return stats
     end
 
+    -- The upgrade from unowned rules to guild owned ones, done once and only
+    -- where it is unambiguous. Cheap to ask: adopt_wildcard returns
+    -- immediately when there is nothing left under the wildcard, which is the
+    -- case on every pass after the first and on every fresh install.
+    if api.has_authority() then
+        local sole = nil
+        for _, camp in ipairs(camps) do
+            local g = api.camp_guild(camp)
+            if g == nil then
+                sole = nil
+                break
+            end
+            if sole == nil then
+                sole = g
+            elseif sole ~= g then
+                sole = nil
+                break
+            end
+        end
+        if sole then caps.adopt_wildcard(sole) end
+    end
+
     pass_totals = {}
 
     for camp_n, camp in ipairs(camps) do

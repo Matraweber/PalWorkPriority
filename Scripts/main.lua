@@ -1132,6 +1132,11 @@ net.on_command = function(command, _, comp)
         if not may_change(comp) then return end
         if not caps.apply_clear(parts[2], parts[3],
             net.guild_of_sender(comp)) then
+            -- Refused, so the asking client is still drawing a rule it
+            -- believes it deleted. Pushing the unchanged set back corrects it
+            -- on the next refresh instead of leaving the panel and the server
+            -- quietly disagreeing until something else happens to sync them.
+            net.push_rules(caps, cfg, comp)
             return
         end
 

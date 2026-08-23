@@ -3456,9 +3456,38 @@ function M.apply(cfg, what, dir, from_mouse)
         end
 
         pending_drop = nil
-        caps.clear(what.rule.work, what.rule.item, mine())
-        log.say("rule removed: " .. workdefs.label(what.rule.work) ..
-            " " .. what.rule.item)
+
+        -- The answer is read rather than assumed.
+        --
+        -- This used to discard it and say "rule removed" either way. A rule
+        -- inherited from before guild scoping lives under the wildcard, not
+        -- under this guild, so clearing it finds nothing and refuses - and
+        -- the panel reported success anyway, then redrew the rule still
+        -- sitting there. Measured on 23 August: the client said removed, the
+        -- server logged nothing, and caps.txt was unchanged.
+        if not caps.clear(what.rule.work, what.rule.item, mine()) then
+            log.say(string.format(
+                "could not remove the %s limit on %s: it is not your " ..
+                "guild's rule, it applies to every guild that has not set " ..
+                "its own",
+                workdefs.label(what.rule.work), what.rule.item))
+            return true
+        end
+
+        -- On a client, caps.clear answers whether the request was SENT, not
+        -- whether the server took it - the server decides, and may refuse a
+        -- rule this guild does not own. Saying "removed" there would be the
+        -- same false claim in a new place, so the wording matches what is
+        -- actually known, and the server pushes its rules back either way so
+        -- the panel redraws the truth a moment later.
+        if caps.submit then
+            log.say("asked the server to remove the " ..
+                workdefs.label(what.rule.work) .. " limit on " ..
+                what.rule.item)
+        else
+            log.say("rule removed: " .. workdefs.label(what.rule.work) ..
+                " " .. what.rule.item)
+        end
         M.wants_pass = true
         return true
     end
