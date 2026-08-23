@@ -422,11 +422,13 @@ COMMANDS.help = function()
     log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("  " .. p .. " guilds    write Guilds.txt")
-    log.say("keys, Ctrl does a thing:")
-    log.say("  Ctrl+F8 transport test   Ctrl+F9  work rules")
-    log.say("  Ctrl+F10 run a pass      Ctrl+F11 Discovery.txt")
-    log.say("  Ctrl+F12 base storage")
-    log.say("keys, Alt changes a setting:")
+    log.say("  " .. p .. " icons     probe the overlay icons")
+    log.say("  " .. p .. " restore   give every pal its work back, unfence")
+    log.say("keys, all on Alt, because Ctrl is crouch:")
+    log.say("  Alt+F1 work rules        Alt+F2 run a pass")
+    log.say("  Alt+F3 base storage      Alt+F5 Discovery.txt")
+    log.say("  Alt+F9 transport test")
+    log.say("keys that change a setting:")
     log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
     log.say("in the rules panel: up and down move, right raises, left lowers")
 end
@@ -553,6 +555,19 @@ COMMANDS.trace = function(args)
         log.say("trace marks are " .. (trace.on and "on" or "off") ..
             ". Use '" .. cfg.chat_prefix .. " trace on|off'")
     end
+end
+
+-- Was Ctrl+F7 until Ctrl turned out to roll the character on every press. It
+-- is a diagnostic for a panel drawing bug that is long fixed, so it lost the
+-- argument for one of the eight free Alt slots and became a command instead.
+COMMANDS.icons = function()
+    -- A chat line is rare, so riding the next clock beat (at most 100 ms away)
+    -- costs nothing perceptible and no registration at all.
+    clock.once(0, function()
+        pcall(function() overlay.icon_probe() end)
+        pcall(function() icons.report() end)
+    end)
+    log.say("icon probe queued, look for the report in UE4SS.log")
 end
 
 -- Drives the panel's own click handler by name, so an interaction can be
@@ -1377,17 +1392,28 @@ local function bind(key, label, fn, modifiers)
     return ok
 end
 
--- Every key here is Ctrl or Alt with a function key, and every one was
--- checked against the other installed mods with tools/keybind_audit.py rather
--- than by eye. Two collisions were found that way and both had been missed by
--- grepping: FreeCam sets its key and its modifier lines apart so Alt+F8 reads
--- as plain F8, and UltraGraphics registers through a wrapper so its plain F10
--- never appeared in a search for RegisterKeyBind at all.
+-- Every key here is Alt with a function key, and every one was checked against
+-- the other installed mods with tools/keybind_audit.py rather than by eye. Two
+-- collisions were found that way and both had been missed by grepping: FreeCam
+-- sets its key and its modifier lines apart so Alt+F8 reads as plain F8, and
+-- UltraGraphics registers through a wrapper so its plain F10 never appeared in
+-- a search for RegisterKeyBind at all.
 --
--- Ctrl does a thing, Alt changes a setting.
-bind(Key.F10, "Ctrl+F10 (run pass)", function()
+-- Alt, and nothing but Alt, because Ctrl is crouch. Every Ctrl+Fn press rolled
+-- the character, which made half the mod unusable in practice: the modifier
+-- does not stop the game seeing the modifier. Palworld binds Alt to nothing,
+-- so it is the only one of the three that costs nothing to hold. Shift was
+-- considered and rejected - it is sprint, and FreeCam decides its own F8
+-- modifier at runtime with Shift among the candidates.
+--
+-- That leaves Alt+F1, F2, F3, F5 and F9 free, plus the three already here.
+-- F4 is Windows, F6 and F7 are EffigyBeacons (and PalBaseInfoGrid on F7), F8
+-- is FreeCam. Eight slots for eight keys, which is why the icon probe became
+-- a chat command instead: it is a diagnostic for a bug that is long fixed and
+-- it was the only one here nobody would miss.
+bind(Key.F2, "Alt+F2 (run pass)", function()
     run_pass("keybind", true)
-end, { ModifierKey.CONTROL })
+end, { ModifierKey.ALT })
 
 log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
     MOD_NAME, VERSION,
@@ -1399,16 +1425,16 @@ log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
 -- discovery dump gets its own key instead of living only behind a chat
 -- command. F10/F11 were picked because every other Fn key in the low range
 -- is already claimed by another installed mod.
-bind(Key.F11, "Ctrl+F11 (discovery)", function()
+bind(Key.F5, "Alt+F5 (discovery)", function()
     COMMANDS.discover()
-end, { ModifierKey.CONTROL })
+end, { ModifierKey.ALT })
 
 -- Base storage on a key too. Ceilings are keyed by internal item id, and
 -- without a way to print those ids outside chat the whole feature is
 -- unreachable in a session where chat input is not available.
-bind(Key.F12, "Ctrl+F12 (stock)", function()
+bind(Key.F3, "Alt+F3 (stock)", function()
     COMMANDS.stock()
-end, { ModifierKey.CONTROL })
+end, { ModifierKey.ALT })
 
 -- Left click raises a cell towards priority 1, right click lowers it towards
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
@@ -1440,30 +1466,19 @@ bind(Key.F12, "Alt+F12 (storage scope)", function()
     COMMANDS.scope()
 end, { ModifierKey.ALT })
 
--- The rules panel. F9 is taken by another installed mod and F8 by two, so
--- this sits on the modifier alongside the other toggles.
-bind(Key.F9, "Ctrl+F9 (work rules)", function()
+-- The rules panel, on the lowest free key, because it is the one a player
+-- reaches for most and F1 is where a hand goes looking for a panel.
+bind(Key.F1, "Alt+F1 (work rules)", function()
     panel.toggle()
-end, { ModifierKey.CONTROL })
+end, { ModifierKey.ALT })
 
 -- The transport test needs a key of its own, because the machine most worth
 -- running it on is a client in single player, where there is no chat box to
--- type a command into. Ctrl rather than Alt: Alt+F8 is FreeCam's toggle.
-bind(Key.F8, "Ctrl+F8 (transport test)", function()
+-- type a command into. F9 rather than F8: Alt+F8 is FreeCam's toggle, and the
+-- plain F9 that BaseTrimmer and UltraGraphics claim is a different binding.
+bind(Key.F9, "Alt+F9 (transport test)", function()
     COMMANDS.net()
-end, { ModifierKey.CONTROL })
-
--- The panel draws its boxes but no text, and every input mode call failed.
--- Both are the API not being shaped as assumed, so this asks it directly
--- rather than guessing a second time.
-bind(Key.F7, "Ctrl+F7 (icon probe)", function()
-    -- A keypress is rare, so riding the next clock beat (at most 100 ms away)
-    -- costs nothing perceptible and no registration at all.
-    clock.once(0, function()
-        pcall(function() overlay.icon_probe() end)
-        pcall(function() icons.report() end)
-    end)
-end, { ModifierKey.CONTROL })
+end, { ModifierKey.ALT })
 
 -- Arrow keys for the rules panel.
 --

@@ -105,7 +105,7 @@ stops loading after a game update or a Workshop subscription change, re-run the 
 to `true` for a session first if you would rather watch before letting it touch a base:
 
 1. load a save with a staffed base
-2. press **Ctrl+F10**, or type `!pwp run` in chat
+2. press **Alt+F2**, or type `!pwp run` in chat
 3. read the `[PalWorkPriority]` lines in `UE4SS.log`
 
 In dry run every pass logs what it *would* toggle and sends nothing. The summary line names the
@@ -285,7 +285,7 @@ counted_containers = {
 },
 ```
 
-Whatever is not in the list is still printed by `Ctrl+F12`, under `holding stock but NOT counted by
+Whatever is not in the list is still printed by `Alt+F3`, under `holding stock but NOT counted by
 ceilings`, along with what it holds. If a ceiling is not firing when you think it should, look
 there first: the resource may be sitting somewhere the count does not reach.
 
@@ -382,26 +382,33 @@ bind would stack duplicate glyphs on each scroll.
 | `!pwp restore` | give every Pal back every work it can do, and unfence the base |
 | `!pwp panel` | drive the rules panel from chat, for scripting and for testing |
 | `!pwp help` | list the commands |
+| `!pwp icons` | probe the overlay icons, and report what they resolved to |
 | `!pwp sweep` / `!pwp trace` | diagnostics: what the storage sweep sees, and what a pass decided |
 
 `!pwp restore` is the one to remember. The fences are the game's own saved data, so they outlive
 the mod: uninstalling while a base is fenced leaves Pals with most of their work switched off and
 no way back but the stand, by hand. Run it before you remove anything. `!pwp off` does it for you.
 
-Keys, for the same actions. Ctrl does a thing, Alt changes a setting.
+Keys, for the same actions. Everything is on Alt, and deliberately so: Ctrl is crouch, so a
+`Ctrl`+function key rolls your character every time you press it, and Shift is sprint. Palworld
+binds Alt to nothing at all, which makes it the only modifier that is free to hold.
 
 | key | does |
 | --- | --- |
-| `Ctrl+F9` | open and close the work rules panel |
+| `Alt+F1` | open and close the work rules panel |
 | arrows, `Enter` | move around the panel and confirm, while it is open |
-| `Ctrl+F7` | probe the overlay icons, and write what they resolved to |
-| `Ctrl+F8` | run the transport test |
-| `Ctrl+F10` | run a pass now |
-| `Ctrl+F11` | write `Discovery.txt` |
-| `Ctrl+F12` | print base storage |
+| `Alt+F2` | run a pass now |
+| `Alt+F3` | print base storage |
+| `Alt+F5` | write `Discovery.txt` |
+| `Alt+F9` | run the transport test |
 | `Alt+F10` | toggle spread/fill |
 | `Alt+F11` | cycle the cap |
 | `Alt+F12` | switch storage scope between one base and all loaded bases |
+
+The gaps are other people's. `Alt+F4` is Windows, `Alt+F6` and `Alt+F7` belong to EffigyBeacons
+and PalBaseInfoGrid, and `Alt+F8` is FreeCam's. All of that was checked with
+`tools/keybind_audit.py` against the mods actually installed, not by eye, because two of those
+collisions do not survive a grep.
 
 Not everything has one. `!pwp dry`, `!pwp live`, `!pwp on`, `!pwp off`, `!pwp reload` and
 `!pwp restore` are chat only, and a single player save has no chat box, so on one they cannot be
