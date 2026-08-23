@@ -38,7 +38,21 @@ local function emit(level, msg)
     local line = TAG .. string.upper(level) .. " " .. tostring(msg)
     pcall(function() print(line) end)
 
-    if rank >= LEVELS.warn then to_file(line) end
+    -- The file gets whatever the level asks for.
+    --
+    -- This was hardcoded to warn and above, so log.info and log.debug reached
+    -- the console and NOTHING else - and on a headless server the console is
+    -- not somewhere anyone can look. Setting log_level = "debug" appeared to
+    -- do nothing at all, and the scheduler pass, which reports at info, left
+    -- no trace: a server running perfectly and a server doing nothing were
+    -- the same empty log. That cost a long diagnosis of a bug that was not
+    -- there.
+    --
+    -- The I/O worry behind the old rule is real - issue #1372 was mitigated
+    -- by taking file writes out of hot callbacks - but the threshold is the
+    -- control for that, and it defaults to info: one line per pass every ten
+    -- seconds. Anyone who asks for debug has asked for the volume.
+    to_file(line)
 end
 
 function M.debug(msg) emit("debug", msg) end
