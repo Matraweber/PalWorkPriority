@@ -228,9 +228,11 @@ Pals work the bench until storage reaches 100, stop, and start again when it
 falls. The standing order is what the mod cannot create; the topping up is
 exactly what a ceiling already does.
 
-Two things to know before relying on it. **Only chests are counted** - spheres
-sitting in your own inventory or on the ground are invisible to a ceiling, and
-`!pwp stock` lists what is holding stock that does not count. And a ceiling
+Two things to know before relying on it. **Your own inventory is not storage** -
+spheres in your pockets, or lying on the ground, do not count towards a ceiling.
+What does count is every container on the base, chests and production stations
+alike, minus the feed box and loose dropped items; `!pwp stock` prints both
+lists so you can see which side a pile is on. And a ceiling
 gates the whole work type, so if your Pals do other Handiwork it stops too -
 unless you list those items as well, because a job only stops once *every*
 item listed for it has reached its ceiling.

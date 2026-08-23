@@ -411,6 +411,28 @@ function M.install()
                         return
                     end
 
+                    -- The authority does not apply its own push.
+                    --
+                    -- Below the echo branch on purpose. The self test relies
+                    -- on Notify_RequestClient_int32 running locally on a host
+                    -- - that is how it proves the pair of calls work in single
+                    -- player at all - so gating the whole handler would break
+                    -- the one thing it exists to prove. Only the rule
+                    -- application is refused.
+                    --
+                    -- The up hook has refused its own outgoing calls since it
+                    -- was written and this one never did. Measured on 23
+                    -- August the gap does not currently fire: a day of pushes
+                    -- with the server at debug produced zero "rules updated
+                    -- from the server" lines there and fourteen on the client.
+                    -- If a build ever did deliver them, push_rules sends ONE
+                    -- guild's batch, replace_all would swallow it whole, and
+                    -- since a pushed row carries no guild every rule on the
+                    -- machine would collapse into the wildcard and every other
+                    -- guild's would be dropped - then saved over caps.txt by
+                    -- the next set. One line, for something that expensive.
+                    if api.has_authority() then return end
+
                     if M.on_state then M.on_state(message) end
                 end)
             end)

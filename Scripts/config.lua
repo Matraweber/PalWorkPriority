@@ -133,9 +133,12 @@ return {
     -- "!pwp stock" in game to print the ids and counts actually present in
     -- your base rather than guessing at spellings.
     --
-    -- Only chests are counted. "!pwp stock" also names anything else on the
-    -- base that is holding items, so you can tell a ceiling that has not
-    -- triggered from a resource sitting somewhere that does not count.
+    -- Every container on the base counts, chests and production stations
+    -- alike, minus the feed box and items lying on the ground - see
+    -- DEFAULT_UNCOUNTED in palapi.lua for the list and why each one is out.
+    -- Your own inventory is not storage. "!pwp stock" prints both what counts
+    -- and what does not, so a ceiling that has not triggered can be told from
+    -- a pile sitting somewhere that was never going to count.
     --
     -- A work type with several items listed is suspended only when every
     -- one of them is at or above its ceiling, so mining keeps running while
