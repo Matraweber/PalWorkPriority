@@ -52,6 +52,14 @@ local hold_since = {}
 -- does and it was doing it every three seconds on the game thread. The pass
 -- already has the answer; it was throwing it away.
 M.last_totals = {}
+
+-- work name -> { pass = n, camps = n, capped = n }, as the pass decided it.
+--
+-- Keyed by pass so a camp that stops being loaded drops out rather than
+-- leaving a stale verdict behind: entries from an older pass are ignored and
+-- overwritten the next time that work is considered.
+M.last_capped = {}
+M.pass_id = 0
 local pass_totals = nil
 
 -- The fence itself is recomputed from demand every pass and remembers
@@ -733,6 +741,28 @@ local function run_camp(cfg, camp, stats)
             and cap_reached(cfg, name, totals, camp_guild) then
             capped[workdefs.value(name)] = true
         end
+
+        -- Published as decided, per camp, rather than left to be re-derived.
+        --
+        -- The panel used to ask cap_state itself, against last_totals - which
+        -- under the default camp scope is the SUM across every camp, while
+        -- the decision above is made per camp against that camp's own
+        -- storage. Two bases holding 3000 wood each under a 5000 limit: the
+        -- panel said Stopped and the lumberjacks kept working, because both
+        -- were right about different numbers. cap_state was exported so the
+        -- two could not disagree about the rule; this stops them disagreeing
+        -- about the input.
+        if name ~= workdefs.ANYONE then
+            local seen = M.last_capped[name]
+            if seen == nil or seen.pass ~= M.pass_id then
+                seen = { pass = M.pass_id, camps = 0, capped = 0 }
+                M.last_capped[name] = seen
+            end
+            seen.camps = seen.camps + 1
+            if capped[workdefs.value(name)] then
+                seen.capped = seen.capped + 1
+            end
+        end
     end
 
     stats.camps = stats.camps + 1
@@ -815,6 +845,7 @@ end
 
 function M.run_pass(cfg)
     local stats = M.blank_stats()
+    M.pass_id = M.pass_id + 1
 
     -- One lookup for the whole pass. See the note on set_work_enabled.
     --

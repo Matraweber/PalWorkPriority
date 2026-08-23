@@ -135,6 +135,17 @@ local sel = 1                   -- which row the keyboard is on
 -- reload or a fresh open it is still zero, so tab_hits + 1 is the first tab
 -- again. Resolved after the draw instead, where the number is real.
 local want_first_row = false
+
+-- What the panel last told the player, and when.
+--
+-- Everything the panel says went to log.say, which reaches the UE4SS console
+-- and priority.log and nothing a player looks at. The most important sentence
+-- the mod writes - "that limit is below what you already hold, so this job
+-- stops now" - was written to a file. The subtitle already steps aside for the
+-- editing caption, so it is the surface that exists; a notice borrows it for a
+-- few seconds and then it goes back to explaining the screen.
+local notice, notice_at = nil, -1
+local NOTICE_FOR = 7.0
 local tab_hits = 0              -- how many order entries the tab bar owns
 
 -- A Remove waiting for its second click, and when it started.
@@ -490,6 +501,16 @@ local FIELD_HINT  = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 }
 local function hit(key, what)
     hits[key] = what
     order[#order + 1] = key
+end
+
+-- Said on screen as well as to the log.
+--
+-- Same text both places on purpose: the log stays a complete record for
+-- anyone reading it after the fact, and the player gets told at the moment it
+-- happens rather than never.
+local function announce(text)
+    notice, notice_at = text, os.clock()
+    log.say(text)
 end
 
 local function warn_once(key, message)
@@ -1695,7 +1716,7 @@ local function poll_amount(cfg)
     if not editing.had_focus or not asked then
         editing.waiting = (editing.waiting or 0) + 1
         if editing.waiting > 30 then
-            log.say("the ceiling box never took the keyboard, so the " ..
+            announce("the ceiling box never took the keyboard, so the " ..
                 workdefs.label(editing.work) .. " limit on " ..
                 editing.item .. " is unchanged")
             editing = nil
@@ -1722,7 +1743,7 @@ local function poll_amount(cfg)
     -- first. An edit should never be able to destroy more than it was aimed
     -- at.
     if want == nil or want <= 0 then
-        log.say("nothing typed, the " .. workdefs.label(job) .. " limit on " ..
+        announce("nothing typed, the " .. workdefs.label(job) .. " limit on " ..
             item .. " is unchanged")
         return
     end
@@ -1751,7 +1772,7 @@ local function poll_amount(cfg)
     -- quietly.
     local have = (stock_totals(cfg) or {})[item] or 0
     if want < have then
-        log.say(string.format(
+        announce(string.format(
             "%s %s limit set to %d, which is below the %d in storage, so %s stops now",
             workdefs.label(job), item, want, have, workdefs.label(job)))
     else
@@ -2009,6 +2030,10 @@ local function draw_list(cfg, totals)
             "Setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
             editing.item .. "  |  Type a number, then click anywhere to save",
             "action", 14)
+    elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
+        -- Below the editing caption on purpose: while a number is being typed
+        -- the instruction for typing it is the more useful of the two.
+        line("why", 2, PAD, notice, "action", 14)
     end
 
     -- Names both numbers. Without this the pair reads as progress towards a
@@ -2193,8 +2218,26 @@ local function draw_list(cfg, totals)
             -- this yet. Falling back to the per-item answer is wrong in the
             -- multi-item case, but it is the answer this row gave before, and
             -- a wrong word beats a nil call that takes the whole refresh out.
-            local capped
-            if scheduler.cap_state then
+            -- What the pass decided, not what this screen can re-derive.
+            --
+            -- Asking cap_state here means asking it against `totals`, which
+            -- under the default camp scope is the SUM across every camp while
+            -- the pass decides per camp against each camp's own storage. Two
+            -- bases with 3000 wood each under a 5000 limit rendered Stopped
+            -- while both kept working. The pass now publishes its verdict and
+            -- this reads it.
+            --
+            -- Still guarded, and now for two reasons: panel.lua hot-reloads
+            -- and scheduler.lua does not, so a freshly dropped panel may be
+            -- talking to a scheduler that exports neither; and last_capped is
+            -- empty until a pass has run at all.
+            local capped, partly = nil, nil
+            local seen = scheduler.last_capped and scheduler.last_capped[rule.work]
+            if seen and seen.camps and seen.camps > 0 then
+                capped = seen.capped >= seen.camps
+                partly = seen.capped > 0 and seen.capped < seen.camps
+                            and seen.capped or nil
+            elseif scheduler.cap_state then
                 capped = scheduler.cap_state(cfg, rule.work, totals, mine())
             else
                 capped = met
@@ -2217,6 +2260,11 @@ local function draw_list(cfg, totals)
                 status, tone = "Testing", "dim"
             elseif capped then
                 status, tone = "Stopped", "over"
+            elseif partly then
+                -- Honest about a split rather than picking a side. Under camp
+                -- scope a limit can be met at one base and not another, and
+                -- both "Stopped" and "Working" would be wrong at one of them.
+                status, tone = "Stopped at " .. partly, "over"
             elseif met then
                 status, tone = "Waiting", "unmet"
             else
@@ -2994,7 +3042,16 @@ local function step(current, dir)
     for _, n in ipairs(LADDER) do
         if n < current then below = n end
     end
-    return below
+
+    -- Clamped, like the top of the ladder already was.
+    --
+    -- This returned nil below the lowest rung and the caller read nil as
+    -- "delete the rule". The top end has always clamped, so stepping up
+    -- stopped and stepping down destroyed - and every rule the ADD tab
+    -- creates starts on the lowest rung, so every new rule was one right
+    -- click from gone, with no confirmation, while the Remove button next to
+    -- it asks twice. Deleting belongs to Remove.
+    return below or LADDER[1]
 end
 
 local function hovered()
@@ -3468,7 +3525,7 @@ function M.apply(cfg, what, dir, from_mouse)
         mode, page, show_all = "item", 0, false
         want_focus = false
         want_first_row = true
-        log.say("picking an item, type to filter or click one")
+        announce("picking an item, type to filter or click one")
         return true
     end
 
@@ -3503,11 +3560,47 @@ function M.apply(cfg, what, dir, from_mouse)
         -- place instead of on a dead end.
         local work = workdefs.work_for_item(what.item) or workdefs.DEFAULT_WORK
 
-        caps.set(work, what.item, LADDER[1], mine())
-        log.say(string.format("rule added: %s until %d %s",
-            workdefs.label(work), LADDER[1], what.item))
+        -- An item that already has a rule is not clicked to be overwritten.
+        --
+        -- This wrote LADDER[1] unconditionally, so clicking a row that
+        -- visibly says LIMIT SET replaced whatever was there with 100 - one
+        -- click, no confirmation, and the only visible state on the row was
+        -- "you have already done this". Now it takes you to the rule instead,
+        -- which is where changing it belongs.
+        local existing = (caps.all(cfg, mine())[work] or {})[what.item]
+        if existing ~= nil then
+            announce(string.format(
+                "%s already stops at %d %s - the RULES tab is where to change it",
+                workdefs.label(work), existing, what.item))
+            mode = "list"
+            want_first_row = true
+            return true
+        end
+
+        -- Seeded above what the base already holds, not at the bottom rung.
+        --
+        -- LADDER[1] is 100. Clicking Stone on a base holding twenty thousand
+        -- of it set a ceiling of 100 and suspended Mining on the spot, from a
+        -- tab whose caption says "click an item to limit it" - which does not
+        -- read as "stop this job now". A ceiling one rung above current stock
+        -- creates the rule the click asked for and leaves the job running
+        -- until the player chooses a real number.
+        local have = (stock_totals(cfg) or {})[what.item] or 0
+        local seed = LADDER[1]
+        for _, n in ipairs(LADDER) do
+            if n > have then
+                seed = n
+                break
+            end
+            seed = LADDER[#LADDER]
+        end
+
+        caps.set(work, what.item, seed, mine())
+        announce(string.format("rule added: %s stops at %d %s (%d in storage)",
+            workdefs.label(work), seed, what.item, have))
         M.wants_pass = true
-        mode, sel = "list", 1
+        mode = "list"
+        want_first_row = true
         return true
     end
 
@@ -3557,7 +3650,7 @@ function M.apply(cfg, what, dir, from_mouse)
         then
             pending_drop = { work = rule.work, item = rule.item }
             pending_at = os.clock()
-            log.say("Click Remove again to delete the " ..
+            announce("Click Remove again to delete the " ..
                 workdefs.label(rule.work) .. " limit on " .. rule.item)
             return true
         end
@@ -3573,7 +3666,7 @@ function M.apply(cfg, what, dir, from_mouse)
         -- sitting there. Measured on 23 August: the client said removed, the
         -- server logged nothing, and caps.txt was unchanged.
         if not caps.clear(what.rule.work, what.rule.item, mine()) then
-            log.say(string.format(
+            announce(string.format(
                 "could not remove the %s limit on %s: it is not your " ..
                 "guild's rule, it applies to every guild that has not set " ..
                 "its own",
@@ -3588,11 +3681,11 @@ function M.apply(cfg, what, dir, from_mouse)
         -- actually known, and the server pushes its rules back either way so
         -- the panel redraws the truth a moment later.
         if caps.submit then
-            log.say("asked the server to remove the " ..
+            announce("asked the server to remove the " ..
                 workdefs.label(what.rule.work) .. " limit on " ..
                 what.rule.item)
         else
-            log.say("rule removed: " .. workdefs.label(what.rule.work) ..
+            announce("rule removed: " .. workdefs.label(what.rule.work) ..
                 " " .. what.rule.item)
         end
         M.wants_pass = true
@@ -3613,10 +3706,20 @@ function M.apply(cfg, what, dir, from_mouse)
 
         local next_amount = step(rule.amount, dir)
 
+        -- A step can no longer delete. step() clamps at both ends now, so
+        -- nil means the rule has no amount at all rather than "you have gone
+        -- past the bottom", and the answer to that is to do nothing. This
+        -- branch used to clear the rule outright: every rule the ADD tab
+        -- creates starts on the lowest rung, so a single right click removed
+        -- it, with no confirmation, while the Remove button beside it asks
+        -- twice.
         if next_amount == nil then
-            caps.clear(rule.work, rule.item, mine())
-            log.say("rule removed: " .. workdefs.label(rule.work) ..
-                " " .. rule.item)
+            return true
+        elseif next_amount == rule.amount then
+            announce(string.format(
+                "%s %s is already at the %s limit the ladder offers",
+                workdefs.label(rule.work), rule.item,
+                dir < 0 and "highest" or "lowest"))
         else
             caps.set(rule.work, rule.item, next_amount, mine())
             -- Announced, like every other way a rule can change.
@@ -3628,7 +3731,7 @@ function M.apply(cfg, what, dir, from_mouse)
             -- globally, with no modifier list, so they fire whenever the
             -- panel is open and the cursor is over a row. A rule that changes
             -- without the player meaning it should at least be traceable.
-            log.say(string.format("%s %s limit stepped to %d",
+            announce(string.format("%s %s limit stepped to %d",
                 workdefs.label(rule.work), rule.item, next_amount))
         end
         M.wants_pass = true
