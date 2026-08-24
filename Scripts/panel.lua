@@ -655,6 +655,10 @@ end
 local function ensure_backdrop(rows)
     if not ensure_root() then return end
 
+    -- The blueprint brings its own backdrop, sized and anchored by Slate. Two
+    -- of them would be one too many, and ours is the one drawn by hand.
+    if overlay.parts then return end
+
     if not alive(backdrop) then
         local cls = api.cdo("/Script/UMG.Border")
         if not cls or not alive(root_tree) then return end
