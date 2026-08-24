@@ -4008,6 +4008,23 @@ function M.command(cfg, args)
     -- of objects and barely notices how many match - which would mean a
     -- one-object class costs the same as a seven thousand object one, and
     -- every mod that sweeps pays the same toll we do.
+    -- The hover scan, timed alone and repeated, so the per-frame budget of a
+    -- native-rate hover loop is a number rather than a guess.
+    if verb == "hoverbench" then
+        if not M.open then return "open the panel first" end
+        local t0 = os.clock()
+        local n = 0
+        for _ = 1, 100 do
+            for key in pairs(was_hit or {}) do
+                n = n + 1
+                if over_key(key) then break end
+            end
+        end
+        local ms = (os.clock() - t0) * 1000
+        return string.format("100 scans over %d widgets: %.1fms total, %.3fms per scan",
+            n, ms, ms / 100)
+    end
+
     if verb == "sweeps" then
         local classes = {
             "Texture2D", "UserWidget", "Actor", "PalPlayerController",
