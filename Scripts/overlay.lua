@@ -76,9 +76,38 @@ M.parts = nil
 -- one drawing into it.
 M.width = nil
 
+-- The shell is a stack of rows. Each chrome line has a fixed height SizeBox
+-- (XxxRow) wrapping a CanvasPanel (Xxx) that the panel draws into, so Slate
+-- owns the vertical order while the panel keeps the X positions it already
+-- has. A row the current screen does not want is collapsed and costs no
+-- height, which is how one shell serves the rules screen and the picker.
+--
+-- The first shell had a title, a search box, two lists and a button row, and
+-- the panel could use exactly one of them: everything else it draws had
+-- nowhere to go and stayed at absolute canvas coordinates. Half the panel in
+-- a Slate flow and half in fixed coordinates only holds while the flow
+-- contains one thing - adding a second container shifted every sibling below
+-- it and scattered the rows.
 local BP_NAMES = {
-    "Root", "Backdrop", "Body", "Title", "Search",
-    "RuleList", "ItemList", "Actions", "NewRuleButton", "CloseButton",
+    "Root", "Backdrop", "Body",
+    "TabsRow", "Tabs",
+    "TitleRow", "Title",
+    "SubRow", "Sub",
+    "NoticeRow", "Notice",
+    "SearchRow", "Search",
+    "CaptionRow", "Caption",
+    "HeadRow", "Head",
+    "RuleList", "ItemList",
+    "FootRow", "Foot",
+}
+
+-- Chrome rows the panel does not fill yet. Collapsed, so the panel goes on
+-- drawing those lines on its own canvas exactly as before and the lists keep
+-- the geometry they were aligned to. Each one comes off this list as the
+-- panel starts drawing into it instead.
+local BP_UNUSED_ROWS = {
+    "TabsRow", "TitleRow", "SubRow", "NoticeRow",
+    "SearchRow", "CaptionRow", "HeadRow", "FootRow",
 }
 
 -- ---------------------------------------------------------------------------
@@ -271,7 +300,7 @@ local function build_blueprint(class)
     -- button row - which is what made the first hosted screenshot render two
     -- of everything. Collapsed, not removed: the pak would have to be rebuilt
     -- to get any of it back.
-    for _, name in ipairs({ "Title", "Search", "Actions" }) do
+    for _, name in ipairs(BP_UNUSED_ROWS) do
         if parts[name] then
             pcall(function() parts[name]:SetVisibility(1) end)
         end

@@ -2,7 +2,6 @@
 
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
-#include "FileHelpers.h"
 
 #include "WidgetBlueprint.h"
 #include "WidgetBlueprintFactory.h"
@@ -15,18 +14,9 @@
 #include "Components/BorderSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
-#include "Components/HorizontalBox.h"
-#include "Components/HorizontalBoxSlot.h"
 #include "Components/ScrollBox.h"
-#include "Components/TextBlock.h"
-#include "Components/EditableTextBox.h"
-#include "Components/Button.h"
+#include "Components/SizeBox.h"
 
-#include "Factories/BlueprintFactory.h"
-#include "Factories/DataAssetFactory.h"
-#include "Engine/PrimaryAssetLabel.h"
-#include "Engine/Blueprint.h"
-#include "GameFramework/Actor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "UObject/SavePackage.h"
@@ -35,15 +25,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogWorkRulesWidget, Log, All);
 
 namespace
 {
-	const TCHAR* ModFolder = TEXT("/Game/Mods/PalWorkPriority");
 	const TCHAR* UiFolder = TEXT("/Game/Mods/PalWorkPriority/UI");
 	const TCHAR* WidgetName = TEXT("WBP_WorkRules");
-	const TCHAR* ActorName = TEXT("ModActor");
-	const TCHAR* LabelName = TEXT("PalWorkPriority_Label");
-
-	// Any nonzero id will do; zero is the base game's chunk and produces no
-	// separate pak at all, which is the trap this number exists to avoid.
-	const int32 ChunkId = 1001;
 
 	void Say(const FString& Line)
 	{
@@ -51,13 +34,13 @@ namespace
 	}
 
 	/**
-	 * Construct a widget into the tree and name it.
+	 * Named, and named on the GENERATED CLASS.
 	 *
-	 * The name is the whole point. Lua reaches every one of these with
-	 * GetWidgetFromName, so a widget without one is invisible to the mod
-	 * however well it renders. bIsVariable is what keeps the name in the
-	 * compiled class, and is the code equivalent of ticking "Is Variable" in
-	 * the designer.
+	 * bIsVariable is what promotes a widget to a property of the compiled
+	 * class, and a property read is the only way the Lua side can pick these
+	 * up: GetWidgetFromName looks like the obvious API and is not a UFUNCTION,
+	 * so UE4SS cannot call it at all. A widget that loses its name here fails
+	 * silently there, at the point a row does not appear.
 	 */
 	template <typename T>
 	T* Make(UWidgetTree* Tree, const TCHAR* Name)
@@ -81,9 +64,53 @@ namespace
 		FSavePackageArgs Args;
 		Args.TopLevelFlags = RF_Public | RF_Standalone;
 		Args.SaveFlags = SAVE_NoError;
-
 		return UPackage::SavePackage(Package, nullptr, *FileName, Args);
 	}
+
+	/** One row of the stack: a fixed height box wrapping a canvas. */
+	struct FRow
+	{
+		const TCHAR* Name;
+		float Height;
+	};
+
+	/**
+	 * The shell is a STACK OF ROWS, and that is the whole design.
+	 *
+	 * The first shell held a title, a search box, two lists and a button row,
+	 * and the panel could use exactly one of them. Everything else it draws -
+	 * tabs, a subtitle, a caption, column headings, an add bar - had nowhere
+	 * to go, so it kept drawing those at absolute canvas coordinates. Half the
+	 * panel in a Slate flow and half in fixed coordinates only holds together
+	 * while the flow contains one thing: the moment a second container joined
+	 * it, every sibling below shifted and the rows scattered across the panel.
+	 *
+	 * So every line the panel draws gets its own fixed height SizeBox wrapping
+	 * its own CanvasPanel. Slate owns the vertical order; the panel keeps the
+	 * X positions it already has, inside a row that is only as tall as it
+	 * needs to be. That is the arrangement that already worked for the list
+	 * rows, applied to the rest of the panel.
+	 *
+	 * A row the current screen does not want is collapsed and costs no height,
+	 * which is how one shell serves the rules screen and the picker both.
+	 *
+	 * Heights come from the panel's own constants: LINE is 34, and the rows
+	 * carrying smaller text are sized to that text.
+	 */
+	const FRow HeadRows[] = {
+		{ TEXT("Tabs"),    34.0f },   // RULES  ADD ............... CLOSE
+		{ TEXT("Title"),   34.0f },   // Production Limits
+		{ TEXT("Sub"),     26.0f },   // the sentence under the title
+		{ TEXT("Notice"),  22.0f },   // editing caption and transient notices
+		{ TEXT("Search"),  40.0f },   // the picker's search field
+		{ TEXT("Caption"), 24.0f },   // "What your storage holds, 13 items"
+		{ TEXT("Head"),    28.0f },   // JOB ITEM IN STORAGE LIMIT STATUS
+	};
+
+	/** After the two lists: the add bar, or the pager and Back. */
+	const FRow TailRows[] = {
+		{ TEXT("Foot"),    76.0f },
+	};
 }
 
 UBuildWorkRulesWidgetCommandlet::UBuildWorkRulesWidgetCommandlet()
@@ -96,108 +123,17 @@ UBuildWorkRulesWidgetCommandlet::UBuildWorkRulesWidgetCommandlet()
 
 int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 {
-	Say(TEXT("building Content/Mods/PalWorkPriority"));
+	Say(TEXT("building the work rules shell"));
 
-	IAssetTools& AssetTools =
-		FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	FAssetToolsModule& AssetToolsModule =
+		FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	IAssetTools& AssetTools = AssetToolsModule.Get();
 
-	// ------------------------------------------------------------------
-	// ModActor
-	// ------------------------------------------------------------------
-	//
-	// Empty on purpose. UE4SS recognises a pak as a LogicMod by finding one
-	// of these in it, and it does nothing else, so it needs nothing in it.
-	{
-		const FString Path = FString::Printf(TEXT("%s/%s.%s"),
-			ModFolder, ActorName, ActorName);
+	UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
+	Factory->ParentClass = UUserWidget::StaticClass();
 
-		UBlueprint* Actor = LoadObject<UBlueprint>(nullptr, *Path);
-		if (!Actor)
-		{
-			UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
-			Factory->ParentClass = AActor::StaticClass();
-
-			Actor = Cast<UBlueprint>(AssetTools.CreateAsset(
-				ActorName, ModFolder, UBlueprint::StaticClass(), Factory));
-		}
-
-		if (!Actor)
-		{
-			Say(TEXT("FAILED: could not create ModActor"));
-			return 1;
-		}
-
-		FKismetEditorUtilities::CompileBlueprint(Actor);
-		Say(SaveAsset(Actor)
-			? TEXT("  ModActor saved")
-			: TEXT("  ModActor could NOT be saved"));
-	}
-
-	// ------------------------------------------------------------------
-	// The chunk label
-	// ------------------------------------------------------------------
-	//
-	// What makes the cook put these assets in a pak of their own rather than
-	// folding them into the base game's. DefaultGame.ini already scans /Game
-	// for labels, so dropping one in this folder is the whole setup.
-	{
-		const FString Path = FString::Printf(TEXT("%s/%s.%s"),
-			ModFolder, LabelName, LabelName);
-
-		UPrimaryAssetLabel* Label = LoadObject<UPrimaryAssetLabel>(nullptr, *Path);
-		if (!Label)
-		{
-			UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
-			Factory->DataAssetClass = UPrimaryAssetLabel::StaticClass();
-
-			Label = Cast<UPrimaryAssetLabel>(AssetTools.CreateAsset(
-				LabelName, ModFolder, UPrimaryAssetLabel::StaticClass(), Factory));
-		}
-
-		if (!Label)
-		{
-			Say(TEXT("FAILED: could not create the chunk label"));
-			return 1;
-		}
-
-		Label->Rules.ChunkId = ChunkId;
-		Label->Rules.Priority = 1;
-		Label->Rules.CookRule = EPrimaryAssetCookRule::AlwaysCook;
-		Label->Rules.bApplyRecursively = true;
-
-		// Everything beside and below it, which is both assets and nothing
-		// else, since this folder holds only the mod.
-		Label->bLabelAssetsInMyDirectory = true;
-
-		// The label is a build time instruction, not something the game
-		// should be carrying around at runtime.
-		Label->bIsRuntimeLabel = false;
-
-		Say(SaveAsset(Label)
-			? FString::Printf(TEXT("  label saved, chunk %d"), ChunkId)
-			: TEXT("  label could NOT be saved"));
-	}
-
-	// ------------------------------------------------------------------
-	// WBP_WorkRules
-	// ------------------------------------------------------------------
-	const FString WidgetPath = FString::Printf(TEXT("%s/%s.%s"),
-		UiFolder, WidgetName, WidgetName);
-
-	UWidgetBlueprint* Blueprint = LoadObject<UWidgetBlueprint>(nullptr, *WidgetPath);
-
-	if (!Blueprint)
-	{
-		UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-
-		// Plain UserWidget, not one of the Pal types. Nothing here wants the
-		// game's HUD behaviour, and a plain widget is one less thing to be
-		// surprised by.
-		Factory->ParentClass = UUserWidget::StaticClass();
-
-		Blueprint = Cast<UWidgetBlueprint>(AssetTools.CreateAsset(
-			WidgetName, UiFolder, UWidgetBlueprint::StaticClass(), Factory));
-	}
+	UWidgetBlueprint* Blueprint = Cast<UWidgetBlueprint>(AssetTools.CreateAsset(
+		WidgetName, UiFolder, UWidgetBlueprint::StaticClass(), Factory));
 
 	if (!Blueprint || !Blueprint->WidgetTree)
 	{
@@ -208,28 +144,24 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 	UWidgetTree* Tree = Blueprint->WidgetTree;
 
 	// Re-runnable. Dropping the root detaches whatever a previous run built,
-	// so this can be edited and run again rather than being a one shot that
-	// has to be right first time.
+	// so this can be edited and run again rather than being a one shot.
 	Tree->RootWidget = nullptr;
 
-	// ------------------------------------------------------------------
-	// The tree
-	// ------------------------------------------------------------------
 	UCanvasPanel* Root = Make<UCanvasPanel>(Tree, TEXT("Root"));
 	Tree->RootWidget = Root;
 
+	// Centred, with a placeholder size. The panel sets the real one at
+	// runtime, because the panel is what knows how wide the panel is and a
+	// number baked in here can only be changed by rebuilding this asset.
 	UBorder* Backdrop = Make<UBorder>(Tree, TEXT("Backdrop"));
 	Backdrop->SetBrushColor(FLinearColor(0.03f, 0.05f, 0.08f, 0.92f));
 
 	if (UCanvasPanelSlot* Slot = Cast<UCanvasPanelSlot>(Root->AddChild(Backdrop)))
 	{
-		// Anchored to the middle of the screen and aligned about its own
-		// centre, so it stays centred at any resolution rather than at the
-		// one it was laid out on.
 		Slot->SetAnchors(FAnchors(0.5f, 0.5f, 0.5f, 0.5f));
 		Slot->SetAlignment(FVector2D(0.5f, 0.5f));
 		Slot->SetPosition(FVector2D(0.0f, 0.0f));
-		Slot->SetSize(FVector2D(900.0f, 700.0f));
+		Slot->SetSize(FVector2D(1086.0f, 700.0f));
 	}
 
 	UVerticalBox* Body = Make<UVerticalBox>(Tree, TEXT("Body"));
@@ -238,63 +170,55 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 		Slot->SetPadding(FMargin(18.0f));
 	}
 
-	UTextBlock* Title = Make<UTextBlock>(Tree, TEXT("Title"));
-	Title->SetText(FText::FromString(TEXT("WORK RULES")));
+	auto AddRow = [&](const FRow& Row)
 	{
-		// GetFont rather than the Font field, which 5.1 deprecates.
-		FSlateFontInfo Font = Title->GetFont();
-		Font.Size = 24;
-		Title->SetFont(Font);
-	}
-	Body->AddChild(Title);
+		const FString BoxName = FString(Row.Name) + TEXT("Row");
+		USizeBox* Box = Make<USizeBox>(Tree, *BoxName);
+		Box->SetHeightOverride(Row.Height);
 
-	UEditableTextBox* Search = Make<UEditableTextBox>(Tree, TEXT("Search"));
-	Search->SetHintText(FText::FromString(TEXT("search items")));
-	Body->AddChild(Search);
-
-	// Two lists rather than one, so moving between the rules and the picker
-	// is a visibility flip rather than tearing down and rebuilding rows.
-	UScrollBox* RuleList = Make<UScrollBox>(Tree, TEXT("RuleList"));
-	if (UVerticalBoxSlot* Slot = Cast<UVerticalBoxSlot>(Body->AddChild(RuleList)))
-	{
-		Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	}
-
-	UScrollBox* ItemList = Make<UScrollBox>(Tree, TEXT("ItemList"));
-	if (UVerticalBoxSlot* Slot = Cast<UVerticalBoxSlot>(Body->AddChild(ItemList)))
-	{
-		Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	}
-	// The panel opens on the rules, so the picker starts out of the way.
-	ItemList->SetVisibility(ESlateVisibility::Collapsed);
-
-	UHorizontalBox* Actions = Make<UHorizontalBox>(Tree, TEXT("Actions"));
-	Body->AddChild(Actions);
-
-	auto AddButton = [&](const TCHAR* Name, const TCHAR* TextName,
-		const TCHAR* Label)
-	{
-		UButton* Button = Make<UButton>(Tree, Name);
-		UTextBlock* Text = Make<UTextBlock>(Tree, TextName);
-		Text->SetText(FText::FromString(Label));
-		Button->AddChild(Text);
-		Actions->AddChild(Button);
+		// The canvas is what the panel draws into. A CanvasPanel reports no
+		// desired size of its own, which is exactly why the SizeBox is here:
+		// without one the row would be laid out at zero height and nothing
+		// inside it would ever be seen.
+		UCanvasPanel* Canvas = Make<UCanvasPanel>(Tree, Row.Name);
+		Box->AddChild(Canvas);
+		Body->AddChild(Box);
 	};
 
-	AddButton(TEXT("NewRuleButton"), TEXT("NewRuleLabel"), TEXT("new rule"));
-	AddButton(TEXT("CloseButton"), TEXT("CloseLabel"), TEXT("close"));
+	for (const FRow& Row : HeadRows)
+	{
+		AddRow(Row);
+	}
 
-	// ------------------------------------------------------------------
-	// Compile, save, and say what is actually in there
-	// ------------------------------------------------------------------
+	// Automatic, never Fill.
+	//
+	// Two Fill siblings take half the body each whatever is in them, so an
+	// emptied list still held half the panel and started the other one in the
+	// middle of it. Automatic sizes each to its own content, which is what
+	// makes emptying one actually give the space back.
+	const TCHAR* Lists[] = { TEXT("RuleList"), TEXT("ItemList") };
+	for (const TCHAR* Name : Lists)
+	{
+		UScrollBox* List = Make<UScrollBox>(Tree, Name);
+		if (UVerticalBoxSlot* Slot = Cast<UVerticalBoxSlot>(Body->AddChild(List)))
+		{
+			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+		}
+	}
+
+	for (const FRow& Row : TailRows)
+	{
+		AddRow(Row);
+	}
+
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
 	const bool bSaved = SaveAsset(Blueprint);
 
-	// Read back rather than assume. Every name below is one Lua will ask for
-	// by string, and a widget that failed to be named fails silently at that
-	// point instead of here.
+	// Read back rather than assume. Every name below is one the Lua side asks
+	// for by string, and a widget that failed to be named fails silently
+	// there rather than here.
 	Say(TEXT("widgets in the saved tree:"));
 
 	int32 Named = 0;

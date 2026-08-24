@@ -1,0 +1,4 @@
+"C:/Users/matra/AppData/Local/Temp/claude/shellgen/stage/ModActor.uasset" "../../../Pal/Content/Mods/PalWorkPriority/ModActor.uasset"
+"C:/Users/matra/AppData/Local/Temp/claude/shellgen/stage/ModActor.uexp" "../../../Pal/Content/Mods/PalWorkPriority/ModActor.uexp"
+"C:/Users/matra/AppData/Local/Temp/claude/shellgen/stage/UI/WBP_WorkRules.uasset" "../../../Pal/Content/Mods/PalWorkPriority/UI/WBP_WorkRules.uasset"
+"C:/Users/matra/AppData/Local/Temp/claude/shellgen/stage/UI/WBP_WorkRules.uexp" "../../../Pal/Content/Mods/PalWorkPriority/UI/WBP_WorkRules.uexp"
