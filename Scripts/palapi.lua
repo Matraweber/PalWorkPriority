@@ -194,11 +194,64 @@ function M.pc_memo_end()
     pc_memo, pc_memo_open = nil, false
 end
 
+-- Walked down from the engine rather than searched for.
+--
+-- FindFirstOf("PalPlayerController") costs 9.8ms on this build and was, after
+-- the beat memo landed, the entire remaining cost of a panel refresh. It is
+-- slow for a structural reason that no amount of caching fixes: FindFirstOf
+-- can only stop early on a class with many instances, and there is exactly
+-- one player controller in a GUObjectArray of tens of thousands, so it reads
+-- all of it. UEHelpers.GetPlayerController is the same call and the same
+-- 9.6ms.
+--
+-- The engine knows where its own controller is. GameViewport.World
+-- .OwningGameInstance.LocalPlayers[1].PlayerController returns the identical
+-- object - verified against FindFirstOf, same instance name - in 0.00ms,
+-- because every step is a pointer read rather than a search. GetEngine costs
+-- 2ms once and is cached by UEHelpers after that.
+--
+-- Nothing is held. The chain is re-read from the engine on every call, so it
+-- is exactly as fresh as the search it replaces, and the beat memo above is
+-- still the only thing that keeps an object alive across calls.
+--
+-- It is also more correct. FindFirstOf returns SOME PalPlayerController; on a
+-- listen server the host has both its own and every client's in the array,
+-- and which one comes back is array order. LocalPlayers[1] is the local
+-- player's by construction, which is what all twelve callers actually meant.
+--
+-- StaticFindObject on the widget's own path was measured too, as the other
+-- way to answer this. It is 11ms. overlay.lua records why.
+-- Counted, not logged. A warning here would either fire ten times a second
+-- for the rest of the session or fire once at a world change and mean
+-- nothing; `!pwp panel routes` reports the count instead.
+M.pc_fallbacks = 0
+
+local function via_engine()
+    local pc
+    pcall(function()
+        local ue = require("UEHelpers")
+        pc = ue.GetEngine().GameViewport.World
+            .OwningGameInstance.LocalPlayers[1].PlayerController
+    end)
+    return pc
+end
+
 function M.player_controller()
     if pc_memo ~= nil then return pc_memo end
 
-    local pc
-    pcall(function() pc = FindFirstOf("PalPlayerController") end)
+    local pc = via_engine()
+
+    -- The chain is tried every time rather than being switched off after a
+    -- few misses. Failing costs nothing - it is a pcall over a nil index -
+    -- and a miss is usually a world load, where GameViewport.World does not
+    -- exist yet, not a build without the chain. Latching on those early
+    -- misses would have given up the fast path permanently at startup, which
+    -- is precisely when they happen.
+    if not valid(pc) then
+        M.pc_fallbacks = M.pc_fallbacks + 1
+        pcall(function() pc = FindFirstOf("PalPlayerController") end)
+    end
+
     if valid(pc) then
         if pc_memo_open then pc_memo = pc end
         return pc

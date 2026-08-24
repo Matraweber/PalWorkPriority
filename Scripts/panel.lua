@@ -4090,6 +4090,62 @@ function M.command(cfg, args)
             n, ms, ms / 100)
     end
 
+    -- Candidate cheap routes to the player controller. Read-only, every
+    -- object taken from the call it is used in, nothing stored.
+    if verb == "routes" then
+        local function timed(name, fn)
+            local got, t = nil, os.clock()
+            for _ = 1, 5 do
+                local r
+                pcall(function() r = fn() end)
+                got = r
+            end
+            local ms = (os.clock() - t) * 1000 / 5
+            local nm = "nil"
+            if got ~= nil then
+                pcall(function() nm = got:GetFName():ToString() end)
+            end
+            log.say(string.format("  %-34s %6.2fms  %s", name, ms, nm))
+        end
+
+        timed("FindFirstOf PalPlayerController", function()
+            return FindFirstOf("PalPlayerController")
+        end)
+        timed("UEHelpers.GetPlayerController", function()
+            local ue = require("UEHelpers")
+            return ue.GetPlayerController()
+        end)
+        timed("UEHelpers.GetEngine", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine()
+        end)
+        timed("Engine.GameViewport", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine().GameViewport
+        end)
+        timed("GameViewport.World", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine().GameViewport.World
+        end)
+        timed("World.OwningGameInstance", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine().GameViewport.World.OwningGameInstance
+        end)
+        timed("GameInstance.LocalPlayers[1]", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine().GameViewport.World
+                .OwningGameInstance.LocalPlayers[1]
+        end)
+        timed("LocalPlayer.PlayerController", function()
+            local ue = require("UEHelpers")
+            return ue.GetEngine().GameViewport.World
+                .OwningGameInstance.LocalPlayers[1].PlayerController
+        end)
+        log.say(string.format("  engine-chain misses this session: %d",
+            api.pc_fallbacks or -1))
+        return "route probe done"
+    end
+
     if verb == "sweeps" then
         local classes = {
             "Texture2D", "UserWidget", "Actor", "PalPlayerController",

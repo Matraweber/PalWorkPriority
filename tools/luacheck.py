@@ -230,6 +230,74 @@ LOCAL_LIMIT = 200
 LOCAL_WARN_AT = 190
 
 
+ASSIGN = re.compile(r"^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=(?!=)")
+
+# Everything that binds a name, matched one line at a time so that `$` means
+# end of line and a declaration with no initialiser - `local rooted` - counts.
+DECL_ON_LINE = (
+    re.compile(r"\blocal\s+function\s+([A-Za-z_]\w*)"),
+    re.compile(r"\blocal\s+([A-Za-z_][\w\s,]*?)\s*(?:=|$)"),
+    re.compile(r"\bfunction\s*[\w.:]*\s*\(([^)]*)\)"),
+    re.compile(r"\bfor\s+([A-Za-z_][\w\s,]*?)\s+(?:=|in)\b"),
+)
+
+
+def undeclared_writes(clean, path):
+    """Assignments to a name this file never declares as a local.
+
+    In Lua that silently creates a global. It costs nothing until something
+    reads the name before the first write, when it is nil - and nil in an
+    arithmetic or comparison throws from wherever it happens to be reached,
+    with no mention of the missing declaration.
+
+    Written after `owner_cached, owner_at = n, now` outlived its own `local`
+    line: a block inserted above the declarations was later removed by cutting
+    from its first line to the function below, which took the three
+    declarations sitting between them. `owner_at >= 0` then compared nil to a
+    number on the first host() call, the panel stopped drawing entirely, and
+    the log said nothing at all. use_before_local could not see it - there was
+    no longer a declaration to be used before.
+
+    Narrow on purpose, and it earned that the hard way: the general form of
+    this check - every name READ but never bound - reported 40 names on a
+    clean tree, nearly all of them table-constructor keys like {R=1,G=2}, and
+    a checker that cries wolf gets switched off. Writes at brace depth zero
+    are the case that can be told apart from a table key with certainty, and
+    they are the case that creates the global.
+    """
+    # Scanned line by line rather than with INNER_BIND, whose patterns end in
+    # `$` and are run against the whole file at once - so `$` means end of
+    # FILE, and a bare `local rooted` with nothing after it never matched.
+    # That is harmless for use_before_local, which only needs to know a name
+    # is bound somewhere else, but here it would report every such name as a
+    # global. It reported eleven on the first run, all of them declared.
+    declared = set()
+    for line in clean.splitlines():
+        for pat in DECL_ON_LINE:
+            for m in pat.finditer(line):
+                declared.update(n.strip() for n in m.group(1).split(","))
+    declared.discard("")
+
+    problems, depth = [], 0
+    for n, line in enumerate(clean.splitlines(), 1):
+        # Depth is measured BEFORE the line is judged, so a line that opens a
+        # table is still at the depth it started on and its keys are not.
+        at_depth = depth
+        depth += line.count("{") - line.count("}")
+        if at_depth != 0:
+            continue
+        m = ASSIGN.match(line)
+        if not m:
+            continue
+        for name in (x.strip() for x in m.group(1).split(",")):
+            if name and name not in declared:
+                problems.append(
+                    "%s:%d: assigns `%s`, which this file never declares "
+                    "local - that is a global, and nil until it is written"
+                    % (path, n, name))
+    return problems
+
+
 def toplevel_locals(clean, path):
     n = 0
     for line in clean.split(chr(10)):
@@ -266,6 +334,7 @@ def check(path):
         return [str(exc)]
 
     problems.extend(use_before_local(clean, path))
+    problems.extend(undeclared_writes(clean, path))
     problems.extend(toplevel_locals(clean, path))
 
     opens = closes = 0

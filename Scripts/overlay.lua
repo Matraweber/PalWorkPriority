@@ -125,23 +125,25 @@ local BP_UNUSED_ROWS = {
 -- window without needing an unload hook.
 local built_under = nil
 
+
 -- The width the backdrop is currently cut to, so fit_width can tell whether
 -- there is anything to do. Declared up here with the other module state
 -- because host() clears it on a drop, hundreds of lines above where
 -- fit_width is defined - and a local declared after its first assignment is
 -- not a local at all, it is a silent global. luacheck said so before the
--- game had to, which is the second time that rule has earned its place today.
+-- game had to, which is the third time that rule has earned its place today.
 local fitted = nil
 
--- Asked at most once a second, not ten times.
---
--- This is a FindFirstOf plus a GetFullName, and host() runs it on every
--- refresh - measured at 11ms of a 100ms frame, spent re-answering a question
--- whose answer only changes when the world does. A world switch is not going
--- to happen and be acted on inside one second, and the whole point of the
--- check is to be ahead of the next beat rather than the next microsecond.
+-- The owner check's state. Deleted by accident on 2026-08-24, when a block
+-- inserted just above it was removed by cutting from its own first line to
+-- owner_name's - which swept up these three declarations on the way past.
+-- owner_at then read as a global nil, "nil >= 0" threw on the first host(),
+-- and the panel simply stopped drawing with nothing in the log to say why.
+-- luacheck is now taught to catch a read of a name that was never declared;
+-- it already caught the reverse case, a local declared after its first use.
 local owner_cached = nil
 local owner_at = -1
+
 -- No cache at all. This was 1.0, then 5.0, and both were wrong.
 --
 -- The reasoning for widening it was that host() validates the canvas, the
@@ -158,12 +160,26 @@ local owner_at = -1
 -- is asked whether it is valid. At a 100ms beat, five seconds of that is up
 -- to fifty attempts per world transition.
 --
--- The price is one FindFirstOf plus one GetFullName per refresh, measured at
--- 9ms, and only while the panel is open. That is the cost of holding widgets
--- across frames at all; the alternative is not a cheaper check, it is an
--- unguarded dereference.
+-- The price used to be the argument for a TTL: one FindFirstOf per refresh at
+-- 9.6ms. palapi now reaches the controller down the engine's own pointers
+-- instead of searching for it, so the check costs almost nothing and there is
+-- nothing left to trade the safety for.
 local OWNER_TTL = 0.0
 
+-- Measured, rejected, recorded so it is not retried (2026-08-24).
+--
+-- owner_name is the last real cost in a refresh, and what it truly asks is
+-- "is the widget I am holding still real" - answered indirectly, by watching
+-- the controller it was built under. StaticFindObject on the widget's own
+-- path answers it directly, and the path does resolve, valid.
+--
+-- It is not cheaper. Run in shadow beside the owner check for a session, it
+-- agreed on every verdict and cost 11ms against the owner check's 9.4 - the
+-- path carries a subobject chain (Transient.Engine:GameInstance.Widget), so
+-- there is no single hash bucket to hit and it walks. Shipping it would have
+-- traded a 9ms check for an 11ms one AND changed the safety rule at the same
+-- time. Left as a comment because "look up the widget by path" is the obvious
+-- next idea, and it is worth knowing it was tried and timed.
 local function owner_name()
     local now = os.clock()
     if owner_at >= 0 and (now - owner_at) < OWNER_TTL then return owner_cached end
@@ -512,7 +528,28 @@ end
 
 -- The canvas panels draw into, and the tree that must own anything they
 -- construct. Builds on first use.
+-- host() reports where its own time goes, worst in a five second window.
+--
+-- The refresh timer already blamed "setup", but setup is ensure_root and
+-- ensure_root is almost entirely this function; 9.6ms of a 22ms setup is the
+-- controller lookup, and the other 12 had no name. Guessing which line it is
+-- has already cost one wrong attribution today.
+local hp_worst, hp_at, hp_parts = 0, 0, ""
+
+local function hp_report(total, parts)
+    if total > hp_worst then hp_worst, hp_parts = total, parts end
+    local now = os.clock()
+    if (now - hp_at) < 5 then return end
+    hp_at = now
+    if hp_worst > 2 then
+        log.say(string.format("overlay: host worst %.1fms  (%s)",
+            hp_worst, hp_parts))
+    end
+    hp_worst, hp_parts = 0, ""
+end
+
 function M.host()
+    local hp_t0 = os.clock()
     -- A different controller than the one this was built under means the
     -- world moved. Everything is dropped without being touched.
     -- A nil owner counts as moved, and that is the whole point.
@@ -524,6 +561,8 @@ function M.host()
     -- to freed memory whether it was still valid. That is the crash, not a
     -- guard against it, and it is the LONGER half of the transition.
     local now_owner = owner_name()
+    local hp_owner = os.clock() - hp_t0
+
     if built_under ~= nil and now_owner ~= built_under then
         widget, tree, canvas = nil, nil, nil
         M.parts = nil
@@ -541,9 +580,15 @@ function M.host()
     -- a construct that would be outered to nil.
     if now_owner == nil then return nil end
 
+    local hp_t1 = os.clock()
     if alive(widget) and alive(tree) and alive(canvas) then
+        local hp_t2 = os.clock()
         -- Cheap on the settled path: one comparison unless the width moved.
         if M.parts then M.fit_width() end
+        local hp_now = os.clock()
+        hp_report((hp_now - hp_t0) * 1000, string.format(
+            "owner %.1f, checks %.1f, fit %.1f",
+            hp_owner * 1000, (hp_t2 - hp_t1) * 1000, (hp_now - hp_t2) * 1000))
         return canvas, tree, widget
     end
 
