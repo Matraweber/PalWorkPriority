@@ -39,7 +39,15 @@ local scheduler = require("scheduler")
 -- frames is the use-after-free this codebase is built to avoid. nil when the
 -- player is in no guild, which caps treats as "no scope" and refuses to write
 -- under rather than widening to everyone.
+--
+-- Guarded like every other call from here into a module that does NOT
+-- hot-swap. palapi is one of those: reload a panel that expects my_guild into
+-- a session whose palapi predates it and the call is a nil, thrown once per
+-- row, once per frame, for the rest of the session. Answering nil instead
+-- costs the reload path its guild scope until the next restart, which caps
+-- reads as "no scope" and refuses to write under rather than widening.
 local function mine()
+    if not api.my_guild then return nil end
     return api.my_guild()
 end
 
