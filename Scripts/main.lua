@@ -361,31 +361,25 @@ end
 -- which is what "laggy and unresponsive" was: not the cost of a frame, the
 -- wait between frames. It also let the mouse and the keyboard disagree about
 -- the current row long enough for two of them to be marked at once.
--- The tick, not the redraw.
+-- Back to one number, because the split was measured and did not work.
 --
--- These were the same number, so the hover highlight could only move when the
--- whole panel redrew and trailed the pointer by up to a tenth of a second.
--- The scan for which row is under the mouse is the cheap half; the draw
--- around it is not. So the tick is now three times faster than the redraw,
--- and a redraw happens on the beat OR the moment the highlight actually
--- changes - which is when a person is looking for it.
-local UI_BEAT = 33
-local BODY_BEAT = 100
+-- UI_BEAT was cut to 33 with a redraw-on-hover-change gate, on the theory
+-- that a faster tick would move the highlight sooner. Two things were wrong
+-- with it. clock.lua beats at 100ms, so a 33ms entry still fired every
+-- 100ms - the number was a wish. And the gate meant a hover change forced a
+-- FULL redraw, so sweeping the pointer across five rows paid five 30-50ms
+-- draws it never paid before. Hover now lives on its own persistent 16ms
+-- game-thread loop (see start_ui), which moves the highlight with two brush
+-- writes and never draws.
+local UI_BEAT = 100
 local body_owed = 0
 
 local function ui_tick()
     grid_owed = grid_owed + UI_BEAT
     body_owed = body_owed + UI_BEAT
 
-    -- Hover first, because it decides whether this tick draws at all.
-    local moved = false
-    if panel.open and panel.poll_hover then
-        local ok, res = pcall(panel.poll_hover)
-        moved = ok and res or false
-    end
-
-    local want = panel.open and BODY_BEAT or 1000
-    if body_owed < want and not moved then return end
+    local want = panel.open and UI_BEAT or 1000
+    if body_owed < want then return end
     body_owed = 0
 
     -- Runs even when disabled, so the grid still reflects edits. It costs
@@ -413,6 +407,33 @@ local function start_ui()
     ui_running = true
     clock.every("ui", UI_BEAT, ui_tick)
     clock.start()
+
+    -- The pointer's own loop: one persistent registration, 16ms, game
+    -- thread. This is the other half of the hover fix - the highlight moves
+    -- at frame rate through panel.hover_tick, which retints two rows and
+    -- draws nothing. The body above keeps redrawing on its 100ms deadline
+    -- for data changes, exactly as before.
+    --
+    -- LoopInGameThreadWithDelay registers once and fires forever: no per-arm
+    -- registry churn, which is the corruption vector ShinyPals' pump.lua
+    -- dissects (upstream #1180) and the reason no per-beat primitive is used
+    -- here. Verified present in this UE4SS.dll by binary scan. Absent the
+    -- API, hover simply rides the 100ms body as it always did.
+    --
+    -- panel is an upvalue reload.rewire reassigns, so this closure follows
+    -- hot reloads; hover_tick is guarded because panel hot-swaps and a
+    -- session can briefly run an older panel without it.
+    if type(LoopInGameThreadWithDelay) == "function" then
+        local ok = pcall(function()
+            LoopInGameThreadWithDelay(16, function()
+                if panel.open and panel.hover_tick then
+                    pcall(panel.hover_tick)
+                end
+            end)
+        end)
+        log.say(ok and "hover: 16ms game-thread loop"
+            or "hover: loop registration failed, riding the body beat")
+    end
 end
 
 -- ---------------------------------------------------------------------------

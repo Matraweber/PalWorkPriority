@@ -121,22 +121,10 @@ local RB = {
         { "Search", 40 }, { "Caption", 24 }, { "Head", 28 },
     },
     on = {},               -- row name -> drawn into this frame
+    base_col = {},         -- slab key -> the base colour its caller passed
     -- Where a draw's time actually goes, per primitive. Counted rather than
     -- reasoned about: "it must be the icons" was wrong once already.
     prof = {},
-    -- How many text updates a single frame may perform.
-    --
-    -- Icons have been rationed since they were measured; text never was, so a
-    -- page turn wrote every label at once. Measured: a draw that changes
-    -- nothing is ~10ms for the same 104 primitive calls, and one that rewrites
-    -- a page is ~100ms - about 0.6ms per property write through UE4SS's
-    -- reflection layer, which is the floor and not something a Lua mod can
-    -- argue with. The work is necessary; doing all of it in one frame is not.
-    --
-    -- Twelve fills an eighteen tile page over three of the ten frames a
-    -- second the panel draws in, so nothing stalls and the page is complete
-    -- in about a third of a second.
-    text_left = 12,
     -- Top left, for widgets inside a row box. The panel's own canvas is
     -- centre anchored, which is what X = -(W/2) exists to undo; a row box
     -- already starts where its row starts, so centre anchoring there put
@@ -1024,6 +1012,8 @@ local function slab(key, px, py, w, h, colour, hittable, current)
         end
     end
 
+    RB.base_col[key] = colour
+
     -- Three states. The mouse and the keyboard were sharing one highlight, so
     -- there was no way to see where the keyboard was while the mouse was over
     -- something else.
@@ -1194,13 +1184,6 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
-        -- Over budget: keep what is on screen and take this one next frame.
-        -- The widget is already marked used, so the blanker leaves it alone
-        -- and the reader sees the previous label for a tenth of a second
-        -- rather than the panel stopping dead for a tenth of a second.
-        if RB.text_left <= 0 then return end
-        RB.text_left = RB.text_left - 1
-
         local ft = make_ftext(text)
         if ft then
             pcall(function() tb:SetText(ft) end)
@@ -3337,17 +3320,40 @@ end
 -- those textures are safe in.
 pcall(function() icons.on_sweep = pin_from_sweep end)
 
--- Which row the pointer is on, without drawing anything.
+-- One row's tint, recomputed in place. The frame-rate half of hover.
 --
--- The highlight used to move only when the whole panel redrew, which is ten
--- times a second, so it trailed the pointer by up to 100ms and reads as the
--- list being sticky. The scan itself is the cheap half - IsHovered on the
--- couple of dozen widgets that registered a hit last frame, measured at 0 to
--- 2ms - and it is the redraw around it that costs.
+-- Ignores the keyboard-selection state on purpose: this runs between full
+-- draws, and a row that was both selected and hovered falls back to its base
+-- colour for at most one body beat before the full draw restores the finer
+-- distinction. The alternative was recomputing row_is_current here, which
+-- drags half the draw's context into a path that exists to avoid the draw.
+RB.retint = function(key)
+    if key == nil then return end
+    local border = stripes[key]
+    if not alive(border) then return end
+    pcall(function()
+        border:SetBrushColor((key == hover_key and ROW_HOVER)
+            or RB.base_col[key]
+            or ROW_BG)
+    end)
+    -- The token is stale now; the next full draw recomputes it honestly.
+    drawn["s:" .. key] = nil
+end
+
+-- Poll the pointer and move the highlight, WITHOUT drawing anything else.
 --
--- So this is called far more often than the panel draws, and answers whether
--- anything changed. Only then is a draw worth doing.
-function M.poll_hover()
+-- The highlight used to move only when the whole panel redrew - ten times a
+-- second, up to 100ms behind the pointer, which is what "hovering is not
+-- fluent" was. Then a hover change was made to force the redraw, which fixed
+-- the wait and introduced a worse cost: sweeping the mouse across five rows
+-- paid five full redraws, ~30-50ms each, with the 9ms owner check inside
+-- every one.
+--
+-- The scan is 0.05ms, measured. The retint is two token-guarded brush writes.
+-- So this runs from a persistent 16ms game-thread loop - BreedingHelper
+-- drives its whole panel this way, off its widget's own Tick - and the full
+-- draw stays on its 100ms deadline for data changes, exactly as before.
+function M.hover_tick()
     if not M.open then return false end
 
     local before = hover_key
@@ -3358,7 +3364,11 @@ function M.poll_hover()
             break
         end
     end
-    return hover_key ~= before
+    if hover_key == before then return false end
+
+    RB.retint(before)
+    RB.retint(hover_key)
+    return true
 end
 
 function M.refresh(cfg)
@@ -3368,7 +3378,6 @@ function M.refresh(cfg)
     local t0 = os.clock()
     frame_id = frame_id + 1
     icon_budget = ICONS_PER_FRAME
-    RB.text_left = 12
 
     -- The root is validated FIRST, before anything touches a stored widget.
     --

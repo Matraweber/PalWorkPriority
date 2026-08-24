@@ -521,23 +521,47 @@ function M.host()
     -- compare, so the check passed, and the next line asked a widget outered
     -- to freed memory whether it was still valid. That is the crash, not a
     -- guard against it, and it is the LONGER half of the transition.
-    local now_owner = owner_name()
-    if built_under ~= nil and now_owner ~= built_under then
-        widget, tree, canvas = nil, nil, nil
-        M.parts = nil
-        -- Re-armed, so the next world's ClientRestart loads and builds again.
-        if bp_state == "hosted" then bp_state = "unasked" end
-        built_under = nil
-        -- The input mode goes back with it. Dropping the widget while the UI
-        -- mode was still set left the cursor forced on and the panel's own
-        -- open flag true, so reopening took two presses.
-        M.open = false
-        pcall(function() M.release_input() end)
+    -- Liveness by exact path, not by comparing owners.
+    --
+    -- The old check ran owner_name() - FindFirstOf(PalPlayerController) plus
+    -- a GetFullName - on every call, measured at 9-11ms on this build,
+    -- because FindFirstOf walks the whole object array for a class with one
+    -- instance in it. This probe asks the engine's object hash for the
+    -- widget's own instance path: alive answers with the object, freed
+    -- answers nil, and no wrapper stored across frames is dereferenced to
+    -- learn which. The window the old comment worried about - controller
+    -- freed, compare passing on stale data - does not exist here, because
+    -- the widget's path dies WITH the widget, in the same engine operation,
+    -- and instance names carry a unique numeric suffix so the path cannot
+    -- come back to life under a different object.
+    if built_path ~= nil then
+        local live
+        pcall(function() live = StaticFindObject(built_path) end)
+        local ok = false
+        if live ~= nil then
+            pcall(function() ok = live:IsValid() end)
+        end
+        if not ok then
+            widget, tree, canvas = nil, nil, nil
+            M.parts = nil
+            -- Re-armed, so the next world's ClientRestart loads and builds.
+            if bp_state == "hosted" then bp_state = "unasked" end
+            built_under, built_path = nil, nil
+            -- The input mode goes back with it. Dropping the widget while
+            -- the UI mode was still set left the cursor forced on and the
+            -- panel's own open flag true, so reopening took two presses.
+            M.open = false
+            pcall(function() M.release_input() end)
+        end
     end
 
-    -- Nothing to build onto yet. Said plainly rather than falling through to
-    -- a construct that would be outered to nil.
-    if now_owner == nil then return nil end
+    -- Nothing to build onto yet: no controller means no world to host in.
+    -- owner_name() is the 9ms walk, so it is asked only when a BUILD might
+    -- actually happen - never on the steady path, where the probe above has
+    -- already vouched for the widget.
+    if not (alive(widget) and alive(tree) and alive(canvas)) then
+        if owner_name() == nil then return nil end
+    end
 
     if alive(widget) and alive(tree) and alive(canvas) then
         return canvas, tree, widget

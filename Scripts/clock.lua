@@ -48,6 +48,22 @@ local armed = false
 -- so a session's transcript says which path it ran.
 local has_delayed = type(ExecuteInGameThreadWithDelay) == "function"
 
+-- Better again: ONE persistent loop, registered once for the session.
+--
+-- The chain below re-arms itself every beat, and each re-arm is an
+-- ExecuteInGameThreadWithDelay - which ShinyPals' pump.lua dissects at the
+-- UE4SS source level: every call allocates a coroutine and takes two Lua
+-- registry slots off a shared, unlocked free list (upstream issue #1180).
+-- One in flight at a time was this file's discipline, and it held; but ten
+-- registry churns a second, all session, is still ten chances a second at
+-- the exact race that produced "Ref was not function, removing hook".
+--
+-- LoopInGameThreadWithDelay registers ONCE and fires forever on the game
+-- thread: one reference, zero churn. PerfectPlacement's runtime.lua is built
+-- on it. Verified present in this exact UE4SS.dll by binary scan, the same
+-- way has_delayed was.
+local has_loop = type(LoopInGameThreadWithDelay) == "function"
+
 -- Read by "pwp status": seconds since the chain last beat. A chain that
 -- stops beating is exactly the silent failure UE4SS produces when it drops
 -- its engine-tick hook, and the number makes it visible from outside.
@@ -55,7 +71,25 @@ M.last_beat = 0
 
 local body   -- forward declaration, arm() references it
 
+local looping = false
+
 local function arm(mygen)
+    if has_loop then
+        -- One registration for the whole session. The loop outlives world
+        -- switches - it is a timer, not a world object - so gen is checked
+        -- inside the body and reset() has nothing to kill or re-arm. arm()
+        -- being called again (start after reset) must not stack a second
+        -- loop, hence the latch.
+        if looping then return end
+        looping = true
+        LoopInGameThreadWithDelay(BEAT_MS, function()
+            -- body() re-arms the CHAIN paths; under the loop that call is
+            -- absorbed by the latch above, so the loop stays the only driver.
+            body(gen)
+        end)
+        return
+    end
+
     if has_delayed then
         -- Game-thread timer from PR #1128: no background thread anywhere.
         ExecuteInGameThreadWithDelay(BEAT_MS, function() body(mygen) end)
@@ -116,7 +150,10 @@ local function beat()
 end
 
 body = function(mygen)
-    if mygen ~= gen then return end   -- a world switch retired this chain
+    -- Under the persistent loop mygen is always the CURRENT gen (read at
+    -- fire time), so this line only ever retires stale CHAIN links. The
+    -- loop itself survives world switches by design.
+    if mygen ~= gen then return end
 
     M.last_beat = os.clock()
 
@@ -159,8 +196,10 @@ end
 function M.start()
     if armed then return end
     armed = true
-    log.say("clock: " .. (has_delayed
-        and "delayed-action API (game-thread timers)"
+    log.say("clock: " .. (has_loop
+        and "persistent game-thread loop (one registration, no churn)"
+        or has_delayed
+        and "delayed-action chain (game-thread timers)"
         or "fallback chain (ExecuteWithDelay -> ExecuteInGameThread)"))
     arm(gen)
 end
@@ -170,7 +209,9 @@ end
 -- had to under the old loops.
 function M.reset()
     gen = gen + 1
-    if armed then arm(gen) end
+    -- The chain needs a fresh link armed under the new gen; the loop just
+    -- keeps firing and reads the new gen at its next beat.
+    if armed and not looping then arm(gen) end
 end
 
 return M
