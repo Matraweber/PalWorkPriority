@@ -112,7 +112,7 @@ local RB = {
     hosts = {},            -- row index -> { box = SizeBox, canvas = CanvasPanel }
     slot = nil,            -- the row canvas being drawn into right now
     base = 0,              -- that row's absolute Y on the panel's canvas
-    pad = nil,             -- last padding pushed onto RuleList's slot
+    pads = {},             -- list name -> padding last pushed onto its slot
     -- Top left, for widgets inside a row box. The panel's own canvas is
     -- centre anchored, which is what X = -(W/2) exists to undo; a row box
     -- already starts where its row starts, so centre anchoring there put
@@ -631,7 +631,7 @@ local function ensure_root()
         root, root_tree, backdrop = nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face = {}, {}
-    RB.hosts, RB.slot, RB.base, RB.pad = {}, nil, 0, nil
+    RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
         pinned, pin_count = {}, 0
         search_box, amount_box, editing = nil, nil, nil
         styled_boxes = {}
@@ -662,7 +662,7 @@ local function ensure_root()
     -- the stored-wrapper dereference that this whole codebase is built to
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face = {}, {}
-    RB.hosts, RB.slot, RB.base, RB.pad = {}, nil, 0, nil
+    RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
     -- pinned holds booleans, not widgets, but the widgets those booleans
     -- describe just went with the old tree - a flag that describes an engine
     -- object shares its lifetime, so it clears where the widget tables clear.
@@ -774,29 +774,36 @@ end
 -- plus its 18 of padding. The gap between those is what this closes, so the
 -- first row lands under the column headings instead of behind the tab bar,
 -- which is exactly where the first filled list drew it.
-local function align_list_to(row)
+local function align_list_to(row, which, unit)
     local parts = overlay.parts
-    if not parts or not alive(parts.RuleList) then return end
+    if not parts or not alive(parts[which]) then return end
 
     local body_top = -(700 / 2) + 18
-    local want = TOP_Y + row * LINE
+    local want = TOP_Y + row * (unit or LINE)
     local pad = math.max(0, want - body_top)
 
-    if RB.pad ~= pad then
+    -- Per list, because they are siblings in the same VerticalBox and each
+    -- has its own idea of where its first row belongs.
+    RB.pads = RB.pads or {}
+    if RB.pads[which] ~= pad then
         local ok = pcall(function()
-            local slot = parts.RuleList.Slot
+            local slot = parts[which].Slot
             if slot then
                 slot:SetPadding({ Left = 0, Top = pad, Right = 0, Bottom = 0 })
             end
         end)
-        if ok then RB.pad = pad end
+        if ok then RB.pads[which] = pad end
     end
 end
 
-local function row_host(i)
+local function row_host(i, which, height)
     local parts = overlay.parts
-    if not parts or not alive(parts.RuleList) then return nil end
+    if not parts or not alive(parts[which]) then return nil end
     if not alive(root_tree) then return nil end
+
+    -- Keyed by list as well as index, or the picker's row 0 and the rules'
+    -- row 0 would be the same box in two different parents.
+    i = which .. ":" .. i
 
     local have = RB.hosts[i]
     if have and alive(have.box) and alive(have.canvas) then
@@ -814,10 +821,10 @@ local function row_host(i)
     pcall(function() inner = StaticConstructObject(canvas_cls, root_tree) end)
     if not alive(inner) then return nil end
 
-    pcall(function() box:SetHeightOverride(LINE) end)
+    pcall(function() box:SetHeightOverride(height or LINE) end)
     pcall(function() box:AddChild(inner) end)
 
-    local ok = pcall(function() parts.RuleList:AddChild(box) end)
+    local ok = pcall(function() parts[which]:AddChild(box) end)
     if not ok then return nil end
 
     RB.hosts[i] = { box = box, canvas = inner }
@@ -827,9 +834,31 @@ end
 -- Rows the list no longer has. Collapsed rather than removed: taking a child
 -- out of a ScrollBox and putting it back is how the old panel ended up with
 -- two of everything, and a collapsed box occupies nothing.
-local function hide_rows_from(n)
+local function hide_rows_from(n, which)
+    -- A list with nothing left in it gives its padding back too.
+    --
+    -- These two ScrollBoxes are siblings in one VerticalBox, and each is
+    -- padded down to meet the panel's own layout. Padding occupies height
+    -- whether or not anything is in the box, so an emptied RuleList still
+    -- pushed the picker a screen down the panel and put its tiles off the
+    -- bottom edge - collapsing the rows was not the same as taking the space
+    -- back.
+    if n == 0 then
+        RB.pads = RB.pads or {}
+        if RB.pads[which] ~= 0 then
+            local parts = overlay.parts
+            local ok = parts and alive(parts[which]) and pcall(function()
+                parts[which].Slot:SetPadding(
+                    { Left = 0, Top = 0, Right = 0, Bottom = 0 })
+            end)
+            if ok then RB.pads[which] = 0 end
+        end
+    end
+
+    local prefix = which .. ":"
     for i, h in pairs(RB.hosts) do
-        if i >= n and h and alive(h.box) then
+        local mine = tostring(i):match("^" .. prefix .. "(%d+)$")
+        if mine and tonumber(mine) >= n and h and alive(h.box) then
             pcall(function() h.box:SetVisibility(1) end)
         end
     end
@@ -1262,6 +1291,10 @@ local function picture(key, px, py, size, item_id, token)
 
     used["i:" .. key] = true
 
+    -- Same routing as slab and text_at: the grid row's own canvas when the
+    -- picker is filling ItemList, the panel's canvas otherwise.
+    local into = RB.slot or host
+
     local img = images[key]
     if not alive(img) then
         local cls = api.cdo("/Script/UMG.Image")
@@ -1271,7 +1304,7 @@ local function picture(key, px, py, size, item_id, token)
         if not alive(img) then return end
 
         local slot
-        local ok = pcall(function() slot = host:AddChildToCanvas(img) end)
+        local ok = pcall(function() slot = into:AddChildToCanvas(img) end)
         if not ok or not alive(slot) then return end
 
         pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
@@ -1281,12 +1314,14 @@ local function picture(key, px, py, size, item_id, token)
         images[key] = img
     end
 
-    local at = px .. ":" .. py .. ":" .. size
+    local at = px .. ":" .. py .. ":" .. size .. ":" .. tostring(RB.slot ~= nil)
     if placed["i:" .. key] ~= at then
         local slot
         pcall(function() slot = img.Slot end)
         if alive(slot) then
-            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
+            local ox = RB.slot and 0 or X
+            local oy = RB.slot and -RB.base or Y
+            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
             pcall(function() slot:SetSize({ X = size, Y = size }) end)
             placed["i:" .. key] = at
         end
@@ -1469,6 +1504,12 @@ end
 local function list_row(key, at, item, have, top, limited)
     local col = at % LIST_COLS
     local row = math.floor(at / LIST_COLS)
+
+    -- Three tiles share a grid row, so the row is the unit that goes into the
+    -- ScrollBox and the tiles keep their X inside it. Set here rather than at
+    -- the caller because this is where both halves are already worked out.
+    RB.slot = row_host(row, "ItemList", LIST_PITCH)
+    RB.base = RB.slot and (top + row * LIST_PITCH) or 0
     local px = ROW_INSET + col * (LIST_W + LIST_GUTTER)
     local py = top + row * LIST_PITCH
 
@@ -2279,14 +2320,18 @@ local function draw_list(cfg, totals)
         line("empty", row, PAD, "No rules yet. Every job runs unlimited", "dim")
         row = row + 2
     else
-        align_list_to(row)
+        -- The picker's boxes go away while the rules are showing, or
+        -- they hold their height under this list and push everything
+        -- below it down a screen.
+        hide_rows_from(0, "ItemList")
+        align_list_to(row, "RuleList")
 
         for i, rule in ipairs(rules) do
             -- Everything this iteration draws goes into row i's own box when
             -- the blueprint is hosting. row_host answers nil on the canvas
             -- path, which leaves both of these nil and every primitive on the
             -- behaviour it has always had.
-            RB.slot = row_host(i)
+            RB.slot = row_host(i, "RuleList")
             RB.base = RB.slot and (row * LINE) or 0
 
             local have = totals[rule.item] or 0
@@ -2466,10 +2511,17 @@ local function draw_list(cfg, totals)
             elseif capped then
                 status, tone = "Stopped", "over"
             elseif partly then
-                -- Honest about a split rather than picking a side. Under camp
-                -- scope a limit can be met at one base and not another, and
-                -- both "Stopped" and "Working" would be wrong at one of them.
-                status, tone = "Stopped at " .. partly, "over"
+                -- Just "Stopped", the same as a full stop.
+                --
+                -- This said "Stopped at 2" once, to be honest about a split:
+                -- under camp scope a limit can be met at one base and not
+                -- another, so neither "Stopped" nor "Working" is true at both.
+                -- But the count ran under the Remove button at any sensible
+                -- column width, and a status nobody can finish reading is
+                -- worse than one that rounds. The split is still visible where
+                -- it belongs - "!pwp scope" says which bases, and switching
+                -- scope to a single base makes each one answer for itself.
+                status, tone = "Stopped", "over"
             elseif met then
                 status, tone = "Waiting", "unmet"
             else
@@ -2529,7 +2581,7 @@ local function draw_list(cfg, totals)
         -- Back to the canvas for the chrome below the list, and any row boxes
         -- left over from a longer list put away.
         RB.slot, RB.base = nil, 0
-        hide_rows_from(#rules + 1)
+        hide_rows_from(#rules + 1, "RuleList")
 
         row = row + 1
     end
@@ -2842,6 +2894,9 @@ local function draw_item_picker(cfg, totals)
     local has_rule = {}
     for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
 
+    hide_rows_from(0, "RuleList")
+    align_list_to(top / LINE, "ItemList", LINE)
+
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -2850,6 +2905,11 @@ local function draw_item_picker(cfg, totals)
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
     end
+
+    -- Back to the canvas for the pager and everything under it, and grid rows
+    -- left over from a fuller page put away.
+    RB.slot, RB.base = nil, 0
+    hide_rows_from(math.ceil(grid_count / LIST_COLS), "ItemList")
 
     -- Where the grid ends, measured from the tiles actually drawn rather than
     -- from the page size. Reserving all five rows for ten items left the

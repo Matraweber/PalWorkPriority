@@ -277,6 +277,28 @@ local function build_blueprint(class)
         end
     end
 
+    -- Both lists visible. The commandlet ships ItemList collapsed, so that
+    -- the shell looked like the rules screen rather than both at once, and a
+    -- collapsed container renders none of its children however many the panel
+    -- puts in it - the picker came up with its headings and no tiles at all.
+    -- Which list has rows in it is the panel's business, and it empties the
+    -- one it is not showing.
+    for _, name in ipairs({ "RuleList", "ItemList" }) do
+        if parts[name] then
+            pcall(function() parts[name]:SetVisibility(0) end)
+            -- Automatic, not Fill. The commandlet gave both lists
+            -- ESlateSizeRule::Fill, which was right for a shell with nothing
+            -- in it and wrong the moment one had rows: two Fill siblings each
+            -- take half of Body whatever they contain, so an empty RuleList
+            -- still held half the panel and started the picker in the middle
+            -- of it. Automatic sizes each to its own content, which is what
+            -- makes emptying one actually give the space back.
+            pcall(function()
+                parts[name].Slot:SetSize({ Value = 1.0, SizeRule = 0 })
+            end)
+        end
+    end
+
     -- The commandlet sized the backdrop 900 wide because that looked right
     -- for an empty shell. The panel's columns span 1050 and run to a Remove
     -- at the far end, so on the first filled list the status column was cut
