@@ -120,14 +120,23 @@ return {
     --   "camp"   only chests belonging to the base being worked out
     --   "global" every chest the game currently has loaded, whoever owns it
     --
-    -- Camp is the default because that is what a per-base ceiling means. Use
-    -- global if you run a mod that pools storage across bases, so a ceiling
-    -- is judged on the shared pile rather than on one base's share of it.
+    -- Global, so a ceiling means what the number on the panel says.
+    --
+    -- Camp was the default, on the reasoning that a per-base ceiling is what
+    -- a per-base ceiling means. What it produced was a panel disagreeing with
+    -- itself: the IN STORAGE column adds every loaded base together, so Wood
+    -- read 15,207 against a 15,000 limit and went on being cut, because
+    -- neither base held 15,000 on its own. Two numbers side by side, one over
+    -- the other, and nothing stopping - which reads as the rule being broken.
+    --
+    -- Camp is still the right answer for someone running bases that are meant
+    -- to be independent; set it back here. But then the figure beside it is
+    -- the wrong one to be showing, and that is worth fixing before choosing it.
     --
     -- Global still cannot see a base that is not loaded. Palworld only keeps
     -- a camp's chests in memory while you are near it, so there is nothing
     -- to read for the bases you are away from, whatever this is set to.
-    storage_scope = "camp",
+    storage_scope = "global",
 
     -- Resource ceilings. When a base already holds enough of something, the
     -- work that produces it is suspended for that pass and its pals fall
