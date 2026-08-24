@@ -71,6 +71,11 @@ local bp_state = "unasked"       -- unasked | asking | hosted | absent
 -- drawing on its own canvas, which is how the panel tells the two apart.
 M.parts = nil
 
+-- What the panel says it is, set by the panel before the widget is built. The
+-- blueprint's own numbers are placeholders; the layout that has to fit is the
+-- one drawing into it.
+M.width = nil
+
 local BP_NAMES = {
     "Root", "Backdrop", "Body", "Title", "Search",
     "RuleList", "ItemList", "Actions", "NewRuleButton", "CloseButton",
@@ -219,6 +224,29 @@ local function build_blueprint(class)
         return give_up("bpmake", "the blueprint widget would not construct")
     end
 
+    -- Take any earlier instance off the viewport first.
+    --
+    -- Every build adds one at ZOrder 9000 and nothing removes it, so a hot
+    -- reload - which resets this module's state but leaves the widget on the
+    -- screen - left the old one visible underneath the new. That showed up as
+    -- faded duplicate rows sitting at the position the list had before it was
+    -- aligned, which reads as a layout bug and is not one.
+    --
+    -- Every object here comes from FindAllOf inside this call, so none of it
+    -- is stored, and the one just built is skipped by name.
+    local mine
+    pcall(function() mine = made:GetFullName() end)
+    pcall(function()
+        for _, other in ipairs(FindAllOf("UserWidget") or {}) do
+            local n
+            pcall(function() n = other:GetFullName() end)
+            if type(n) == "string" and n ~= mine
+                and n:find("WBP_WorkRules", 1, true) then
+                pcall(function() other:RemoveFromParent() end)
+            end
+        end
+    end)
+
     local made_tree
     pcall(function() made_tree = made.WidgetTree end)
     if not alive(made_tree) then
@@ -237,17 +265,29 @@ local function build_blueprint(class)
     -- work-rules screen greeting every spawn would be a bug with a viewport.
     pcall(function() made:SetVisibility(1) end)
 
-    -- The blueprint's Body is a placeholder: a title, a search box, two empty
-    -- lists and a button row, laid out by Slate so that the shell could be
-    -- looked at before anything drove it. The panel draws all four of those
-    -- itself, onto Root, so leaving Body visible renders both at once - which
-    -- is exactly what the first hosted screenshot showed.
-    --
-    -- Collapsed rather than removed: this is the layout the panel will
-    -- eventually fill instead of drawing over, and taking it out now would
-    -- mean rebuilding the pak to get it back.
-    if parts.Body then
-        pcall(function() parts.Body:SetVisibility(1) end)
+    -- Body stays VISIBLE now, because RuleList lives inside it and the panel
+    -- has started filling that rather than drawing over it. What goes is only
+    -- the chrome the panel draws for itself - a title, a search box and a
+    -- button row - which is what made the first hosted screenshot render two
+    -- of everything. Collapsed, not removed: the pak would have to be rebuilt
+    -- to get any of it back.
+    for _, name in ipairs({ "Title", "Search", "Actions" }) do
+        if parts[name] then
+            pcall(function() parts[name]:SetVisibility(1) end)
+        end
+    end
+
+    -- The commandlet sized the backdrop 900 wide because that looked right
+    -- for an empty shell. The panel's columns span 1050 and run to a Remove
+    -- at the far end, so on the first filled list the status column was cut
+    -- off mid word and Remove was missing entirely. Set here rather than in
+    -- the pak: it is the panel that knows how wide the panel is, and a number
+    -- baked into a cooked asset can only be changed by rebuilding it.
+    if M.width and parts.Backdrop then
+        pcall(function()
+            local slot = parts.Backdrop.Slot
+            if slot then slot:SetSize({ X = M.width + 36, Y = 700 }) end
+        end)
     end
 
     widget, tree, canvas = made, made_tree, parts.Root

@@ -216,6 +216,46 @@ def use_before_local(clean, path):
     return problems
 
 
+# Lua allows 200 locals per function, and the main chunk of a module is a
+# function. Going over is not a runtime error and not a syntax error: loadfile
+# simply refuses the chunk. On 24 August panel.lua crossed it, every hot
+# reload after that failed with one WARN line, reload.now kept the previous
+# module, and the game ran code from before the edit while three separate
+# changes looked as though they had done nothing at all.
+#
+# Counted rather than parsed, so the number is approximate on the safe side:
+# every `local` at column zero, which is what a module's own state is, plus
+# top level `local function`. Warns from 190 so there is room to land.
+LOCAL_LIMIT = 200
+LOCAL_WARN_AT = 190
+
+
+def toplevel_locals(clean, path):
+    n = 0
+    for line in clean.split(chr(10)):
+        if not line.startswith("local"):
+            continue
+        rest = line[5:]
+        if not rest[:1].isspace():
+            continue
+        rest = rest.strip()
+        if rest.startswith("function"):
+            n += 1
+            continue
+        # `local a, b, c = ...` declares three.
+        names = rest.split("=")[0]
+        n += max(1, names.count(",") + 1)
+
+    if n >= LOCAL_LIMIT:
+        return ["%s: %d top level local(s), at or over Lua's limit of %d - "
+                "the file will load but every hot reload will refuse it. "
+                "Collapse some into one table." % (path, n, LOCAL_LIMIT)]
+    if n >= LOCAL_WARN_AT:
+        print("warn %s: %d top level local(s), Lua's ceiling is %d"
+              % (path, n, LOCAL_LIMIT))
+    return []
+
+
 def check(path):
     src = open(path, encoding="utf-8").read()
     problems = []
@@ -226,6 +266,7 @@ def check(path):
         return [str(exc)]
 
     problems.extend(use_before_local(clean, path))
+    problems.extend(toplevel_locals(clean, path))
 
     opens = closes = 0
     for word in words(clean):

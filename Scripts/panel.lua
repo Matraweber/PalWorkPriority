@@ -95,6 +95,31 @@ local images = {}               -- key -> Image showing an item icon
 local pinned = {}               -- item id -> true, a pin widget holds its icon
 local pin_count = 0
 
+-- Rows that live in the blueprint's ScrollBox rather than on the canvas.
+--
+-- RB.slot is the CanvasPanel for the row being drawn right now, and RB.base
+-- the absolute Y that row would have had on the canvas. Every primitive
+-- subtracts that base, so callers keep passing the same absolute Y they
+-- always did and the row's own widgets land at the top of their own box.
+-- Both nil means the canvas, which is every path that is not a hosted rules
+-- list, and every path at all when there is no pak.
+-- One table, not five locals. panel.lua's main chunk sits at Lua's hard limit
+-- of 200 locals per function, and exceeding it breaks only the RELOAD path:
+-- loadfile refuses the new chunk, reload.now keeps the old module, and the
+-- game carries on running code from before the edit while every file on disk
+-- says otherwise. Three changes in a row appeared to do nothing that way.
+local RB = {
+    hosts = {},            -- row index -> { box = SizeBox, canvas = CanvasPanel }
+    slot = nil,            -- the row canvas being drawn into right now
+    base = 0,              -- that row's absolute Y on the panel's canvas
+    pad = nil,             -- last padding pushed onto RuleList's slot
+    -- Top left, for widgets inside a row box. The panel's own canvas is
+    -- centre anchored, which is what X = -(W/2) exists to undo; a row box
+    -- already starts where its row starts, so centre anchoring there put
+    -- every column half a row too far right.
+    TOPLEFT = { Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } },
+}
+
 -- Where the tiles sit inside "order", so up and down can cross a row of them
 -- instead of stepping to the neighbour.
 local grid_from, grid_count = 0, 0
@@ -197,6 +222,11 @@ local warned = {}
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
 local W = 1050
+
+-- The blueprint sizes its backdrop from this, so it has to be told before the
+-- widget is ever built. Declared here rather than at the top of the file
+-- because W is, and luacheck said so before the game had to.
+pcall(function() overlay.width = W end)
 -- Derived, never typed. X was left at -410 when W grew from 820 to 1010, so
 -- the panel stopped being centred and its right edge slid under the game's
 -- own Base Info panel. A width and a left edge that have to be kept in step
@@ -601,6 +631,7 @@ local function ensure_root()
         root, root_tree, backdrop = nil, nil, nil
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face = {}, {}
+    RB.hosts, RB.slot, RB.base, RB.pad = {}, nil, 0, nil
         pinned, pin_count = {}, 0
         search_box, amount_box, editing = nil, nil, nil
         styled_boxes = {}
@@ -631,6 +662,7 @@ local function ensure_root()
     -- the stored-wrapper dereference that this whole codebase is built to
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face = {}, {}
+    RB.hosts, RB.slot, RB.base, RB.pad = {}, nil, 0, nil
     -- pinned holds booleans, not widgets, but the widgets those booleans
     -- describe just went with the old tree - a flag that describes an engine
     -- object shares its lifetime, so it clears where the widget tables clear.
@@ -673,7 +705,7 @@ local function ensure_backdrop(rows)
             return
         end
 
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         -- Under the text, over the world.
         pcall(function() slot:SetZOrder(8990) end)
@@ -724,11 +756,96 @@ end
 -- for single-job items the cursor key became the limit, the stripe stopped
 -- matching, and the selected row lost its fill entirely - leaving a 10px ">"
 -- as the whole cursor on that screen, while ADD had a rail and a fill.
+-- One row's box inside RuleList, made once and kept.
+--
+-- A CanvasPanel reports no desired size, so a bare one in a ScrollBox gets no
+-- height and the row is invisible - which is the first thing that goes wrong
+-- if this is written the obvious way. The SizeBox is what gives it one.
+--
+-- Rows are created in ascending order because draw_list draws them that way,
+-- and a ScrollBox orders children by when they were added, not by any index
+-- it is told. Anything that ever draws rows out of order has to rebuild these
+-- rather than reuse them.
+-- Push RuleList down to where the canvas table starts.
+--
+-- Two coordinate systems meet here. The panel's chrome is centre anchored at
+-- TOP_Y + row * LINE; the ScrollBox is wherever Slate puts it, which with the
+-- placeholders collapsed is the top of Body - the backdrop's top edge (-H/2)
+-- plus its 18 of padding. The gap between those is what this closes, so the
+-- first row lands under the column headings instead of behind the tab bar,
+-- which is exactly where the first filled list drew it.
+local function align_list_to(row)
+    local parts = overlay.parts
+    if not parts or not alive(parts.RuleList) then return end
+
+    local body_top = -(700 / 2) + 18
+    local want = TOP_Y + row * LINE
+    local pad = math.max(0, want - body_top)
+
+    if RB.pad ~= pad then
+        local ok = pcall(function()
+            local slot = parts.RuleList.Slot
+            if slot then
+                slot:SetPadding({ Left = 0, Top = pad, Right = 0, Bottom = 0 })
+            end
+        end)
+        if ok then RB.pad = pad end
+    end
+end
+
+local function row_host(i)
+    local parts = overlay.parts
+    if not parts or not alive(parts.RuleList) then return nil end
+    if not alive(root_tree) then return nil end
+
+    local have = RB.hosts[i]
+    if have and alive(have.box) and alive(have.canvas) then
+        pcall(function() have.box:SetVisibility(0) end)
+        return have.canvas
+    end
+
+    local box_cls = api.cdo("/Script/UMG.SizeBox")
+    local canvas_cls = api.cdo("/Script/UMG.CanvasPanel")
+    if not box_cls or not canvas_cls then return nil end
+
+    local box, inner
+    pcall(function() box = StaticConstructObject(box_cls, root_tree) end)
+    if not alive(box) then return nil end
+    pcall(function() inner = StaticConstructObject(canvas_cls, root_tree) end)
+    if not alive(inner) then return nil end
+
+    pcall(function() box:SetHeightOverride(LINE) end)
+    pcall(function() box:AddChild(inner) end)
+
+    local ok = pcall(function() parts.RuleList:AddChild(box) end)
+    if not ok then return nil end
+
+    RB.hosts[i] = { box = box, canvas = inner }
+    return inner
+end
+
+-- Rows the list no longer has. Collapsed rather than removed: taking a child
+-- out of a ScrollBox and putting it back is how the old panel ended up with
+-- two of everything, and a collapsed box occupies nothing.
+local function hide_rows_from(n)
+    for i, h in pairs(RB.hosts) do
+        if i >= n and h and alive(h.box) then
+            pcall(function() h.box:SetVisibility(1) end)
+        end
+    end
+end
+
 local function slab(key, px, py, w, h, colour, hittable, current)
     local host = ensure_root()
     if not host then return end
 
     used["s:" .. key] = true
+
+    -- The row's own canvas when one is being drawn, the panel's otherwise.
+    -- Captured per widget: a recycled key may have belonged to the other one
+    -- last frame, and re-parenting is not something to do quietly.
+    local into = RB.slot or host
+    local base = RB.slot and RB.base or 0
 
     local border = stripes[key]
     if not alive(border) then
@@ -739,10 +856,10 @@ local function slab(key, px, py, w, h, colour, hittable, current)
         if not alive(border) then return end
 
         local slot
-        local ok = pcall(function() slot = host:AddChildToCanvas(border) end)
+        local ok = pcall(function() slot = into:AddChildToCanvas(border) end)
         if not ok or not alive(slot) then return end
 
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(8995) end)
         -- Hit test invisible unless the caller wants this to BE the target.
@@ -758,12 +875,18 @@ local function slab(key, px, py, w, h, colour, hittable, current)
     -- have been made for a different role last frame.
     pcall(function() border:SetVisibility(hittable and 0 or 3) end)
 
-    local at = px .. ":" .. py .. ":" .. w .. ":" .. h
+    -- X and Y are the canvas's centring offsets. A row canvas spans the list
+    -- from its own left edge, so inside one the caller's px is already right
+    -- and only the row's base has to come off the Y.
+    local ox = RB.slot and 0 or X
+    local oy = RB.slot and -base or Y
+
+    local at = px .. ":" .. py .. ":" .. w .. ":" .. h .. ":" .. tostring(RB.slot ~= nil)
     if placed["s:" .. key] ~= at then
         local slot
         pcall(function() slot = border.Slot end)
         if alive(slot) then
-            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
+            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
             pcall(function() slot:SetSize({ X = w, Y = h }) end)
             placed["s:" .. key] = at
         end
@@ -865,6 +988,10 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     used[key] = true
 
+    -- Same routing as slab: the row's own canvas while a row is being drawn.
+    local into = RB.slot or canvas
+    local base = RB.slot and RB.base or 0
+
     local tb = blocks[key]
     if not alive(tb) then
         local cls = api.cdo("/Script/UMG.TextBlock")
@@ -874,7 +1001,7 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
         if not alive(tb) then return end
 
         local slot
-        local ok = pcall(function() slot = canvas:AddChildToCanvas(tb) end)
+        local ok = pcall(function() slot = into:AddChildToCanvas(tb) end)
         if not ok or not alive(slot) then return end
 
         -- Auto sized, because that is what demonstrably renders here.
@@ -882,7 +1009,7 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
         -- that were positioned correctly and drew nothing at all, while the
         -- identically constructed text in overlay.lua's probe showed fine. The
         -- only difference between them was this call.
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(true) end)
         pcall(function() slot:SetZOrder(9000) end)
         pcall(function() tb:SetVisibility(passthrough and 3 or 0) end)
@@ -896,12 +1023,15 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
     -- Position every frame, not only at construction: a row moves when the
     -- screen above it changes length.
     -- Ten times a second, so a move that changes nothing is worth skipping.
-    local at = px .. ":" .. py
+    local ox = RB.slot and 0 or X
+    local oy = RB.slot and -base or Y
+
+    local at = px .. ":" .. py .. ":" .. tostring(RB.slot ~= nil)
     if placed[key] ~= at then
         local slot
         pcall(function() slot = tb.Slot end)
         if alive(slot) then
-            pcall(function() slot:SetPosition({ X = X + px, Y = Y + py }) end)
+            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
             placed[key] = at
         end
     end
@@ -1144,7 +1274,7 @@ local function picture(key, px, py, size, item_id, token)
         local ok = pcall(function() slot = host:AddChildToCanvas(img) end)
         if not ok or not alive(slot) then return end
 
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         pcall(function() slot:SetZOrder(8998) end)
         pcall(function() img:SetVisibility(0) end)
@@ -1587,7 +1717,7 @@ local function ensure_search(row)
             return nil
         end
 
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         -- Below the text layer, not above it.
         --
@@ -1675,7 +1805,7 @@ local function ensure_amount_box()
             return nil
         end
 
-        pcall(function() slot:SetAnchors(CENTRE) end)
+        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
         pcall(function() slot:SetAutoSize(false) end)
         -- Above the rows it covers.
         pcall(function() slot:SetZOrder(9020) end)
@@ -2149,7 +2279,16 @@ local function draw_list(cfg, totals)
         line("empty", row, PAD, "No rules yet. Every job runs unlimited", "dim")
         row = row + 2
     else
+        align_list_to(row)
+
         for i, rule in ipairs(rules) do
+            -- Everything this iteration draws goes into row i's own box when
+            -- the blueprint is hosting. row_host answers nil on the canvas
+            -- path, which leaves both of these nil and every primitive on the
+            -- behaviour it has always had.
+            RB.slot = row_host(i)
+            RB.base = RB.slot and (row * LINE) or 0
+
             local have = totals[rule.item] or 0
             local met = have >= rule.amount
             local key = "rule" .. i
@@ -2386,6 +2525,12 @@ local function draw_list(cfg, totals)
             hit("del" .. i, { kind = "drop", rule = rule })
             row = row + 1
         end
+
+        -- Back to the canvas for the chrome below the list, and any row boxes
+        -- left over from a longer list put away.
+        RB.slot, RB.base = nil, 0
+        hide_rows_from(#rules + 1)
+
         row = row + 1
     end
 
@@ -3276,6 +3421,38 @@ function M.command(cfg, args)
     -- reload does not trigger, so without this the blueprint path can only be
     -- tested by restarting the game - and restarts are exactly what this
     -- whole exercise has been spending too many of.
+    if verb == "geom" then
+        local parts = overlay.parts
+        log.say("  overlay.width: " .. tostring(overlay.width))
+        log.say("  RB.pad: " .. tostring(RB.pad))
+        log.say("  parts: " .. tostring(parts ~= nil))
+        if parts then
+            local bs, rs = "?", "?"
+            pcall(function()
+                local s = parts.Backdrop.Slot
+                bs = tostring(s ~= nil) .. " cls=" ..
+                    (s and s:GetClass():GetFName():ToString() or "-")
+            end)
+            pcall(function()
+                local s = parts.RuleList.Slot
+                rs = tostring(s ~= nil) .. " cls=" ..
+                    (s and s:GetClass():GetFName():ToString() or "-")
+            end)
+            log.say("  Backdrop.Slot: " .. bs)
+            log.say("  RuleList.Slot: " .. rs)
+            local ok = pcall(function()
+                parts.Backdrop.Slot:SetSize({ X = 1086, Y = 700 })
+            end)
+            log.say("  SetSize direct: " .. tostring(ok))
+            local ok2 = pcall(function()
+                parts.RuleList.Slot:SetPadding(
+                    { Left = 0, Top = 200, Right = 0, Bottom = 0 })
+            end)
+            log.say("  SetPadding direct: " .. tostring(ok2))
+        end
+        return "geom probe done"
+    end
+
     if verb == "host" then
         if not overlay.prepare then return "this build cannot do that" end
         overlay.prepare()
