@@ -917,11 +917,11 @@ end
 -- Everything derives from this, chests and stations alike.
 M.CONTAINER_BASE_CLASS = "PalMapObjectConcreteModelBase"
 
--- The exceptions, and why each one is an exception:
---   the feed box holds food set aside for pals to eat, so counting it stops
---     a ranch that is only keeping pace with what gets eaten
---   dropped and lying-about items are loose world clutter rather than base
---     stock, and one test base had 54 of them
+-- The fallback when config names nothing, which is NOT what ships: config.lua
+-- sets uncounted_containers to an empty table, so everything on the base
+-- counts. Kept here because a config that fails to load should still leave
+-- the mod with a defensible answer, and because these three are the classes
+-- anyone excluding something is most likely to want.
 M.DEFAULT_UNCOUNTED = {
     "PalMapObjectPalFoodBoxModel",
     "PalMapObjectDropItemModel",

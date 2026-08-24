@@ -229,7 +229,15 @@ local warned = {}
 -- centred at any resolution without ever asking how big the viewport is,
 -- which is a question with an awkward answer in UE4SS.
 local CENTRE = { Minimum = { X = 0.5, Y = 0.5 }, Maximum = { X = 0.5, Y = 0.5 } }
-local W = 1050
+-- 1050 until the status column had to hold a sentence rather than a word.
+--
+-- "Stopped at 1" needs about 150 pixels at ROW_PT and STATUS had 132, so it
+-- ran under Remove and the reader saw "Stopped at 1" with the 1 half eaten.
+-- The panel is what decides how wide the panel is - the shell's backdrop is
+-- sized from this at runtime - so widening here widens the whole thing, and
+-- COL3 moves with it to hand the difference to STATUS instead of to the
+-- right margin.
+local W = 1110
 
 -- The blueprint sizes its backdrop from this, so it has to be told before the
 -- widget is ever built. Declared here rather than at the top of the file
@@ -278,7 +286,9 @@ local COL_DONE = 810      -- what the pals are doing
 -- used to end 16 pixels after the status word, so the two read as a pair and
 -- the only control in the row that destroys something sat shoulder to
 -- shoulder with a label.
-local COL3     = 952
+-- Moved right with W, so the 60 pixels the panel gained land in STATUS
+-- rather than making the Remove button wider. Remove keeps the 86 it had.
+local COL3     = 1012
 local TAB_H = 34
 
 -- The limit's well, and the two numeric right edges derived from it.
@@ -2634,17 +2644,16 @@ local function draw_list(cfg, totals)
             elseif capped then
                 status, tone = "Stopped", "over"
             elseif partly then
-                -- Just "Stopped", the same as a full stop.
+                -- Honest about a split rather than picking a side. Under camp
+                -- scope a limit can be met at one base and not another, and
+                -- both "Stopped" and "Working" would be wrong at one of them.
                 --
-                -- This said "Stopped at 2" once, to be honest about a split:
-                -- under camp scope a limit can be met at one base and not
-                -- another, so neither "Stopped" nor "Working" is true at both.
-                -- But the count ran under the Remove button at any sensible
-                -- column width, and a status nobody can finish reading is
-                -- worse than one that rounds. The split is still visible where
-                -- it belongs - "!pwp scope" says which bases, and switching
-                -- scope to a single base makes each one answer for itself.
-                status, tone = "Stopped", "over"
+                -- This was shortened to plain "Stopped" for a while because
+                -- the count ran under the Remove button. That was the column
+                -- being too narrow, not the sentence being too long: the
+                -- panel is 60 pixels wider now and STATUS has 192 rather than
+                -- 132, which holds "Stopped at 12" with room to spare.
+                status, tone = "Stopped at " .. partly, "over"
             elseif met then
                 status, tone = "Waiting", "unmet"
             else

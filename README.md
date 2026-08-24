@@ -232,7 +232,7 @@ exactly what a ceiling already does.
 Two things to know before relying on it. **Your own inventory is not storage** -
 spheres in your pockets, or lying on the ground, do not count towards a ceiling.
 What does count is every container on the base, chests and production stations
-alike, minus the feed box and loose dropped items; `!pwp stock` prints both
+alike, and the feed box and loose dropped items with them; `!pwp stock` prints both
 lists so you can see which side a pile is on. And a ceiling
 gates the whole work type, so if your Pals do other Handiwork it stops too -
 unless you list those items as well, because a job only stops once *every*

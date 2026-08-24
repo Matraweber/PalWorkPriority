@@ -91,14 +91,23 @@ return {
     -- ceiling quietly overshooting by whatever that station is holding.
     --
     -- Press F12 to print what every container on your base is holding.
-    uncounted_containers = {
-        -- Food set aside for the pals to eat. Counting it would stop a ranch
-        -- that is only keeping pace with what gets eaten.
-        "PalMapObjectPalFoodBoxModel",
-        -- Loose world clutter rather than base stock. One test base had 54.
-        "PalMapObjectDropItemModel",
-        "PalMapObjectPickupItemOnLevelModel",
-    },
+    -- Empty: everything on the base counts towards a ceiling.
+    --
+    -- Three classes used to be excluded, and the reasoning was that a feed box
+    -- holds food set aside to be eaten rather than stock, so counting it would
+    -- stop a ranch that was only keeping pace with what the pals get through.
+    --
+    -- What that actually produced was a lie on the screen. A base with 20,454
+    -- Berries in its feed box and a 3,000 ceiling reported "0 in storage" and
+    -- went on planting, because the only berries it had were in the one
+    -- container it refused to look at. A limit that ignores most of what you
+    -- own is not a limit, and "in storage" has to mean in storage.
+    --
+    -- The ranch case is real but it is a hysteresis problem, not a counting
+    -- one: the box drains as the pals eat, and work resumes when it falls back
+    -- under the ceiling. Put the classes back here if you would rather have
+    -- the old behaviour - "!pwp stock" prints every container by class name.
+    uncounted_containers = {},
 
     -- Set this to a list of class names to count ONLY those and nothing else,
     -- ignoring uncounted_containers. Chests alone would be:
