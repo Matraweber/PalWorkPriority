@@ -113,6 +113,14 @@ local RB = {
     slot = nil,            -- the row canvas being drawn into right now
     base = 0,              -- that row's absolute Y on the panel's canvas
     pads = {},             -- list name -> padding last pushed onto its slot
+    -- The shell's chrome rows, in the order the commandlet stacked them into
+    -- Body, with the heights it gave them. Everything here sits ABOVE the two
+    -- lists, so whichever of them are showing decides where a list begins.
+    rows = {
+        { "Tabs", 34 }, { "Title", 34 }, { "Sub", 26 }, { "Notice", 22 },
+        { "Search", 40 }, { "Caption", 24 }, { "Head", 28 },
+    },
+    on = {},               -- row name -> drawn into this frame
     -- Top left, for widgets inside a row box. The panel's own canvas is
     -- centre anchored, which is what X = -(W/2) exists to undo; a row box
     -- already starts where its row starts, so centre anchoring there put
@@ -778,7 +786,15 @@ local function align_list_to(row, which, unit)
     local parts = overlay.parts
     if not parts or not alive(parts[which]) then return end
 
+    -- Body's top, plus every chrome row currently taking height above the
+    -- lists. Without that second half, moving one line into the flow pushed
+    -- the list down by its height and the rows scattered - which is exactly
+    -- how the first attempt at the heading went wrong.
     local body_top = -(700 / 2) + 18
+    for _, r in ipairs(RB.rows) do
+        if RB.on[r[1]] then body_top = body_top + r[2] end
+    end
+
     local want = TOP_Y + row * (unit or LINE)
     local pad = math.max(0, want - body_top)
 
@@ -794,6 +810,55 @@ local function align_list_to(row, which, unit)
         end)
         if ok then RB.pads[which] = pad end
     end
+end
+
+-- Draw the next lines into a shell row instead of onto the canvas.
+--
+-- The row is uncollapsed so it takes its height, and RB.base is set to the Y
+-- that row would have had on the canvas - so callers keep passing the same
+-- absolute row numbers they always did and the widgets land at the top of
+-- their own box. Answers false with no shell, which is what leaves every
+-- caller on the behaviour it had before there was one.
+function RB.use_row(name)
+    local parts = overlay.parts
+    if not parts or not alive(parts[name]) then return false end
+
+    RB.on[name] = true
+    pcall(function() parts[name .. "Row"]:SetVisibility(0) end)
+
+    RB.slot = parts[name]
+
+    -- Zero, and that is the whole point of a row.
+    --
+    -- Slate has already put the row where it goes, so a widget belongs at the
+    -- TOP of it and the caller passes row 0. The first attempt set this to the
+    -- gap between Body's top and canvas row 0, which reproduced the tabs at
+    -- their old absolute position - 32 pixels below their own row, overflowing
+    -- into the next one. It looked correct only because the row below was
+    -- still collapsed, and would have collided the moment anything moved into
+    -- it. Negative offsets still reach upward, which is how the header band
+    -- gets out past Body's padding to the backdrop's edge.
+    RB.base = 0
+    return true
+end
+
+function RB.done_row()
+    RB.slot, RB.base = nil, 0
+end
+
+-- Rows nobody drew into this frame go away, so they cost no height. This is
+-- what lets one shell serve the rules screen and the picker: the search field
+-- and the caption belong to one of them, the column headings to both.
+function RB.tidy_rows()
+    local parts = overlay.parts
+    if not parts then return end
+
+    for _, row in ipairs(RB.rows) do
+        if not RB.on[row[1]] and alive(parts[row[1] .. "Row"]) then
+            pcall(function() parts[row[1] .. "Row"]:SetVisibility(1) end)
+        end
+    end
+    RB.on = {}
 end
 
 local function row_host(i, which, height)
@@ -2127,6 +2192,30 @@ local function draw_tabs(active)
     -- PAD-3 = 15 pixel strip of body tone sat above the header and read as a
     -- render seam along the top of the panel. The height grows by the same
     -- amount so the band still ends where it did.
+
+    -- The band above stays on the canvas on purpose. It runs the full width
+    -- of the BACKDROP, outside Body's padding, so it is not a row of the
+    -- stack at all - it is decoration behind one, and a row canvas could not
+    -- reach the panel's edges to draw it.
+    --
+    -- What moves is everything you can see or click. Hit testing asks the
+    -- widget IsHovered() rather than comparing coordinates, so reparenting
+    -- costs the clicks nothing.
+    RB.use_row("Tabs")
+
+    -- The band comes into the row with the tabs, and it has to.
+    --
+    -- It was drawn on the panel's canvas at ZOrder 8995 while the tabs sat
+    -- inside Backdrop's subtree at ZOrder 0, so it painted straight over them
+    -- and the first attempt at this lost the words entirely. Anything on the
+    -- canvas above the backdrop covers everything in the flow, which is a
+    -- general rule: as chrome moves into the shell its decoration has to move
+    -- with it or it ends up on the wrong side of the panel.
+    --
+    -- Placed in row coordinates. RB.base is what slab subtracts, so adding it
+    -- back asks for a position measured from the row's own top left - and
+    -- -PAD there is Body's padding, which is what lets the band run to the
+    -- backdrop's edges instead of stopping short of them.
     slab("tabbar", -PAD, -PAD, W + PAD * 2, ROW_H + PAD - 3, CHROME_BG)
 
     local tabs = {
@@ -2189,10 +2278,16 @@ local function draw_tabs(active)
     -- Nudged down out of the tab bar. At its plain row-1 position the cap
     -- height of the title sat four pixels under the active tab's underline,
     -- so the two read as one stacked block instead of a header and a bar.
-    line("title", 1, PAD, "Production Limits", "title", 22, TITLE_DROP)
-    line("why", 2, PAD,
+    -- Row 0 in each, because the row is already where the line goes.
+    RB.use_row("Title")
+    line("title", 0, PAD, "Production Limits", "title", 22, TITLE_DROP)
+
+    RB.use_row("Sub")
+    line("why", 0, PAD,
         "Your Pals stop a job once base storage reaches the limit you set.",
         "dim", 14, TITLE_DROP)
+
+    RB.done_row()
 
     -- Counted rather than assumed. The keyboard cursor starts at order[1],
     -- which is whatever the tab bar registered first, so switching screens
@@ -3111,6 +3206,9 @@ function M.refresh(cfg)
     local td = os.clock()
     local rows = redraw(cfg, totals)
     perf_draw = os.clock() - td
+
+    -- Chrome rows nobody drew into this frame put away, before the textures.
+    RB.tidy_rows()
 
     -- The draw is over, so drop the textures it was handed. icons builds a map
     -- of them in one sweep to avoid a 9.4ms lookup per tile, and that map is
