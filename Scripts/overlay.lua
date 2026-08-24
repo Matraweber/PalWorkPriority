@@ -46,6 +46,27 @@ local function alive(o)
     return ok and res == true
 end
 
+-- The widget blueprint out of our own pak, when it is there.
+--
+-- Everything below still works without it. The hand built canvas is what has
+-- been drawing the panel all along and remains the fallback, because a pak
+-- that failed to mount should degrade to the panel we had rather than to no
+-- panel at all.
+local BP_PACKAGE = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
+local BP_ASSET = "WBP_WorkRules_C"
+
+local bp_class = nil
+local bp_state = "unasked"       -- unasked | asking | ready | absent
+
+-- Named widgets from the blueprint, once one is hosted. nil when the panel is
+-- drawing on its own canvas, which is how the panel tells the two apart.
+M.parts = nil
+
+local BP_NAMES = {
+    "Root", "Backdrop", "Body", "Title", "Search",
+    "RuleList", "ItemList", "Actions", "NewRuleButton", "CloseButton",
+}
+
 -- ---------------------------------------------------------------------------
 -- Building
 -- ---------------------------------------------------------------------------
@@ -102,6 +123,165 @@ local function owner_name()
 
     owner_cached, owner_at = n, now
     return n
+end
+
+-- Ask for the blueprint class once, early, so that by the time the panel is
+-- opened the answer is already in hand. The lookup is asynchronous because it
+-- has to happen on the game thread, and a panel that opened while waiting for
+-- it would open on the wrong host.
+function M.prepare()
+    if bp_state ~= "unasked" then return end
+    bp_state = "asking"
+
+    M.mod_class(BP_PACKAGE, BP_ASSET, function(class)
+        if class == nil then
+            bp_state = "absent"
+            log.say("overlay: no blueprint widget in the pak, " ..
+                "drawing on our own canvas")
+            return
+        end
+
+        bp_class = class
+        bp_state = "ready"
+        log.say("overlay: the blueprint widget is available")
+    end)
+end
+
+-- The named children of a blueprint instance, WITHOUT GetWidgetFromName.
+--
+-- That call is what sank the first attempt. It looks like the obvious API and
+-- it is not callable from here: UserWidget.h:1122 declares it plain C++, no
+-- UFUNCTION, so UE4SS has nothing to reflect and every lookup came back nil
+-- against a perfectly healthy tree - the cooked asset was extracted from the
+-- pak afterwards and string-checked, all twelve names present. Those ten
+-- unknown-member misses were also the only novel engine interaction in the
+-- minute before the crash, so this path stays off unreflected names entirely.
+--
+-- Two passes, both lifted from mods proven on this machine:
+--
+-- Pass 1 is BreedingHelper's collect_parts: the commandlet set bIsVariable on
+-- every named widget, and a compiled variable widget IS a property of the
+-- generated class, so made.Root is a plain property read - the cheapest and
+-- best-trodden access this environment has.
+--
+-- Pass 2 is PerfectPlacement's find_widget: walk WidgetTree.RootWidget by
+-- GetFName, children through GetChildrenCount and GetChildAt, which unlike
+-- GetWidgetFromName are real UFUNCTIONs (PanelWidget.h:27 and :35). The
+-- visited set is not decoration - their walker guards cycles, which is how
+-- you know cycles happen.
+local function collect_parts(made)
+    local parts, found = {}, 0
+
+    for _, name in ipairs(BP_NAMES) do
+        local w
+        pcall(function() w = made[name] end)
+        if alive(w) then
+            parts[name] = w
+            found = found + 1
+        end
+    end
+    if found == #BP_NAMES then return parts, found end
+
+    local wanted = {}
+    for _, name in ipairs(BP_NAMES) do
+        if parts[name] == nil then wanted[name] = true end
+    end
+
+    local root
+    pcall(function() root = made.WidgetTree.RootWidget end)
+    if not alive(root) then return parts, found end
+
+    local visited, depth = {}, 0
+    local function walk(w)
+        if depth > 64 or not alive(w) then return end
+        local id
+        pcall(function() id = w:GetFullName() end)
+        if type(id) ~= "string" or visited[id] then return end
+        visited[id] = true
+
+        local name
+        pcall(function() name = w:GetFName():ToString() end)
+        if name and wanted[name] then
+            parts[name] = w
+            wanted[name] = nil
+            found = found + 1
+        end
+
+        local n = 0
+        pcall(function() n = w:GetChildrenCount() end)
+        depth = depth + 1
+        for i = 0, (tonumber(n) or 0) - 1 do
+            local child
+            pcall(function() child = w:GetChildAt(i) end)
+            if child ~= nil then walk(child) end
+        end
+        depth = depth - 1
+    end
+    walk(root)
+
+    return parts, found
+end
+
+-- Construct the blueprint widget and take its parts.
+--
+-- Create rather than StaticConstructObject, because a UserWidget wants
+-- initialising with a player and an owning world, and one built raw is a
+-- widget that exists without being alive.
+--
+-- ONE attempt per session. The first version left bp_state at "ready" on
+-- every failure, so a fault in here would have been retried once a second
+-- with warn_once swallowing every repeat - whatever went wrong was set up to
+-- go wrong forever, silently. Any failure now latches "absent" and the
+-- session runs on the hand built canvas, which is a look, not a loss.
+local function build_blueprint()
+    if bp_class == nil then return false end
+
+    local function give_up(key, why)
+        bp_state = "absent"
+        warn_once(key, why .. ", drawing on our own canvas for this session")
+        return false
+    end
+
+    local pc = api.player_controller()
+    if not alive(pc) then return give_up("bppc", "no player controller yet") end
+
+    local made
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if lib then
+        pcall(function() made = lib:Create(pc, bp_class, pc) end)
+    end
+    if not alive(made) then
+        return give_up("bpmake", "the blueprint widget would not construct")
+    end
+
+    local made_tree
+    pcall(function() made_tree = made.WidgetTree end)
+    if not alive(made_tree) then
+        return give_up("bptree", "the blueprint widget has no widget tree")
+    end
+
+    local parts, found = collect_parts(made)
+    if parts.Root == nil then
+        return give_up("bproot", "the blueprint Root did not resolve (" ..
+            found .. " of " .. #BP_NAMES .. " names found)")
+    end
+
+    pcall(function() made:SetIsFocusable(true) end)
+    pcall(function() made:AddToViewport(9000) end)
+
+    widget, tree, canvas = made, made_tree, parts.Root
+    M.parts = parts
+
+    log.say(string.format("overlay: hosted on the blueprint, %d of %d " ..
+        "named widgets found", found, #BP_NAMES))
+
+    for _, name in ipairs(BP_NAMES) do
+        if parts[name] == nil then
+            log.warn("  missing from the blueprint: " .. name)
+        end
+    end
+
+    return true
 end
 
 local function build_now()
@@ -235,6 +415,17 @@ function M.host()
     -- asking a freed widget whether it is valid is the crash rather than the
     -- check for it.
     widget, tree, canvas = nil, nil, nil
+    -- The parts go with the widget they came out of: handles into a tree that
+    -- was just let go of, and a flag that describes an engine object has to
+    -- share that object's lifetime.
+    M.parts = nil
+
+    -- The blueprint if the pak mounted and construction has never failed,
+    -- our own canvas otherwise. The fallback is the entire point: that canvas
+    -- has drawn this panel all along, so nothing here can cost the menu.
+    if bp_state == "ready" and build_blueprint() then
+        return canvas, tree, widget
+    end
 
     if not build() then return nil end
     return canvas, tree, widget
