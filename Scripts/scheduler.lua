@@ -683,8 +683,13 @@ local function run_camp(cfg, camp, stats)
                     pass_totals[id] = n
                 end
             else
+                -- Max, not sum, for the reason given at panel.stock_totals:
+                -- under camp scope each base is judged on its own, so the
+                -- total across bases is a figure nothing is compared against.
+                -- This is what the panel displays and what cap_state reads,
+                -- so summing here made both disagree with the fencing.
                 for id, n in pairs(totals) do
-                    pass_totals[id] = (pass_totals[id] or 0) + n
+                    if n > (pass_totals[id] or 0) then pass_totals[id] = n end
                 end
             end
         end

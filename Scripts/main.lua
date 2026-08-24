@@ -890,7 +890,12 @@ local function stock_across_camps()
         if camp_id then
             local part = api.camp_item_totals(api.guid_key(camp_id), container_opts())
             for id, n in pairs(part or {}) do
-                totals[id] = (totals[id] or 0) + n
+                -- The fullest base, not the sum. Same reason as
+                -- panel.stock_totals: the ceiling is checked against one base
+                -- at a time, so the total across bases is a figure nothing is
+                -- ever compared against, and printing it beside a limit that
+                -- has not fired reads as the limit being broken.
+                if n > (totals[id] or 0) then totals[id] = n end
             end
         end
     end

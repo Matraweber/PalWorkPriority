@@ -2192,7 +2192,19 @@ function stock_totals(cfg)
             if camp_id then
                 local part = api.camp_item_totals(api.guid_key(camp_id), opts)
                 for id, n in pairs(part or {}) do
-                    totals[id] = (totals[id] or 0) + n
+                    -- The fullest base, not the sum of them.
+                    --
+                    -- Under camp scope the ceiling is checked against ONE
+                    -- base at a time, so the sum is a number no decision is
+                    -- ever made against. It read 15,207 beside a 15,000 limit
+                    -- with nothing stopping, because neither base held 15,000
+                    -- on its own - the panel appearing to break its own rule
+                    -- while behaving correctly.
+                    --
+                    -- The largest single holding is the one that trips a
+                    -- ceiling, so it is the honest thing to put next to it:
+                    -- when it passes the limit, something really does stop.
+                    if n > (totals[id] or 0) then totals[id] = n end
                 end
             end
         end
