@@ -252,6 +252,12 @@ local function build_blueprint(class)
 
     widget, tree, canvas = made, made_tree, parts.Root
     M.parts = parts
+    -- Stamped here as well as in the hand built path, and this was missing.
+    -- built_under is what host() compares the current controller against to
+    -- notice a world change; left nil, that guard can never fire, and the
+    -- first world switch would have had host() validate a widget outered to
+    -- a freed controller. alive() on that is the crash, not the check for it.
+    built_under = owner_name()
 
     log.say(string.format("overlay: hosted on the blueprint, %d of %d " ..
         "named widgets found", found, #BP_NAMES))
