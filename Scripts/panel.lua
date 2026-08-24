@@ -3338,6 +3338,32 @@ RB.retint = function(key)
     end)
     -- The token is stale now; the next full draw recomputes it honestly.
     drawn["s:" .. key] = nil
+
+    -- The picker tile's rail, whose hover channel is WIDTH - 3px wide, 6px
+    -- under the pointer, per the note at its draw site. The tint above moves
+    -- at frame rate now, so a rail waiting for the 100ms body pass reads as
+    -- the one part of the highlight still trailing - which is exactly what
+    -- it was. Rules rows have no rail; the lookup just misses for them.
+    --
+    -- Width only. The rail's colour also reacts to the cursor, but its base
+    -- colour encodes "a rule exists" (green), and this path cannot know that
+    -- without dragging the draw's context in - a briefly stale colour for
+    -- one body beat is invisible next to a stale width, which is the thing
+    -- being fixed.
+    local rail = stripes["rail:" .. key]
+    if alive(rail) then
+        local slot
+        pcall(function() slot = rail.Slot end)
+        if alive(slot) then
+            pcall(function()
+                slot:SetSize({
+                    X = (key == hover_key) and RAIL_W_HOT or RAIL_W,
+                    Y = LIST_H,
+                })
+            end)
+            placed["s:rail:" .. key] = nil
+        end
+    end
 end
 
 -- Poll the pointer and move the highlight, WITHOUT drawing anything else.
