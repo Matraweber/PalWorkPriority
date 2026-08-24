@@ -122,6 +122,16 @@ local RB = {
     },
     on = {},               -- row name -> drawn into this frame
     base_col = {},         -- slab key -> the base colour its caller passed
+    -- When ensure_root last vouched for the widget tree.
+    --
+    -- hover_tick runs off a 16ms loop and dereferences widgets STORED since
+    -- an earlier frame - tile_face, blocks, images - which is the one thing
+    -- this codebase forbids without a fresh validation in front of it:
+    -- alive() on a freed wrapper is the crash, not a guard against it. The
+    -- draw path is safe because ensure_root runs first and drops the tree on
+    -- a world change; the loop had no such thing, and got six attempts per
+    -- beat instead of one.
+    validated = -1,
     -- Where a draw's time actually goes, per primitive. Counted rather than
     -- reasoned about: "it must be the icons" was wrong once already.
     prof = {},
@@ -654,6 +664,7 @@ local function ensure_root()
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face = {}, {}
     RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
+    RB.validated = -1
         pinned, pin_count = {}, 0
         search_box, amount_box, editing = nil, nil, nil
         styled_boxes = {}
@@ -685,6 +696,7 @@ local function ensure_root()
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face = {}, {}
     RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
+    RB.validated = -1
     -- pinned holds booleans, not widgets, but the widgets those booleans
     -- describe just went with the old tree - a flag that describes an engine
     -- object shares its lifetime, so it clears where the widget tables clear.
@@ -3382,6 +3394,13 @@ end
 function M.hover_tick()
     if not M.open then return false end
 
+    -- Only inside the window a draw has just validated. 150ms is one body
+    -- beat plus slack: past that the tree has not been proven this side of a
+    -- world change, and the widgets below are wrappers from an earlier frame.
+    -- Refusing costs one missed highlight update; not refusing costs the
+    -- process, which is what it cost.
+    if (os.clock() - (RB.validated or -1)) > 0.15 then return false end
+
     local before = hover_key
     hover_key = nil
     for key in pairs(was_hit or {}) do
@@ -3438,6 +3457,7 @@ function M.refresh(cfg)
     local rooted
     if M.open or editing ~= nil then
         rooted = ensure_root()
+        if rooted then RB.validated = os.clock() end
     end
     perf_setup = os.clock() - tsetup
 
