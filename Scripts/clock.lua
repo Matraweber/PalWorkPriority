@@ -108,6 +108,11 @@ local due = {}
 
 -- The work of one beat, split out so body() can run it under pcall and still
 -- re-arm afterwards no matter what it does.
+-- palapi is not required at the top of this file on purpose: clock.lua is the
+-- one module with no dependencies beyond log, and it stays that way. Resolved
+-- lazily, once, and only to open and close the controller memo around a beat.
+local palapi = nil
+
 local function beat()
     -- Two passes, and the split is not tidiness. An entry's fn may call
     -- M.once or M.every - icons.lua re-arms its own pump from inside its
@@ -164,7 +169,20 @@ body = function(mygen)
     -- and silently end the mod. So the failure is logged and the heartbeat
     -- continues. (This catches Lua errors only; an access violation is not
     -- catchable and never was.)
+    -- One controller lookup for the whole beat, not one per caller.
+    --
+    -- Opened and closed around the work rather than left on, so nothing holds
+    -- an engine object between beats. The close runs whatever the beat did,
+    -- which is why it is not inside the pcall with it.
+    if palapi == nil then
+        pcall(function() palapi = require("palapi") end)
+    end
+    if palapi and palapi.pc_memo_begin then pcall(palapi.pc_memo_begin) end
+
     local ok, err = pcall(beat)
+
+    if palapi and palapi.pc_memo_end then pcall(palapi.pc_memo_end) end
+
     if not ok then
         log.warn("clock beat threw: " .. tostring(err))
     end

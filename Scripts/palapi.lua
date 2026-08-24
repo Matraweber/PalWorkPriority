@@ -167,10 +167,42 @@ function M.cdo(path)
     return nil
 end
 
+-- The local player's controller, found at most once per clock beat.
+--
+-- FindFirstOf can only early-exit on a class that is COMMON, and there is
+-- exactly one PalPlayerController in an array of tens of thousands - measured
+-- on this build at 9ms, against 1ms for a class like Texture2D. Twelve places
+-- in this mod ask for it, and a single panel refresh asks twice on its own:
+-- once through overlay.host's owner check and once through reassert_input.
+-- That was most of a 40ms refresh spent finding the same object repeatedly.
+--
+-- Beat scoped, and the scope is the point. BreedingHelper's sync.lua carries
+-- the same memo with the same reasoning ("one active beat walks through here
+-- 2-4 times, each a fresh GUObjectArray lookup at 10Hz") and clears it on
+-- entry AND exit so its lifetime is exactly one beat. A wall-clock TTL is the
+-- version that would be wrong: an object held past the beat that found it is
+-- the use-after-free this whole codebase is built to avoid, and clock.lua's
+-- beat is one synchronous call - the same window rule one already calls safe.
+local pc_memo = nil
+local pc_memo_open = false
+
+function M.pc_memo_begin()
+    pc_memo, pc_memo_open = nil, true
+end
+
+function M.pc_memo_end()
+    pc_memo, pc_memo_open = nil, false
+end
+
 function M.player_controller()
+    if pc_memo ~= nil then return pc_memo end
+
     local pc
     pcall(function() pc = FindFirstOf("PalPlayerController") end)
-    if valid(pc) then return pc end
+    if valid(pc) then
+        if pc_memo_open then pc_memo = pc end
+        return pc
+    end
     return nil
 end
 

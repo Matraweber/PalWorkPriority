@@ -3505,6 +3505,14 @@ function M.refresh(cfg)
     local rows = redraw(cfg, totals)
     perf_draw = os.clock() - td
 
+    -- Everything after the draw, timed as one lump.
+    --
+    -- setup + hover + stock + draw came to about 31ms of a 44ms refresh, and
+    -- the four are captured from the SAME frame as the total - so 13ms was
+    -- being spent somewhere nobody was looking. Tail work is the only
+    -- candidate left: tidy_rows, blanking, the caret, the cursor guard.
+    RB.t_tail = os.clock()
+
     -- One draw's worth of primitive calls, kept for the bench.
     RB.last_prof, RB.prof = RB.prof, {}
     -- The WORST draw since the last bench, not the last draw. A page turn is
@@ -3579,6 +3587,7 @@ function M.refresh(cfg)
     if ms > perf_worst then
         perf_worst = ms
         worst_setup, worst_hover, worst_hits = perf_setup, perf_hover, perf_hits
+        RB.worst_tail = RB.t_tail and (os.clock() - RB.t_tail) or 0
         worst_stock, worst_draw, worst_blank = perf_stock, perf_draw, perf_blank
     end
     if (os.clock() - perf_at) > 5.0 then
@@ -3586,9 +3595,10 @@ function M.refresh(cfg)
         if perf_worst > 4.0 then
             log.say(string.format(
                 "panel refresh worst %.1fms  (setup %.1f, hover %.1f/%d, " ..
-                "stock %.1f, draw %.1f, blank %.1f)",
+                "stock %.1f, draw %.1f, blank %.1f, tail %.1f)",
                 perf_worst, worst_setup * 1000, worst_hover * 1000, worst_hits,
-                worst_stock * 1000, worst_draw * 1000, worst_blank * 1000))
+                worst_stock * 1000, worst_draw * 1000, worst_blank * 1000,
+                (RB.worst_tail or 0) * 1000))
         end
         perf_worst = 0
     end
