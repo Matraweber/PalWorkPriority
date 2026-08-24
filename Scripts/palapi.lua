@@ -893,7 +893,16 @@ end
 -- On a multiplayer client the camp's work data is not replicated until it is
 -- asked for. Harmless on a host.
 function M.request_work_replication(camp_id, on)
-    local comp = M.network_component()
+    -- The owned one, like every other RequestX_ToServer on this component.
+    --
+    -- This was the last call still going through FindFirstOf, which picks by
+    -- engine order and flips after a server restart: half the time it returns
+    -- the game state's transmitter instead of the player's, and a client to
+    -- server RPC on that one is dropped in silence with sent_up still
+    -- counting it. That single mistake caused both the rule transport bug and
+    -- the toggle churn; this is the same mistake, latent because the branch
+    -- only runs under run_pass and run_pass is authority gated.
+    local comp = M.owned_network_component() or M.network_component()
     if not valid(comp) then return false end
     local ok = pcall(function()
         comp:RequestReplicateBaseCampWork_ToServer(camp_id, on and true or false)

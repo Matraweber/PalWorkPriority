@@ -92,6 +92,16 @@ local stock = {}
 function M.forget()
     hold_since = {}
     stock = {}
+
+    -- The published figures go too. This is the world-switch reset, and the
+    -- panel prefers last_totals over a fresh scan whenever it is non-empty -
+    -- so leaving them behind showed the PREVIOUS world's storage, and the
+    -- previous world's cap verdicts beside it, until the first pass of the
+    -- new one happened to overwrite each entry. A flag that describes a world
+    -- has to share that world's lifetime.
+    M.last_totals = {}
+    M.last_capped = {}
+    M.pass_id = 0
 end
 
 -- Called when the rules window opens, so what it shows is measured now

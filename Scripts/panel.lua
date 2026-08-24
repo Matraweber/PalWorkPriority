@@ -2628,6 +2628,16 @@ local function draw_list(cfg, totals)
             -- empty until a pass has run at all.
             local capped, partly = nil, nil
             local seen = scheduler.last_capped and scheduler.last_capped[rule.work]
+            -- From THIS pass, or not at all.
+            --
+            -- scheduler.lua keys these by pass precisely so a camp that stops
+            -- being loaded drops out rather than leaving a stale verdict
+            -- behind - and the only reader ignored the key. Walk away from a
+            -- base whose ceiling was met and run_pass stops considering it, so
+            -- nothing ever overwrites the entry and the row says Stopped for
+            -- the rest of the session. Falling through to cap_state answers
+            -- from storage as it is now.
+            if seen and seen.pass ~= scheduler.pass_id then seen = nil end
             if seen and seen.camps and seen.camps > 0 then
                 capped = seen.capped >= seen.camps
                 partly = seen.capped > 0 and seen.capped < seen.camps
@@ -3143,24 +3153,39 @@ local function draw_item_picker(cfg, totals)
     -- pressing it would do. A stable label plus a box that fills says both at
     -- once, and the box survives being read by somebody who cannot separate
     -- the two label colours.
+    -- Both buttons into the shell's Foot row, which is 76 tall for exactly
+    -- this: two 34 pixel rows and a little air. Rows 0 and 1 inside it, since
+    -- a chrome row is already where it goes and the caller counts from its
+    -- top. The rules screen puts its add bar in the same row - only one of
+    -- the two screens is ever drawing.
+    --
+    -- These were the last thing still on the canvas, left there because they
+    -- collided with nothing. That is not a reason: the grid moved into the
+    -- flow above them and the search field had to follow, and a widget left
+    -- behind does not stay put, it ends up somewhere wrong.
+    local footed = RB.use_row("Foot")
+    local r_all = footed and 0 or row
+    local r_back = footed and 1 or (row + 1)
+
     hit("all", { kind = "toggle_all" })
-    stripe("all", row, PAD, ROW_W, BUTTON_BG, true)
+    stripe("all", r_all, PAD, ROW_W, BUTTON_BG, true)
     tile_face["all"] = stripes["all"]
-    line("mk_all", row, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
-    line("g_all", row, PAD + MARK_W,
+    line("mk_all", r_all, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
+    line("g_all", r_all, PAD + MARK_W,
         everything and "[x]" or "[  ]", "action", ROW_PT)
-    line("all", row, PAD + MARK_W + GLYPH_SLOT,
+    line("all", r_all, PAD + MARK_W + GLYPH_SLOT,
         "Show every item with a job", "action", ROW_PT)
-    row = row + 1
 
     hit("back", { kind = "back" })
-    stripe("back", row, PAD, ROW_W, BUTTON_BG, true)
+    stripe("back", r_back, PAD, ROW_W, BUTTON_BG, true)
     tile_face["back"] = stripes["back"]
-    line("mk_back", row, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
-    line("g_back", row, PAD + MARK_W, "<", "action", ROW_PT)
-    line("back", row, PAD + MARK_W + GLYPH_SLOT, "Back", "action", ROW_PT)
+    line("mk_back", r_back, PAD, row_is_current("back") and ">" or "", "hover", ROW_PT)
+    line("g_back", r_back, PAD + MARK_W, "<", "action", ROW_PT)
+    line("back", r_back, PAD + MARK_W + GLYPH_SLOT, "Back", "action", ROW_PT)
 
-    return row + 1
+    RB.done_row()
+
+    return row + 2
 end
 
 -- ---------------------------------------------------------------------------
@@ -3643,6 +3668,42 @@ function M.command(cfg, args)
     -- reload does not trigger, so without this the blueprint path can only be
     -- tested by restarting the game - and restarts are exactly what this
     -- whole exercise has been spending too many of.
+    -- What identifies a base camp, so "Stopped at 1" can say which one.
+    -- Schema only: property and function NAMES off the class, never a call on
+    -- an instance. Reading the class is what discover.lua does safely; calling
+    -- an unverified name on a live object is what has taken the game down.
+    if verb == "camp" then
+        local cls = StaticFindObject("/Script/Pal.PalBaseCamp")
+        if not cls then return "PalBaseCamp did not resolve" end
+
+        local hits = 0
+        pcall(function()
+            cls:ForEachProperty(function(p)
+                local n, t = "", ""
+                pcall(function() n = p:GetFName():ToString() end)
+                pcall(function() t = p:GetClass():GetFName():ToString() end)
+                local low = n:lower()
+                if low:find("name") or low:find("location") or low:find("transform")
+                    or low:find("level") or low:find("rank") or low:find("id") then
+                    hits = hits + 1
+                    log.say("  prop " .. t .. " " .. n)
+                end
+            end)
+        end)
+        pcall(function()
+            cls:ForEachFunction(function(f)
+                local n = ""
+                pcall(function() n = f:GetFName():ToString() end)
+                local low = n:lower()
+                if low:find("name") or low:find("location") or low:find("level") then
+                    hits = hits + 1
+                    log.say("  fn   " .. n)
+                end
+            end)
+        end)
+        return "camp probe done, " .. hits .. " candidate(s)"
+    end
+
     if verb == "geom" then
         local parts = overlay.parts
         log.say("  overlay.width: " .. tostring(overlay.width))
