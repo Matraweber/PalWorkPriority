@@ -3354,7 +3354,28 @@ function M.refresh(cfg)
     -- It is frame-cached, so asking here costs nothing that was not going to
     -- be paid anyway.
     local tsetup = os.clock()
-    local rooted = ensure_root()
+
+    -- Nothing to validate when the panel is shut and nothing is being typed.
+    --
+    -- ensure_root ends in overlay.host(), whose first act is owner_name() - a
+    -- FindFirstOf for PalPlayerController plus a GetFullName. Measured on this
+    -- build at 9ms, because FindFirstOf can only early-exit on a class that is
+    -- common and there is exactly one player controller in an array of tens of
+    -- thousands. At ten refreshes a second that is 90ms of every second spent
+    -- checking whether a widget nobody is looking at is still valid.
+    --
+    -- It cannot simply be cached: overlay.lua sets OWNER_TTL to zero on
+    -- purpose, and says why - a stale name matches, the drop is skipped, and
+    -- alive() is then called on a widget outered to a freed controller, which
+    -- is the crash rather than the check for it.
+    --
+    -- But the reason this runs while shut is to drop a freed amount_box, and
+    -- there is no amount_box unless a ceiling is being typed. With the panel
+    -- closed and editing nil there is nothing here to protect.
+    local rooted
+    if M.open or editing ~= nil then
+        rooted = ensure_root()
+    end
     perf_setup = os.clock() - tsetup
 
     -- Closing the game's own menu hands the cursor back to the world without
@@ -3951,6 +3972,52 @@ function M.command(cfg, args)
     end
 
     -- One sweep against N lookups, for the picker's remaining lag.
+    -- What a FindAllOf costs, per class, in this process.
+    --
+    -- Every mod here pays whatever this says: with bUseUObjectArrayCache off
+    -- in UE4SS-settings.ini, FindAllOf walks the global object array rather
+    -- than a per-class index. If that is so, the cost tracks the TOTAL number
+    -- of objects and barely notices how many match - which would mean a
+    -- one-object class costs the same as a seven thousand object one, and
+    -- every mod that sweeps pays the same toll we do.
+    if verb == "sweeps" then
+        local classes = {
+            "Texture2D", "UserWidget", "Actor", "PalPlayerController",
+            "PalMapObjectItemChestModel", "PalNetworkTransmitter",
+            "WidgetTree", "PalIndividualCharacterParameter",
+        }
+        log.say("FindAllOf cost by class:")
+        for _, cls in ipairs(classes) do
+            local t0 = os.clock()
+            local found
+            pcall(function() found = FindAllOf(cls) end)
+            local ms = (os.clock() - t0) * 1000
+            log.say(string.format("  %-32s %5.1fms  %d object(s)",
+                cls, ms, found and #found or 0))
+        end
+        -- FindFirstOf can stop at the first match. Whether it does is the
+        -- difference between the overlay's per-refresh owner check being
+        -- free and it being a tenth of the frame budget, ten times a second.
+        log.say("FindFirstOf, for comparison:")
+        for _, cls in ipairs({ "PalPlayerController", "Texture2D" }) do
+            local t0 = os.clock()
+            pcall(function() return FindFirstOf(cls) end)
+            log.say(string.format("  %-32s %5.1fms",
+                cls, (os.clock() - t0) * 1000))
+        end
+
+        -- And what the overlay actually does every refresh.
+        local t0 = os.clock()
+        pcall(function()
+            local pc = FindFirstOf("PalPlayerController")
+            if pc then return pc:GetFullName() end
+        end)
+        log.say(string.format("  owner_name() equivalent          %5.1fms",
+            (os.clock() - t0) * 1000))
+
+        return "findallof cost measured"
+    end
+
     if verb == "bench" then
         local p = RB.last_prof or {}
         log.say("primitive calls in the last draw:")
