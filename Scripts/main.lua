@@ -1509,6 +1509,28 @@ bind(Key.F9, "Alt+F9 (transport test)", function()
     COMMANDS.net()
 end, { ModifierKey.ALT })
 
+-- Esc closes the panel, so it can never be open while the game's own menu is.
+--
+-- Both of the cursor faults came from those two overlapping. With the panel
+-- open, Esc opens Palworld's menu and changes nothing here; then either the
+-- second Esc closes that menu and takes the cursor with it while this panel is
+-- still up, or closing this panel first calls SetInputMode_GameOnly and takes
+-- the cursor away from the menu, which is still up. Same collision, either
+-- order, and in both cases the pointer is gone until Esc is pressed again.
+--
+-- overlay.reassert_input covers the first. This covers the second, and is the
+-- better half of the pair because it stops the overlap happening at all
+-- rather than repairing it afterwards.
+--
+-- Close only, never toggle: with the panel shut this is a no-op and the game's
+-- own Esc is untouched, which is the shape BreedingHelper settled on for the
+-- same reason. Unmodified, because Esc is Esc.
+bind(Key.ESCAPE, "Esc (close the rules panel)", function()
+    if panel.open then
+        pcall(function() panel.toggle() end)
+    end
+end)
+
 -- Arrow keys for the rules panel.
 --
 -- The mouse works, but the cursor sits over a live game world and the rows
