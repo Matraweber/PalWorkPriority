@@ -1407,7 +1407,11 @@ end
 local function pin_from_sweep(found)
     if not (alive(root) and alive(root_tree)) then return end
 
-    local left = 8
+    -- Twenty four, not eight. Eight took ten sweeps to cover the seventy odd
+    -- item icons a browse loads, and each of those sweeps is the 25ms this is
+    -- trying to make unnecessary. Pinning is a construct and a brush write;
+    -- doing more of them in the frame that already swept is the trade.
+    local left = 24
     for name, tex in pairs(found or {}) do
         if left <= 0 then return end
         -- The sweep is keyed by icon NAME; pins are keyed by item id. Only
@@ -3332,6 +3336,30 @@ end
 -- icons calls this from inside the frame that swept, which is the only frame
 -- those textures are safe in.
 pcall(function() icons.on_sweep = pin_from_sweep end)
+
+-- Which row the pointer is on, without drawing anything.
+--
+-- The highlight used to move only when the whole panel redrew, which is ten
+-- times a second, so it trailed the pointer by up to 100ms and reads as the
+-- list being sticky. The scan itself is the cheap half - IsHovered on the
+-- couple of dozen widgets that registered a hit last frame, measured at 0 to
+-- 2ms - and it is the redraw around it that costs.
+--
+-- So this is called far more often than the panel draws, and answers whether
+-- anything changed. Only then is a draw worth doing.
+function M.poll_hover()
+    if not M.open then return false end
+
+    local before = hover_key
+    hover_key = nil
+    for key in pairs(was_hit or {}) do
+        if over_key(key) then
+            hover_key = key
+            break
+        end
+    end
+    return hover_key ~= before
+end
 
 function M.refresh(cfg)
     -- Timed, because "laggy" has three plausible causes here and guessing

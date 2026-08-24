@@ -361,15 +361,31 @@ end
 -- which is what "laggy and unresponsive" was: not the cost of a frame, the
 -- wait between frames. It also let the mouse and the keyboard disagree about
 -- the current row long enough for two of them to be marked at once.
-local UI_BEAT = 100
+-- The tick, not the redraw.
+--
+-- These were the same number, so the hover highlight could only move when the
+-- whole panel redrew and trailed the pointer by up to a tenth of a second.
+-- The scan for which row is under the mouse is the cheap half; the draw
+-- around it is not. So the tick is now three times faster than the redraw,
+-- and a redraw happens on the beat OR the moment the highlight actually
+-- changes - which is when a person is looking for it.
+local UI_BEAT = 33
+local BODY_BEAT = 100
 local body_owed = 0
 
 local function ui_tick()
     grid_owed = grid_owed + UI_BEAT
     body_owed = body_owed + UI_BEAT
 
-    local want = panel.open and UI_BEAT or 1000
-    if body_owed < want then return end
+    -- Hover first, because it decides whether this tick draws at all.
+    local moved = false
+    if panel.open and panel.poll_hover then
+        local ok, res = pcall(panel.poll_hover)
+        moved = ok and res or false
+    end
+
+    local want = panel.open and BODY_BEAT or 1000
+    if body_owed < want and not moved then return end
     body_owed = 0
 
     -- Runs even when disabled, so the grid still reflects edits. It costs
