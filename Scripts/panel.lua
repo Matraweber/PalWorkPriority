@@ -113,6 +113,25 @@ local RB = {
     slot = nil,            -- the row canvas being drawn into right now
     base = 0,              -- that row's absolute Y on the panel's canvas
     pads = {},             -- list name -> padding last pushed onto its slot
+
+    -- How long one frame may spend showing tiles it has never shown before.
+    --
+    -- The picker's first draw was 75-104ms: every tile on the page created,
+    -- written and pictured in one beat, which is six frames the game did not
+    -- get to render. Everything else in a refresh is now under 5ms, so this
+    -- is the whole of what was left to feel.
+    --
+    -- Eight milliseconds is BreedingHelper's number too - its planner scan
+    -- takes SCAN_SOFT_SLICE_SECONDS = 0.008 per frame - and it is not a
+    -- coincidence: half a 16.7ms frame leaves room for the rest of the
+    -- refresh and for the game. A count would have been the easy version and
+    -- the wrong one, because what a tile costs depends on whether its picture
+    -- is already pinned.
+    SLICE = 0.008,
+    filled = {},           -- tile key -> the item id that tile is showing
+    pending = false,       -- a page stopped mid fill and wants another frame
+    draw_t0 = 0,           -- when the current draw started
+    cfg = nil,             -- last config handed to refresh, for fill_tick
     -- The shell's chrome rows, in the order the commandlet stacked them into
     -- Body, with the heights it gave them. Everything here sits ABOVE the two
     -- lists, so whichever of them are showing decides where a list begins.
@@ -664,6 +683,11 @@ local function ensure_root()
         blocks, drawn, stripes, placed = {}, {}, {}, {}
         images, tile_face = {}, {}
     RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
+    -- The fill map goes with the widgets it describes. Left behind, every
+    -- tile in a rebuilt tree would look already drawn, so nothing would be
+    -- rationed and nothing written - an empty picker that thinks it is full.
+    -- A flag describing an engine object shares that object's lifetime.
+    RB.filled = {}
     RB.validated = -1
         pinned, pin_count = {}, 0
         search_box, amount_box, editing = nil, nil, nil
@@ -696,6 +720,11 @@ local function ensure_root()
     -- avoid - and the comment three lines up says so in as many words.
     images, tile_face = {}, {}
     RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
+    -- The fill map goes with the widgets it describes. Left behind, every
+    -- tile in a rebuilt tree would look already drawn, so nothing would be
+    -- rationed and nothing written - an empty picker that thinks it is full.
+    -- A flag describing an engine object shares that object's lifetime.
+    RB.filled = {}
     RB.validated = -1
     -- pinned holds booleans, not widgets, but the widgets those booleans
     -- describe just went with the old tree - a flag that describes an engine
@@ -3169,6 +3198,37 @@ local function draw_item_picker(cfg, totals)
         local id = source[i]
         local key = "pick" .. (i - from)
 
+        -- A tile already showing this item is a handful of guarded writes
+        -- that all decline; a tile showing it for the first time creates its
+        -- widgets. Only the second kind is rationed, which is why a settled
+        -- page still redraws whole at under 5ms and only a page being built
+        -- for the first time is spread across frames.
+        if RB.filled[key] ~= id then
+            -- Broken at any tile, not only on a grid row boundary.
+            --
+            -- The row was the first shape of this and it did not work: a tile
+            -- shown for the first time costs about ten milliseconds - widget
+            -- creation, not the picture, which pinning already has down to
+            -- one or two - so a three tile row is thirty, and forcing a whole
+            -- row through meant every frame of the fill was still a frame the
+            -- game lost. Measured at the checkpoint: "3 tiles, 4 fresh,
+            -- spent 33".
+            --
+            -- The cost of the finer grain is that a row can be part drawn for
+            -- a frame or two. On a first build the rest of the row is blank
+            -- anyway, and on a rebuild it briefly holds the previous page -
+            -- at 16ms a tile that is one or two frames of staleness against a
+            -- guaranteed dropped frame, which is the better trade.
+            --
+            -- grid_count > 0 keeps one tile of progress per frame, so a slice
+            -- too small for even one tile still cannot stall the fill.
+            if grid_count > 0 and (os.clock() - RB.draw_t0) > RB.SLICE then
+                RB.pending = true
+                break
+            end
+            RB.filled[key] = id
+        end
+
         list_row(key, i - from, id, totals[id] or 0, top, has_rule[id])
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
@@ -3294,6 +3354,12 @@ end
 -- One pass of whichever screen is up, returning how many rows tall it came
 -- out. Separated so the frame that changes height can run it twice.
 local function redraw(cfg, totals)
+    -- The slice is measured from here rather than from the top of refresh, so
+    -- a slow beat elsewhere cannot eat the whole allowance before a single
+    -- tile has been drawn. Cleared first: a draw that finishes is a draw with
+    -- nothing pending, and only the tile loop sets it again.
+    RB.draw_t0, RB.pending = os.clock(), false
+
     if mode == "item" then
         return draw_item_picker(cfg, totals)
     end
@@ -3416,6 +3482,25 @@ function M.hover_tick()
     return true
 end
 
+-- Carries a page that ran out of slice on to the next frame.
+--
+-- Rides main.lua's 16ms game thread loop, the one hover already uses, rather
+-- than the 100ms clock beat. That is the point of it: eighteen tiles at eight
+-- milliseconds a beat would take most of two seconds to appear, while at
+-- frame rate the same fill is done in about a third of a second and no single
+-- frame pays more than half its budget.
+--
+-- It calls the ordinary refresh rather than reaching into the draw directly,
+-- so hits, order and the used map are rebuilt by the code that already gets
+-- that right. Setup is free now, stock is on its own timer and the draw
+-- rations itself, so a refresh with nothing new to show is under 5ms: the
+-- extra frequency buys the fill and costs nothing once the fill is over.
+function M.fill_tick()
+    if not (M.open and RB.pending and RB.cfg) then return false end
+    M.refresh(RB.cfg)
+    return true
+end
+
 function M.refresh(cfg)
     -- Timed, because "laggy" has three plausible causes here and guessing
     -- between them has already cost a round. Reports the worst refresh seen
@@ -3423,6 +3508,11 @@ function M.refresh(cfg)
     local t0 = os.clock()
     frame_id = frame_id + 1
     icon_budget = ICONS_PER_FRAME
+
+    -- Kept so fill_tick can carry a half drawn page on without the clock. It
+    -- is config's own table, plain Lua this mod owns, not an engine object -
+    -- holding it across frames costs nothing and risks nothing.
+    RB.cfg = cfg or RB.cfg
 
     -- The root is validated FIRST, before anything touches a stored widget.
     --

@@ -443,20 +443,29 @@ local function look_around()
     local found = {}
 
     for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
-        -- GetFullName, not GetName, which returns nothing on this build.
+        -- GetFName():ToString(), not GetFullName - the same fix sweep_frame
+        -- above already carries, on the same loop, missed here.
+        --
+        -- This was the last big number in the panel. One list_row call was
+        -- taking 84ms of an 85ms draw, a different item each time, about once
+        -- a minute: whichever tile happened to be drawing when SIGHT_TTL
+        -- expired paid for the whole look around. GetFullName builds
+        -- "Class Package.Object" only for this to match the leaf back out of
+        -- it, seven thousand times, with FName resolution set to Scan on this
+        -- build. Measured at 84ms before and 24ms after, and the 24 left is
+        -- FindAllOf building the table, not the naming.
+        --
         -- These come straight from the engine within this call, so they are
-        -- live and reading them is safe. What must not happen is keeping one.
-        local full
-        pcall(function() full = tex:GetFullName() end)
+        -- live and reading them is safe. What must not happen is keeping one,
+        -- and only names are taken.
+        local leaf
+        pcall(function() leaf = tex:GetFName():ToString() end)
 
-        if type(full) == "string" then
-            local leaf = full:match("([^/.]+)$") or ""
-            if leaf:sub(1, #PREFIX) == PREFIX then
-                local rest = leaf:sub(#PREFIX + 1)
-                local id = rest:match("^[^_]+_(.+)$") or rest
-                local key = id:lower()
-                if found[key] == nil then found[key] = rest end
-            end
+        if type(leaf) == "string" and leaf:sub(1, #PREFIX) == PREFIX then
+            local rest = leaf:sub(#PREFIX + 1)
+            local id = rest:match("^[^_]+_(.+)$") or rest
+            local key = id:lower()
+            if found[key] == nil then found[key] = rest end
         end
     end
 

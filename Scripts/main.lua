@@ -429,6 +429,14 @@ local function start_ui()
                 if panel.open and panel.hover_tick then
                     pcall(panel.hover_tick)
                 end
+                -- A page being shown for the first time draws eight
+                -- milliseconds of tiles per frame and asks to be called back
+                -- until it is done. Guarded like hover_tick and for the same
+                -- reason: panel hot swaps, and a session can briefly run an
+                -- older one without this.
+                if panel.open and panel.fill_tick then
+                    pcall(panel.fill_tick)
+                end
             end)
         end)
         log.say(ok and "hover: 16ms game-thread loop"
