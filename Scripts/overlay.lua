@@ -55,8 +55,17 @@ end
 local BP_PACKAGE = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
 local BP_ASSET = "WBP_WorkRules_C"
 
-local bp_class = nil
-local bp_state = "unasked"       -- unasked | asking | ready | absent
+-- No stored class. The first version kept the wrapper GetAsset handed the
+-- callback and used it from host() a second later - and a Lua wrapper is not
+-- a GC reference, so a class nothing in the engine references is collectable
+-- the moment the callback returns. Probed after today's clean refusal:
+-- "class resident: false" minutes after "the blueprint widget is available".
+-- Yesterday the same stored wrapper met a different GC timing inside Create,
+-- which is the best-sourced theory yet for the crash. Rule one of this
+-- codebase, violated in the one place it looked exempt: a CLASS is an engine
+-- object like any other. It is used inside the callback that receives it,
+-- never after.
+local bp_state = "unasked"       -- unasked | asking | hosted | absent
 
 -- Named widgets from the blueprint, once one is hosted. nil when the panel is
 -- drawing on its own canvas, which is how the panel tells the two apart.
@@ -125,50 +134,6 @@ local function owner_name()
     return n
 end
 
--- Ask for the blueprint class once, early, so that by the time the panel is
--- opened the answer is already in hand. The lookup is asynchronous because it
--- has to happen on the game thread, and a panel that opened while waiting for
--- it would open on the wrong host.
-function M.prepare()
-    if bp_state ~= "unasked" then return end
-    bp_state = "asking"
-
-    M.mod_class(BP_PACKAGE, BP_ASSET, function(class)
-        if class == nil then
-            bp_state = "absent"
-            log.say("overlay: no blueprint widget in the pak, " ..
-                "drawing on our own canvas")
-            return
-        end
-
-        bp_class = class
-        bp_state = "ready"
-        log.say("overlay: the blueprint widget is available")
-    end)
-end
-
--- The named children of a blueprint instance, WITHOUT GetWidgetFromName.
---
--- That call is what sank the first attempt. It looks like the obvious API and
--- it is not callable from here: UserWidget.h:1122 declares it plain C++, no
--- UFUNCTION, so UE4SS has nothing to reflect and every lookup came back nil
--- against a perfectly healthy tree - the cooked asset was extracted from the
--- pak afterwards and string-checked, all twelve names present. Those ten
--- unknown-member misses were also the only novel engine interaction in the
--- minute before the crash, so this path stays off unreflected names entirely.
---
--- Two passes, both lifted from mods proven on this machine:
---
--- Pass 1 is BreedingHelper's collect_parts: the commandlet set bIsVariable on
--- every named widget, and a compiled variable widget IS a property of the
--- generated class, so made.Root is a plain property read - the cheapest and
--- best-trodden access this environment has.
---
--- Pass 2 is PerfectPlacement's find_widget: walk WidgetTree.RootWidget by
--- GetFName, children through GetChildrenCount and GetChildAt, which unlike
--- GetWidgetFromName are real UFUNCTIONs (PanelWidget.h:27 and :35). The
--- visited set is not decoration - their walker guards cycles, which is how
--- you know cycles happen.
 local function collect_parts(made)
     local parts, found = {}, 0
 
@@ -233,8 +198,8 @@ end
 -- with warn_once swallowing every repeat - whatever went wrong was set up to
 -- go wrong forever, silently. Any failure now latches "absent" and the
 -- session runs on the hand built canvas, which is a look, not a loss.
-local function build_blueprint()
-    if bp_class == nil then return false end
+local function build_blueprint(class)
+    if class == nil then return false end
 
     local function give_up(key, why)
         bp_state = "absent"
@@ -248,7 +213,7 @@ local function build_blueprint()
     local made
     local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
     if lib then
-        pcall(function() made = lib:Create(pc, bp_class, pc) end)
+        pcall(function() made = lib:Create(pc, class, pc) end)
     end
     if not alive(made) then
         return give_up("bpmake", "the blueprint widget would not construct")
@@ -268,6 +233,22 @@ local function build_blueprint()
 
     pcall(function() made:SetIsFocusable(true) end)
     pcall(function() made:AddToViewport(9000) end)
+    -- Collapsed until the panel opens: this now runs at world load, and a
+    -- work-rules screen greeting every spawn would be a bug with a viewport.
+    pcall(function() made:SetVisibility(1) end)
+
+    -- The blueprint's Body is a placeholder: a title, a search box, two empty
+    -- lists and a button row, laid out by Slate so that the shell could be
+    -- looked at before anything drove it. The panel draws all four of those
+    -- itself, onto Root, so leaving Body visible renders both at once - which
+    -- is exactly what the first hosted screenshot showed.
+    --
+    -- Collapsed rather than removed: this is the layout the panel will
+    -- eventually fill instead of drawing over, and taking it out now would
+    -- mean rebuilding the pak to get it back.
+    if parts.Body then
+        pcall(function() parts.Body:SetVisibility(1) end)
+    end
 
     widget, tree, canvas = made, made_tree, parts.Root
     M.parts = parts
@@ -283,6 +264,57 @@ local function build_blueprint()
 
     return true
 end
+
+-- Ask for the blueprint class once, early, so that by the time the panel is
+-- opened the answer is already in hand. The lookup is asynchronous because it
+-- has to happen on the game thread, and a panel that opened while waiting for
+-- it would open on the wrong host.
+function M.prepare()
+    if bp_state ~= "unasked" then return end
+    bp_state = "asking"
+
+    M.mod_class(BP_PACKAGE, BP_ASSET, function(class)
+        if class == nil then
+            bp_state = "absent"
+            log.say("overlay: no blueprint widget in the pak, " ..
+                "drawing on our own canvas")
+            return
+        end
+
+        -- Built HERE, while the class is an object of the current call. Once
+        -- AddToViewport succeeds the instance roots the class, so from then
+        -- on neither can be collected under us. The widget waits collapsed
+        -- until the panel wants it.
+        if build_blueprint(class) then
+            bp_state = "hosted"
+        else
+            bp_state = "absent"
+        end
+    end)
+end
+
+-- The named children of a blueprint instance, WITHOUT GetWidgetFromName.
+--
+-- That call is what sank the first attempt. It looks like the obvious API and
+-- it is not callable from here: UserWidget.h:1122 declares it plain C++, no
+-- UFUNCTION, so UE4SS has nothing to reflect and every lookup came back nil
+-- against a perfectly healthy tree - the cooked asset was extracted from the
+-- pak afterwards and string-checked, all twelve names present. Those ten
+-- unknown-member misses were also the only novel engine interaction in the
+-- minute before the crash, so this path stays off unreflected names entirely.
+--
+-- Two passes, both lifted from mods proven on this machine:
+--
+-- Pass 1 is BreedingHelper's collect_parts: the commandlet set bIsVariable on
+-- every named widget, and a compiled variable widget IS a property of the
+-- generated class, so made.Root is a plain property read - the cheapest and
+-- best-trodden access this environment has.
+--
+-- Pass 2 is PerfectPlacement's find_widget: walk WidgetTree.RootWidget by
+-- GetFName, children through GetChildrenCount and GetChildAt, which unlike
+-- GetWidgetFromName are real UFUNCTIONs (PanelWidget.h:27 and :35). The
+-- visited set is not decoration - their walker guards cycles, which is how
+-- you know cycles happen.
 
 local function build_now()
     local pc = api.player_controller()
@@ -395,6 +427,9 @@ function M.host()
     local now_owner = owner_name()
     if built_under ~= nil and now_owner ~= built_under then
         widget, tree, canvas = nil, nil, nil
+        M.parts = nil
+        -- Re-armed, so the next world's ClientRestart loads and builds again.
+        if bp_state == "hosted" then bp_state = "unasked" end
         built_under = nil
         -- The input mode goes back with it. Dropping the widget while the UI
         -- mode was still set left the cursor forced on and the panel's own
@@ -420,13 +455,11 @@ function M.host()
     -- share that object's lifetime.
     M.parts = nil
 
-    -- The blueprint if the pak mounted and construction has never failed,
-    -- our own canvas otherwise. The fallback is the entire point: that canvas
-    -- has drawn this panel all along, so nothing here can cost the menu.
-    if bp_state == "ready" and build_blueprint() then
-        return canvas, tree, widget
-    end
-
+    -- The blueprint widget is built at world load, inside the callback that
+    -- receives its class, and the alive(widget) fast path above returns it.
+    -- Reaching here means there is none this session - never built, given up,
+    -- or dropped with a world - so the hand built canvas takes over, which is
+    -- the canvas that has drawn this panel all along.
     if not build() then return nil end
     return canvas, tree, widget
 end
@@ -598,6 +631,8 @@ end
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
     widget, tree, canvas = nil, nil, nil
+    M.parts = nil
+    if bp_state == "hosted" then bp_state = "unasked" end
     built_under = nil
     owner_cached, owner_at = nil, -1
     cursor_was, input_route = nil, nil

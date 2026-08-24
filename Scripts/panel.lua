@@ -3268,6 +3268,66 @@ function M.command(cfg, args)
     --
     -- So: on the game thread, through a callback, with FindOrAddFName, and
     -- the two asks spaced apart rather than fired together.
+    -- The construction stages, one by one, on a warm world. The world-load
+    -- attempt just failed with everything conflated into one message; this
+    -- separates library, class and Create, and says which one is the problem
+    -- NOW, minutes after load, which also answers whether it was timing.
+    -- Fire prepare() by hand. It normally runs at ClientRestart, which a hot
+    -- reload does not trigger, so without this the blueprint path can only be
+    -- tested by restarting the game - and restarts are exactly what this
+    -- whole exercise has been spending too many of.
+    if verb == "host" then
+        if not overlay.prepare then return "this build cannot do that" end
+        overlay.prepare()
+        return "asked; the answer lands in the log a moment from now"
+    end
+
+    if verb == "create" then
+        local out = {}
+        local pc = api.player_controller()
+        out[#out+1] = "pc: " .. tostring(pc ~= nil)
+
+        local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+        out[#out+1] = "library cdo: " .. tostring(lib ~= nil)
+
+        local cls
+        pcall(function()
+            cls = StaticFindObject(
+                "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C")
+        end)
+        local cls_ok = false
+        pcall(function() cls_ok = cls ~= nil and cls:IsValid() end)
+        out[#out+1] = "class resident: " .. tostring(cls_ok)
+
+        if pc ~= nil and lib ~= nil and cls_ok then
+            local made, err
+            local ok = pcall(function() made = lib:Create(pc, cls, pc) end)
+            if not ok then err = "threw" end
+            local alive_ok = false
+            pcall(function() alive_ok = made ~= nil and made:IsValid() end)
+            out[#out+1] = "Create: ok=" .. tostring(ok) ..
+                " alive=" .. tostring(alive_ok) .. (err and (" " .. err) or "")
+            if alive_ok then
+                local nm = "?"
+                pcall(function() nm = made:GetFullName() end)
+                out[#out+1] = "made: " .. nm
+                local tree
+                pcall(function() tree = made.WidgetTree end)
+                local tree_ok = false
+                pcall(function() tree_ok = tree ~= nil and tree:IsValid() end)
+                out[#out+1] = "tree: " .. tostring(tree_ok)
+                local root
+                pcall(function() root = made.Root end)
+                local root_ok = false
+                pcall(function() root_ok = root ~= nil and root:IsValid() end)
+                out[#out+1] = "made.Root property: " .. tostring(root_ok)
+            end
+        end
+
+        for _, l in ipairs(out) do log.say("  " .. l) end
+        return "create probe done"
+    end
+
     if verb == "cooked" then
         if not overlay.mod_class then
             return "this build has no mod_class, reload overlay first"
