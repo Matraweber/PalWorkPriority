@@ -414,6 +414,96 @@ function M.reset()
     warned = {}
 end
 
+-- Restored verbatim from fb9be28, the last commit before the runtime was
+-- rolled back on 21 August. The rollback was not because this failed - it
+-- worked end to end and there is a screenshot - but because five runtime
+-- changes were stacked at once and none could be told apart afterwards.
+-- This is one of the five, brought back by itself and nothing else with it.
+-- A class out of our own cooked pak.
+--
+-- LoadAsset does not reach it, and that is not a bug in the pak. UnrealPak
+-- lists UI/WBP_WorkRules.uasset inside it at the right mount point, the
+-- cooked package names WBP_WorkRules_C and WidgetBlueprintGeneratedClass
+-- outright, and ModActor sits beside it and loads. Three spellings of
+-- LoadAsset found none of it.
+--
+-- The route that works is the one BPModLoaderMod uses on our own ModActor,
+-- which is the proof that it works: ask the asset registry, not the loader.
+-- Read out of its source rather than guessed, which is the only reason this
+-- took one attempt instead of five.
+local registry = nil
+
+local function helpers()
+    if registry ~= nil then return registry end
+
+    local found
+    pcall(function()
+        found = StaticFindObject(
+            "/Script/AssetRegistry.Default__AssetRegistryHelpers")
+    end)
+
+    if found ~= nil then
+        local ok = false
+        pcall(function() ok = found:IsValid() end)
+        if ok then registry = found end
+    end
+    return registry
+end
+
+-- FindOrAddFName, borrowed rather than reimplemented.
+--
+-- A name merely looked up comes back as None when the game has never seen it,
+-- and a name out of a mod's own pak is exactly the kind it has never seen. My
+-- version guessed at the argument order; this is the one the working loader
+-- uses, and there is no reason to have two.
+local UEHelpers = nil
+pcall(function() UEHelpers = require("UEHelpers") end)
+
+local function name_of(text)
+    if UEHelpers and UEHelpers.FindOrAddFName then
+        local made
+        pcall(function() made = UEHelpers.FindOrAddFName(text) end)
+        if made ~= nil then return made end
+    end
+
+    local made
+    pcall(function() made = FName(text, EFindName.FNAME_Add) end)
+    if made == nil then pcall(function() made = FName(text) end) end
+    return made
+end
+
+-- Ask the registry for a class out of a mounted mod pak, on the game thread,
+-- and hand it back through a callback.
+--
+-- On the game thread because the last attempt hung the mod outright. ModActor
+-- came back and the widget never did, and the tick stopped with it: GetAsset
+-- on a package that is not loaded yet does a synchronous load, and a
+-- synchronous load off the game thread waits for a thread that is waiting for
+-- it. ModActor answered instantly only because BPModLoaderMod had loaded it
+-- moments earlier.
+--
+-- A callback rather than a return value, because that is what asking on
+-- another thread costs and pretending otherwise is what caused the hang.
+function M.mod_class(package, asset, done)
+    ExecuteInGameThread(function()
+        local reg = helpers()
+        if reg == nil then return done(nil) end
+
+        local data = {
+            PackageName = name_of(package),
+            AssetName = name_of(asset),
+        }
+
+        local class
+        pcall(function() class = reg:GetAsset(data) end)
+
+        local ok = false
+        if class ~= nil then pcall(function() ok = class:IsValid() end) end
+
+        done(ok and class or nil)
+    end)
+end
+
 -- ---------------------------------------------------------------------------
 -- Diagnostics
 -- ---------------------------------------------------------------------------

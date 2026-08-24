@@ -3245,85 +3245,48 @@ function M.command(cfg, args)
     -- our pak exists, and a failure later can only be in OUR pak. Loading a
     -- class object runs no Blueprint code - Construct scripts belong to
     -- instances, and no instance is made here.
+    -- Resolve our own cooked widget class, the way that is known to work.
+    --
+    -- Synchronous GetAsset is what hung the game on 21 August: on a package
+    -- that is not loaded yet it does a synchronous load, and a synchronous
+    -- load off the game thread waits on a thread that is waiting on it. The
+    -- earlier version of this probe got away with it only because the class
+    -- it asked for was already resident - which docs/widget-spec.md warns is
+    -- the misleading example, not the proof.
+    --
+    -- So: on the game thread, through a callback, with FindOrAddFName, and
+    -- the two asks spaced apart rather than fired together.
     if verb == "cooked" then
-        local OURS = "/Game/Mods/PalWorkPriority/WBP_PwpPicker"
-        local lines = {}
-
-        local mine
-        pcall(function() mine = StaticFindObject(OURS .. ".WBP_PwpPicker_C") end)
-        local mine_ok = false
-        pcall(function() mine_ok = mine ~= nil and mine:IsValid() end)
-        lines[#lines + 1] = "ours in memory: " .. tostring(mine_ok)
-
-        local arh
-        pcall(function()
-            arh = StaticFindObject(
-                "/Script/AssetRegistry.Default__AssetRegistryHelpers")
-        end)
-        local arh_ok = false
-        pcall(function() arh_ok = arh ~= nil and arh:IsValid() end)
-        lines[#lines + 1] = "asset registry route: " .. tostring(arh_ok)
-
-        -- Maybe the control class is already resident - their mod is active,
-        -- so if their own UI has ever opened this session, it is.
-        local ctl
-        pcall(function()
-            ctl = StaticFindObject(
-                "/Game/Mods/BreedingHelperUI/WBP_BreedingCalc.WBP_BreedingCalc_C")
-        end)
-        local ctl_resident = false
-        pcall(function() ctl_resident = ctl ~= nil and ctl:IsValid() end)
-        lines[#lines + 1] = "control already in memory: " .. tostring(ctl_resident)
-
-        if arh_ok then
-            local helpers_ok, UEH = pcall(require, "UEHelpers")
-            if helpers_ok and UEH and UEH.FindOrAddFName then
-                -- The _C name, not the asset name. A cooked pak holds the
-                -- generated class; the editor-side Blueprint asset it was
-                -- generated from is not in it, and asking for that is a nil
-                -- that looks like the mechanism failing. Their own constant
-                -- is the _C name for exactly this reason.
-                local loaded
-                pcall(function()
-                    loaded = arh:GetAsset({
-                        PackageName = UEH.FindOrAddFName(
-                            "/Game/Mods/BreedingHelperUI/WBP_BreedingCalc"),
-                        AssetName = UEH.FindOrAddFName("WBP_BreedingCalc_C"),
-                    })
-                end)
-                local got = "nil"
-                pcall(function()
-                    if loaded and loaded:IsValid() then
-                        got = loaded:GetFullName()
-                    end
-                end)
-                lines[#lines + 1] = "control via GetAsset: " .. got
-            else
-                lines[#lines + 1] = "control skipped: UEHelpers not available"
-            end
+        if not overlay.mod_class then
+            return "this build has no mod_class, reload overlay first"
         end
 
-        -- The discriminating stage. A nil above has two readings: the
-        -- mechanism fails in our hands, or their pak is simply not mounted
-        -- this session - their own code anticipates that with an "assets not
-        -- loaded" announcement. A plain texture from the same pak separates
-        -- them: LoadAsset handles textures reliably (icons.lua stakes its
-        -- whole pump on it), so texture loads + class does not = mechanism
-        -- problem; texture also fails = the pak is not mounted and the
-        -- control proves nothing either way.
-        local TEX = "/Game/Mods/BreedingHelperUI/BH_T_Anubis_icon_normal"
-        local tex
-        pcall(function()
-            LoadAsset(TEX .. "." .. "BH_T_Anubis_icon_normal")
-            tex = StaticFindObject(TEX .. "." .. "BH_T_Anubis_icon_normal")
-        end)
-        local tex_ok = false
-        pcall(function() tex_ok = tex ~= nil and tex:IsValid() end)
-        lines[#lines + 1] = "texture from their pak: " .. tostring(tex_ok)
+        local function try(label, package, asset)
+            overlay.mod_class(package, asset, function(class)
+                local full
+                if class ~= nil then
+                    pcall(function() full = class:GetFullName() end)
+                end
+                log.say(string.format("  %-14s %s", label,
+                    full or "not found through the registry"))
+            end)
+        end
 
-        for _, l in ipairs(lines) do log.say("  " .. l) end
-        return "cooked-widget probe done, " .. #lines .. " stage(s)"
+        -- ModActor first, and it is the CONTROL rather than the result:
+        -- BPModLoaderMod loads it seconds after the pak mounts, so it answers
+        -- from memory. If it resolves and the widget does not, the fault is
+        -- in the asset, not the route.
+        try("ModActor", "/Game/Mods/PalWorkPriority/ModActor", "ModActor_C")
+
+        ExecuteWithDelay(1500, function()
+            try("WBP_WorkRules",
+                "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules",
+                "WBP_WorkRules_C")
+        end)
+
+        return "asked for both classes, answers follow in the log"
     end
+
 
     -- Whether the input mode is still ours. Lives here for the same reason
     -- `icons` does, and is guarded the same way: this module reloads, and a
