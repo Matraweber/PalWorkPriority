@@ -774,6 +774,32 @@ end
 -- plus its 18 of padding. The gap between those is what this closes, so the
 -- first row lands under the column headings instead of behind the tab bar,
 -- which is exactly where the first filled list drew it.
+-- The blueprint's own heading, given the panel's words and put where the
+-- panel's heading went.
+--
+-- SetText wants an FText and make_ftext is what builds one on this build.
+-- Handing it a bare Lua string took the game down on the first attempt, in a
+-- pcall, which caught nothing because a marshalling fault is an access
+-- violation rather than a Lua error. The panel had solved this at six other
+-- call sites already; the mistake was writing a seventh instead of reading
+-- one of them.
+--
+-- Returns whether it took, because the caller draws its own heading if not.
+-- A screen with no title is worse than one that keeps the old one.
+local function use_bp_title(str)
+    local parts = overlay.parts
+    if not parts or not alive(parts.Title) then return false end
+
+    local ft = make_ftext(str)
+    if ft == nil then return false end
+
+    local ok = pcall(function() parts.Title:SetText(ft) end)
+    if not ok then return false end
+
+    pcall(function() parts.Title:SetVisibility(0) end)
+    return true
+end
+
 local function align_list_to(row, which, unit)
     local parts = overlay.parts
     if not parts or not alive(parts[which]) then return end
@@ -2189,7 +2215,14 @@ local function draw_tabs(active)
     -- Nudged down out of the tab bar. At its plain row-1 position the cap
     -- height of the title sat four pixels under the active tab's underline,
     -- so the two read as one stacked block instead of a header and a bar.
-    line("title", 1, PAD, "Production Limits", "title", 22, TITLE_DROP)
+    -- The blueprint's Title when there is one, ours when there is not.
+    -- Drawing both renders the heading twice a few pixels apart, which is
+    -- what the very first hosted screenshot showed.
+    if use_bp_title("Production Limits") then
+        align_list_to(1, "Title")
+    else
+        line("title", 1, PAD, "Production Limits", "title", 22, TITLE_DROP)
+    end
     line("why", 2, PAD,
         "Your Pals stop a job once base storage reaches the limit you set.",
         "dim", 14, TITLE_DROP)

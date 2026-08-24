@@ -271,7 +271,11 @@ local function build_blueprint(class)
     -- button row - which is what made the first hosted screenshot render two
     -- of everything. Collapsed, not removed: the pak would have to be rebuilt
     -- to get any of it back.
-    for _, name in ipairs({ "Title", "Search", "Actions" }) do
+    -- Title stays: the panel puts its own heading into it. Search and
+    -- Actions go, being chrome the panel still draws for itself - the
+    -- shell has no container for a tab bar, a subtitle or the add bar,
+    -- so those cannot move without a pak with somewhere to put them.
+    for _, name in ipairs({ "Search", "Actions" }) do
         if parts[name] then
             pcall(function() parts[name]:SetVisibility(1) end)
         end
