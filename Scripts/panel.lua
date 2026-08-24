@@ -786,17 +786,26 @@ local function align_list_to(row, which, unit)
     local parts = overlay.parts
     if not parts or not alive(parts[which]) then return end
 
-    -- Body's top, plus every chrome row currently taking height above the
-    -- lists. Without that second half, moving one line into the flow pushed
-    -- the list down by its height and the rows scattered - which is exactly
-    -- how the first attempt at the heading went wrong.
-    local body_top = -(700 / 2) + 18
-    for _, r in ipairs(RB.rows) do
-        if RB.on[r[1]] then body_top = body_top + r[2] end
+    -- Nothing, now that the chrome is in the flow with it.
+    --
+    -- This used to pad the list down to TOP_Y + row * LINE, because the tabs,
+    -- the heading, the subtitle and the column headings were all drawn at
+    -- absolute canvas positions and the list had to be pushed under them by
+    -- hand. They are rows above it now, so Slate has already put the list
+    -- exactly where it goes and any padding on top of that is a gap - which
+    -- is what it looked like: seventy four pixels of empty backdrop between
+    -- the headings and the first rule.
+    --
+    -- Kept as a function rather than deleted at the call sites, because it is
+    -- what puts the padding BACK to zero on a list that had some before the
+    -- chrome moved, and because a shell that fails to mount still needs the
+    -- old behaviour. row and unit stay in the signature for that.
+    local pad = 0
+    if not (overlay.parts and next(RB.on) ~= nil) then
+        local body_top = -(700 / 2) + 18
+        local want = TOP_Y + row * (unit or LINE)
+        pad = math.max(0, want - body_top)
     end
-
-    local want = TOP_Y + row * (unit or LINE)
-    local pad = math.max(0, want - body_top)
 
     -- Per list, because they are siblings in the same VerticalBox and each
     -- has its own idea of where its first row belongs.
@@ -1805,6 +1814,14 @@ local function ensure_search(row)
 
     used["search"] = true
 
+    -- Into the shell's own row when there is one. It was left on the canvas
+    -- through the first pass of this work, on the grounds that an
+    -- EditableTextBox with a typing path is not something to reparent
+    -- casually - but the grid moved up into the flow without it and the field
+    -- ended up lying across the first row of tiles. A widget that stays
+    -- behind does not stay put, it just ends up somewhere wrong.
+    local into = RB.use_row("Search") and RB.slot or host
+
     if not alive(search_box) then
         local cls = api.cdo("/Script/UMG.EditableTextBox")
         if not cls or not alive(root_tree) then return nil end
@@ -1817,7 +1834,7 @@ local function ensure_search(row)
         end
 
         local slot
-        local ok = pcall(function() slot = host:AddChildToCanvas(search_box) end)
+        local ok = pcall(function() slot = into:AddChildToCanvas(search_box) end)
         if not ok or not alive(slot) then
             search_box = nil
             return nil
@@ -1843,7 +1860,11 @@ local function ensure_search(row)
     pcall(function() slot = search_box.Slot end)
     if alive(slot) then
         pcall(function()
-            slot:SetPosition({ X = X + ROW_INSET, Y = Y + row * LINE })
+            if RB.slot then
+                slot:SetPosition({ X = ROW_INSET, Y = 0 })
+            else
+                slot:SetPosition({ X = X + ROW_INSET, Y = Y + row * LINE })
+            end
         end)
         -- 30 cut the descenders off its own hint text. A field that clips the
         -- word "type" is not a field anybody trusts to hold what they typed.
@@ -1857,6 +1878,7 @@ local function ensure_search(row)
         end)
     end
     pcall(function() search_box:SetVisibility(0) end)
+    RB.done_row()
 
     -- Focus is taken once on entering the picker, not every frame: stealing it
     -- each tick would fight anything else that wants it and make typing feel
@@ -2358,14 +2380,18 @@ local function draw_list(cfg, totals)
     -- general explanation is the one thing you do not need while typing, so
     -- it steps aside.
     if editing ~= nil then
-        line("why", 2, PAD,
+        RB.use_row("Notice")
+        line("why", 0, PAD,
             "Setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
             editing.item .. "  |  Type a number, then click anywhere to save",
             "action", 14)
+        RB.done_row()
     elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
         -- Below the editing caption on purpose: while a number is being typed
         -- the instruction for typing it is the more useful of the two.
-        line("why", 2, PAD, notice, "action", 14)
+        RB.use_row("Notice")
+        line("why", 0, PAD, notice, "action", 14)
+        RB.done_row()
     end
 
     -- Names both numbers. Without this the pair reads as progress towards a
@@ -2378,8 +2404,9 @@ local function draw_list(cfg, totals)
         -- same constant. It used to be the string "  JOB" placed at PAD, and
         -- two spaces at 12pt are not two spaces at 17pt, so the heading came
         -- out five pixels left of the data it headed.
-        line("h_job",  row, PAD + MARK_W, "JOB",    "faint", 12)
-        line("h_item", row, COL_ITEM, "ITEM",       "faint", 12)
+        RB.use_row("Head")
+        line("h_job",  0, PAD + MARK_W, "JOB",    "faint", 12)
+        line("h_item", 0, COL_ITEM, "ITEM",       "faint", 12)
         -- Numeric headings are CENTRED over their column, not set from its
         -- right edge.
         --
@@ -2392,10 +2419,10 @@ local function draw_list(cfg, totals)
         -- some is right bound" looked like from the outside. Centring halves
         -- the error and makes it symmetric, and a centred heading over a
         -- right-aligned column is a normal table.
-        line("h_have", row,
+        line("h_have", 0,
             centre_x(COL2, COL2_R - COL2, "IN STORAGE", 12, CAPS_W),
             "IN STORAGE", "faint", 12)
-        line("h_cap",  row,
+        line("h_cap",  0,
             centre_x(COL_CAP - WELL_INSET, WELL_W, "LIMIT", 12, CAPS_W),
             "LIMIT", "faint", 12)
         -- PALS, not STATUS. The column sits 780 pixels right of the job it
@@ -2407,7 +2434,8 @@ local function draw_list(cfg, totals)
         -- which is the state of the job, and a heading reading PALS over
         -- those invites reading them as a count of pals. Wider than PALS but
         -- narrower than the values already under it, so the layout is unmoved.
-        line("h_st",   row, COL_DONE, "STATUS",     "faint", 12)
+        line("h_st",   0, COL_DONE, "STATUS",     "faint", 12)
+        RB.done_row()
         row = row + 1
     end
 
@@ -2686,15 +2714,17 @@ local function draw_list(cfg, totals)
     -- job" and "< Back" were the same bar in the same tone with the same cyan
     -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
-    stripe("new", row, PAD, ROW_W, PRIMARY_BG, true)
+    RB.use_row("Foot")
+    stripe("new", 0, PAD, ROW_W, PRIMARY_BG, true)
     tile_face["new"] = stripes["new"]
     -- Glyph and label in fixed slots, so all three action rows start their
     -- words on one edge. Baked into single strings before, where "[x]   ",
     -- "+   " and "<   " are three different widths and the labels came out
     -- ten and thirty pixels apart.
-    line("mk_new", row, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
-    line("g_new", row, PAD + MARK_W, "+", "primary", ROW_PT)
-    line("new", row, PAD + MARK_W + GLYPH_SLOT, "Add a rule", "primary")
+    line("mk_new", 0, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
+    line("g_new", 0, PAD + MARK_W, "+", "primary", ROW_PT)
+    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Add a rule", "primary")
+    RB.done_row()
 
     -- One row of breathing space, not two. The panel is sized from what it
     -- draws, so a spare row is 34 pixels of empty backdrop; with the top
@@ -2933,10 +2963,19 @@ local function draw_item_picker(cfg, totals)
     -- field is 36 tall and sits flush on the row's top edge while a row is 30
     -- tall and inset three, so a hint placed by row sat about eight pixels
     -- high in it - which is what "not properly in the middle" was.
+    -- Into the field's own row, with the field. The panel draws this hint
+    -- itself because UMG keeps a field's placeholder colour in the one part
+    -- of the style struct this build will not let us write, and the stock one
+    -- measured 2.20 against the field - so it is a separate widget, and a
+    -- separate widget is one that can be left behind. It was: the field moved
+    -- into the shell and its own placeholder stayed on the canvas, lying
+    -- across the caption underneath.
+    RB.use_row("Search")
     text_at("hint", ROW_INSET + 13,
-        3 * LINE + (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
+        (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
         search_text == "" and "Search for an item to limit" or "",
         "hint_on_field", ROW_PT, true)
+    RB.done_row()
 
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
     -- typed, which is what a hint is supposed to do.
@@ -2959,7 +2998,9 @@ local function draw_item_picker(cfg, totals)
     -- the moment anything was typed, which is precisely when somebody is
     -- about to click a tile for the first time.
     caption = caption .. "   |   Click an item to limit it"
-    line("sub", 4, PAD, caption, "dim", 13)
+    RB.use_row("Caption")
+    line("sub", 0, PAD, caption, "dim", 13)
+    RB.done_row()
 
     -- Names the only number on this screen.
     --
@@ -2972,13 +3013,15 @@ local function draw_item_picker(cfg, totals)
     --
     -- Repeated over each of the three columns, because each column is its own
     -- little table.
+    RB.use_row("Head")
     for c = 0, LIST_COLS - 1 do
         local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
-        line("h_it" .. c, 5, cx + LIST_NAME_X, "ITEM", "faint", 12)
+        line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12)
         line("h_st" .. c,
-            5, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
+            0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
             "IN STORAGE", "faint", 12)
     end
+    RB.done_row()
 
     local top = 6 * LINE
     local from = page * LIST_PER_PAGE + 1
