@@ -1310,20 +1310,6 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- happened before the class existed.
     demandidx.install()
 
-    -- Fetch the blueprint widget's class ahead of anyone wanting it. The
-    -- lookup has to happen on the game thread and answers through a callback,
-    -- so a panel opened while it was still in flight would open on the wrong
-    -- host. Asking at world load means the answer is there long before
-    -- anybody presses anything.
-    --
-    -- Guarded: overlay hot-swaps and this file does not, so a session running
-    -- an overlay from before the pak work would otherwise take the whole
-    -- ClientRestart handler down with it, and everything below this line with
-    -- it too.
-    if overlay.prepare then
-        pcall(function() overlay.prepare() end)
-    end
-
     -- A client announces itself so the server knows to push rules to it, and
     -- gets the current set back in reply. Delayed with everything else,
     -- because the network component does not exist the instant a world loads.
