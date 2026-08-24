@@ -121,6 +121,22 @@ local RB = {
         { "Search", 40 }, { "Caption", 24 }, { "Head", 28 },
     },
     on = {},               -- row name -> drawn into this frame
+    -- Where a draw's time actually goes, per primitive. Counted rather than
+    -- reasoned about: "it must be the icons" was wrong once already.
+    prof = {},
+    -- How many text updates a single frame may perform.
+    --
+    -- Icons have been rationed since they were measured; text never was, so a
+    -- page turn wrote every label at once. Measured: a draw that changes
+    -- nothing is ~10ms for the same 104 primitive calls, and one that rewrites
+    -- a page is ~100ms - about 0.6ms per property write through UE4SS's
+    -- reflection layer, which is the floor and not something a Lua mod can
+    -- argue with. The work is necessary; doing all of it in one frame is not.
+    --
+    -- Twelve fills an eighteen tile page over three of the ten frames a
+    -- second the panel draws in, so nothing stalls and the page is complete
+    -- in about a third of a second.
+    text_left = 12,
     -- Top left, for widgets inside a row box. The panel's own canvas is
     -- centre anchored, which is what X = -(W/2) exists to undo; a row box
     -- already starts where its row starts, so centre anchoring there put
@@ -949,6 +965,9 @@ local function hide_rows_from(n, which)
 end
 
 local function slab(key, px, py, w, h, colour, hittable, current)
+    local _p = RB.prof["slab"]
+    if _p == nil then _p = { n = 0, ms = 0 } RB.prof["slab"] = _p end
+    _p.n = _p.n + 1
     local host = ensure_root()
     if not host then return end
 
@@ -1096,6 +1115,9 @@ end
 -- could be clicked: the tiles were listening, and their own labels were in
 -- the way.
 local function text_at(key, px, py, text, colour_key, points, passthrough)
+    local _p = RB.prof["text"]
+    if _p == nil then _p = { n = 0, ms = 0 } RB.prof["text"] = _p end
+    _p.n = _p.n + 1
     local canvas = ensure_root()
     if not canvas then return end
 
@@ -1172,6 +1194,13 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
+        -- Over budget: keep what is on screen and take this one next frame.
+        -- The widget is already marked used, so the blanker leaves it alone
+        -- and the reader sees the previous label for a tenth of a second
+        -- rather than the panel stopping dead for a tenth of a second.
+        if RB.text_left <= 0 then return end
+        RB.text_left = RB.text_left - 1
+
         local ft = make_ftext(text)
         if ft then
             pcall(function() tb:SetText(ft) end)
@@ -1350,8 +1379,44 @@ local function pin(texture, item_id)
     pcall(function() img:SetBrushFromTexture(texture, false) end)
     pcall(function() img:SetVisibility(1) end)
 
-    pinned[item_id] = true
+    -- The widget, not just a flag.
+    --
+    -- It already holds the texture on its brush - that is what pinning means -
+    -- so it is also the cheapest place to get that texture back from: one
+    -- property read on a widget we own, against a sweep of every Texture2D in
+    -- memory. Keeping it is allowed for the same reason the panel keeps its
+    -- other widgets: we made it, it is parented to our tree, and it is
+    -- validated with alive() before every use.
+    pinned[item_id] = img
     pin_count = pin_count + 1
+end
+
+-- Pin what a sweep found, not merely what is on screen.
+--
+-- A sweep resolves every loaded icon in one pass and the panel used to keep
+-- the eighteen it was drawing and drop the rest, so the next page swept all
+-- 7,171 textures again. Pinning the surplus is what turns the sweep from a
+-- per-page cost into a converging one: each sweep leaves fewer icons that
+-- could ever need another.
+--
+-- Rationed, because pinning is a construct plus a brush write each and doing
+-- sixty in a frame is its own stall. Eight a sweep, at most twice a second.
+--
+-- The map's textures are live only inside the sweep's own frame, which is
+-- when this runs - icons calls it before returning.
+local function pin_from_sweep(found)
+    if not (alive(root) and alive(root_tree)) then return end
+
+    local left = 8
+    for name, tex in pairs(found or {}) do
+        if left <= 0 then return end
+        -- The sweep is keyed by icon NAME; pins are keyed by item id. Only
+        -- ids already resolved can be matched up, which is most of them.
+        if pinned[name] == nil and tex ~= nil then
+            pin(tex, name)
+            left = left - 1
+        end
+    end
 end
 
 -- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
@@ -1360,6 +1425,9 @@ end
 local probed = false
 
 local function picture(key, px, py, size, item_id, token)
+    local _p = RB.prof["pic"]
+    if _p == nil then _p = { n = 0, ms = 0 } RB.prof["pic"] = _p end
+    _p.n = _p.n + 1
     if not probed then
         probed = true
         -- Only the lookup. The image probe reported that UMG.Image has no
@@ -1443,10 +1511,38 @@ local function picture(key, px, py, size, item_id, token)
         -- works there is nothing here for the table, the queue or the
         -- rationing to do.
         --
-        local texture = item_id and icons.get(item_id) or nil
+        local _tg = os.clock()
+
+        -- The pin first. An icon this panel has shown before is on a pin's
+        -- brush, and reading it back is O(1) - where icons.get may sweep every
+        -- texture in memory, which measured 80ms and was running ten times a
+        -- second for as long as any icon on the page was unresolved.
+        local texture
+        local icon_name = item_id and icons.name_for
+            and icons.name_for(item_id) or nil
+        local pin_w = icon_name and pinned[icon_name] or nil
+        if pin_w ~= nil and pin_w ~= true and alive(pin_w) then
+            pcall(function()
+                local b = pin_w.Brush
+                local res = b and b.ResourceObject
+                if res ~= nil then
+                    local ok, yes = pcall(function() return res:IsValid() end)
+                    if ok and yes then texture = res end
+                end
+            end)
+        end
+
+        if texture == nil then
+            texture = item_id and icons.get(item_id) or nil
+        end
+        RB.t_get = (RB.t_get or 0) + (os.clock() - _tg)
         if texture then
+            local _ta = os.clock()
             apply_texture(img, texture, size)
-            pin(texture, item_id)
+            RB.t_apply = (RB.t_apply or 0) + (os.clock() - _ta)
+            -- Keyed by icon name, the same key the sweep uses, so a pin made
+            -- here and a pin made from a sweep are the same pin.
+            if icon_name then pin(texture, icon_name) end
             pcall(function() img:SetOpacity(1.0) end)
             -- Marked drawn only now. A failed resolve leaves the token stale
             -- so the next refresh tries again, which is what makes an icon
@@ -1600,7 +1696,9 @@ local function list_row(key, at, item, have, top, limited)
     -- The row itself is the target. Its hit key owns no text - the name is
     -- drawn under "n:"..key - so before this the only hoverable part of the
     -- row was the icon, and a row still waiting for its icon had none at all.
+    local _ts = os.clock()
     slab(key, px, py, LIST_W, LIST_H, TILE_BG, true)
+    RB.t_slab = (RB.t_slab or 0) + (os.clock() - _ts)
     tile_face[key] = stripes[key]
 
     -- The rail says three things at once without any of them fighting: it is
@@ -1621,8 +1719,10 @@ local function list_row(key, at, item, have, top, limited)
     -- page turn spent asking a question that resolving the icon answers
     -- anyway. picture() marks itself drawn only once it actually applied a
     -- texture, so an icon that is not there yet comes back on its own.
+    local _tp = os.clock()
     picture(key, px + 8, py + math.floor((LIST_H - LIST_ICON) / 2), LIST_ICON,
         item, item)
+    RB.t_pic = (RB.t_pic or 0) + (os.clock() - _tp)
 
     -- "Already limited" said in a second channel, not only in green.
     --
@@ -3229,6 +3329,10 @@ local function over_key(key)
     return hit_any
 end
 
+-- icons calls this from inside the frame that swept, which is the only frame
+-- those textures are safe in.
+pcall(function() icons.on_sweep = pin_from_sweep end)
+
 function M.refresh(cfg)
     -- Timed, because "laggy" has three plausible causes here and guessing
     -- between them has already cost a round. Reports the worst refresh seen
@@ -3236,6 +3340,7 @@ function M.refresh(cfg)
     local t0 = os.clock()
     frame_id = frame_id + 1
     icon_budget = ICONS_PER_FRAME
+    RB.text_left = 12
 
     -- The root is validated FIRST, before anything touches a stored widget.
     --
@@ -3295,6 +3400,22 @@ function M.refresh(cfg)
     local td = os.clock()
     local rows = redraw(cfg, totals)
     perf_draw = os.clock() - td
+
+    -- One draw's worth of primitive calls, kept for the bench.
+    RB.last_prof, RB.prof = RB.prof, {}
+    -- The WORST draw since the last bench, not the last draw. A page turn is
+    -- one frame in ten and by the time anyone asks, ten quiet ones have been
+    -- and gone - which is how the first attempt at this reported 0ms for the
+    -- thing it was measuring.
+    local w = RB.worst_t or { slab = 0, pic = 0, n = 0 }
+    if (RB.t_slab or 0) > w.slab then w.slab = RB.t_slab end
+    if (RB.t_pic or 0) > w.pic then
+        w.pic = RB.t_pic
+        w.get, w.apply = RB.t_get or 0, RB.t_apply or 0
+    end
+    RB.t_get, RB.t_apply = 0, 0
+    RB.worst_t = w
+    RB.t_slab, RB.t_pic = 0, 0
 
     -- Chrome rows nobody drew into this frame put away, before the textures.
     RB.tidy_rows()
@@ -3831,7 +3952,18 @@ function M.command(cfg, args)
 
     -- One sweep against N lookups, for the picker's remaining lag.
     if verb == "bench" then
-        if not icons.bench then return "this build cannot report that" end
+        local p = RB.last_prof or {}
+        log.say("primitive calls in the last draw:")
+        for _, k in ipairs({ "slab", "text", "pic" }) do
+            log.say(string.format("  %-5s %d", k, (p[k] and p[k].n) or 0))
+        end
+        local t = RB.worst_t or {}
+        log.say(string.format("  worst draw: slab %.0fms, picture %.0fms",
+            (t.slab or 0) * 1000, (t.pic or 0) * 1000))
+        log.say(string.format("    of which icons.get %.0fms, apply_texture %.0fms",
+            (t.get or 0) * 1000, (t.apply or 0) * 1000))
+        RB.worst_t = nil
+        if not icons.bench then return "counts above" end
         return icons.bench()
     end
 

@@ -308,33 +308,75 @@ end
 -- use after free this file's every other rule exists to avoid.
 local frame_tex = nil
 
+-- When the last sweep ran, and how many loads had completed by then.
+--
+-- The sweep is per FRAME for object safety, and that was read as "once per
+-- draw". It is once per draw that needs it, and a draw needs it whenever any
+-- icon is still unresolved - so a page with a handful of items the index has
+-- no name for swept 7,171 textures ten times a second, for as long as the
+-- picker stayed open. Measured: twelve sweeps and 958ms across one page turn,
+-- ~80ms each, which is the whole of the picker's lag. The page turn was never
+-- special; it is just when anyone looks.
+--
+-- A second sweep can only find something the first did not if a load has
+-- landed in between, so that is the gate. The interval is a safety net for
+-- textures the game itself brings in without the pump noticing.
+local swept_at = -1
+local swept_loads = -1
+local SWEEP_MIN_GAP = 0.5
+
 local function sweep_frame()
+    M.sweeps = (M.sweeps or 0) + 1
+    local _t = os.clock()
     local out = {}
 
     for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
-        -- Keyed exactly as find() asks: the leaf with PREFIX taken off. Parsed
-        -- the same way look_around parses it, deliberately, so the two cannot
-        -- drift into disagreeing about what an icon is called.
-        local full
-        pcall(function() full = tex:GetFullName() end)
+        -- GetFName():ToString(), not GetFullName().
+        --
+        -- The leaf is all this needs, and GetFullName builds the whole
+        -- "Class Package.Object" path to produce it - seven thousand times a
+        -- sweep, which is the sweep. GetName() returns nothing on this build,
+        -- which is why the original reached for GetFullName; the FName route
+        -- is what PerfectPlacement walks widget trees with.
+        local leaf
+        pcall(function() leaf = tex:GetFName():ToString() end)
 
-        if type(full) == "string" then
-            local leaf = full:match("([^/.]+)$") or ""
-            if leaf:sub(1, #PREFIX) == PREFIX then
-                local rest = leaf:sub(#PREFIX + 1)
-                if out[rest] == nil then out[rest] = tex end
-            end
+        if type(leaf) == "string" and leaf:sub(1, #PREFIX) == PREFIX then
+            local rest = leaf:sub(#PREFIX + 1)
+            if out[rest] == nil then out[rest] = tex end
         end
     end
 
+    M.sweep_ms = (M.sweep_ms or 0) + (os.clock() - _t) * 1000
     return out
 end
 
 -- Only ever a lookup. Wanting something loaded is a separate matter, handled
 -- above at its own pace, and a later frame is what finds it.
 local function find(name)
-    -- The sweep first, and only once per draw however many tiles ask.
-    if frame_tex == nil then frame_tex = sweep_frame() end
+    -- The sweep first, and only when one could tell us something new.
+    if frame_tex == nil then
+        local now = os.clock()
+        -- Time only. Gating on "has a load landed since" looked precise and
+        -- was useless: the pump lands twelve a beat, so the counter always
+        -- differed and the sweep ran every frame anyway - 53 sweeps and 4.2
+        -- seconds across four page turns, worse than before.
+        if (now - swept_at) >= SWEEP_MIN_GAP then
+            frame_tex = sweep_frame()
+            swept_at, swept_loads = now, M.loads
+
+            -- Hand the whole find to whoever registered for it, inside the
+            -- frame that found it. The sweep resolves every loaded icon at
+            -- once and the panel then throws all but the eighteen it is
+            -- drawing away - so the next page sweeps again. Letting the panel
+            -- pin what it did not ask for is what makes sweeps stop.
+            if M.on_sweep then pcall(function() M.on_sweep(frame_tex) end) end
+        else
+            -- Everything misses this frame, which costs the tile its picture
+            -- for a tenth of a second and costs the frame nothing at all.
+            frame_tex = {}
+        end
+    end
 
     local hit = frame_tex[name]
     if hit ~= nil and real(hit) then return hit end
@@ -739,10 +781,23 @@ function M.bench()
         M.find_ms or 0))
     log.say(string.format("  sweep misses:            %d, of which the lookup then found: %d",
         M.sweep_misses or 0, M.fallback_hits or 0))
+    log.say(string.format("  sweeps run:              %d, %.0fms total",
+        M.sweeps or 0, M.sweep_ms or 0))
+    M.sweeps, M.sweep_ms = 0, 0
 
     return string.format("sweep %.0fms vs %d finds at %.1fms",
         sweep + walk, M.finds or 0,
         (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0)
+end
+
+-- The icon name this id resolved to, if it has resolved. Exposed so the panel
+-- can key its pins by the same thing the sweep is keyed by, which saves
+-- keeping a reverse map that would only ever be built to be thrown away.
+function M.name_for(item_id)
+    if type(item_id) ~= "string" then return nil end
+    local name = resolved[item_id:lower()]
+    if name == false then return nil end
+    return name
 end
 
 function M.gave_up(item_id)
