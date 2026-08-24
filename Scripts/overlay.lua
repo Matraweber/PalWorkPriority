@@ -125,6 +125,14 @@ local BP_UNUSED_ROWS = {
 -- window without needing an unload hook.
 local built_under = nil
 
+-- The width the backdrop is currently cut to, so fit_width can tell whether
+-- there is anything to do. Declared up here with the other module state
+-- because host() clears it on a drop, hundreds of lines above where
+-- fit_width is defined - and a local declared after its first assignment is
+-- not a local at all, it is a silent global. luacheck said so before the
+-- game had to, which is the second time that rule has earned its place today.
+local fitted = nil
+
 -- Asked at most once a second, not ten times.
 --
 -- This is a FindFirstOf plus a GetFullName, and host() runs it on every
@@ -334,15 +342,9 @@ local function build_blueprint(class)
     -- off mid word and Remove was missing entirely. Set here rather than in
     -- the pak: it is the panel that knows how wide the panel is, and a number
     -- baked into a cooked asset can only be changed by rebuilding it.
-    if M.width and parts.Backdrop then
-        pcall(function()
-            local slot = parts.Backdrop.Slot
-            if slot then slot:SetSize({ X = M.width + 36, Y = 700 }) end
-        end)
-    end
-
     widget, tree, canvas = made, made_tree, parts.Root
     M.parts = parts
+    M.fit_width()
     -- Stamped here as well as in the hand built path, and this was missing.
     -- built_under is what host() compares the current controller against to
     -- notice a world change; left nil, that guard can never fire, and the
@@ -521,49 +523,27 @@ function M.host()
     -- compare, so the check passed, and the next line asked a widget outered
     -- to freed memory whether it was still valid. That is the crash, not a
     -- guard against it, and it is the LONGER half of the transition.
-    -- Liveness by exact path, not by comparing owners.
-    --
-    -- The old check ran owner_name() - FindFirstOf(PalPlayerController) plus
-    -- a GetFullName - on every call, measured at 9-11ms on this build,
-    -- because FindFirstOf walks the whole object array for a class with one
-    -- instance in it. This probe asks the engine's object hash for the
-    -- widget's own instance path: alive answers with the object, freed
-    -- answers nil, and no wrapper stored across frames is dereferenced to
-    -- learn which. The window the old comment worried about - controller
-    -- freed, compare passing on stale data - does not exist here, because
-    -- the widget's path dies WITH the widget, in the same engine operation,
-    -- and instance names carry a unique numeric suffix so the path cannot
-    -- come back to life under a different object.
-    if built_path ~= nil then
-        local live
-        pcall(function() live = StaticFindObject(built_path) end)
-        local ok = false
-        if live ~= nil then
-            pcall(function() ok = live:IsValid() end)
-        end
-        if not ok then
-            widget, tree, canvas = nil, nil, nil
-            M.parts = nil
-            -- Re-armed, so the next world's ClientRestart loads and builds.
-            if bp_state == "hosted" then bp_state = "unasked" end
-            built_under, built_path = nil, nil
-            -- The input mode goes back with it. Dropping the widget while
-            -- the UI mode was still set left the cursor forced on and the
-            -- panel's own open flag true, so reopening took two presses.
-            M.open = false
-            pcall(function() M.release_input() end)
-        end
+    local now_owner = owner_name()
+    if built_under ~= nil and now_owner ~= built_under then
+        widget, tree, canvas = nil, nil, nil
+        M.parts = nil
+        -- Re-armed, so the next world's ClientRestart loads and builds again.
+        if bp_state == "hosted" then bp_state = "unasked" end
+        built_under = nil
+        -- The input mode goes back with it. Dropping the widget while the UI
+        -- mode was still set left the cursor forced on and the panel's own
+        -- open flag true, so reopening took two presses.
+        M.open = false
+        pcall(function() M.release_input() end)
     end
 
-    -- Nothing to build onto yet: no controller means no world to host in.
-    -- owner_name() is the 9ms walk, so it is asked only when a BUILD might
-    -- actually happen - never on the steady path, where the probe above has
-    -- already vouched for the widget.
-    if not (alive(widget) and alive(tree) and alive(canvas)) then
-        if owner_name() == nil then return nil end
-    end
+    -- Nothing to build onto yet. Said plainly rather than falling through to
+    -- a construct that would be outered to nil.
+    if now_owner == nil then return nil end
 
     if alive(widget) and alive(tree) and alive(canvas) then
+        -- Cheap on the settled path: one comparison unless the width moved.
+        if M.parts then M.fit_width() end
         return canvas, tree, widget
     end
 
@@ -575,6 +555,7 @@ function M.host()
     -- was just let go of, and a flag that describes an engine object has to
     -- share that object's lifetime.
     M.parts = nil
+    fitted = nil
 
     -- The blueprint widget is built at world load, inside the callback that
     -- receives its class, and the alive(widget) fast path above returns it.
@@ -671,6 +652,30 @@ end
 
 -- Exposed so host() can hand the input mode back when it drops the widget.
 -- host() is declared above set_input_now, so it cannot call it directly.
+-- The backdrop, sized to whatever the panel currently says it is.
+--
+-- This used to run once, inside the build. That is one moment, and it is the
+-- wrong one to depend on: M.width is pushed across from panel.lua when its
+-- chunk loads, so any build that happened before that - or a widget that
+-- survived a reload which replaced the module table under it - kept whatever
+-- size it was built with. The visible symptom was the panel's own Remove
+-- column hanging off a backdrop still cut for the older, narrower layout.
+--
+-- Idempotent and guarded on the value, so calling it from host() every time
+-- costs one table read on the settled path and repairs itself on any other.
+function M.fit_width()
+    local parts = M.parts
+    if not (parts and M.width) then return end
+    if fitted == M.width then return end
+    if not alive(parts.Backdrop) then return end
+
+    local ok = pcall(function()
+        local slot = parts.Backdrop.Slot
+        if slot then slot:SetSize({ X = M.width + 36, Y = 700 }) end
+    end)
+    if ok then fitted = M.width end
+end
+
 function M.release_input()
     return set_input_now(false)
 end
