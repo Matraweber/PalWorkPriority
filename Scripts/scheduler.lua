@@ -203,11 +203,49 @@ end
 -- Work objects of each type that exist, announcing or not. NOT demand: a cold
 -- campfire has one. It answers only "is there any of this left?", which is
 -- enough to keep a pal working but not to pull one in.
-local function count_work_objects(camp)
+local function count_work_objects(camp, wanted)
     local out = {}
+
+    -- Nothing to answer, so nothing to walk.
+    --
+    -- This used to type every work object in the camp - roughly 700 on this
+    -- save, 1400 across two camps, every pass. api.camp_works resolves the
+    -- work progress manager and then makes one GetWork call per object, and
+    -- api.work_suitability then reads a property off each and falls through to
+    -- three more engine reads and a 29 pattern substring scan whenever
+    -- OverrideWorkType is absent.
+    --
+    -- All of that produced a table with at most thirteen entries, of which
+    -- exactly one is ever read: keeps() asks objects[value] on the line after
+    -- "if pal.current ~= value then return false end", so the only values that
+    -- can be looked up are the work types some pal is CURRENTLY doing, and the
+    -- only question asked of them is whether the count is zero. The counts
+    -- themselves were thrown away.
+    --
+    -- So the caller passes the set it will ask about and this stops as soon as
+    -- each has been seen once. With no pal holding a job the answer is empty
+    -- and the sweep does not happen at all.
+    if wanted == nil then return out end
+
+    local left = 0
+    for _ in pairs(wanted) do left = left + 1 end
+    if left == 0 then return out end
+
     for _, w in ipairs(api.camp_works(camp)) do
         local value = api.work_suitability(w)
-        if value then out[value] = (out[value] or 0) + 1 end
+        if value then
+            local seen = out[value]
+            out[value] = (seen or 0) + 1
+
+            -- Counts past the first are no longer accurate for a wanted
+            -- value, and cannot be: this returns the moment every one of them
+            -- has been seen. Nothing reads them as counts - if that ever
+            -- changes, this early exit has to go with it.
+            if seen == nil and wanted[value] then
+                left = left - 1
+                if left == 0 then break end
+            end
+        end
     end
     return out
 end
@@ -297,7 +335,8 @@ local function plan_fences(cfg, pals, demand, objects, stats, capped)
 
     for _, pal in ipairs(pals) do
         pal.capable, pal.base = base_allowed(cfg, pal, capped or {})
-        pal.current = api.current_work_suitability(pal.param)
+        -- pal.current is already set: run_camp reads it off the roster before
+        -- the work sweep, which needs the answer to know what to look for.
 
         -- Sorted, because pairs() order is not stable in Lua and this list
         -- decides ties. A pal equally suited to two work types at the same
@@ -901,8 +940,18 @@ local function run_camp(cfg, camp, stats)
         return
     end
 
+    -- Asked here rather than inside plan_fences, because the sweep below needs
+    -- to know which work types it is being asked about before it starts. One
+    -- engine call per pal, fourteen on this save, and plan_fences reads what
+    -- this leaves rather than asking again.
+    local held = {}
+    for _, pal in ipairs(pals) do
+        pal.current = api.current_work_suitability(pal.param)
+        if pal.current then held[pal.current] = true end
+    end
+
     trace.at("camp: count_work_objects")
-    local objects = count_work_objects(camp)
+    local objects = count_work_objects(camp, held)
     trace.done()
 
     trace.at("camp: plan_fences")

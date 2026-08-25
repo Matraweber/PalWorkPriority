@@ -16,7 +16,6 @@ The world is a copy of the singleplayer save; the original is never written.
 import glob
 import io
 import os
-import re
 import shutil
 import subprocess
 import sys

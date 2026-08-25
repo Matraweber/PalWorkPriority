@@ -643,36 +643,6 @@ end
 -- The answer is a boolean and booleans are safe to keep, unlike the texture it
 -- came from. Once true it stays true: an icon that has loaded does not unload
 -- while the panel is open, and a world change clears this with everything else.
-local ready_ids = {}
-
--- Icons whose lookup came back empty, and the beat it was asked on.
---
--- Only the positive answer was remembered. A "no" fell through to M.get ->
--- find -> StaticFindObject, measured at about 10ms, once per tile per frame -
--- and an item that is named but not yet loaded answers no for as long as it
--- takes to load. Eighteen rows at ten frames a second is the whole budget
--- spent asking a question that cannot change within a second.
-local not_ready = {}
-local NOT_READY_S = 1.0
-
-function M.ready(item_id)
-    if type(item_id) ~= "string" or item_id == "" then return false end
-    if ready_ids[item_id] then return true end
-
-    -- A "no" is only ever "not yet", so it expires rather than sticking.
-    local asked = not_ready[item_id]
-    local now = os.clock()
-    if asked and (now - asked) < NOT_READY_S then return false end
-
-    if M.get(item_id) ~= nil then
-        ready_ids[item_id] = true
-        not_ready[item_id] = nil
-        return true
-    end
-
-    not_ready[item_id] = now
-    return false
-end
 
 function M.get(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
@@ -1048,8 +1018,6 @@ end
 -- A world switch invalidates nothing held here, since nothing is held, but
 -- what is loaded changes and so does what is worth waiting for.
 function M.reset()
-    ready_ids = {}
-    not_ready = {}
     resolved, requested, waited = {}, {}, {}
     retried, alternates, idle_waits = {}, {}, {}
     arrived = {}

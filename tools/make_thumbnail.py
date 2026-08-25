@@ -1,3 +1,4 @@
+import os
 """Build the Workshop thumbnail.
 
 Two constraints drive the layout. It is judged in a Workshop grid at maybe a
@@ -92,5 +93,13 @@ d.text((rx0 + ((rx1 - rx0) - lw) / 2, base_y + 16), "LIMITS",
 tag = font("segoeuib.ttf", 27)
 centre("RANK THE JOBS. CAP THE STOCKPILE.", tag, 448, CYAN)
 
-img.save("C:/Users/matra/Desktop/palworld-priority-mod/thumbnail.png")
+# Written beside this script's repo rather than to an absolute path.
+#
+# It used to save to C:/Users/matra/Desktop/..., which is nobody else's
+# directory and the last developer path left in the tree - an earlier commit
+# removed exactly this class of thing an hour before this file was added.
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   "thumbnail.png")
+img.save(OUT)
+print("wrote " + OUT)
 print("written 512x512")

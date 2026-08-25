@@ -430,7 +430,6 @@ local COLOUR = {
     title  = { R = 1.00, G = 1.00, B = 1.00, A = 1.00 },
     dim    = { R = 0.52, G = 0.57, B = 0.64, A = 1.00 },
     item   = { R = 0.86, G = 0.89, B = 0.95, A = 1.00 },
-    met    = { R = 0.35, G = 0.92, B = 0.48, A = 1.00 },
     unmet  = { R = 1.00, G = 0.70, B = 0.24, A = 1.00 },
     action = { R = 0.42, G = 0.80, B = 1.00, A = 1.00 },
     hover  = { R = 0.60, G = 1.00, B = 1.00, A = 1.00 },
@@ -584,7 +583,6 @@ local INVISIBLE = { R = 0.0, G = 0.0, B = 0.0, A = 0.0 }
 -- where a row stripe happened to be behind it and its boundary against that
 -- stripe measured 1.48:1, under the 3:1 a UI boundary needs to be seen.
 local FIELD_WELL = { R = 0.012, G = 0.020, B = 0.030, A = 1.00 }
-local TAB_BAR   = { R = 0.020, G = 0.030, B = 0.048, A = 1.00 }
 local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 
 -- Text fields.
@@ -615,9 +613,7 @@ local CLEAR     = { R = 0.00, G = 0.00, B = 0.00, A = 0.00 }
 -- different text colours, neither of them settable from here.
 --
 -- So they no longer share a colour. This one is dark and matches the panel.
-local FIELD_BG    = { R = 0.055, G = 0.075, B = 0.100, A = 1.00 }
 local CEILING_BG  = { R = 0.82,  G = 0.85,  B = 0.89,  A = 1.00 }
-local FIELD_HINT  = { R = 0.38, G = 0.42, B = 0.48, A = 1.00 }
 
 
 -- Registers a row as clickable and, in the same breath, as reachable by the
@@ -649,11 +645,6 @@ local function alive(o)
     return ok and res == true
 end
 
-local function class_name(o)
-    local n
-    pcall(function() n = o:GetClass():GetFName():ToString() end)
-    return n
-end
 
 local function make_ftext(str)
     if ftext_mode == "direct" or ftext_mode == nil then
@@ -4285,7 +4276,6 @@ function M.command(cfg, args)
     if verb == "geom" then
         local parts = overlay.parts
         log.say("  overlay.width: " .. tostring(overlay.width))
-        log.say("  RB.pad: " .. tostring(RB.pad))
         log.say("  parts: " .. tostring(parts ~= nil))
         if parts then
             local bs, rs = "?", "?"
