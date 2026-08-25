@@ -3094,7 +3094,7 @@ local function draw_list(cfg, totals)
     -- job" and "< Back" were the same bar in the same tone with the same cyan
     -- label: a create, a filter and a navigation, visually indistinguishable.
     hit("new", { kind = "new" })
-    RB.use_row("Foot")
+    if RB.use_row("Foot") then RB.base = -RB.ROW_LIFT end
     stripe("new", 0, PAD, ROW_W, PRIMARY_BG, true)
     tile_face["new"] = stripes["new"]
     -- Glyph and label in fixed slots, so all three action rows start their
@@ -3549,6 +3549,12 @@ local function draw_item_picker(cfg, totals)
     -- flow above them and the search field had to follow, and a widget left
     -- behind does not stay put, it ends up somewhere wrong.
     local footed = RB.use_row("Foot")
+    -- Down by the same lift the list rows get, and for the same reason: the
+    -- shared anchor puts a row's content three pixels above its own top edge,
+    -- so the first footer bar was drawn INTO the grid above it. Measured, the
+    -- last tile ended at 599 and this bar began at 600 - the two touched. The
+    -- other chrome rows compensate with their own drops; this one had none.
+    if footed then RB.base = -RB.ROW_LIFT end
     local r_all = footed and 0 or row
     local r_back = footed and 1 or (row + 1)
 
