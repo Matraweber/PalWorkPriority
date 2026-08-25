@@ -3330,9 +3330,23 @@ local function producible(id)
     -- while this asks the game, and the 88 ids it catches are debug weapons,
     -- NPC-only gear and _Tmp leftovers.
     --
-    -- Guarded, because items is not hot swapped and a session can be running a
-    -- copy that predates this.
-    if items.named and not items.named(id) then return false end
+    -- Tested HERE rather than delegated to items.named, deliberately.
+    --
+    -- items is not in reload.lua's swap list, so a session keeps whatever copy
+    -- it loaded at startup. Delegating meant the guard found no items.named,
+    -- skipped silently, and the filter did nothing at all until the next
+    -- restart - which is exactly what happened. real_name has been in the
+    -- loaded module since the last restart, so asking it directly and judging
+    -- the answer here works now instead of eventually.
+    --
+    -- A missing localization resolves to the culture code plus "Text" - "en
+    -- Text", or "de Text" on a German client - so it is matched by shape. The
+    -- 88 ids that answer this way are debug weapons, NPC-only gear and _Tmp
+    -- leftovers, none of which a player can ever hold.
+    if items.real_name then
+        local real = items.real_name(id)
+        if real == nil or real:match("^%a[%a%-]* Text$") then return false end
+    end
     -- An id the icon loader has exhausted every route for is not an item the
     -- game itself believes in. See icons.gave_up.
     if icons.gave_up and icons.gave_up(id) then return false end
