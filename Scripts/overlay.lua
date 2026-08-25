@@ -725,7 +725,7 @@ end
 
 M.pawn_held = false
 
-local function suppress_pawn(on)
+local function suppress_pawn(on, force)
     on = (on == true)
 
     -- Once per state change, never once per call.
@@ -743,7 +743,16 @@ local function suppress_pawn(on)
     -- Latent rather than active so far, because reassert_input has a guard
     -- that fires rarely. It is the same shape as the bug that cost this
     -- morning, so it goes now rather than when it finally bites.
-    if M.pawn_held == on then return true end
+    --
+    -- `force` exists because the two escape hatches must not be silenced by
+    -- this. release_pawn and force_release are for the case where these flags
+    -- have ALREADY disagreed with the game, and M.pawn_held is the likeliest
+    -- one to be wrong: a close that runs while the controller is momentarily
+    -- unresolvable returns early, leaving the flag true and the game
+    -- suppressed, and a module swap then resets the flag to false while the
+    -- game still holds the count. Both hatches were returning their success
+    -- strings and doing nothing.
+    if M.pawn_held == on and not force then return true end
 
     local pc = api.player_controller()
     if not alive(pc) then return false end
@@ -816,7 +825,7 @@ end
 -- Reachable from outside, because the one thing worse than a panel that will
 -- not open is a character that will not walk. force_release calls it too.
 function M.release_pawn()
-    suppress_pawn(false)
+    suppress_pawn(false, true)
     return "pawn input restored"
 end
 
@@ -923,10 +932,17 @@ local function set_input_now(on)
             pcall(function() lib:SetFocusToGameViewport() end)
         end
 
-        -- Cleared here, not only in reset. This is the flag the watchdog reads
-        -- to tell "we applied a UI route and never took it back" apart from
-        -- "the game is showing its own menu", and it is only true of the first.
-        input_route = nil
+        -- Cleared only when the route was actually given back.
+        --
+        -- This was unconditional, which quietly disarmed the one safety net
+        -- covering the case it sits next to: when the game has its own UI up
+        -- the three restores above are skipped ON PURPOSE, so the route is
+        -- still ours - and clearing the flag told watch_input there was
+        -- nothing to watch. The net was switched off exactly where it was
+        -- needed.
+        if api.game_ui_active ~= true then
+            input_route = nil
+        end
         return
     end
 
@@ -1069,8 +1085,9 @@ function M.force_release()
     pcall(function() pc:EnableInput(pc) end)
 
     -- And the pawn. A player who cannot walk is worse off than one who cannot
-    -- click, so unstick has to cover this too.
-    pcall(function() suppress_pawn(false) end)
+    -- click, so unstick has to cover this too. Forced, for the same reason
+    -- this whole function is not conditional on M.open.
+    pcall(function() suppress_pawn(false, true) end)
 
     -- The widget too: a collapsed widget still holding keyboard focus is the
     -- other way input goes nowhere.

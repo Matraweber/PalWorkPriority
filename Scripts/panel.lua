@@ -3779,6 +3779,8 @@ function M.pad_tick()
             tab_prev = function() M.tab_step(cfg, -1) end,
             tab_next = function() M.tab_step(cfg, 1) end,
             remove   = function() M.row_action(cfg, "drop") end,
+            page_prev = function() M.page_step(cfg, -1) end,
+            page_next = function() M.page_step(cfg, 1) end,
         })
     end)
 end
@@ -3921,14 +3923,28 @@ function M.refresh(cfg)
     --
     -- Compared against what it was when the panel opened, so opening the panel
     -- from inside a menu does not slam it shut again on the next beat.
-    if M.open then
-        if api.game_ui_active == true and RB.game_ui_at_open ~= true then
-            log.debug("panel: the game opened its own UI, stepping aside")
-            pcall(function() M.toggle() end)
-            return
-        end
-    else
-        RB.game_ui_at_open = api.game_ui_active
+    -- On the RISING EDGE of the game's UI, not against a snapshot.
+    --
+    -- The snapshot was taken in the closed branch, and ui_tick runs this at
+    -- 1000ms while the panel is shut rather than 100ms, so it could be a full
+    -- second stale. Close your inventory, open the panel inside that second,
+    -- and the snapshot still says true - which switched the auto-close off for
+    -- that entire panel session. Open the inventory over the panel after that
+    -- and it does not step aside, while DisableInput is in force, so nothing
+    -- in the inventory is clickable. That is precisely the state the design
+    -- claims cannot exist.
+    --
+    -- An edge needs no snapshot and no freshness. It fires when the game's
+    -- answer CHANGES from false to true, which is the actual event, and it is
+    -- immune to whatever the value happened to be when the panel opened.
+    local game_ui = (api.game_ui_active == true)
+    local rose = game_ui and RB.game_ui_prev == false
+    RB.game_ui_prev = game_ui
+
+    if M.open and rose then
+        log.debug("panel: the game opened its own UI, stepping aside")
+        pcall(function() M.toggle() end)
+        return
     end
 
     -- The pad, driving the same verbs the arrow keys drive.
@@ -4380,6 +4396,29 @@ function M.row_action(cfg, kind)
             if what and what.kind == kind then
                 return M.apply(cfg, what, -1)
             end
+        end
+    end
+    return false
+end
+
+-- Turn a page, wherever the current screen keeps its pager.
+--
+-- The picker registers "page" and the rules list registers "rpage", both
+-- carrying the direction as `by`. Asking for a direction rather than a key
+-- means this works on either screen without knowing which is up, and does
+-- nothing on a screen with no pager, which is the right answer there.
+--
+-- Reachable by walking the selection down past the grid, in principle. Not in
+-- practice: on a page of forty tiles that is a long hold towards a control
+-- nobody knows is there. The triggers are where a pad expects paging.
+function M.page_step(cfg, by)
+    if not M.open then return false end
+
+    for i = 1, #order do
+        local what = hits[order[i]]
+        if what and (what.kind == "page" or what.kind == "rpage")
+            and what.by == by then
+            return M.apply(cfg, what, -1)
         end
     end
     return false

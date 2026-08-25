@@ -28,7 +28,7 @@
 local M = {}
 
 -- Bumped by hand when this file changes, so a report says which copy ran.
-M.VERSION = 13
+M.VERSION = 15
 
 local api = require("palapi")
 local log = require("log")
@@ -214,6 +214,17 @@ local TAPS = {
     { "Gamepad_LeftShoulder",      "tab_prev" },
     { "Gamepad_RightShoulder",     "tab_next" },
     { "Gamepad_FaceButton_Left",   "remove" },
+
+    -- Paging, where a pad expects it. The alternative was walking the
+    -- selection down past a grid of forty tiles to reach a pager nobody knows
+    -- is there.
+    --
+    -- LeftTrigger is FreeCam's modifier and FullSphereSummon's cancel-aim.
+    -- Neither can fire from it alone: FreeCam needs it held WITH
+    -- Special_Right, and cancel-aim only means anything while aiming, which
+    -- cannot be happening with this panel up.
+    { "Gamepad_LeftTrigger",       "page_prev" },
+    { "Gamepad_RightTrigger",      "page_next" },
 }
 
 -- Held down means repeat, at a menu's pace rather than a poll's.
@@ -327,6 +338,21 @@ function M.open_asked()
 
     local fired = all and not chord_was
     chord_was = all
+
+    if fired then
+        -- Mark the chord's buttons as already held.
+        --
+        -- RightShoulder is half of this chord AND tab_next. The panel calls
+        -- forget() before this, so without seeding, the shoulder the player is
+        -- still holding reads as a brand new press on the very next tick and
+        -- the panel opens on the wrong tab. It survives today only because the
+        -- opening beat happens to find an empty hits table, which is luck
+        -- rather than design and would break the moment the draw order shifts.
+        for _, name in ipairs(M.OPEN_CHORD) do
+            held[name] = 1
+        end
+    end
+
     return fired
 end
 

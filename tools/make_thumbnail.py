@@ -82,16 +82,37 @@ fill_top = top + 40
 d.rectangle([rx0 + 5, fill_top + 7, rx1 - 5, bot - 4], fill=(61, 140, 220))
 d.rectangle([rx0 + 3, fill_top, rx1 - 3, fill_top + 5], fill=(255, 68, 68))
 
-label = font("segoeuib.ttf", 21)
-lw = d.textbbox((0, 0), "PRIORITIES", font=label)[2]
-d.text((lx + (5 * bw + 4 * gap - lw) / 2, base_y + 16), "PRIORITIES",
-       font=label, fill=DIM)
-lw = d.textbbox((0, 0), "LIMITS", font=label)[2]
-d.text((rx0 + ((rx1 - rx0) - lw) / 2, base_y + 16), "LIMITS",
-       font=label, fill=DIM)
+# Numerals under the bars, in the bars' own colours.
+#
+# This is the mod's actual scale - 1 green through 5 grey - so the thumbnail
+# teaches the thing the panel then uses, and a reader who has seen it once
+# recognises the row of numbers on the Monitoring Stand.
+#
+# They replace the words PRIORITIES and LIMITS, which were 21pt on a 512
+# square. Steam draws this at well under half that in a browse grid, where
+# 21pt becomes about eight pixels and turns to mush. Shapes and numerals
+# survive that scale; small words do not, and the tagline underneath already
+# says which half is which.
+num = font("seguibl.ttf", 24)
+for i, col in enumerate(BARS):
+    x = lx + i * (bw + gap)
+    ch = str(i + 1)
+    cw = d.textbbox((0, 0), ch, font=num)[2]
+    d.text((x + (bw - cw) / 2, base_y + 12), ch, font=num, fill=col)
 
-tag = font("segoeuib.ttf", 27)
-centre("RANK THE JOBS. CAP THE STOCKPILE.", tag, 448, CYAN)
+# A red lid on the stockpile, echoed as the one number that is not a rank:
+# the limit. Same weight as the numerals opposite so the two symbols read as
+# a pair rather than as a chart beside a diagram.
+cap = font("seguibl.ttf", 24)
+cw = d.textbbox((0, 0), "MAX", font=cap)[2]
+d.text((rx0 + ((rx1 - rx0) - cw) / 2, base_y + 12), "MAX",
+       font=cap, fill=(232, 86, 86))
+
+# 25pt, not 27. At 27 the line ran to within 22 pixels of both edges, which
+# reads as crowded at full size and as edge-to-edge noise once Steam scales it
+# down. This leaves a margin the eye can find the block against.
+tag = font("segoeuib.ttf", 25)
+centre("RANK THE JOBS. CAP THE STOCKPILE.", tag, 452, CYAN)
 
 # Written beside this script's repo rather than to an absolute path.
 #
