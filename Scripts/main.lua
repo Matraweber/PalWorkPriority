@@ -667,6 +667,42 @@ COMMANDS.pad = function(args)
     log.say("use: pad probe | pad watch | pad watch off")
 end
 
+-- Does the game answer when asked what an item is called?
+--
+-- Measured before it is wired into anything that draws. The picker renders 27
+-- tiles a page, so per-name cost matters only if it is wild; what actually
+-- decides the design is whether resolving all 2466 at load is a hitch or a
+-- shrug, and that is what the timing below is for.
+COMMANDS.names = function(args)
+    local n = tonumber(args) or 14
+    items.load()
+
+    if not items.real_name then
+        log.say("this build has no name resolver, restart to pick it up")
+        return
+    end
+
+    local ids = items.ids or {}
+    local t0 = os.clock()
+    local shown = 0
+
+    for i = 1, #ids do
+        local id = ids[i]
+        local real = items.real_name(id)
+        if shown < n then
+            shown = shown + 1
+            log.say(string.format("  %-30s %s", id,
+                real or "(no name, would fall back)"))
+        end
+    end
+
+    local ms = (os.clock() - t0) * 1000
+    log.say(string.format(
+        "resolved %d, unnamed %d, of %d ids in %.0fms (%.2fms each)",
+        items.resolved, items.unresolved, #ids, ms,
+        #ids > 0 and (ms / #ids) or 0))
+end
+
 COMMANDS.click = function(args)
     local kind, rest = (args or ""):match("^%s*(%S+)%s*(.*)$")
     if kind == nil then

@@ -132,6 +132,76 @@ end
 -- Substring match, case insensitive, capped so a single letter cannot try to
 -- draw two thousand rows. Exact and prefix matches come first: typing "wood"
 -- should offer Wood before Wood_Refined.
+-- The name the GAME gives an item, or nil.
+--
+-- The transform below can only rearrange the internal id, and a third of these
+-- ids are outright renames with no lexical overlap at all: CopperOre is "Ore",
+-- IronIngot is "Refined Ingot", MachineParts is "Nail", Pal_crystal_S is
+-- "Paldium Fragment". No amount of splitting camel case reaches those.
+--
+-- PalUIUtility.GetItemName takes an item id and returns the localized display
+-- name, in whichever of the game's sixteen languages is active. It is
+-- reflected - it appears in this mod's own ForEachFunction dump, and that
+-- enumeration only sees reflected UFunctions - with the signature
+--
+--   GetItemName(ObjectProperty WorldContextObject,
+--               NameProperty StaticItemId,
+--               TextProperty outName)
+--
+-- THE ARGUMENT MUST BE FName(id), NEVER THE BARE STRING. UE4SS's
+-- push_nameproperty calls get_userdata<FName> with no type check, so a Lua
+-- string makes it dereference null, and that is an access violation pcall
+-- cannot catch. It is upstream issue #1360 and it is still open. This is the
+-- single most dangerous line in the file.
+--
+-- The FText is converted to a string immediately and the wrapper is never
+-- kept, which is the rule BetterSearch and PalBaseInfoGrid both follow. An
+-- empty result counts as a miss rather than as a name: reading FText off a
+-- property is documented to return "" sometimes, and cut content genuinely
+-- has no name.
+local name_memo = {}
+
+M.resolved, M.unresolved = 0, 0
+
+function M.real_name(id)
+    local hit = name_memo[id]
+    if hit ~= nil then
+        if hit == false then return nil end
+        return hit
+    end
+
+    local got
+    pcall(function()
+        local util = api.cdo("/Script/Pal.Default__PalUIUtility")
+        if not util then return end
+
+        -- Any live world context does; the controller is the one this mod
+        -- already resolves, and it is used within this call and not kept.
+        local pc = api.player_controller()
+        if not pc then return end
+
+        local box = {}
+        util:GetItemName(pc, FName(id), box)
+
+        -- The out-param's casing is not consistent across UE4SS builds, so
+        -- both spellings are tried rather than assumed.
+        local ft = box.outName or box.OutName
+        if ft == nil then return end
+
+        local text
+        pcall(function() text = ft:ToString() end)
+        if type(text) ~= "string" then return end
+
+        text = text:match("^%s*(.-)%s*$") or ""
+        if text ~= "" then got = text end
+    end)
+
+    name_memo[id] = got or false
+    if got then M.resolved = M.resolved + 1
+    else M.unresolved = M.unresolved + 1 end
+    return got
+end
+
 -- What the panel draws for an id, and the only definition of it.
 --
 -- Lives here rather than in panel.lua because the search index has to be built
