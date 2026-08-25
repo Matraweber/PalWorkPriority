@@ -890,6 +890,19 @@ function M.bench()
     end
     local walk = (os.clock() - t1) * 1000
 
+    -- The walk the sweep ACTUALLY pays. The GetFullName loop above is what
+    -- look_around used to do and no longer does, so on its own it measures a
+    -- call this mod stopped making - which matters when the number is being
+    -- used to judge a UE4SS setting.
+    local t3 = os.clock()
+    local fnamed = 0
+    for _, tex in ipairs(all) do
+        local leaf
+        pcall(function() leaf = tex:GetFName():ToString() end)
+        if type(leaf) == "string" then fnamed = fnamed + 1 end
+    end
+    local fwalk = (os.clock() - t3) * 1000
+
     -- The other half of the comparison, which had never actually been run:
     -- the note in this file says StaticFindObject averages 9.4ms and gets
     -- asked once per tile, but "finds: 0" says it was never asked at all
@@ -918,7 +931,9 @@ function M.bench()
     log.say(string.format("  FindAllOf sweep:         %.1fms", sweep))
     log.say(string.format("  reading every name:      %.1fms  (%d named, %d item icons)",
         walk, named, icons_seen))
-    log.say(string.format("  one sweep, all in:       %.1fms", sweep + walk))
+    log.say(string.format("  GetFName:ToString walk:  %.1fms  (%d named)",
+        fwalk, fnamed))
+    log.say(string.format("  one sweep, all in:       %.1fms", sweep + fwalk))
     log.say(string.format("  StaticFindObject so far: %d finds, %.2fms average, %.0fms total",
         M.finds or 0, (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0,
         M.find_ms or 0))
