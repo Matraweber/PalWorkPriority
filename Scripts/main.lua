@@ -454,9 +454,9 @@ COMMANDS.help = function()
     log.say("  " .. p .. " on / off  enable or disable")
     log.say("  " .. p .. " reload    re-read config.lua")
     log.say("  " .. p .. " mode      spread <-> fill")
-    log.say("  " .. p .. " cap       cycle max pals per work type")
+    log.say("  " .. p .. " cap       how many pals may share one work type")
     log.say("  " .. p .. " stock     print base storage by item id")
-    log.say("  " .. p .. " limit     set a stock ceiling for a work type")
+    log.say("  " .. p .. " limit     how much of an item a base stockpiles")
     log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
     log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
@@ -466,12 +466,13 @@ COMMANDS.help = function()
             "this guild's")
     log.say("  " .. p .. " restore   give every pal its work back, unfence")
     log.say("keys, all on Alt, because Ctrl is crouch:")
-    log.say("  Alt+F1 work rules        Alt+F2 run a pass")
+    log.say("  Alt+F1 Production Limits Alt+F2 run a pass")
     log.say("  Alt+F3 base storage      Alt+F5 Discovery.txt")
     log.say("  Alt+F9 transport test")
     log.say("keys that change a setting:")
     log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
-    log.say("in the rules panel: up and down move, right raises, left lowers")
+    log.say("in the panel: up and down move, right and left change the " ..
+        "ceiling, Esc or Alt+F1 closes it")
 end
 
 COMMANDS.status = function()
@@ -545,7 +546,29 @@ COMMANDS.mode = function()
 end
 
 -- off -> 1 -> 2 -> 3 -> 4 -> off
-COMMANDS.cap = function()
+-- Takes nothing, and says so rather than ignoring what it was given.
+--
+-- This cycles how many pals may share one work type. The other feature - a
+-- ceiling on how much of an item a base stockpiles - is "!pwp limit", but it
+-- is called caps everywhere else in the mod: caps.lua, caps.txt, work_caps in
+-- config.lua. So "!pwp cap Lumbering Wood 5000" is a reasonable thing for
+-- somebody to type after reading any of those, and it used to discard all
+-- three arguments, silently cycle a completely different setting, and re-fence
+-- every base in the guild. The only sign was a log line nobody is watching.
+--
+-- Renaming the ceiling feature to match the command is the real fix and is a
+-- bigger change than this - caps.txt has to be read under both names for a
+-- release or two. Refusing to guess is the part worth having now.
+COMMANDS.cap = function(args)
+    if type(args) == "string" and args:match("%S") then
+        log.say("'" .. cfg.chat_prefix .. " cap' takes no arguments: it " ..
+            "cycles how many pals may share one work type, and it is " ..
+            "currently " .. tostring(cfg.max_pals_per_work_type or "no limit"))
+        log.say("to cap how much of an item a base stockpiles, that is '" ..
+            cfg.chat_prefix .. " limit " .. args .. "'")
+        return
+    end
+
     local current = tonumber(cfg.max_pals_per_work_type)
     local next_cap
     if current == nil then

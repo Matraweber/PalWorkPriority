@@ -338,6 +338,41 @@ If no container answers at all, totals read as zero and work keeps running. Over
 is a far milder failure than suspending a work type because a container did not reply. Storage
 is only read when at least one ceiling exists, in `caps.txt` or in `config.lua`.
 
+## The Production Limits panel
+
+`Alt+F1` opens it, `Alt+F1` or `Esc` closes it. It is the only part of the mod you can reach
+without a chat box, which matters in single player, where there is no chat box at all.
+
+The name is worth getting right because the mod has two features that sound alike. This panel
+sets **production limits**: how much of an item a base stockpiles before the job that makes it
+stops. It does not set work priorities. Those live on the Monitoring Stand, described in the next
+section, and are a different screen with a different control.
+
+**RULES** lists the limits in force:
+
+| column | what it is |
+| --- | --- |
+| JOB | the work type the limit suspends |
+| ITEM | what is being counted |
+| IN STORAGE | how much the base holds now, amber once it is at or over the limit |
+| LIMIT | the ceiling, click it to type one or use the arrow keys to step it |
+| STATUS | `Working`, or `Stopped at 2` meaning the job is suspended and two Pals were freed |
+
+`Remove` deletes a rule. `+ Add a rule` opens the other tab.
+
+**ADD** is a picker of everything the base is holding, largest first, with a search box. Click an
+item to create a limit for it. Items that already have one are marked `LIMIT SET` and clicking
+them takes you to the rule instead. `Show every item with a job` widens the list from what you
+are holding to every item a Pal could produce, which is how you set a limit on something the base
+has not made yet.
+
+Changes take effect on the next pass, and the panel triggers one when you make one, so a rule you
+set is usually in force before you have closed the window.
+
+On a multiplayer server the rules belong to the guild, and the panel shows and edits only your
+own. A client's edits are sent to the server, which decides; the panel says "asked the server to"
+rather than claiming a change it cannot confirm.
+
 ## The Monitoring Stand display
 
 Everything the mod decides is shown on the vanilla work-suitability screen, read-only:
@@ -440,7 +475,8 @@ binds Alt to nothing at all, which makes it the only modifier that is free to ho
 
 | key | does |
 | --- | --- |
-| `Alt+F1` | open and close the work rules panel |
+| `Alt+F1` | open and close the Production Limits panel |
+| `Esc` | close the panel, if it is open |
 | arrows, `Enter` | move around the panel and confirm, while it is open |
 | `Alt+F2` | run a pass now |
 | `Alt+F3` | print base storage |
@@ -456,9 +492,28 @@ and PalBaseInfoGrid, and `Alt+F8` is FreeCam's. All of that was checked with
 collisions do not survive a grep.
 
 Not everything has one. `!pwp dry`, `!pwp live`, `!pwp on`, `!pwp off`, `!pwp reload` and
-`!pwp restore` are chat only, and a single player save has no chat box, so on one they cannot be
-reached at all. That matters most for dry run: if you set `dry_run = true` in `config.lua` there
-is no way back from inside the game, so edit the file again and restart.
+`!pwp restore` have no key, and a single player save has no chat box either.
+
+`remote.txt` is the way in. It sits next to `priority.log` in the mod folder, is read once a
+second, and every line after the first is an instruction:
+
+    17                   any number, changed each time, so rewriting the same instruction counts
+    pwp restore          any chat command, exactly as you would type it
+    open                 open the panel, or close
+    mode item            which screen the panel shows, item or list
+    reload               swap panel, overlay and icons without a restart
+    cmd shot showui      run a console command, this one takes a screenshot
+
+The first line is a nonce: the file is acted on when its contents change, so bumping that number
+is how you run the same instruction twice. `python tools/remote.py "pwp restore"` writes it for
+you and prints whatever the mod said back.
+
+This exists because the panel takes the input mode while it is open, so UE4SS never sees a key
+press - which is exactly when you most want to tell the mod something. A file can be written at
+any moment from outside the game.
+
+It matters most for dry run: with `dry_run = true` in `config.lua` there is no key and no chat,
+so `remote.txt` is the only way back without editing the file and restarting.
 
 `!pwp discover` *calls* into live Pals, which only the machine running the world can do safely -
 on a client those are replicated proxies and `GetWorkSuitabilityRank` on one takes the game down
