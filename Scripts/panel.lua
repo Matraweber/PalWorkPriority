@@ -4392,6 +4392,13 @@ function M.command(cfg, args)
     -- `icons` does, and is guarded the same way: this module reloads, and a
     -- reload into a session whose overlay predates input_report would take the
     -- command down rather than answer it.
+    -- The way out when the panel has left the game in UI input mode.
+    if verb == "unstick" then
+        if not overlay.force_release then return "this build cannot do that" end
+        M.open = false
+        return overlay.force_release()
+    end
+
     if verb == "input" then
         if not overlay.input_report then return "this build cannot report that" end
         return overlay.input_report()

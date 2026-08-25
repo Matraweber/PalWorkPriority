@@ -245,6 +245,36 @@ local function collect_parts(made)
     return parts, found
 end
 
+-- Every panel widget off the viewport, however many there are.
+--
+-- Each build adds one at ZOrder 9000 and only build_blueprint removed the
+-- previous one, by name, one at a time. A session that reloads often - which
+-- this mod is built for, and which host() re-asking for the blueprint made
+-- more frequent - accumulates them, and any one left parented sits over the
+-- game taking hit tests.
+--
+-- Objects come from FindAllOf inside this call and none is kept.
+local function sweep_panels(keep_name)
+    local n = 0
+    pcall(function()
+        for _, w in ipairs(FindAllOf("UserWidget") or {}) do
+            if alive(w) then
+                local full
+                pcall(function() full = w:GetFullName() end)
+                if type(full) == "string"
+                    and full:find("WBP_WorkRules", 1, true)
+                    and full ~= keep_name
+                then
+                    pcall(function() w:SetVisibility(1) end)
+                    pcall(function() w:RemoveFromParent() end)
+                    n = n + 1
+                end
+            end
+        end
+    end)
+    return n
+end
+
 -- Construct the blueprint widget and take its parts.
 --
 -- Create rather than StaticConstructObject, because a UserWidget wants
@@ -290,14 +320,7 @@ local function build_blueprint(class)
     local mine
     pcall(function() mine = made:GetFullName() end)
     pcall(function()
-        for _, other in ipairs(FindAllOf("UserWidget") or {}) do
-            local n
-            pcall(function() n = other:GetFullName() end)
-            if type(n) == "string" and n ~= mine
-                and n:find("WBP_WorkRules", 1, true) then
-                pcall(function() other:RemoveFromParent() end)
-            end
-        end
+        sweep_panels(mine)
     end)
 
     local made_tree
@@ -694,6 +717,21 @@ local function set_input_now(on)
     if not on then
         -- Two parameters, not one. The second is bFlushInput.
         pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+
+        -- And the focus, which the input mode does not carry.
+        --
+        -- show_now calls SetKeyboardFocus on the panel widget, and
+        -- build_blueprint does the same when it replaces a widget while the
+        -- panel is open. Nothing gave that focus back. SetInputMode_GameOnly
+        -- changes the MODE; Slate goes on routing keys and clicks to whatever
+        -- last held focus, so a widget that is then collapsed - which closing
+        -- the panel does - keeps it, and every menu the game draws afterwards
+        -- is unclickable. Escape still works, because that is a raw key, which
+        -- is exactly what makes it look like the game rather than the mod.
+        --
+        -- Taking focus is fine. Not handing it back was the bug, so it is
+        -- handed back here, on the one path every close goes through.
+        pcall(function() lib:SetFocusToGameViewport() end)
         return
     end
 
@@ -769,8 +807,75 @@ function M.fit_width()
     if ok then fitted = M.width end
 end
 
+
 function M.release_input()
     return set_input_now(false)
+end
+
+-- Put the game back whatever this module thinks it did.
+--
+-- set_input_now(false) restores the cursor only "elseif cursor_was ~= nil", so
+-- once that record is lost the cursor stays forced on and nothing here will
+-- ever put it back. The input mode is separately handed to SetInputMode_GameOnly,
+-- which does not care what we remembered - so the two halves can disagree, and
+-- the half that strands a player is the cursor.
+--
+-- This asks for neither and asserts both: cursor off, game-only input, records
+-- cleared. It is what "!pwp panel unstick" runs, and it is deliberately not
+-- conditional on M.open, because the state it exists to fix is one where those
+-- flags already disagree with the game.
+function M.force_release()
+    local pc = api.player_controller()
+    if not alive(pc) then return "no player controller" end
+
+    pcall(function() pc.bShowMouseCursor = false end)
+
+    local lib = api.cdo("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if lib then
+        pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+        -- Focus back to the viewport, explicitly.
+        --
+        -- This is the half that strands a session. show_now calls
+        -- SetKeyboardFocus on the panel widget, and build_blueprint does too
+        -- when it replaces a widget while the panel is open. Setting the input
+        -- mode does not hand that focus back, so a widget that is then
+        -- collapsed or taken off the viewport keeps it - and Slate goes on
+        -- routing to a target that draws nothing. Escape still works because
+        -- it is a raw key; every click and every menu does not.
+        pcall(function() lib:SetFocusToGameViewport() end)
+    end
+
+    -- The widget too: a collapsed widget still holding keyboard focus is the
+    -- other way input goes nowhere.
+    if alive(widget) then
+        pcall(function() widget:SetVisibility(1) end)
+    end
+
+    -- Every WBP_WorkRules in memory off the viewport, not just the one this
+    -- module currently holds.
+    --
+    -- build_blueprint already does this for the instance it is replacing, and
+    -- the reason is written there: every build adds one at ZOrder 9000 and
+    -- nothing removes it. A session that has reloaded twenty times has had
+    -- twenty of them built. Any one still parented and visible sits over the
+    -- game at ZOrder 9000 taking hit tests, which is a pause menu that draws
+    -- and cannot be clicked - and it survives every input mode change, because
+    -- the input mode is not what is eating the click.
+    --
+    -- Objects come from FindAllOf inside this call and none is kept.
+    local swept = sweep_panels()
+
+    widget, tree, canvas = nil, nil, nil
+    M.parts = nil
+    fitted = nil
+    built_under = nil
+    if bp_state == "hosted" then bp_state = "unasked" end
+
+    cursor_was, input_route = nil, nil
+    M.open = false
+    return string.format(
+        "input forced back to the game, %d panel widget(s) taken off the "
+        .. "viewport", swept)
 end
 
 -- Three early returns, so the mark is owned by a wrapper here too.
@@ -849,6 +954,21 @@ end
 
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
+    -- Put the game back BEFORE forgetting how.
+    --
+    -- This used to clear cursor_was and input_route and set M.open = false
+    -- without releasing anything, and reload.lua calls it on every swap. So a
+    -- reload with the panel open left the game in UI-only input with the
+    -- cursor forced on, and threw away the record needed to undo either -
+    -- set_input_now(false) restores the cursor only "elseif cursor_was ~= nil".
+    -- After that no amount of opening and closing the panel could fix it,
+    -- which is exactly how it presented: a session that worked after a restart
+    -- and degraded as reloads accumulated.
+    --
+    -- Order matters. Release first, sweep second, forget last.
+    pcall(function() set_input_now(false) end)
+    pcall(sweep_panels)
+
     widget, tree, canvas = nil, nil, nil
     M.parts = nil
     fitted = nil
