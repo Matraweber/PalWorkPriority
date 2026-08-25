@@ -289,12 +289,8 @@ to print what is in storage, by id, and write the full list to `Stock.txt`.
 
 ### What counts toward a ceiling
 
-Every container on the base, chests and stations alike, minus the exceptions in
-`uncounted_containers`:
-
-    PalMapObjectPalFoodBoxModel         food set aside for pals to eat
-    PalMapObjectDropItemModel           dropped on the ground
-    PalMapObjectPickupItemOnLevelModel  lying about waiting to be collected
+Every container on the base, chests and stations alike. `uncounted_containers` ships empty, so
+nothing is excluded by default, including the feed box.
 
 This started as a list of classes to *include* and that was the wrong way round. Palworld has
 far more station types than any hand written list will name, and each one missed is a ceiling
@@ -302,9 +298,27 @@ quietly overshooting by whatever that station holds. A Logging Site sitting on 2
 one that showed it. Counting everything and naming the exceptions means a station type this mod
 has never heard of still counts.
 
-The feed box is the deliberate exception. That food exists to be eaten, so counting it would
-stop a ranch that is only keeping pace with what the Pals get through. Dropped and lying-about
-items are loose world clutter rather than base stock, and one test base carried 54 of them.
+The feed box used to be excluded, on the reasoning that food set aside to be eaten is not stock,
+so counting it would stop a ranch that is only keeping pace with what the Pals get through. What
+that produced was a lie on the screen: a base holding 20,454 Berries in its feed box, against a
+3,000 ceiling, reported `0 in storage` and went on planting, because the only berries it had were
+in the one container the mod refused to look at. A limit that ignores most of what you own is not
+a limit, and "in storage" has to mean in storage.
+
+The ranch case is real, but it is a hysteresis problem rather than a counting one: the box drains
+as the Pals eat and the work resumes when it falls back under the ceiling. If you would rather
+have the old behaviour, name the classes yourself:
+
+```lua
+uncounted_containers = {
+    "PalMapObjectPalFoodBoxModel",         -- food set aside for pals to eat
+    "PalMapObjectDropItemModel",           -- dropped on the ground
+    "PalMapObjectPickupItemOnLevelModel",  -- waiting to be collected
+},
+```
+
+Dropped and lying-about items are loose world clutter rather than base stock, and one test base
+carried 54 of them, so those two are worth excluding if the clutter bothers you.
 
 To go the other way and count only certain classes, set `counted_containers` to a list. That
 overrides `uncounted_containers` entirely:

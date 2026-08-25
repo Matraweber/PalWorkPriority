@@ -79,9 +79,6 @@ return {
     -- rank-3 pal should be doing.
     min_suitability_rank = 1,
 
-    -- The material a ceiling applies to when you set one by clicking the
-    -- stand. Only work types with one obvious output have an answer here.
-    --
     -- Which containers do NOT count as storage for a ceiling.
     --
     -- Everything else on the base does, chests and every station alike, so a
@@ -90,7 +87,8 @@ return {
     -- types than any hand written list will name, and each one missed is a
     -- ceiling quietly overshooting by whatever that station is holding.
     --
-    -- Press F12 to print what every container on your base is holding.
+    -- Press Alt+F3, or run "!pwp stock", to print what every container
+    -- on your base is holding.
     -- Empty: everything on the base counts towards a ceiling.
     --
     -- Three classes used to be excluded, and the reasoning was that a feed box
@@ -149,11 +147,11 @@ return {
     -- your base rather than guessing at spellings.
     --
     -- Every container on the base counts, chests and production stations
-    -- alike, minus the feed box and items lying on the ground - see
-    -- DEFAULT_UNCOUNTED in palapi.lua for the list and why each one is out.
-    -- Your own inventory is not storage. "!pwp stock" prints both what counts
-    -- and what does not, so a ceiling that has not triggered can be told from
-    -- a pile sitting somewhere that was never going to count.
+    -- alike, and so does the feed box - see uncounted_containers above for
+    -- why that changed and how to put the old behaviour back. Your own
+    -- inventory is not storage. "!pwp stock" prints both what counts and what
+    -- does not, so a ceiling that has not triggered can be told from a pile
+    -- sitting somewhere that was never going to count.
     --
     -- A work type with several items listed is suspended only when every
     -- one of them is at or above its ceiling, so mining keeps running while

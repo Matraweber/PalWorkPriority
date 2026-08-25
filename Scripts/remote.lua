@@ -21,11 +21,17 @@
 -- somebody to alt tab and screenshot, and alt tabbing is what stops the game
 -- ticking in the first place.
 --
--- What this deliberately does not do is reload code. An earlier version
--- swapped modules in package.loaded and that is not in here: it was never
--- proved safe, it was blamed twice for faults it did not cause, and the value
--- it added was small next to the confusion it created. This file only ever
--- calls functions that were already running.
+-- Reloading code is reload.lua's job, asked for by the "reload" line above.
+-- It swaps panel, overlay and icons and nothing else, because those three
+-- register no hooks and hold no timers; everything else needs a restart.
+--
+-- This paragraph used to say the opposite - that reloading code was
+-- deliberately not in here - eight lines below listing reload as a supported
+-- instruction and eighty above calling reload.now(). It was true of the
+-- version that swapped modules in package.loaded by itself, which was never
+-- proved safe and was blamed twice for faults it did not cause. What survived
+-- is narrower and asked for explicitly: nothing here reloads unless a line in
+-- remote.txt says to.
 
 local log = require("log")
 local api = require("palapi")

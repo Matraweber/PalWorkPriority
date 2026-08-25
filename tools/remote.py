@@ -10,9 +10,16 @@ Deploys the Lua first, writes the instruction file the mod watches, waits, and
 prints whatever the mod said in reply. A snap also reports the png the game
 wrote, which can then be read directly.
 
-This does not reload code. Changing Lua still needs the game restarted. The
-version that swapped modules while running was never proved safe, was blamed
-twice for faults it did not cause, and is deliberately not here.
+    python tools/remote.py reload
+
+swaps panel, overlay and icons in the running game. Those three register no
+hooks and hold no timers, which is what makes them safe to replace; a change
+to anything else still needs the game restarted.
+
+This docstring used to say the opposite, that reloading was deliberately not
+here. That was true of the version which swapped modules on its own whenever a
+file changed - never proved safe, and blamed twice for faults it did not
+cause. What replaced it only ever reloads because a command asked it to.
 """
 
 import io

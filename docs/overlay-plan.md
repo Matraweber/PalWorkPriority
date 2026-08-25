@@ -35,9 +35,17 @@ folder ships with the kit, so it will not compile until you supply one.
 
 ## Resolved: the widget is built from Lua, not cooked
 
-The overlay does not need a pak. A UserWidget constructed at runtime, given a
-WidgetTree and a CanvasPanel root and added to the viewport, appears on screen
-and is ours. Proven in game, not argued: `Scripts/overlay.lua`, Ctrl+F7.
+**Superseded.** This section argued the overlay needed no pak, and that held
+for as long as the panel drew everything onto one canvas of its own. It does
+not hold for the shell the panel uses now: the chrome sits in named rows that
+come out of the widget, so without the pak `use_row` fails for all seven of
+them and the header collapses onto one line. The runtime canvas is still there
+and still works, as the fallback rather than the answer - see the Requirements
+section of the README.
+
+What the section proved is still true and still worth keeping: a UserWidget
+constructed at runtime, given a WidgetTree and a CanvasPanel root and added to
+the viewport, appears on screen and is ours.
 
 That is the whole of what the blueprint route was for. We own the lifetime, so
 nothing rebuilds it underneath us, which is what caused both crashes. And a

@@ -317,12 +317,6 @@ local function ui_body()
         pcall(function() ui.refresh(cfg) end)
     end
 
-    -- Icons resolved ahead of being drawn, a few per beat.
-    --
-    -- Looking one up costs an engine call, and doing it while a tile is being
-    -- drawn puts that cost on the frame that can least afford it. This gets
-    -- the answers known before anybody opens the picker, and it stands aside
-    -- whenever the loader has real work queued.
     -- Drawn independently: the panel opens on a hotkey and has to keep
     -- working with the stand shut.
     -- The message is kept, not thrown away.

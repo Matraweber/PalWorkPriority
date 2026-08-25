@@ -1449,8 +1449,8 @@ local function pin_from_sweep(found)
     end
 end
 
--- Run from here rather than from a keybind. UE4SS never sees Ctrl+F7 while
--- the panel holds the input mode, which is exactly when these questions
+-- Run from here rather than from a keybind. UE4SS never sees a key press
+-- while the panel holds the input mode, which is exactly when these questions
 -- matter, so the diagnostics fire themselves the first time a tile is drawn.
 local probed = false
 
@@ -3819,7 +3819,7 @@ function M.toggle()
 
     want_first_row = true
 
-    log.say("work rules open, Ctrl+F9 again to close")
+    log.say("Production Limits open, Alt+F1 or Esc to close")
 end
 
 function M.reset()
