@@ -23,7 +23,6 @@ local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
 local store = require("store")
-local caps = require("caps")
 
 local M = {}
 
@@ -51,7 +50,9 @@ local ftext_mode = nil          -- "direct" | "kismet"
 -- Row -> pal identity, captured at bind time. Rows recycle on scroll, so a
 -- rebind overwrites.
 local row_pal = {}              -- row full name -> { key, name, species }
-local bind_hooked = false       -- never reset: the hook survives world switches
+local bind_hooked = false
+-- One line per session when the grid stands down on a client.
+local said_client = false       -- never reset: the hook survives world switches
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -647,6 +648,40 @@ end
 -- ---------------------------------------------------------------------------
 
 function M.refresh(cfg)
+    -- The stand grid is authority-only, and the reason is a crash rather than
+    -- a preference.
+    --
+    -- Binding a row reaches api.suitability_rank, which is
+    -- GetWorkSuitabilityRank on the pal's individual parameter. On a client
+    -- those pals are replicated proxies and that call faults outright - not a
+    -- Lua error, an access violation, so the pcall around it catches nothing
+    -- and the process goes. discover.lua and main.lua both carry that warning
+    -- and both gated themselves on 23 August in d3d024a. That commit touched
+    -- seven files and missed this one, which had held the same call since the
+    -- 19th.
+    --
+    -- Gating it costs nothing, which is what makes this easy. The grid never
+    -- worked on a client: store.lua has no submit indirection the way caps.lua
+    -- does, so a click writes the client's own priorities.txt and asks for a
+    -- pass that returns immediately for want of authority; and the protocol
+    -- carries no priority messages in either direction, so the numbers on
+    -- screen were the client's local file, which the server never reads. It
+    -- looked like a control and was a decoration.
+    --
+    -- Checked every refresh rather than once at load, so a session that
+    -- changes role picks it up, and placed above try_hook_bind so the hook is
+    -- never registered on a machine that must not run it. Vanilla's own grid
+    -- is untouched underneath.
+    if not api.has_authority() then
+        if not said_client then
+            said_client = true
+            log.debug("stand grid is off on a client: the server owns work " ..
+                "priorities, and asking a replicated pal for its rank is fatal")
+        end
+        M.detach()
+        return false
+    end
+
     try_hook_bind()
 
     -- Before every early return below, not after them.
