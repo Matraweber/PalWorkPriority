@@ -27,6 +27,9 @@
 
 local M = {}
 
+-- Bumped by hand when this file changes, so a report says which copy ran.
+M.VERSION = 7
+
 local api = require("palapi")
 local log = require("log")
 local clock = require("clock")
@@ -107,7 +110,7 @@ function M.probe()
         if v == nil then unreadable = unreadable + 1 else key_ok = key_ok + 1 end
     end
 
-    log.say("pad probe:")
+    log.say("pad probe (pad.lua v" .. tostring(M.VERSION) .. "):")
     log.say("  pad keys answered:      " .. pad_ok .. " of " .. #M.PAD)
     log.say("  keyboard keys answered: " .. key_ok .. " of " .. #M.KEYS)
     log.say("  could not be asked:     " .. unreadable)
@@ -119,51 +122,83 @@ function M.probe()
 end
 
 local SAMPLE_MS = 50
-local ENTRY = "pad sample"
 
--- Watch for a few seconds and report everything that went down.
+-- Opening the panel from a pad.
 --
--- Sampled rather than asked once, because a report is only useful if the
--- player can press things while it runs. 50ms is well inside a deliberate
--- button press and cheap enough that the cost does not need arguing about,
--- and the entry cancels itself so nothing is left polling afterwards.
-function M.sample(seconds)
-    seconds = tonumber(seconds) or 4
-    if seconds < 1 then seconds = 1 end
-    if seconds > 20 then seconds = 20 end
+-- A chord rather than a button, and not for elegance. While the panel is shut
+-- the game has its input and we cannot take it away, so whatever is bound here
+-- ALSO does whatever the game has it doing. A single free button would open
+-- the panel and throw a sphere at the same time. Two held together is a
+-- gesture the game does not use for anything.
+--
+-- The pair was picked against what is actually installed rather than by taste:
+-- LeftTrigger, LeftShoulder, Special_Right, FaceButton_Left and both stick
+-- clicks are claimed by FreeCam or FullSphereSummon. RightShoulder and
+-- Special_Left are free in both.
+M.OPEN_CHORD = { "Gamepad_RightShoulder", "Gamepad_Special_Left" }
 
-    local ticks = math.floor((seconds * 1000) / SAMPLE_MS)
-    local seen, order, n = {}, {}, 0
+local chord_was = false
 
-    clock.cancel(ENTRY)
-    log.say("watching the pad for " .. seconds .. "s, press things now")
+-- True on the beat the chord closes, not while it is held.
+function M.open_asked()
+    local all = true
+    for _, name in ipairs(M.OPEN_CHORD) do
+        if M.down(name) ~= true then all = false break end
+    end
 
-    clock.every(ENTRY, SAMPLE_MS, function()
-        n = n + 1
+    local fired = all and not chord_was
+    chord_was = all
+    return fired
+end
+
+local WATCH = "pad watch"
+
+-- Log presses as they happen, until told to stop.
+--
+-- The timed sample needs the player pressing things during a window someone
+-- else opened, which cannot be arranged over a trigger file. This just runs:
+-- switch it on, press whatever, read the log afterwards. No synchronising.
+--
+-- Edge triggered, so holding a button writes one line rather than twenty a
+-- second. The previous state lives in the closure, so a fresh copy of this
+-- module starts clean, and the entry is keyed by a constant name, which means
+-- "watch off" still finds a watch that an older copy of the module started.
+function M.watch(on)
+    if on == false then
+        clock.cancel(WATCH)
+        return "pad watch off"
+    end
+
+    local was = {}
+    local beats = 0
+
+    clock.every(WATCH, SAMPLE_MS, function()
+        -- Proof of life, because three results in a row have now rested on
+        -- nothing being logged, and "nothing was pressed", "nothing could be
+        -- read" and "this entry stopped running" all look identical from the
+        -- outside. A silence that comes with a heartbeat is a measurement; a
+        -- silence without one is just a dead loop.
+        beats = beats + 1
+        if beats % 100 == 0 then
+            local pc = api.player_controller()
+            log.say(string.format(
+                "pad watch alive, %ds, controller %s",
+                math.floor(beats * SAMPLE_MS / 1000),
+                pc and "yes" or "NO"))
+        end
 
         for _, list in ipairs({ M.PAD, M.KEYS }) do
             for _, name in ipairs(list) do
-                if M.down(name) and not seen[name] then
-                    seen[name] = true
-                    order[#order + 1] = name
+                local now = M.down(name) == true
+                if now and not was[name] then
+                    log.say("pad: " .. name .. " down")
                 end
-            end
-        end
-
-        if n >= ticks then
-            clock.cancel(ENTRY)
-            if #order == 0 then
-                log.say("pad sample: nothing went down in " .. seconds .. "s")
-            else
-                log.say("pad sample saw " .. #order .. ":")
-                for _, name in ipairs(order) do
-                    log.say("  " .. name)
-                end
+                was[name] = now
             end
         end
     end)
 
-    return "sampling for " .. seconds .. "s, results follow in the log"
+    return "pad watch on, press things and it will say what it saw"
 end
 
 return M

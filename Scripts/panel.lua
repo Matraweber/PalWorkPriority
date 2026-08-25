@@ -69,6 +69,7 @@ local blocks = {}               -- key -> TextBlock
 local drawn = {}                -- key -> last token drawn
 local hits = {}                 -- key -> what clicking it means
 local order = {}                -- the same keys in draw order, for the arrows
+local rows = {}                 -- order index -> which visible row it belongs to
 
 -- A tile's whole face, for hit testing.
 --
@@ -618,9 +619,16 @@ local CEILING_BG  = { R = 0.82,  G = 0.85,  B = 0.89,  A = 1.00 }
 
 -- Registers a row as clickable and, in the same breath, as reachable by the
 -- arrow keys. Two lists that could disagree would be a bug waiting.
-local function hit(key, what)
+-- The optional third argument groups several hits into one visible row.
+--
+-- A rule row registers three of them - the job, the ceiling and Remove - and
+-- up and down used to step through all three, so reaching the next rule took
+-- three presses. Nobody reading a list thinks of it that way. Hits that pass
+-- no row get one of their own and behave exactly as before.
+local function hit(key, what, row)
     hits[key] = what
     order[#order + 1] = key
+    rows[#order] = row or ("solo:" .. #order)
 end
 
 -- Said on screen as well as to the log.
@@ -796,9 +804,20 @@ local function ensure_backdrop(rows)
         pcall(function() slot:SetAutoSize(false) end)
         -- Under the text, over the world.
         pcall(function() slot:SetZOrder(8990) end)
-        -- Hit test invisible, so the slab cannot swallow a click meant for a
-        -- row sitting on top of it.
-        pcall(function() backdrop:SetVisibility(3) end)
+        -- Hit testable, and the ZOrder above is what makes that safe: the
+        -- backdrop is 8990 and every slab is 8995, so a row on top still wins
+        -- the hit test and this only ever catches clicks that would otherwise
+        -- have landed on nothing.
+        --
+        -- It has to catch them. Under Game-and-UI a click that misses every
+        -- widget goes on to the game viewport, which takes mouse capture, and
+        -- the click after that is the one the panel finally sees. That is the
+        -- "I have to click tabs twice" report: the first click was not lost in
+        -- the panel, it was spent on the world behind it.
+        --
+        -- Harmless under UI-only too, where nothing reached the viewport
+        -- anyway, so this does not depend on which route is in force.
+        pcall(function() backdrop:SetVisibility(0) end)
     end
 
     -- Both, because the brush colour alone did not do it. A Border with an
@@ -3006,8 +3025,9 @@ local function draw_list(cfg, totals)
             line("del" .. i, row, centre_x(del_x, del_w, del_text, ROW_PT),
                 del_text, asking and "danger" or "quiet", ROW_PT)
 
+            local nav_row = "rule:" .. i
             if choosable then
-                hit(key, { kind = "job", rule = rule, works = works })
+                hit(key, { kind = "job", rule = rule, works = works }, nav_row)
             end
             -- On the limit, which is the number being edited, the number the
             -- well is drawn behind and the number the typing box opens over.
@@ -3015,8 +3035,8 @@ local function draw_list(cfg, totals)
             -- the well said "click here" over something that was not
             -- clickable, and clicking the thing that was opened a box
             -- somewhere else entirely.
-            hit("cap" .. i, { kind = "rule", rule = rule, row = row })
-            hit("del" .. i, { kind = "drop", rule = rule })
+            hit("cap" .. i, { kind = "rule", rule = rule, row = row }, nav_row)
+            hit("del" .. i, { kind = "drop", rule = rule }, nav_row)
             row = row + 1
         end
 
@@ -3813,6 +3833,54 @@ function M.refresh(cfg)
         pcall(function() overlay.watch_input() end)
     end
 
+    -- The pad, driving the same verbs the arrow keys drive.
+    --
+    -- Hung off RB rather than a top-level local because this file sits four
+    -- short of Lua's 200-local ceiling, and going over breaks hot reload
+    -- silently, which is exactly the tool being used to develop this.
+    --
+    -- loadfile for the same reason the pad command uses it: require would hand
+    -- back whatever UE4SS compiled at startup. Cached after the first read, and
+    -- a panel reload clears the cache with the rest of RB.
+    if RB.pad == nil then
+        local built = false
+        local rl = package.loaded["reload"]
+        local dir = rl and rl.scripts_dir
+        if dir then
+            local chunk = loadfile(dir .. "pad.lua")
+            if chunk then
+                local ok, result = pcall(chunk)
+                if ok and type(result) == "table" then built = result end
+            end
+        end
+        RB.pad = built
+    end
+
+    if RB.pad and RB.pad.drive then
+        if M.open then
+            pcall(function()
+                RB.pad.drive({
+                    nav      = function(verb) M.nav(cfg, verb) end,
+                    close    = function() M.toggle() end,
+                    tab_prev = function() M.tab_step(cfg, -1) end,
+                    tab_next = function() M.tab_step(cfg, 1) end,
+                    remove   = function() M.row_action(cfg, "drop") end,
+                })
+            end)
+        else
+            -- A button still down when the panel shuts must not fire again the
+            -- instant it reopens.
+            pcall(RB.pad.forget)
+
+            -- Shut, so the only thing worth reading is the chord that opens it.
+            if RB.pad.open_asked then
+                local asked = false
+                pcall(function() asked = RB.pad.open_asked() end)
+                if asked then pcall(function() M.toggle() end) end
+            end
+        end
+    end
+
     -- The typed-ceiling box, when one is open: placed, then read.
     if rooted and editing ~= nil then
         ensure_amount_box()
@@ -3839,7 +3907,7 @@ function M.refresh(cfg)
 
     -- was_sel is set after the draw instead, once `order` is this frame's.
     was_hit = hits
-    hits, order, used = {}, {}, {}
+    hits, order, used, rows = {}, {}, {}, {}
 
     local ts = os.clock()
     local totals = stock_totals(cfg)
@@ -4130,6 +4198,78 @@ function M.move(delta)
     return true
 end
 
+-- One press, one row, whatever the row is made of.
+--
+-- Lands on the ceiling where a row has one, because that is what left and
+-- right act on and what a player is nearly always here to change. Falls back
+-- to the row's first entry otherwise.
+function M.move_row(delta)
+    if not M.open or #order == 0 then return false end
+
+    local from = rows[sel]
+    local i, guard = sel, 0
+
+    repeat
+        i = i + delta
+        if i > #order then i = 1 end
+        if i < 1 then i = #order end
+        guard = guard + 1
+
+        if rows[i] ~= from then
+            local landed = i
+            for j = 1, #order do
+                if rows[j] == rows[i] then
+                    local what = hits[order[j]]
+                    if what and what.kind == "rule" then landed = j break end
+                end
+            end
+            sel = landed
+            return true
+        end
+    until guard > #order
+
+    return false
+end
+
+-- Act on part of the selected row without having to walk onto it first.
+--
+-- With up and down moving a whole row at a time, Remove is no longer somewhere
+-- the selection passes through, so a controller needs a way to ask for it
+-- directly. This finds the entry of the given kind belonging to the row the
+-- selection is on.
+function M.row_action(cfg, kind)
+    if not M.open then return false end
+
+    local r = rows[sel]
+    if r == nil then return false end
+
+    for i = 1, #order do
+        if rows[i] == r then
+            local what = hits[order[i]]
+            if what and what.kind == kind then
+                return M.apply(cfg, what, -1)
+            end
+        end
+    end
+    return false
+end
+
+-- Next or previous tab, for the shoulder buttons.
+function M.tab_step(cfg, delta)
+    if not M.open then return false end
+
+    local want = (mode == "list") and "item" or "list"
+    if delta == nil then delta = 1 end
+
+    for i = 1, #order do
+        local what = hits[order[i]]
+        if what and what.kind == "tab" and what.mode == want then
+            return M.apply(cfg, what, -1)
+        end
+    end
+    return false
+end
+
 -- What an arrow key means depends on which screen is up, so the meaning is
 -- decided here rather than at the keybind. On the rules list up and down walk
 -- the rules while left and right raise and lower the ceiling. In the picker
@@ -4158,8 +4298,9 @@ function M.nav(cfg, what)
         return M.move(what == "up" and -1 or 1)
     end
 
-    if what == "up" then return M.move(-1) end
-    if what == "down" then return M.move(1) end
+    -- By row, not by hit. See move_row.
+    if what == "up" then return M.move_row(-1) end
+    if what == "down" then return M.move_row(1) end
     if what == "right" then return M.activate(cfg, -1) end
     if what == "left" then return M.activate(cfg, 1) end
     return false
@@ -4412,6 +4553,70 @@ function M.command(cfg, args)
     if verb == "input" then
         if not overlay.input_report then return "this build cannot report that" end
         return overlay.input_report()
+    end
+
+    -- The gamepad probe, reachable without restarting the game.
+    --
+    -- It belongs on "pwp pad" and that is where it will live. But that command
+    -- sits in main.lua, which is not swappable, so reaching it costs a restart
+    -- and a restart is the one thing that hides the answer: the question is
+    -- whether polling still reads input while the panel holds the UI route,
+    -- and that state only exists in a session that has been driving the panel.
+    --
+    -- Required here rather than at the top of the file, because pad is new and
+    -- a session whose panel predates it must not lose this whole command to a
+    -- missing module.
+    -- Which input route the panel holds while open, so both can be measured.
+    if verb == "route" then
+        if rest == "gameandui" then overlay.prefer_ui_only = false
+        elseif rest == "uionly" then overlay.prefer_ui_only = true
+        elseif rest ~= nil then return "use: route gameandui | route uionly" end
+        if not overlay.reapply_input then return "this build cannot do that" end
+        return overlay.reapply_input()
+    end
+
+    -- The way out if a close ever fails to give the character back.
+    if verb == "pawn" then
+        if not overlay.release_pawn then return "this build cannot do that" end
+        return overlay.release_pawn()
+    end
+
+    if verb == "pad" then
+        -- loadfile, not require, and clearing package.loaded is not enough
+        -- either. UE4SS keeps the chunk it compiled at startup, so require
+        -- hands back the code from before the edit while reporting no error
+        -- at all. reload.lua carries the long version of this, having found
+        -- it the hard way; the first draft here repeated the same mistake and
+        -- a version marker in the file is what caught it.
+        --
+        -- The watch entry is keyed by a constant name, so a copy loaded here
+        -- can still cancel a watch an older copy started.
+        local pad = package.loaded["pad"]
+
+        local rl = package.loaded["reload"]
+        local dir = rl and rl.scripts_dir
+        if dir then
+            local chunk = loadfile(dir .. "pad.lua")
+            if chunk then
+                local built, result = pcall(chunk)
+                if built and type(result) == "table" then
+                    pad = result
+                    package.loaded["pad"] = result
+                end
+            end
+        end
+
+        if type(pad) ~= "table" then
+            local got, req = pcall(require, "pad")
+            pad = (got and type(req) == "table") and req or nil
+        end
+        if type(pad) ~= "table" then
+            return "no pad module in this session"
+        end
+        if rest == "probe" then return pad.probe() end
+        if rest == "watch" or rest == "watch on" then return pad.watch(true) end
+        if rest == "watch off" then return pad.watch(false) end
+        return "use: pad probe | pad watch | pad watch off"
     end
 
     -- One sweep against N lookups, for the picker's remaining lag.

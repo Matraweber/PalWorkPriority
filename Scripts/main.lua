@@ -656,7 +656,15 @@ COMMANDS.pad = function(args)
         log.say(pad.probe())
         return
     end
-    log.say(pad.sample(args ~= "" and args or nil))
+    if args == "watch" or args == "" then
+        log.say(pad.watch(true))
+        return
+    end
+    if args == "watch off" or args == "off" then
+        log.say(pad.watch(false))
+        return
+    end
+    log.say("use: pad probe | pad watch | pad watch off")
 end
 
 COMMANDS.click = function(args)

@@ -693,6 +693,93 @@ end
 --
 -- It failed before because the mode wants a widget to focus and we had none of
 -- our own to give it. Now we do.
+-- Stop the character without taking the input mode away.
+--
+-- This is the whole reason Game-and-UI was rejected. The comment on the shapes
+-- table says it plainly: the panel took clicks and the character still ran
+-- around behind it, so it read as a decal rather than a screen. True, and the
+-- conclusion drawn from it - use UI-only instead - turned out to cost more
+-- than it bought. UI-only routes every key and every pad button into Slate,
+-- so the PlayerController sees nothing at all, which is why the arrow keys
+-- have never worked in this panel and why a controller cannot drive it.
+--
+-- FreeCam suppresses the PAWN instead and keeps the game's own input mode,
+-- which is exactly why it can read a gamepad while this cannot. Same three
+-- calls here, under our own flag name.
+--
+-- SetIgnoreMoveInput is on the controller, the other two are on the pawn, and
+-- all three are reflected and proven on this build by FreeCam running beside
+-- us. Deliberately NOT SetActorEnableCollision, which FreeCam also calls: it
+-- needs the body out of the way of building previews, we only need it to stop
+-- walking, and dropping a player's collision to open a menu is the kind of
+-- side effect that ends with someone under the map.
+local flag_name
+local function pwp_flag()
+    if flag_name == nil then
+        pcall(function() flag_name = FName("PalWorkPriority") end)
+        if flag_name == nil then flag_name = false end
+    end
+    if flag_name == false then return nil end
+    return flag_name
+end
+
+M.pawn_held = false
+
+local function suppress_pawn(on)
+    on = (on == true)
+
+    local pc = api.player_controller()
+    if not alive(pc) then return false end
+
+    -- K2_GetPawn first, the property second. Both are read here, in this call,
+    -- and neither is kept.
+    local pawn
+    pcall(function() pawn = pc:K2_GetPawn() end)
+    if not alive(pawn) then pcall(function() pawn = pc.Pawn end) end
+
+    pcall(function() pc:SetIgnoreMoveInput(on) end)
+
+    -- The controller too, not only the pawn.
+    --
+    -- Suppressing the pawn stops the character walking, and that is all it
+    -- stops: with Game-and-UI the pad still reaches the game, so a face button
+    -- pressed to confirm something in this panel also opened the inventory
+    -- behind it. BreedingHelper disables the controller on open for exactly
+    -- this reason and enables it on close, which is the pair this module was
+    -- missing entirely until this morning.
+    --
+    -- Polling is unaffected: IsInputKeyDown reads key state rather than the
+    -- input stack, which is the whole reason FreeCam can read a pad while the
+    -- player it suppressed cannot act on one.
+    if on then
+        pcall(function() pc:DisableInput(pc) end)
+    else
+        pcall(function() pc:EnableInput(pc) end)
+    end
+
+    if alive(pawn) then
+        if on then
+            pcall(function() pawn:DisableInput(pc) end)
+        else
+            pcall(function() pawn:EnableInput(pc) end)
+        end
+        local f = pwp_flag()
+        if f then
+            pcall(function() pawn:SetDisablePlayerInput(f, on) end)
+        end
+    end
+
+    M.pawn_held = on
+    return true
+end
+
+-- Reachable from outside, because the one thing worse than a panel that will
+-- not open is a character that will not walk. force_release calls it too.
+function M.release_pawn()
+    suppress_pawn(false)
+    return "pawn input restored"
+end
+
 local function set_input_now(on)
     local pc = api.player_controller()
     if not alive(pc) then return end
@@ -751,6 +838,11 @@ local function set_input_now(on)
         -- already enabled, so it costs nothing on the normal path.
         pcall(function() pc:EnableInput(pc) end)
 
+        -- And the pawn, which was suppressed so the character would stand
+        -- still while the panel is up. Released on the same one path every
+        -- close goes through, for the same reason EnableInput is here.
+        pcall(function() suppress_pawn(false) end)
+
         pcall(function() lib:SetFocusToGameViewport() end)
 
         -- Cleared here, not only in reset. This is the flag the watchdog reads
@@ -781,12 +873,36 @@ local function set_input_now(on)
     -- decal rather than a screen.
     --
     -- Mouse lock 0 is DoNotLock, so the pointer is free to leave the window.
+    -- Game and UI first now, which reverses what the long comment above
+    -- describes. That comment is kept because its reasoning was right and only
+    -- its conclusion was wrong: the character really did run around behind an
+    -- open panel, and that really is unacceptable. The fix is suppress_pawn,
+    -- not UI-only.
+    --
+    -- Measured 25 August, panel open, watch proven alive by its own heartbeat:
+    --
+    --   UIOnlyEx      keyboard silent, pad silent
+    --   GameAndUIEx   keyboard reads,  pad silent
+    --
+    -- Under UI-only the PlayerController sees nothing whatsoever, which is
+    -- documented UE behaviour rather than a quirk here: a UI-only mode routes
+    -- keys and pad buttons into Slate's focus framework instead of the input
+    -- stack. That is why the arrow keys this panel advertises have never once
+    -- worked, and no amount of rebinding them could have fixed it.
     local shapes = {
-        { "UIOnlyEx(pc, widget, 0, false)",
-          function() lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
         { "GameAndUIEx(pc, widget, 0, false, false)",
           function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
+        { "UIOnlyEx(pc, widget, 0, false)",
+          function() lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
     }
+
+    if M.prefer_ui_only then
+        shapes[1], shapes[2] = shapes[2], shapes[1]
+    end
+
+    -- The character stands still while the panel is up. This is what buys back
+    -- everything the UI-only route was chosen to provide.
+    pcall(function() suppress_pawn(true) end)
 
     for _, shape in ipairs(shapes) do
         if pcall(shape[2]) then
@@ -873,6 +989,10 @@ function M.force_release()
     -- And the input itself. See set_input_now: this is the third piece of
     -- state, and the only one that stays broken after the panel is gone.
     pcall(function() pc:EnableInput(pc) end)
+
+    -- And the pawn. A player who cannot walk is worse off than one who cannot
+    -- click, so unstick has to cover this too.
+    pcall(function() suppress_pawn(false) end)
 
     -- The widget too: a collapsed widget still holding keyboard focus is the
     -- other way input goes nowhere.
@@ -1005,6 +1125,14 @@ function M.watch_input()
         "is still leaking.")
     M.force_release()
     return true
+end
+
+-- Apply the current preference now, without closing anything.
+function M.reapply_input()
+    if not M.open then return "the panel is shut" end
+    input_route = nil
+    pcall(function() set_input_now(true) end)
+    return "route is now " .. tostring(input_route)
 end
 
 function M.reassert_input()
