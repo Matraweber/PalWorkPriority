@@ -261,7 +261,8 @@ falls. The standing order is what the mod cannot create; the topping up is
 exactly what a ceiling already does.
 
 Two things to know before relying on it. **Your own inventory is not storage** -
-spheres in your pockets, or lying on the ground, do not count towards a ceiling.
+spheres in your pockets do not count towards a ceiling. Items dropped on the base ground DO count,
+along with every container.
 What does count is every container on the base, chests and production stations
 alike, and the feed box and loose dropped items with them; `!pwp stock` prints both
 lists so you can see which side a pile is on. And a ceiling
@@ -361,12 +362,12 @@ section, and are a different screen with a different control.
 | ITEM | what is being counted |
 | IN STORAGE | how much the base holds now, amber once it is at or over the limit |
 | LIMIT | the ceiling, click it to type one or use the arrow keys to step it |
-| STATUS | `Working`, or `Stopped at 2` meaning the job is suspended and two Pals were freed |
+| STATUS | `Working`, `Stopped` when every base is at the ceiling, or `Stopped at 2` meaning two of your bases are at it and the rest are still going. Also `Waiting` when this item is capped but the job runs on for another, `Rule off` when the mod is disabled, and `Testing` in dry run |
 
 `Remove` deletes a rule. `+ Add a rule` opens the other tab.
 
 **ADD** is a picker of everything the base is holding, largest first, with a search box. Click an
-item to create a limit for it. Items that already have one are marked `LIMIT SET` and clicking
+item to create a limit for it. Items that already have one are marked `LIMITED` and clicking
 them takes you to the rule instead. `Show every item with a job` widens the list from what you
 are holding to every item a Pal could produce, which is how you set a limit on something the base
 has not made yet.

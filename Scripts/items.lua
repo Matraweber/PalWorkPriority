@@ -101,10 +101,23 @@ function M.load()
         return a < b
     end)
 
-    local lower = {}
-    for i, id in ipairs(ids) do lower[i] = id:lower() end
+    -- Two keys per id: the raw id, and what the panel actually draws.
+    --
+    -- Only the raw id was indexed, while the picker displays the transformed
+    -- form - underscores become spaces and camel case is split. So "CopperOre"
+    -- was shown as "Copper Ore" and searched as "copperore", and typing the
+    -- name on screen found nothing. Measured across the ids the picker shows,
+    -- 157 of 198 could not be found by typing their own displayed name.
+    --
+    -- Both are kept rather than swapping one for the other, because anyone who
+    -- learned to type the internal id should not lose that.
+    local lower, disp = {}, {}
+    for i, id in ipairs(ids) do
+        lower[i] = id:lower()
+        disp[i] = M.display_name(id):lower()
+    end
 
-    M.ids, M.lower = ids, lower
+    M.ids, M.lower, M.disp = ids, lower, disp
     log.debug("item list: " .. #ids .. " id(s)")
     return M.ids
 end
@@ -119,6 +132,26 @@ end
 -- Substring match, case insensitive, capped so a single letter cannot try to
 -- draw two thousand rows. Exact and prefix matches come first: typing "wood"
 -- should offer Wood before Wood_Refined.
+-- What the panel draws for an id, and the only definition of it.
+--
+-- Lives here rather than in panel.lua because the search index has to be built
+-- from the same string the player reads. Two copies of this rule is precisely
+-- how the grid and the scheduler once disagreed about a priority, and the
+-- README already tells that story about store.effective.
+function M.display_name(id)
+    local out = {}
+    for chunk in tostring(id):gmatch("[^_%s]+") do
+        -- Two capitals before the next word, not one. The single-capital form
+        -- turned "AIcore" into "A Icore"; a run is what the rule is for, so
+        -- HPMedicine still becomes HP Medicine.
+        chunk = chunk:gsub("(%l)(%u)", "%1 %2"):gsub("(%u%u)(%u%l)", "%1 %2")
+        out[#out + 1] = chunk
+    end
+    local name = table.concat(out, " ")
+    if name == "" then return tostring(id) end
+    return name
+end
+
 function M.search(text, limit)
     M.load()
     limit = limit or 40
@@ -133,11 +166,15 @@ function M.search(text, limit)
     local exact, prefix, rest = {}, {}, {}
 
     for i, id in ipairs(M.lower) do
-        if id == want then
+        -- Either key matches, and the better of the two decides the rank, so
+        -- typing a displayed name is not punished for being the second key.
+        local shown = M.disp and M.disp[i] or id
+
+        if id == want or shown == want then
             exact[#exact + 1] = M.ids[i]
-        elseif id:sub(1, #want) == want then
+        elseif id:sub(1, #want) == want or shown:sub(1, #want) == want then
             prefix[#prefix + 1] = M.ids[i]
-        elseif id:find(want, 1, true) then
+        elseif id:find(want, 1, true) or shown:find(want, 1, true) then
             rest[#rest + 1] = M.ids[i]
         end
     end

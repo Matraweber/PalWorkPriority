@@ -1786,13 +1786,46 @@ end
 --
 -- The second pattern keeps runs of capitals together, so HPMedicine breaks as
 -- HP Medicine rather than into single letters.
+-- Moved into items.lua, which builds the search index and therefore has to
+-- agree with this exactly. It did not: the index held the raw id while this
+-- drew the transformed one, so typing a name off the screen found nothing.
+-- Ask, and say what actually happened.
+--
+-- caps.set returns whether the write was made or, on a client, whether the
+-- request was sent. Five call sites take that answer; three of them threw it
+-- away and announced success unconditionally. On a client that means the
+-- panel says "limit set to 5000" while the host has refused it - and the host
+-- also rate limits a client to ten rule changes per ten seconds, logging the
+-- refusal on the SERVER, so the player sees nothing at all.
+--
+-- The two paths that already checked, remove and move, each had this exact
+-- bug and each was fixed on its own. This is the same fix in one place, so
+-- the next call site inherits it rather than repeating the mistake.
+local function set_and_say(work, item, amount, said)
+    if caps.set(work, item, amount, mine()) then
+        announce(said)
+        return true
+    end
+
+    announce(string.format(
+        "asked the server to set %s %s to %d, it has not confirmed",
+        workdefs.label(work), tostring(item), amount))
+    return false
+end
+
 local function pretty_name(item)
+    -- Delegates, but survives a session whose items module predates it.
+    --
+    -- items is NOT in reload.lua's swap list, so a hot reload brings a new
+    -- panel against the OLD items - and a panel that calls straight into a
+    -- function that does not exist there yet takes the picker down. This is
+    -- the reload-path failure the codebase already knows about: a swapped
+    -- module calling a NEW api on a non-swapped one fails only on that path,
+    -- which is the one used all day during development.
+    if items.display_name then return items.display_name(item) end
+
     local out = {}
     for chunk in tostring(item):gmatch("[^_%s]+") do
-        -- Two capitals before the next word, not one. The single-capital form
-        -- turned "AIcore" into "A Icore" while the readout above the list, on
-        -- the same screen, called it AIcore. A run is what the rule was for:
-        -- HPMedicine still becomes HP Medicine.
         chunk = chunk:gsub("(%l)(%u)", "%1 %2"):gsub("(%u%u)(%u%l)", "%1 %2")
         out[#out + 1] = chunk
     end
@@ -2402,8 +2435,17 @@ local function poll_amount(cfg)
     -- remove.
     if want == was then return end
 
-    caps.set(job, item, want, mine())
+    local written = caps.set(job, item, want, mine())
     M.wants_pass = true
+
+    -- Said before the at-or-over-stock notice below, because "the server has
+    -- not confirmed this" outranks "this will stop the job now".
+    if not written then
+        announce(string.format(
+            "asked the server to set %s %s to %d, it has not confirmed",
+            workdefs.label(job), tostring(item), want))
+        return
+    end
 
     -- Says so when the new limit is already passed, because that stops the
     -- job the moment it is set and the panel should not let that happen
@@ -5506,8 +5548,8 @@ function M.apply(cfg, what, dir, from_mouse)
             seed = LADDER[#LADDER]
         end
 
-        caps.set(work, what.item, seed, mine())
-        announce(string.format("rule added: %s stops at %d %s (%d in storage)",
+        set_and_say(work, what.item, seed, string.format(
+            "rule added: %s stops at %d %s (%d in storage)",
             workdefs.label(work), seed, what.item, have))
         M.wants_pass = true
         mode = "list"
@@ -5675,7 +5717,7 @@ function M.apply(cfg, what, dir, from_mouse)
                 workdefs.label(rule.work), rule.item,
                 dir < 0 and "highest" or "lowest"))
         else
-            caps.set(rule.work, rule.item, next_amount, mine())
+            local stepped = caps.set(rule.work, rule.item, next_amount, mine())
             -- Announced, like every other way a rule can change.
             --
             -- Typing a ceiling says so, removing one says so, and stepping
@@ -5685,8 +5727,17 @@ function M.apply(cfg, what, dir, from_mouse)
             -- globally, with no modifier list, so they fire whenever the
             -- panel is open and the cursor is over a row. A rule that changes
             -- without the player meaning it should at least be traceable.
-            announce(string.format("%s %s limit stepped to %d",
-                workdefs.label(rule.work), rule.item, next_amount))
+            -- The answer decides the wording. A client whose step the host
+            -- refuses used to be told the limit had moved.
+            if stepped then
+                announce(string.format("%s %s limit stepped to %d",
+                    workdefs.label(rule.work), rule.item, next_amount))
+            else
+                announce(string.format(
+                    "asked the server to step %s %s to %d, "
+                    .. "it has not confirmed",
+                    workdefs.label(rule.work), rule.item, next_amount))
+            end
         end
         M.wants_pass = true
         return true

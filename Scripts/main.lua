@@ -1150,7 +1150,20 @@ COMMANDS.limit = function(args)
                     "now, so check the spelling with " .. cfg.chat_prefix .. " stock")
             end
 
-            caps.set(work, id, math.floor(ceiling), api.my_guild())
+            local written = caps.set(work, id, math.floor(ceiling),
+                api.my_guild())
+            if not written then
+                -- The clearing branch above already read this answer; setting
+                -- discarded it. caps.set refuses outright when there is no
+                -- guild, and on a client it reports only whether the request
+                -- was SENT, so this is the strongest claim available either
+                -- way.
+                log.say(string.format(
+                    "asked for %s to pause at %d %s, "
+                    .. "it has not been confirmed",
+                    workdefs.label(work), math.floor(ceiling), id))
+                return
+            end
             log.say(string.format("limit set: %s pauses at %d %s, base holds %d",
                 workdefs.label(work), math.floor(ceiling), id, totals[id] or 0))
         end
