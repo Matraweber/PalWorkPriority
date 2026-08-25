@@ -1322,7 +1322,51 @@ local TITLE_DROP = 10
 -- Done as a drop rather than by making the Sub row taller, because those
 -- heights are baked into the pak and this is a text position. The Head row is
 -- 28 tall carrying 12pt caps, so there is room to move down into.
-RB.HEAD_DROP = 8
+RB.HEAD_DROP = 2
+
+-- The rules list pages, and until now it did not.
+--
+-- It drew every rule it had. The panel's backdrop is a fixed 700 tall, so
+-- past about fifteen rules the rows simply carried on down the screen: tested
+-- with nineteen, and the last four rules and the "Add a rule" bar were drawn
+-- over the game world with no backdrop behind them and the HUD showing
+-- through. Nothing warned, and nothing scrolled - the list just left the box.
+--
+-- Thirteen a page, measured against the drawn panel rather than guessed. Rows
+-- start at y=332 and step 34, the backdrop ends at 890, and the pager row and
+-- the "Add a rule" bar want a row each: 332 + 13*34 = 774, then 808 for the
+-- pager and 842 for the bar, which clears the bottom with room to spare.
+-- Fourteen would fit and fifteen would not, so this is one row of margin
+-- rather than none.
+RB.RULES_PER_PAGE = 13
+RB.rule_page = 0
+
+-- The subtitle needs its own drop, smaller than the title's.
+--
+-- It used to share TITLE_DROP, which is 10 and is tuned for 22pt text in the
+-- 34 tall Title row. The subtitle is 14pt in the 26 tall Sub row, and 10 put
+-- it at roughly 11..30 - four pixels past the bottom of its own row.
+--
+-- On the rules screen that spill was invisible, because the row below is the
+-- column headings and those are dropped away from it. On the picker the row
+-- below is the search field, whose box fills almost all of its own row, so
+-- the subtitle's descenders finished five pixels INSIDE the box. Two rows in
+-- a vertical flow cannot overlap by accident; one of them has to be leaving
+-- its own box, and it was this one.
+--
+-- 4 puts it near enough to 5..24 inside 26, which clears the row with a little
+-- under the descenders. HEAD_DROP comes down from 8 to 2 at the same time, so
+-- the gap to the column headings stays where it was measured rather than
+-- growing by the six pixels the subtitle just moved up.
+-- Measured on the drawn panel rather than derived. The title ends at 272 and
+-- the search box starts at 302, so there are thirty pixels for an eighteen
+-- pixel line and only twelve of slack.
+--
+-- Splitting that evenly measured well and looked wrong: a 22pt title wants
+-- more air beneath it than a 14pt line needs above a box, so 7 and 6 read as
+-- the title and subtitle being jammed together. The room came from the search
+-- row instead, which had four spare pixels doing nothing under its box.
+RB.SUB_DROP = 4
 
 -- Resolved once, here, with a fallback.
 --
@@ -2085,7 +2129,14 @@ local function ensure_search(row)
     if alive(slot) then
         pcall(function()
             if RB.slot then
-                slot:SetPosition({ X = ROW_INSET, Y = 0 })
+                -- Y = 4, not 0. The Search row is 40 tall and the box is
+                -- 36, and flush to the top spent all four spare pixels below
+                -- it - where they do nothing - while the subtitle above had
+                -- one pixel of clearance. Four of them moved to the top of the
+                -- box is the whole gap, taken from a row that was not using
+                -- it, which leaves the title its own breathing room instead of
+                -- borrowing from that.
+                slot:SetPosition({ X = ROW_INSET, Y = 4 })
             else
                 slot:SetPosition({ X = X + ROW_INSET, Y = Y + row * LINE })
             end
@@ -2551,7 +2602,7 @@ local function draw_tabs(active)
     RB.use_row("Sub")
     line("why", 0, PAD,
         "Your Pals stop a job once base storage reaches the limit you set.",
-        "dim", 14, TITLE_DROP)
+        "dim", 14, RB.SUB_DROP)
 
     RB.done_row()
 
@@ -2606,7 +2657,22 @@ local function short_amount(n)
 end
 
 local function draw_list(cfg, totals)
-    local rules = rule_list(cfg)
+    local all_rules = rule_list(cfg)
+
+    -- Clamped rather than trusted. Removing the last rule on the last page
+    -- would otherwise leave the view on a page that no longer exists, showing
+    -- nothing, with no way back except the pager it just stopped drawing.
+    local rule_pages = math.max(1,
+        math.ceil(#all_rules / RB.RULES_PER_PAGE))
+    if RB.rule_page >= rule_pages then RB.rule_page = rule_pages - 1 end
+    if RB.rule_page < 0 then RB.rule_page = 0 end
+
+    local rules = {}
+    local rule_from = RB.rule_page * RB.RULES_PER_PAGE
+    for i = rule_from + 1,
+            math.min(rule_from + RB.RULES_PER_PAGE, #all_rules) do
+        rules[#rules + 1] = all_rules[i]
+    end
 
     draw_tabs("list")
     local row = 3
@@ -2956,10 +3022,71 @@ local function draw_list(cfg, totals)
 
         -- Back to the canvas for the chrome below the list, and any row boxes
         -- left over from a longer list put away.
+        -- Leftover rows away FIRST, so the pager's own host can be re-shown
+        -- after them.
         RB.slot, RB.base = nil, 0
         hide_rows_from(#rules + 1, "RuleList")
 
         row = row + 1
+
+        -- The pager goes INTO the list as one more row, not onto the canvas
+        -- under it.
+        --
+        -- "Add a rule" lives in the shell's Foot row, which the vertical flow
+        -- places straight after RuleList - so a pager drawn at an absolute
+        -- canvas position came out beneath it, with the cyan bar splitting the
+        -- list from its own page controls. As a list row it lands where it
+        -- reads: under the last rule, above the button.
+        --
+        -- Drawn only when it can do something. Unlike the picker's it does not
+        -- hold its row on a single page: the picker's grid is a fixed height
+        -- whatever it holds, so a vanishing pager moved the buttons under it,
+        -- while this list is already as tall as its contents and one page is
+        -- the normal case.
+        if rule_pages > 1 then
+            -- A FIXED host, one past a full page, never #rules + 1.
+            --
+            -- Keyed by index, so #rules + 1 was host 14 on a full page and
+            -- host 7 on a six rule page - and a widget does not follow its key
+            -- to a new parent. The pager's boxes stayed in host 14, which the
+            -- shorter page had just collapsed, so page two drew no pager at
+            -- all and there was no way back to page one. Found by paging to
+            -- the end and being stranded there.
+            --
+            -- A collapsed row takes no height in a VerticalBox, so hosts
+            -- between the last rule and this one close up and the pager still
+            -- sits directly under the list.
+            RB.slot = row_host(RB.RULES_PER_PAGE + 1, "RuleList")
+            RB.base = RB.slot and (row * LINE - RB.ROW_LIFT) or 0
+
+            local can_prev = RB.rule_page > 0
+            local can_next = RB.rule_page < rule_pages - 1
+
+            if can_prev then hit("rprev", { kind = "rpage", by = -1 }) end
+            if can_next then hit("rnext", { kind = "rpage", by = 1 }) end
+
+            slab("rprevbox", PAD, row * LINE - 1, 200, ROW_H - 4,
+                can_prev and BUTTON_BG or ROW_BG, can_prev)
+            slab("rnextbox", PAD + 212, row * LINE - 1, 200, ROW_H - 4,
+                can_next and BUTTON_BG or ROW_BG, can_next)
+            if can_prev then tile_face["rprev"] = stripes["rprevbox"] end
+            if can_next then tile_face["rnext"] = stripes["rnextbox"] end
+
+            line("rprev", row, PAD + 16, "<   Previous",
+                can_prev and "action" or "spent", ROW_PT)
+            line("rnext", row, PAD + 228, "Next   >",
+                can_next and "action" or "spent", ROW_PT)
+            line("rpageno", row, PAD + 440, string.format(
+                "page %d of %d, %d limits", RB.rule_page + 1, rule_pages,
+                #all_rules), "dim", 13)
+
+            RB.slot, RB.base = nil, 0
+            row = row + 1
+        else
+            line("rprev", row, PAD + 16, "", "dim", ROW_PT)
+            line("rnext", row, PAD + 228, "", "dim", ROW_PT)
+            line("rpageno", row, PAD + 440, "", "dim", 13)
+        end
     end
 
     -- The one action on this screen that creates something, so it is the one
@@ -4811,6 +4938,14 @@ function M.apply(cfg, what, dir, from_mouse)
 
     if what.kind == "page" then
         page = page + what.by
+        return true
+    end
+
+    -- The rules list keeps its own page. Sharing the picker's would carry a
+    -- position across a tab switch, so opening ADD on page two of the rules
+    -- would show page two of the items.
+    if what.kind == "rpage" then
+        RB.rule_page = RB.rule_page + what.by
         return true
     end
 
