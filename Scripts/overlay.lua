@@ -756,7 +756,29 @@ local function suppress_pawn(on)
 
     pcall(function() pc:SetIgnoreMoveInput(on) end)
 
-    -- NOT DisableInput on the controller.
+    -- DisableInput on the controller, again, and this time it is safe.
+    --
+    -- Without it the pad reaches the game while the panel is up: the d-pad
+    -- opens the build menu behind an open panel. The overlay gate does not
+    -- stop that, because it only REPORTS state and Palworld evidently does
+    -- not gate its own actions on that report.
+    --
+    -- The first attempt at this broke the game: a disabled controller ignores
+    -- every menu the game draws, so with the inventory open the player could
+    -- not click anything. What makes it safe now is that the two can no
+    -- longer coexist. panel.lua closes this panel the moment the game opens
+    -- UI of its own, so there is never a game menu sitting under a disabled
+    -- controller. Coexistence was the bug, not the call.
+    --
+    -- That is also BreedingHelper's answer, arrived at from the other end:
+    -- it disables input and simply prevents the menus being reachable.
+    if on then
+        pcall(function() pc:DisableInput(pc) end)
+    else
+        pcall(function() pc:EnableInput(pc) end)
+    end
+
+    -- Kept for the record: the reasoning that took this out.
     --
     -- It was here for one afternoon and it broke the game: with the panel open
     -- the player could not click anything in their own inventory, because a

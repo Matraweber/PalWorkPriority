@@ -3753,8 +3753,44 @@ end
 -- So this runs from a persistent 16ms game-thread loop - BreedingHelper
 -- drives its whole panel this way, off its widget's own Tick - and the full
 -- draw stays on its 100ms deadline for data changes, exactly as before.
+-- The pad, read at frame rate rather than on the body beat.
+--
+-- IsInputKeyDown is a LEVEL read, and the body beat is clock's 100ms floor,
+-- so a press shorter than one beat was invisible. A deliberate d-pad press is
+-- 60 to 100ms, which is exactly the range that was being dropped, and it read
+-- as "the controller is unreliable" rather than as aliasing.
+--
+-- The 16ms loop already exists for the pointer highlight and calls into this
+-- module, so this costs a registration of nothing. Moving the selection here
+-- does not draw: nav changes which row is selected and the next body beat
+-- renders it, same as the mouse.
+function M.pad_tick()
+    if not (M.open and RB.pad and RB.pad.drive) then return end
+
+    local cfg = RB.pad_cfg
+    if cfg == nil then return end
+
+    RB.pad.tick_ms = 16
+
+    pcall(function()
+        RB.pad.drive({
+            nav      = function(verb) M.nav(cfg, verb) end,
+            close    = function() M.toggle() end,
+            tab_prev = function() M.tab_step(cfg, -1) end,
+            tab_next = function() M.tab_step(cfg, 1) end,
+            remove   = function() M.row_action(cfg, "drop") end,
+        })
+    end)
+end
+
 function M.hover_tick()
     if not M.open then return false end
+
+    -- Before the validity window below, deliberately. Reading a controller
+    -- touches no widget, so it has no reason to be refused on the frames when
+    -- the widget tree is not proven fresh - and those are exactly the frames
+    -- after a redraw, when a player is most likely to be pressing something.
+    pcall(M.pad_tick)
 
     -- Only inside the window a draw has just validated. 150ms is one body
     -- beat plus slack: past that the tree has not been proven this side of a
@@ -3869,6 +3905,32 @@ function M.refresh(cfg)
         pcall(function() overlay.watch_cursor() end)
     end
 
+    -- Step aside when the game opens UI of its own.
+    --
+    -- This is what the goal asked for all along - behave like the creative
+    -- menu - and it is also what makes disabling the controller safe. A
+    -- disabled controller ignores the game's menus too, so the one state that
+    -- must never exist is our panel open underneath one of them. Rather than
+    -- police that, this makes it impossible: the game opens something, we get
+    -- out of the way and hand input back on the way out.
+    --
+    -- api.game_ui_active is the game's own answer, recorded by main.lua's gate
+    -- BEFORE the gate overrides it, and measured uncontaminated: with the
+    -- panel open and no game menu it reads false while the override reads
+    -- true.
+    --
+    -- Compared against what it was when the panel opened, so opening the panel
+    -- from inside a menu does not slam it shut again on the next beat.
+    if M.open then
+        if api.game_ui_active == true and RB.game_ui_at_open ~= true then
+            log.debug("panel: the game opened its own UI, stepping aside")
+            pcall(function() M.toggle() end)
+            return
+        end
+    else
+        RB.game_ui_at_open = api.game_ui_active
+    end
+
     -- The pad, driving the same verbs the arrow keys drive.
     --
     -- Hung off RB rather than a top-level local because this file sits four
@@ -3910,15 +3972,10 @@ function M.refresh(cfg)
 
     if RB.pad and RB.pad.drive then
         if M.open then
-            pcall(function()
-                RB.pad.drive({
-                    nav      = function(verb) M.nav(cfg, verb) end,
-                    close    = function() M.toggle() end,
-                    tab_prev = function() M.tab_step(cfg, -1) end,
-                    tab_next = function() M.tab_step(cfg, 1) end,
-                    remove   = function() M.row_action(cfg, "drop") end,
-                })
-            end)
+            -- Driven from hover_tick at 16ms instead, so a quick tap is not
+            -- missed. See M.pad_tick. cfg is stashed because that loop is
+            -- called with no arguments.
+            RB.pad_cfg = cfg
         else
             -- A button still down when the panel shuts must not fire again the
             -- instant it reopens.
@@ -4243,13 +4300,33 @@ end
 
 -- Arrow keys. The mouse works, but the cursor sits over a live game world and
 -- the rows are thin, so this is the reliable way in.
+-- The tab bar is not somewhere the selection should walk through.
+--
+-- tab_hits counts the order entries the tab bar owns - the two tabs and the
+-- close button - and they are always the first ones. Stepping through them to
+-- get anywhere meant that holding down on the last row took several presses
+-- to come back round to the first rule, past three controls nobody was
+-- navigating towards.
+--
+-- They are not unreachable: the shoulders switch tabs and B closes, which is
+-- how a pad expects to reach chrome anyway, and the mouse still clicks them.
+local function is_chrome(i)
+    return tab_hits > 0 and i <= tab_hits
+end
+
 function M.move(delta)
     if not M.open or #order == 0 then return false end
 
-    sel = sel + delta
-    if sel > #order then sel = 1 end
-    if sel < 1 then sel = #order end
-    return true
+    local i, guard = sel, 0
+    repeat
+        i = i + delta
+        if i > #order then i = 1 end
+        if i < 1 then i = #order end
+        guard = guard + 1
+        if not is_chrome(i) then sel = i return true end
+    until guard > #order
+
+    return false
 end
 
 -- One press, one row, whatever the row is made of.
@@ -4269,7 +4346,7 @@ function M.move_row(delta)
         if i < 1 then i = #order end
         guard = guard + 1
 
-        if rows[i] ~= from then
+        if rows[i] ~= from and not is_chrome(i) then
             local landed = i
             for j = 1, #order do
                 if rows[j] == rows[i] then

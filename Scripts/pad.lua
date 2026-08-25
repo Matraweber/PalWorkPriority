@@ -28,7 +28,7 @@
 local M = {}
 
 -- Bumped by hand when this file changes, so a report says which copy ran.
-M.VERSION = 12
+M.VERSION = 13
 
 local api = require("palapi")
 local log = require("log")
@@ -218,10 +218,22 @@ local TAPS = {
 
 -- Held down means repeat, at a menu's pace rather than a poll's.
 --
--- clock's floor is 100ms, so these are in ticks and cannot be finer. Four
--- ticks before the first repeat, two between.
-local FIRST_REPEAT = 4
-local NEXT_REPEAT = 2
+-- In milliseconds, converted to ticks against whatever rate the caller
+-- actually runs at. The previous version counted ticks directly and assumed
+-- 100ms, so moving this onto the 16ms loop would have made a held d-pad
+-- sprint at six times the intended speed with nothing in the code to say so.
+local FIRST_REPEAT_MS = 340
+local NEXT_REPEAT_MS = 110
+
+-- Set by whoever drives this. Defaults to the slow beat, so a caller that
+-- forgets gets the old cadence rather than a runaway one.
+M.tick_ms = 100
+
+local function ticks(ms)
+    local n = math.floor(ms / (M.tick_ms or 100) + 0.5)
+    if n < 1 then n = 1 end
+    return n
+end
 
 local held = {}
 
@@ -244,8 +256,9 @@ local function pressed_verbs()
             h = h + 1
             -- enter does not repeat. A held confirm firing every 200ms would
             -- walk down a list of rules deleting things.
-            if verb ~= "enter" and h >= FIRST_REPEAT
-                and ((h - FIRST_REPEAT) % NEXT_REPEAT) == 0 then
+            local first, gap = ticks(FIRST_REPEAT_MS), ticks(NEXT_REPEAT_MS)
+            if verb ~= "enter" and h >= first
+                and ((h - first) % gap) == 0 then
                 n = n + 1
                 out = out or {}
                 out[n] = verb
