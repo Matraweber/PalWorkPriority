@@ -388,20 +388,29 @@ local LIST_W       = math.floor((ROW_W - LIST_GUTTER * (LIST_COLS - 1))
                                 / LIST_COLS)
 local LIST_H       = 36
 local LIST_PITCH   = LIST_H + 4
--- Ten, from the space that was already there.
+-- Nine, from the space that is actually there.
 --
 -- At six, the picker wrapped fourteen items into three columns and then left
 -- 226 pixels of the panel empty below them - a third of its height - while
 -- paging every eighteen items. The layout was arguing with itself: it ran out
 -- of width and had height to spare.
 --
--- Measured off the drawn panel rather than picked: the grid starts at y=402,
--- the two footer rows take 68 with a 12 gap above them, and the panel ends at
--- 889. That leaves 407, which is ten pitches of 40 with seven to spare.
+-- Ten was the first answer and it was wrong. The sum counted the two footer
+-- rows and forgot the pager, which sits between them and the grid and holds
+-- its row even on a single page. With ten rows the pager was pushed past the
+-- bottom of the backdrop entirely: turning on "show every item with a job"
+-- drew "< Previous  Next >  page 1 of 7" over the game world, outside the
+-- panel, with the HUD visible behind it. Only that screen showed it, because
+-- it is the only one with enough items to page.
 --
--- Thirty per page rather than eighteen takes the full item list, with "show
--- every item with a job" ticked, from thirteen pages to eight.
-local LIST_ROWS    = 10
+-- Measured off the drawn panel: the grid starts at y=402 and the backdrop
+-- ends at 891, so 489 to spend. The pager takes 34 and the two footer rows 68,
+-- which leaves 387 - nine pitches of 40 with 27 to spare, where ten would need
+-- 400 and overrun by 13.
+--
+-- Twenty seven per page rather than eighteen still takes the full list from
+-- thirteen pages to eight.
+local LIST_ROWS    = 9
 local LIST_PER_PAGE = LIST_COLS * LIST_ROWS
 local LIST_ICON    = 28
 local LIST_NAME_X  = 44
