@@ -3321,6 +3321,18 @@ end
 
 local function producible(id)
     if looks_internal(id) then return false end
+
+    -- The game must have a name for it.
+    --
+    -- Added alongside the older string heuristics rather than replacing them,
+    -- because it only ever hides MORE and the direction is the safe one. It is
+    -- also the better test: the heuristics guess from the shape of an id,
+    -- while this asks the game, and the 88 ids it catches are debug weapons,
+    -- NPC-only gear and _Tmp leftovers.
+    --
+    -- Guarded, because items is not hot swapped and a session can be running a
+    -- copy that predates this.
+    if items.named and not items.named(id) then return false end
     -- An id the icon loader has exhausted every route for is not an item the
     -- game itself believes in. See icons.gave_up.
     if icons.gave_up and icons.gave_up(id) then return false end

@@ -200,13 +200,39 @@ function M.real_name(id)
         if type(text) ~= "string" then return end
 
         text = text:match("^%s*(.-)%s*$") or ""
-        if text ~= "" then got = text end
+
+        -- "en Text" is not a name, it is UE saying it has no row for this.
+        --
+        -- When a localized text lookup misses, the FText resolves to the
+        -- culture code followed by "Text" - "en Text" here, "de Text" on a
+        -- German client. Only an EMPTY result was being rejected, so 88 ids
+        -- came back holding that placeholder and were drawn as if the game had
+        -- named them. Matched by shape rather than by the literal, since the
+        -- culture is whatever the player is running.
+        --
+        -- Genuinely worth having as a signal rather than just filtering out:
+        -- every one of the 88 is cut, debug or NPC-only content - names like
+        -- Debug_Handgun_IvyCling, FarmCrop_Tmp, GatlingGun_NPC_GrassBoss. The
+        -- game having no name for something is the most reliable evidence
+        -- available that a player can never hold it.
+        if text ~= "" and not text:match("^%a[%a%-]* Text$") then
+            got = text
+        end
     end)
 
     name_memo[id] = got or false
     if got then M.resolved = M.resolved + 1
     else M.unresolved = M.unresolved + 1 end
     return got
+end
+
+-- Does the game have a name for this at all?
+--
+-- False means the localized lookup returned its placeholder, which in practice
+-- means cut, debug or NPC-only content. Used by the picker to keep such things
+-- out of a list a player is choosing from.
+function M.named(id)
+    return M.real_name(id) ~= nil
 end
 
 -- What the panel draws for an id, and the only definition of it.
