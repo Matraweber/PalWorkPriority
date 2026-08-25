@@ -1799,11 +1799,6 @@ local function list_row(key, at, item, have, top, limited)
     -- in twelve could not see it. A word carries the same fact at any colour
     -- vision, and the count column is empty for these rows more often than
     -- not.
-    if limited then
-        text_at("set:" .. key,
-            px + right_x(LIST_COUNT_R, "LIMIT SET", 11, CAPS_W),
-            py + 3, "LIMIT SET", "atlimit", 11, true)
-    end
 
     -- The name takes whatever the count is not using.
     --
@@ -1814,10 +1809,32 @@ local function list_row(key, at, item, have, top, limited)
     -- names should have the whole row.
     local count = have > 0 and group_digits(have) or nil
     local room = LIST_COUNT_R - LIST_NAME_X
-    if limited then
-        room = room - text_w("LIMIT SET", 11, CAPS_W) - 10
-    elseif count then
-        room = room - text_w(count, 14, DIGIT_W) - 10
+
+    -- The badge sits BESIDE the count now, on one baseline, not above it.
+    --
+    -- Stacked, it pushed the count down nine pixels to make room, so the three
+    -- rows carrying the most state were the three whose numbers did not line
+    -- up with the column - a step in the one column whose entire job is being
+    -- comparable at a glance, at exactly the rows a player is looking hardest
+    -- at.
+    --
+    -- It also reads as a word: "LIMITED", not "LIMIT SET". Above a number,
+    -- "LIMIT SET 20,761" parses as a label and its value, which says the limit
+    -- is 20,761 when that figure is what the base is HOLDING - the opposite of
+    -- what the row means. An adjective cannot be read as a label for the
+    -- number next to it.
+    local badge = limited and "LIMITED" or nil
+    local count_w = count and (text_w(count, 14, DIGIT_W) + 10) or 0
+
+    if count then room = room - count_w end
+    if badge then room = room - text_w(badge, 11, CAPS_W) - 10 end
+
+    if badge then
+        -- 11pt against the count's 14pt, so a shared top edge is not a shared
+        -- baseline. Two pixels of the difference puts them on one.
+        text_at("set:" .. key,
+            px + right_x(LIST_COUNT_R - count_w, badge, 11, CAPS_W),
+            py + 10, badge, "atlimit", 11, true)
     end
 
     -- Green while a rule already exists, so the rail and the name agree.
@@ -1827,7 +1844,7 @@ local function list_row(key, at, item, have, top, limited)
 
     if count then
         text_at("q:" .. key, px + right_x(LIST_COUNT_R, count, 14, DIGIT_W),
-            py + (limited and 17 or 8), count, "limit", 14, true)
+            py + 8, count, "limit", 14, true)
     end
 end
 
