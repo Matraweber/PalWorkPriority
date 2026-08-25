@@ -7,9 +7,17 @@
 -- Getting at those rows took a live probe rather than a guess, and the two
 -- results worth keeping are:
 --
---   RowMap is NOT readable. It reads back as a TrivialObject, the same
---   live-looking wrapper UE4SS hands out for any name at all, and calling
---   ForEach on it fails. It is not a property on this build.
+--   RowMap the PROPERTY is not readable. It reads back as a TrivialObject,
+--   the same live-looking wrapper UE4SS hands out for any name at all, and
+--   calling ForEach on it fails. It is not a property on this build.
+--
+--   That is narrower than it first read, and worth stating precisely: the
+--   UDataTable METHODS are exported by this UE4SS - FindRow, GetRowMap,
+--   GetRowNames, ForEachRow and GetAllRows are all present as bindings. So
+--   "the rows cannot be reached" was never true; only that one property is
+--   out. If a lookup by row key is ever wanted, table:FindRow(key) is the
+--   route, and it is how the localized text tables would be read directly
+--   if PalUIUtility.GetItemName ever stops answering.
 --
 --   GetDataTableRowNames takes the destination as its SECOND argument and
 --   fills it. Called with one argument it raises "UFunction expected 2
