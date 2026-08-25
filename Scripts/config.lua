@@ -52,7 +52,7 @@ return {
         Mining = 4,              -- Mining
         OilExtraction = 4,       -- Oil Extraction
         MonsterFarm = 5,         -- Farming
-        Anyone = 3,              -- work needing no particular skill
+        Anyone = 3,              -- INERT, see README: nothing ever resolves work to this type
     },
 
 

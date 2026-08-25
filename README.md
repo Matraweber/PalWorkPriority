@@ -163,7 +163,10 @@ An override outranks suitability. `["Diggy"] = { Mining = 1 }` puts Diggy on min
 better-suited miner is standing next to them; rank only decides between Pals that share the same
 priority. `false` removes the Pal from that work type entirely.
 
-`min_suitability_rank` stops low-rank Pals from occupying jobs a specialist should be doing.
+`min_suitability_rank` stops the mod from DEDICATING a low-rank Pal to a job a specialist should
+be doing. It does not stop that Pal doing the work: the gate is applied when the pass pulls a Pal
+onto a fence, not when it decides which work a Pal is permitted, so a rank-1 Pal keeps the
+permission and the game's own AI may still send it.
 
 ## Spread or fill
 
@@ -523,7 +526,13 @@ dropped short presses and looked like an unreliable controller.
 | `!pwp panel` | drive the rules panel from chat, for scripting and for testing |
 | `!pwp help` | list the commands |
 | `!pwp icons` | probe the overlay icons, and report what they resolved to |
-| `!pwp sweep` / `!pwp trace` | diagnostics: what the storage sweep sees, and what a pass decided |
+| `!pwp sweep <seconds>` | how long the chest-count cache lives. It does not print the sweep; `!pwp stock` does |
+| `!pwp trace on\|off` | breadcrumb marks to `trace.txt`, for finding what was in flight when a hard crash killed the process. A file write per risky touch, so it is off by default |
+| `!pwp adopt` | take the wildcard rules left by an older version into your own guild |
+| `!pwp names` | what the game calls each item id, and how long resolving all of them took |
+| `!pwp pad probe\|watch` | whether a controller is readable, and what it is reporting |
+| `!pwp panel <verb>` | drive the panel from chat: `input`, `unstick`, `pawn`, `drive`, `ui`, `hover` |
+| `!pwp click` / `!pwp clicks` | click a named panel control, and toggle click reporting |
 
 `!pwp restore` is the one to remember. The fences are the game's own saved data, so they outlive
 the mod: uninstalling while a base is fenced leaves Pals with most of their work switched off and
@@ -616,17 +625,31 @@ name, including ones that do not exist. A non-nil read proves nothing. Probing b
 is how the first four candidate names all appeared to answer while meaning nothing.
 
 The suitability enum is confirmed: `0 = None`, `1 = EmitFlame` ... `13 = MonsterFarm`,
-`14 = Anyone`, so `workdefs.enum_offset` stays 1. Work filed under `Anyone` names no skill, so
-suitability rank and `min_suitability_rank` are both bypassed for it and any Pal will do.
+`14 = Anyone`, so `workdefs.enum_offset` stays 1.
+
+**`config.work_priority.Anyone` is inert.** It is shipped, it is read, and it changes nothing,
+whatever you set it to. Nothing ever resolves a work object to suitability 14: it appears in no
+entry of `WORKTYPE_TO_SUIT` and in none of the keyword patterns, so demand for it is always zero,
+the type is never wanted, and no fence ever covers it. An earlier version of this file claimed
+the rank gate was bypassed for it and any Pal would do. That was never true. Making `Anyone` work
+needs demand resolution for value 14, not a config change.
 
 ## Multiplayer
 
 The mod runs client-side and only issues RPCs the vanilla UI already issues, so other players do
 not need it installed.
 
-On a pure multiplayer client the camp's work list is not replicated until requested. The mod
-asks for it via `RequestReplicateBaseCampWork_ToServer` when a pass finds no readable work, so
-the following pass usually succeeds. Hosting or singleplayer needs none of this.
+On a pure multiplayer client **the mod does not run passes at all** - the server decides, and
+`run_pass` returns immediately without authority. So the request-replication path described in
+older versions of this file cannot execute on a client: it lives inside a pass, and a client
+never reaches one. Nothing is estimated client-side either, because nothing runs.
+
+What a client does do is edit rules, which are sent to the server, and draw the panel. Hosting or
+singleplayer needs none of this.
+
+**The Monitoring Stand grid is switched off entirely on a client.** No numbers, no clicks, the
+vanilla checkboxes untouched. Priorities are the server's to decide and a client cannot write
+them, so rather than draw numbers it cannot honour, the mod leaves the screen alone.
 
 ## Publishing to Steam Workshop
 

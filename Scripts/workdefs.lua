@@ -27,7 +27,7 @@ M.ORDER = {
 M.enum_offset = 1
 
 -- Work that names no skill requirement. Suitability rank is meaningless
--- here, so the rank gate is skipped for it and any pal will do.
+-- here, so INERT: nothing resolves a work object to suitability 14, so demand for it is always zero and no fence ever covers it.
 M.ANYONE = "Anyone"
 
 -- Human-facing labels, matching the in-game work suitability icons.

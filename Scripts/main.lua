@@ -445,6 +445,8 @@ end
 
 local COMMANDS = {}
 
+-- Kept in step with the README's table deliberately: an audit found four
+-- commands documented in neither, and two documented with the wrong meaning.
 COMMANDS.help = function()
     local p = cfg.chat_prefix
     log.say("commands:")
@@ -502,8 +504,14 @@ COMMANDS.status = function()
         " returned")
     log.say("  authority: " .. (api.has_authority()
         and "yes, this machine runs the world"
-        or "NO, this is a client. Work is estimated from the camp's own work " ..
-           "objects, because the server's pulses never reach a client"))
+        -- Not "work is estimated here". Nothing is: run_pass returns
+        -- immediately without authority, so a client never reaches the code
+        -- that would estimate anything. The old wording described a fallback
+        -- that cannot execute, which is the same class of error as
+        -- documenting a keybind that never fires.
+        or "NO, this is a client. No passes run here and the Monitoring " ..
+           "Stand grid is off; the server decides. Rules you edit are sent " ..
+           "to it"))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
     log.say("  ceilings measured against: " ..
@@ -1554,9 +1562,9 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
 
             if not api.has_authority() then
                 log.warn("no authority here, so this looks like a client on " ..
-                    "a dedicated server. Work demand will be estimated from " ..
-                    "the camp's own work objects rather than read from the " ..
-                    "server's pulses, which is coarser.")
+                    "a dedicated server. No passes will run on this machine " ..
+                    "and the Monitoring Stand grid stays off - the server " ..
+                    "decides both. Rules you set are sent to it.")
             end
         end)
 
