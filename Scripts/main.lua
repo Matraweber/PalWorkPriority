@@ -683,15 +683,28 @@ local function restore_all(why)
         return
     end
 
-    local sent, rounds = 0, 0
+    local sent, rounds, blocked = 0, 0, false
 
     repeat
         rounds = rounds + 1
         local stats = scheduler.restore(cfg)
         sent = sent + stats.toggles
+        blocked = stats.blocked or false
         local owed = stats.deferred
-    until owed == 0 or rounds >= 12
+    until owed == 0 or blocked or rounds >= 12
 
+    -- Three different things, said three different ways. This used to print
+    -- "gave every pal its work back" for all of them, including the one where
+    -- it had changed nothing because it could not.
+    if blocked then
+        log.say(why .. ": nothing was restored, see the warning above")
+        return
+    end
+    if sent == 0 then
+        log.say(why .. ": nothing needed giving back, every pal already has " ..
+            "all of its work")
+        return
+    end
     log.say(string.format(
         "%s: gave every pal its work back (%d change(s) over %d sweep(s))",
         why, sent, rounds))

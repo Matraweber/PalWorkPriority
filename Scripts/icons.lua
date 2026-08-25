@@ -763,6 +763,28 @@ function M.get(item_id)
         learn(key, name)
     end
 
+    -- Snapshot the queue BEFORE the lookup, because the lookup fills it.
+    --
+    -- The category retry below asks for an idle queue, which is its whole
+    -- safety argument: guesses only run when there is nothing better to do.
+    -- Asked after find(), that condition can never be true. find() returns nil
+    -- only after calling want(name), and want either pushes the name or
+    -- returns early BECAUSE the name is already queued - so #queue >= 1 either
+    -- way, and the gate was unsatisfiable from the day it was written.
+    --
+    -- What it cost: an item whose icondex name is wrong - the lowercase food_
+    -- scrape artefacts the note below names as the reason this feature exists
+    -- - waited out its patience, fell past the dead branch to resolved=false,
+    -- and was written off. gave_up then made producible() false, so the picker
+    -- dropped the item and no limit could be set for it until the world
+    -- reloaded. The twenty lines of reasoning under "Bounded twice over" had
+    -- never run once.
+    --
+    -- Items missing from icondex entirely were always fine: the same test in
+    -- the name == nil path above is reached before any find() and is genuinely
+    -- satisfiable. It was only wrong names that were lost.
+    local idle = (#queue == 0)
+
     local texture = find(name)
     if texture ~= nil then
         -- Cleared on success, or M.unresolved reports every icon that was
@@ -795,7 +817,7 @@ function M.get(item_id)
         -- drawn every icon a minute earlier came up almost entirely blank.
         -- Guesses wait for the queue to be empty, which is the definition of
         -- "nothing better to do", and stop after a bounded number.
-        if not retried[key] and #queue == 0 and retries_left > 0 then
+        if not retried[key] and idle and retries_left > 0 then
             retries_left = retries_left - 1
             retried[key] = true
             local base = tostring(name):match("^[^_]+_(.+)$")

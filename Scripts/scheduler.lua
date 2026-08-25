@@ -562,6 +562,9 @@ function M.blank_stats()
         demand_types = 0,
         unknown_work = 0, unconfigured = 0, capped = 0, ignored = 0,
         demand_estimated = false,
+        -- Set only by restore, when it could not act at all. Distinct from
+        -- toggles == 0, which means there was nothing that needed changing.
+        blocked = false,
         needed = 0, covered = 0, idle_skipped = 0, held = 0,
         demand_by_name = {},
         lines = {},
@@ -593,7 +596,33 @@ function M.restore(cfg)
     if not api.has_authority() then return M.blank_stats() end
 
     local stats = M.blank_stats()
-    pass_comp = api.owned_network_component() or api.network_component()
+
+    -- Owned only, with no fallback, exactly as run_pass does.
+    --
+    -- This line used to read "owned_network_component() or
+    -- network_component()". The fallback was taken out of run_pass in 673b856
+    -- - "An empty dedicated server spent every pass sending calls it could not
+    -- deliver" - which recorded that it had never once been observed to work,
+    -- in any mode. restore kept it, and restore is the one command whose whole
+    -- job is to leave the save clean before the mod is removed.
+    --
+    -- What that cost: on a dedicated server with nobody connected, the camps
+    -- still stream in, so every set_work_enabled went through the game state's
+    -- component, every pcall succeeded, the toggle count climbed, and not one
+    -- change landed. restore_all then printed "gave every pal its work back".
+    -- An admin who uninstalled next kept a save with every pal fenced, which
+    -- is the precise outcome this command exists to prevent.
+    --
+    -- Saying so out loud rather than returning a quiet zero: a count of no
+    -- changes reads as "there was nothing to undo", and the two are opposite.
+    pass_comp = api.owned_network_component()
+    if pass_comp == nil then
+        stats.blocked = true
+        log.warn("nothing on this machine owns a base camp component, so no " ..
+            "pal work can be changed from here and nothing was restored")
+        return released(stats)
+    end
+
     local camps = api.base_camps()
 
     -- One pal at a time, because this is the undo path.

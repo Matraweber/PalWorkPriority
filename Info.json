@@ -20,6 +20,12 @@
       "Targets": [
         "./Scripts"
       ]
+    },
+    {
+      "Type": "LogicMods",
+      "Targets": [
+        "./LogicMods/"
+      ]
     }
   ]
 }

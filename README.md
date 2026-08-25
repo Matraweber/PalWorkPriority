@@ -72,10 +72,12 @@ you say "never" to this mod.**
 
 - Palworld, game revision 82182 or newer
 - UE4SS, the [Experimental Palworld build](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587) is what this was developed against
-- `PalWorkPriority.pak`, which carries the panel's widget. It is part of the mod rather than an
-  optional extra: without it the panel falls back to a plain canvas with no named rows, and the
-  header collapses onto one line. Every comparable mod ships one the same way, including
-  `BreedingHelperUI_P.pak` and `PerfectPlacement_NativeUI_P.pak`
+- `PalWorkPriority.pak` in `Pal/Content/Paks/LogicMods`, which carries the panel's widget. It is
+  part of the mod rather than an optional extra: without it the panel falls back to a plain
+  canvas with no named rows, and the header collapses onto one line. Subscribing installs it;
+  see the publishing section if you are building the package yourself. A Lua mod shipping its UI
+  in a pak is the ordinary arrangement here - `AutoHatch` does the same, and `CreativeMenu` sits
+  in the same folder
 
 ## Installing for development
 
@@ -499,12 +501,24 @@ the following pass usually succeeds. Hosting or singleplayer needs none of this.
   `"PalSchema"`. A numeric ID there makes the Mod Uploader fail to read the file at all, and the
   mod shows up in its list with a blank name
 - add a `thumbnail.png`
-- **include `build/PalWorkPriority.pak`**. This is the step that is easy to miss, because the mod
-  runs on the developer machine whether or not the pak is in the package - it was installed by
-  `pak_mod.py` months ago and stays there. A subscriber gets only what the package carries, so
-  leaving it out ships a panel whose header is collapsed onto one line, and it looks like a
-  layout bug rather than a missing file. Name it with the `_P` suffix the other Workshop mods
-  use, `PalWorkPriority_P.pak`, so it mounts at priority
+- **copy `build/PalWorkPriority.pak` into a `LogicMods/` folder in the package**, beside
+  `Scripts/`. `Info.json` carries the rule that installs it:
+
+  ```json
+  { "Type": "LogicMods", "Targets": ["./LogicMods/"] }
+  ```
+
+  Both halves are needed and neither is obvious. The pak in the package does nothing on its own,
+  because the uploader deploys what `InstallRule` names; the rule does nothing without the pak.
+  This is the step that hides, because the mod runs on the developer machine either way - the pak
+  was installed by `pak_mod.py` months ago and is still sitting in `Paks/LogicMods`. A subscriber
+  gets only what the package carries, so leaving either half out ships a panel whose header is
+  collapsed onto one line, which reads as a layout bug rather than a missing file.
+
+  No `_P` suffix. That belongs to paks delivered through `~WorkshopMods/`, which is a different
+  mechanism; everything in `Paks/LogicMods` is named plainly, `AutoHatch.pak` and
+  `CreativeMenu.pak` alongside ours. `AutoHatch` is the mod to copy here - a Lua mod that ships a
+  widget pak exactly this way.
 
 Then upload with Pocketpair's [PalworldModUploader](https://github.com/pocketpairjp/PalworldModUploader).
 Bump `Version` on every update, the loader compares it as a plain string and only reinstalls
