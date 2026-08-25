@@ -731,7 +731,32 @@ local function set_input_now(on)
         --
         -- Taking focus is fine. Not handing it back was the bug, so it is
         -- handed back here, on the one path every close goes through.
+        -- And the input itself, which is neither the mode nor the focus.
+        --
+        -- Measured 25 August, with the panel shut and every flag this module
+        -- owns already clean - open false, widget not even alive, cursor
+        -- false, route nil - and the game's menus still dead. Nothing here
+        -- was holding anything, so nothing here could give it back either.
+        --
+        -- bInputEnabled on the controller is a third piece of state, separate
+        -- from both. SetInputMode says where input is ROUTED and
+        -- SetFocusToGameViewport says who HOLDS it, and neither says whether
+        -- the controller accepts any, so a controller left with input
+        -- disabled ignores the pause menu, the inventory and every click,
+        -- while Escape keeps working because it is a raw key. That is the
+        -- reported symptom exactly, and it survives closing the panel.
+        --
+        -- BreedingHelper restores all three on this same build and has never
+        -- shown this; we restored two. It is idempotent when input was
+        -- already enabled, so it costs nothing on the normal path.
+        pcall(function() pc:EnableInput(pc) end)
+
         pcall(function() lib:SetFocusToGameViewport() end)
+
+        -- Cleared here, not only in reset. This is the flag the watchdog reads
+        -- to tell "we applied a UI route and never took it back" apart from
+        -- "the game is showing its own menu", and it is only true of the first.
+        input_route = nil
         return
     end
 
@@ -845,6 +870,10 @@ function M.force_release()
         pcall(function() lib:SetFocusToGameViewport() end)
     end
 
+    -- And the input itself. See set_input_now: this is the third piece of
+    -- state, and the only one that stays broken after the panel is gone.
+    pcall(function() pc:EnableInput(pc) end)
+
     -- The widget too: a collapsed widget still holding keyboard focus is the
     -- other way input goes nowhere.
     if alive(widget) then
@@ -932,6 +961,52 @@ end
 --
 -- Polled rather than hooked because there is no event for "someone took your
 -- input mode away". Once a second, off the refresh that already runs.
+-- The panel is shut but the game is still in the panel's input mode.
+--
+-- Called on the beat, and it exists because chasing the paths did not work.
+-- hide() releases, reset() releases, host()'s drop releases, and the state
+-- still came back twice in one session: cursor forced on, route UI-only,
+-- cursor_was nil so nothing could put it back. A player cannot click the
+-- pause menu, cannot open their inventory, and only Escape does anything,
+-- because Escape is a raw key and everything else goes through focus.
+--
+-- Rather than find the one remaining door, this notices the room is wrong.
+-- The panel being shut while the cursor is forced on is a state that has no
+-- legitimate reason to exist, so whenever it lasts longer than a beat it is
+-- corrected. If a path is still leaking, this bounds the damage to one tick
+-- instead of the rest of the session.
+--
+-- Deliberately NOT keyed on cursor_was, which is exactly the record that goes
+-- missing when a module is swapped mid-open, and therefore cannot be trusted
+-- to decide whether there is anything to undo.
+function M.watch_input()
+    if M.open then return false end
+
+    -- OUR route, not the cursor.
+    --
+    -- The first version of this checked whether the cursor was on while the
+    -- panel was shut, and that is wrong in a way that would have been much
+    -- worse than the bug: the game turns the cursor on for its own pause menu,
+    -- inventory and map, so it would have switched the cursor off underneath
+    -- every one of them.
+    --
+    -- input_route is set only by this module, when it applies a UI mode, and
+    -- cleared only when it releases one. Non-nil while the panel is shut means
+    -- exactly one thing - we took the input and did not give it back - and it
+    -- is never true of the game showing its own UI.
+    if input_route == nil then return false end
+
+    local pc = api.player_controller()
+    if not alive(pc) then return false end
+
+
+    log.warn("the panel is shut but the game was still in its input mode, " ..
+        "putting it back. If this repeats, say so - it means a close path " ..
+        "is still leaking.")
+    M.force_release()
+    return true
+end
+
 function M.reassert_input()
     if not M.open then return false end
 

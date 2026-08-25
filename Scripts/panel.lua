@@ -3803,6 +3803,16 @@ function M.refresh(cfg)
         pcall(function() overlay.reassert_input() end)
     end
 
+    -- The other direction, and it runs whether or not the panel is rooted.
+    --
+    -- reassert_input puts the panel's input back when the game takes it while
+    -- the panel is OPEN. This catches the opposite and worse case: the panel
+    -- shut with the game still in the panel's input mode, which leaves a
+    -- player unable to click their own pause menu.
+    if overlay.watch_input then
+        pcall(function() overlay.watch_input() end)
+    end
+
     -- The typed-ceiling box, when one is open: placed, then read.
     if rooted and editing ~= nil then
         ensure_amount_box()
