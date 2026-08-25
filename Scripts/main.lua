@@ -1573,6 +1573,14 @@ for _, path in ipairs({
 }) do
     local ok = pcall(function()
         RegisterHook(path, function() end, function(_, ReturnValue)
+            -- The game's own answer, read BEFORE we override it, and kept on
+            -- palapi because that module is never swapped. It is the only way
+            -- anything else can ask "does the GAME have UI up" without reading
+            -- back our own lie and believing it.
+            pcall(function()
+                api.game_ui_active = (ReturnValue:get() == true)
+            end)
+
             if not (panel and panel.open) then return end
 
             -- Both shapes. Some UE4SS builds take the returned value, others

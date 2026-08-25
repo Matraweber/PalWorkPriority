@@ -790,7 +790,23 @@ local function set_input_now(on)
             if cursor_was == nil then cursor_was = pc.bShowMouseCursor end
             pc.bShowMouseCursor = true
         elseif cursor_was ~= nil then
-            pc.bShowMouseCursor = cursor_was
+            -- Not if the game is showing its own UI.
+            --
+            -- cursor_was is what the cursor was before THIS panel opened, and
+            -- restoring it blindly assumes nothing happened in between. Open
+            -- the panel, open the inventory, close the panel, and that
+            -- assumption puts the cursor back to false while the inventory is
+            -- still up - so the menu is there and there is nothing to click it
+            -- with. Reported from a real session, not imagined.
+            --
+            -- api.game_ui_active is the game's own answer to "is an overlay
+            -- active", recorded by main.lua's gate before that gate overrides
+            -- it. When the game has UI up, the cursor is the game's business
+            -- and the honest thing is to leave it alone. cursor_was is still
+            -- cleared, because the record has served its purpose either way.
+            if api.game_ui_active ~= true then
+                pc.bShowMouseCursor = cursor_was
+            end
             cursor_was = nil
         end
     end)
