@@ -274,29 +274,6 @@ function M.send_batch(name, messages)
     return true
 end
 
--- Every modded client we have heard from, dropping the stale as we go.
-function M.broadcast(message)
-    local now = os.clock()
-    local sent = 0
-
-    for name, entry in pairs(M.clients) do
-        -- TTL only. The IsValid that used to sit here asked a component
-        -- wrapper stored on an earlier frame whether it was still alive,
-        -- which is the same stored-wrapper dereference that demand.lua was
-        -- purged of; on a busy server clients churn exactly like work
-        -- objects. A dead component makes the send fail, and a failed send
-        -- drops the entry, which is the same outcome without the dangerous
-        -- question.
-        if (now - entry.at) > CLIENT_TTL then
-            M.clients[name] = nil
-        elseif M.to_client(name, message) then
-            sent = sent + 1
-        else
-            M.clients[name] = nil
-        end
-    end
-    return sent
-end
 
 -- ---------------------------------------------------------------------------
 -- Receiving
@@ -532,6 +509,16 @@ function M.push_rules(caps, cfg, comp)
     -- both asked its guild and sent to, rather than going through send_batch
     -- which would resolve it a second time. Dropping a key during pairs is
     -- defined behaviour in Lua; adding one is not, and nothing here adds.
+    --
+    -- Note what M.clients stores: a name and a timestamp, never a component.
+    -- An earlier M.broadcast lived here and said why - an IsValid on a
+    -- component wrapper kept from an earlier frame is the same stored-wrapper
+    -- dereference demand.lua was purged of, and on a busy server clients
+    -- churn exactly like work objects. That function has been deleted (it was
+    -- dead, and stale enough to hand M.to_client a name where it wants a
+    -- component), but the rule it was written for is the reason this loop
+    -- resolves live_client first and only then asks api.valid: the object
+    -- being validated came from this call, not from the table.
     local now = os.clock()
     local sent = 0
     for name, entry in pairs(M.clients) do

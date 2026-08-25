@@ -428,6 +428,25 @@ end
 -- cleared when they finish, so nothing here holds it between passes.
 local pass_comp = nil
 
+-- Every exit that set pass_comp leaves through here.
+--
+-- pass_comp is an engine object, and this file's own rule is that one is safe
+-- for the call that found it and a use-after-free afterwards. run_pass ended
+-- with "pass_comp = nil" under a comment saying nothing holds an engine
+-- object between passes - true of the bottom of the function and false of the
+-- early return above it, where a machine with no camps loaded yet kept the
+-- component until the next pass happened to overwrite it.
+--
+-- Latent rather than live: every reader assigns it first, so nothing has ever
+-- read a stale one. It is fixed because "a dangerous primitive that every
+-- caller has to remember to guard is exactly the shape of the bug this gate
+-- closes" is already written four hundred lines up this file, about this same
+-- pair of functions, and it applies to exits as much as to entries.
+local function released(stats)
+    pass_comp = nil
+    return stats
+end
+
 -- The work types this pal is being iterated over, by name, for the diagnostic
 -- below. Built only when something is about to be logged.
 local function capable_names(pal)
@@ -577,6 +596,19 @@ function M.restore(cfg)
     pass_comp = api.owned_network_component() or api.network_component()
     local camps = api.base_camps()
 
+    -- One pal at a time, because this is the undo path.
+    --
+    -- The loop was bare, and a throw anywhere in it - base_allowed asks every
+    -- pal for a suitability rank, apply_pal sends a request per work type -
+    -- abandoned every pal after it still fenced, with no way to tell which,
+    -- and skipped the pass_comp release on the way out. "!pwp off" leaving a
+    -- base half switched off is worse than leaving it wholly on: the mod is
+    -- meant to be removable, and a partial restore is a state neither the mod
+    -- nor the player asked for.
+    --
+    -- Per pal rather than per camp, so one unhappy pal costs one pal.
+    local failed = 0
+
     for _, camp in ipairs(camps) do
         local camp_id = api.camp_id(camp)
         if camp_id ~= nil then
@@ -585,16 +617,25 @@ function M.restore(cfg)
                 -- No plan and no ceilings: base_allowed then returns capable
                 -- minus X, which is precisely the vanilla state this mod
                 -- started from.
-                local capable, base = base_allowed(cfg, pal, {})
-                pal.capable, pal.base = capable, base
-                apply_pal(cfg, pal, base, stats)
+                local ok = pcall(function()
+                    local capable, base = base_allowed(cfg, pal, {})
+                    pal.capable, pal.base = capable, base
+                    apply_pal(cfg, pal, base, stats)
+                end)
+                -- Cleared whatever happened: these are scratch fields hung on
+                -- a pal record that outlives this call.
                 pal.capable, pal.base, pal.param = nil, nil, nil
+                if not ok then failed = failed + 1 end
             end
         end
     end
 
-    pass_comp = nil
-    return stats
+    if failed > 0 then
+        log.warn(failed .. " pal(s) could not be restored and are still " ..
+            "fenced; run it again, or switch their work back on by hand")
+    end
+
+    return released(stats)
 end
 
 -- ---------------------------------------------------------------------------
@@ -887,7 +928,7 @@ function M.run_pass(cfg)
     if pass_comp == nil then
         log.debug("no base camp component this machine owns, so nothing can " ..
             "be changed and nothing is sent")
-        return stats
+        return released(stats)
     end
 
     trace.at("pass: base_camps sweep")
@@ -895,7 +936,7 @@ function M.run_pass(cfg)
     trace.done()
     if #camps == 0 then
         log.debug("no base camps loaded")
-        return stats
+        return released(stats)
     end
 
     -- The upgrade from unowned rules to guild owned ones, done once and only
@@ -948,10 +989,8 @@ function M.run_pass(cfg)
     end
 
     -- Dropped with the pass that resolved it. Nothing holds an engine object
-    -- between passes.
-    pass_comp = nil
-
-    return stats
+    -- between passes - which is now true of the early returns above as well.
+    return released(stats)
 end
 
 -- Which types want a worker. "3 type(s)" says nothing when a pal is on the
