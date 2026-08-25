@@ -343,6 +343,11 @@ is only read when at least one ceiling exists, in `caps.txt` or in `config.lua`.
 `Alt+F1` opens it, `Alt+F1` or `Esc` closes it. It is the only part of the mod you can reach
 without a chat box, which matters in single player, where there is no chat box at all.
 
+The arrow keys move around it and Enter activates. Those were bound for a long time before they
+worked: the panel used to hold a UI-only input mode, and under that route the PlayerController
+sees no key presses at all, so the keys were dead exactly when they mattered. It now holds a
+Game-and-UI route and suppresses the player pawn instead, which is what a controller needs too.
+
 The name is worth getting right because the mod has two features that sound alike. This panel
 sets **production limits**: how much of an item a base stockpiles before the job that makes it
 stops. It does not set work priorities. Those live on the Monitoring Stand, described in the next
@@ -440,6 +445,60 @@ Each number is a `TextBlock` injected as a sibling of the cell's checkbox with i
 copied, so placement is exact by construction rather than inferred. Rows recycle on scroll rather
 than being destroyed, so the injected widgets are cached across rebinds; re-injecting on every
 bind would stack duplicate glyphs on each scroll.
+
+## Playing with a controller
+
+The panel is fully drivable from a gamepad, including on a Steam Deck.
+
+| control | what it does |
+| --- | --- |
+| **RB + View** | opens the panel |
+| **D-pad up/down** | one press, one row |
+| **D-pad left/right** | raises and lowers the selected ceiling |
+| **A** | confirm, the same as Enter |
+| **X** | Remove the selected rule |
+| **B** | closes the panel |
+| **LB / RB** | previous and next tab |
+
+Opening needs two buttons held together for a reason worth knowing. While the panel is shut the
+game owns its input and the mod cannot take it away, so any single button bound here would open
+the panel **and** do whatever the game has that button doing. Two held at once is a gesture
+Palworld does not use. `RightShoulder` and `Special_Left` were also checked against every mod
+installed alongside this one: FreeCam claims `LeftTrigger` and `Special_Right`,
+FullSphereSummon claims `LeftShoulder` and `FaceButton_Left`, and both stick clicks are taken.
+
+Up and down move a whole **row** rather than one control, so reaching the next rule is one press
+and not three. That leaves Remove somewhere the selection never lands, which is why **X** acts on
+the selected row directly.
+
+The tab bar is deliberately not in the vertical walk. Wrapping from the last row used to step
+through both tabs and the close button on the way round; the shoulders and **B** reach them the
+way a pad expects to.
+
+### Why it reads the controller the way it does
+
+`RegisterKeyBind` reads the keyboard and nothing else, so a controller press never reaches it.
+The pad is polled through the PlayerController instead, with `IsInputKeyDown` and an `FKey` built
+as a plain table with a `KeyName` field, which is how FreeCam and FullSphereSummon read theirs on
+this build.
+
+Three things had to be true at once, and each was measured rather than assumed:
+
+- **The route cannot be UI-only.** Under `SetInputMode_UIOnly*` the PlayerController sees nothing,
+  keyboard or pad, because a UI-only mode routes both into Slate's focus framework instead of the
+  input stack. `GameAndUIEx` reads the keyboard; the pad needs the next item as well.
+- **The pawn is suppressed, not the input mode.** `SetIgnoreMoveInput`, `DisableInput` and
+  `SetDisablePlayerInput` on the pawn stop the character walking while the panel is up, which is
+  the whole reason UI-only was chosen originally. FreeCam does the same and that is exactly why it
+  can read a pad.
+- **The controller is disabled while the panel is open**, or the d-pad opens the build menu
+  behind it. That is safe only because the panel closes itself the moment the game opens UI of its
+  own: a disabled controller ignores the game's menus too, so the two must never be on screen
+  together.
+
+The pad is read on the mod's 16ms loop rather than its 100ms one. `IsInputKeyDown` reports a level
+rather than an event, and a deliberate d-pad press is 60 to 100ms, so reading it on the slow beat
+dropped short presses and looked like an unreliable controller.
 
 ## Chat commands
 
