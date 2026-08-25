@@ -1689,6 +1689,37 @@ local function bind(key, label, fn, modifiers)
     return ok
 end
 
+-- A rebindable key, from DarnMenu when the player has set one.
+--
+-- The shipped Alt+Fn stays the default and is used whenever DarnMenu is absent,
+-- the saved file is absent, or the saved key is one this UE4SS has no entry
+-- for. A hotkey that silently does not exist is the worst outcome available
+-- here, and this mod has already shipped one of those once.
+--
+-- The label follows the binding, so the warning printed when a bind fails
+-- names the key the player actually chose rather than the one we shipped.
+local function bind_action(name, default_key, what, fn)
+    local key, mods, _, label
+
+    pcall(function()
+        key, mods, _, label = darnmenu.binding(name, default_key, { "ALT" })
+    end)
+
+    if key == nil then
+        key = Key and Key[default_key] or nil
+        mods = (ModifierKey ~= nil) and { ModifierKey.ALT } or nil
+        label = "Alt+" .. default_key
+    end
+
+    if key == nil then
+        log.warn("no " .. default_key .. " on this UE4SS build, so " ..
+            what .. " has no hotkey")
+        return
+    end
+
+    bind(key, label .. " (" .. what .. ")", fn, mods)
+end
+
 -- Every key here is Alt with a function key, and every one was checked against
 -- the other installed mods with tools/keybind_audit.py rather than by eye. Two
 -- collisions were found that way and both had been missed by grepping: FreeCam
@@ -1708,9 +1739,9 @@ end
 -- is FreeCam. Eight slots for eight keys, which is why the icon probe became
 -- a chat command instead: it is a diagnostic for a bug that is long fixed and
 -- it was the only one here nobody would miss.
-bind(Key.F2, "Alt+F2 (run pass)", function()
+bind_action("key_pass", "F2", "run pass", function()
     run_pass("keybind", true)
-end, { ModifierKey.ALT })
+end)
 
 log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
     MOD_NAME, VERSION,
@@ -1729,9 +1760,9 @@ end, { ModifierKey.ALT })
 -- Base storage on a key too. Ceilings are keyed by internal item id, and
 -- without a way to print those ids outside chat the whole feature is
 -- unreachable in a session where chat input is not available.
-bind(Key.F3, "Alt+F3 (stock)", function()
+bind_action("key_stock", "F3", "stock", function()
     COMMANDS.stock()
-end, { ModifierKey.ALT })
+end)
 
 -- Left click raises a cell towards priority 1, right click lowers it towards
 -- never. cfg is passed as a getter because '!pwp reload' replaces the table.
@@ -1748,26 +1779,26 @@ end
 -- Toggles on modifiers rather than fresh F-keys: the plain ones are getting
 -- crowded, and Alt+F10/F11 are clear of every keybind the other installed
 -- mods claim. Ctrl is avoided because UE4SS uses Ctrl+H itself.
-bind(Key.F10, "Alt+F10 (mode)", function()
+bind_action("key_mode", "F10", "mode", function()
     COMMANDS.mode()
-end, { ModifierKey.ALT })
+end)
 
-bind(Key.F11, "Alt+F11 (cap)", function()
+bind_action("key_cap", "F11", "cap", function()
     COMMANDS.cap()
-end, { ModifierKey.ALT })
+end)
 
 -- Single player has no chat box, so every command behind the chat prefix is
 -- unreachable there. Anything that changes what the mod does needs a key as
 -- well, or it may as well not exist for a single player game.
-bind(Key.F12, "Alt+F12 (storage scope)", function()
+bind_action("key_scope", "F12", "storage scope", function()
     COMMANDS.scope()
-end, { ModifierKey.ALT })
+end)
 
 -- The rules panel, on the lowest free key, because it is the one a player
 -- reaches for most and F1 is where a hand goes looking for a panel.
-bind(Key.F1, "Alt+F1 (work rules)", function()
+bind_action("key_panel", "F1", "work rules", function()
     panel.toggle()
-end, { ModifierKey.ALT })
+end)
 
 -- The transport test needs a key of its own, because the machine most worth
 -- running it on is a client in single player, where there is no chat box to

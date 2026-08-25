@@ -37,7 +37,7 @@ local USER_NAME = "PalWorkPriority_user"
 -- dot on a setting that quietly does nothing until restart.
 local SCHEMA_SOURCE = [==[
 return {
-  schemaVersion = 1,
+  schemaVersion = 2,
   tab = "Pal Work Priority",
   order = 100,
   target = "PalWorkPriority_user",
@@ -54,6 +54,12 @@ return {
     min_suitability_rank = 1,
     storage_scope = "camp",
     log_level = "info",
+    key_panel = { key = "F1", modifiers = { "ALT" } },
+    key_pass  = { key = "F2", modifiers = { "ALT" } },
+    key_stock = { key = "F3", modifiers = { "ALT" } },
+    key_mode  = { key = "F10", modifiers = { "ALT" } },
+    key_cap   = { key = "F11", modifiers = { "ALT" } },
+    key_scope = { key = "F12", modifiers = { "ALT" } },
   },
   sections = {
     {
@@ -95,6 +101,18 @@ return {
             { value = "global", label = "Across every loaded base" },
           },
           help = "Whether a limit is measured at each base on its own or over all of them." },
+      },
+    },
+    {
+      title = "Hotkeys",
+      options = {
+        { path = "key_panel", label = "Production Limits panel", kind = "keychord" },
+        { path = "key_pass", label = "Run a pass now", kind = "keychord" },
+        { path = "key_stock", label = "Print base storage", kind = "keychord" },
+        { path = "key_mode", label = "Switch spread / fill", kind = "keychord" },
+        { path = "key_cap", label = "Cycle the per-job cap", kind = "keychord" },
+        { path = "key_scope", label = "Switch storage scope", kind = "keychord" },
+        { subtitle = "Esc closes the panel and is not rebindable." },
       },
     },
     {
@@ -205,6 +223,64 @@ local KEYS = {
     storage_scope = "string",
     log_level = "string",
 }
+
+-- A hotkey the player may have rebound, resolved to what RegisterKeyBind wants.
+--
+-- The stored shape is DarnMenu's keychord: a primary key NAME plus a list of
+-- modifier names. Both have to survive a player-edited file, so an unknown key
+-- falls back to the shipped default rather than binding nothing - a hotkey that
+-- silently does not exist is the worst outcome here, and this mod has already
+-- shipped one of those.
+--
+-- Returns key, modifiers, changed.
+local MODS = { CONTROL = true, ALT = true, SHIFT = true }
+
+function M.binding(name, default_key, default_mods)
+    local shared = shared_dir()
+    local user = shared and read_table(shared .. USER_NAME .. ".lua") or nil
+    local saved = user and user[name] or nil
+
+    local key_name = default_key
+    local mod_names = default_mods or {}
+    local changed = false
+
+    if type(saved) == "table" and type(saved.key) == "string" then
+        if Key ~= nil and Key[saved.key] ~= nil then
+            key_name = saved.key
+            mod_names = {}
+            if type(saved.modifiers) == "table" then
+                for _, m in ipairs(saved.modifiers) do
+                    if type(m) == "string" and MODS[m] then
+                        mod_names[#mod_names + 1] = m
+                    end
+                end
+            end
+            changed = true
+        else
+            log.warn("darnmenu: " .. name .. " is bound to '" ..
+                tostring(saved.key) .. "', which this UE4SS has no key for. " ..
+                "Using the default.")
+        end
+    end
+
+    local key = Key and Key[key_name] or nil
+    if key == nil then return nil, nil, false end
+
+    local mods = nil
+    if #mod_names > 0 and ModifierKey ~= nil then
+        mods = {}
+        for _, m in ipairs(mod_names) do
+            if ModifierKey[m] ~= nil then mods[#mods + 1] = ModifierKey[m] end
+        end
+        if #mods == 0 then mods = nil end
+    end
+
+    -- What to call it in a log line, so a rebound key still reads clearly.
+    local label = table.concat(mod_names, "+")
+    label = (label ~= "" and (label .. "+") or "") .. key_name
+
+    return key, mods, changed, label
+end
 
 function M.apply(cfg)
     if type(cfg) ~= "table" then return 0 end

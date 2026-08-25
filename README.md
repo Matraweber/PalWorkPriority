@@ -450,6 +450,31 @@ copied, so placement is exact by construction rather than inferred. Rows recycle
 than being destroyed, so the injected widgets are cached across rebinds; re-injecting on every
 bind would stack duplicate glyphs on each scroll.
 
+## Settings in game, via DarnMenu
+
+If [DarnMenu](https://www.nexusmods.com/palworld/mods/4245) is installed, **ESC > Darn Mod
+Options > Pal Work Priority** edits the settings that otherwise need `config.lua` opened in a text
+editor: whether the mod assigns at all, test mode, the pass interval, spread or fill, the per-job
+Pal cap, the minimum rank worth dedicating, the storage scope, the log level, **and the hotkeys**.
+
+Priorities and production limits are deliberately absent. Both are already editable in game, on
+the Monitoring Stand and in the Alt+F1 panel, so a second place to set them would be a second
+thing to keep in step.
+
+Every option is marked as needing a relaunch, which is honest rather than cautious: config is read
+once at load and the pass, the grid and the panel each capture what they need from it.
+
+`config.lua` stays the baseline. An option the player never touched is absent from
+`Mods/shared/PalWorkPriority_user.lua` and falls through to the shipped value, and deleting that
+file restores the defaults exactly. Without DarnMenu the schema this mod writes simply sits unread,
+so nothing here can stop the mod working.
+
+**Rebinding a hotkey** replaces the shipped Alt+Fn. A saved key that this UE4SS build has no entry
+for falls back to the default with a warning, rather than binding nothing - a hotkey that silently
+does not exist is the worst outcome available, and this mod has shipped one of those before. The
+discovery and transport-test keys are developer tools and stay on Alt+F5 and Alt+F9. Esc is not
+rebindable, because it is Esc.
+
 ## Playing with a controller
 
 The panel is fully drivable from a gamepad, including on a Steam Deck.
