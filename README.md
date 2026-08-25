@@ -221,10 +221,19 @@ than one the client names.
 
 A guild of `*` is a limit written before guild rules existed. Those still apply, to any guild
 that has not set its own for the same job and item, so an existing `caps.txt` keeps working
-untouched. Where every base camp on the server belongs to one guild the ambiguity is not real
-and they are adopted into it on the next pass, after which every limit has an owner. Where camps
-span several guilds they stay shared, and the panel will say so rather than pretend to remove
-one. `0` removes a limit rather than
+untouched, and they stay that way until somebody says otherwise. Where every base camp the
+server currently has loaded belongs to one guild, the mod says so once and offers `!pwp adopt`,
+which makes those limits that guild's and gives every limit an owner.
+
+Adopting is deliberate rather than automatic, and the reason is worth knowing before you run it.
+The mod can only read a guild off a base camp that is streamed in, and it cannot list the guilds
+a save contains at all. On a server where one guild is online and another is not, only the first
+guild's camps are loaded, so "every camp agrees" is true and says nothing about the guild that is
+offline. This used to happen by itself on the next pass, which meant a shared limit could become
+one guild's, on disk, with the wildcard deleted and no way back, because somebody walked near
+their own base. If more than one guild plays on your server, check the others are not relying on
+those limits first. Where the loaded camps already span several guilds the offer is not made, and
+the panel says so rather than pretending to remove a shared rule. `0` removes a limit rather than
 being read literally: taken at face value it would mean "you already have at least none of
 these" and suspend the work type for good, which is what priority `X` on the stand is for.
 

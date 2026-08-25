@@ -372,6 +372,34 @@ end
 --
 -- A rule the guild has already set wins: it is the more specific of the two
 -- and was written later.
+-- Said once per session, when there is something to adopt and a guild that
+-- could take it. Nothing is changed here.
+local offered = false
+
+function M.offer_adopt(guild)
+    if offered then return false end
+    local shared = M.data[M.ANY_GUILD]
+    if shared == nil or next(shared) == nil then return false end
+    if type(guild) ~= "string" or guild == "" or guild == M.ANY_GUILD then
+        return false
+    end
+
+    local n = 0
+    for _, items in pairs(shared) do
+        for _ in pairs(items) do n = n + 1 end
+    end
+
+    offered = true
+    log.say(string.format(
+        "%d limit(s) predate guild rules and apply to every guild that has " ..
+        "not set its own. Every base camp loaded here belongs to one guild, " ..
+        "so they can be made that guild's with '!pwp adopt' - or left shared, " ..
+        "which is what they do now.", n))
+    log.say("  on a server with more than one guild, check the others are " ..
+        "not relying on them first: adopting cannot be undone")
+    return true
+end
+
 function M.adopt_wildcard(guild)
     local shared = M.data[M.ANY_GUILD]
     if shared == nil or next(shared) == nil then return 0 end

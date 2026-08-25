@@ -426,6 +426,10 @@ end
 
 -- The network component for the pass in flight. Set by run_pass and restore,
 -- cleared when they finish, so nothing here holds it between passes.
+-- The guild every loaded camp agreed on, last pass, or nil. Read by
+-- "!pwp adopt", which is the only thing allowed to act on it.
+M.adoptable = nil
+
 local pass_comp = nil
 
 -- Every exit that set pass_comp leaves through here.
@@ -968,10 +972,28 @@ function M.run_pass(cfg)
         return released(stats)
     end
 
-    -- The upgrade from unowned rules to guild owned ones, done once and only
-    -- where it is unambiguous. Cheap to ask: adopt_wildcard returns
-    -- immediately when there is nothing left under the wildcard, which is the
-    -- case on every pass after the first and on every fresh install.
+    -- The upgrade from unowned rules to guild owned ones is OFFERED here and
+    -- carried out by "!pwp adopt". It used to happen on its own.
+    --
+    -- The test below is careful about what it can see and blind to what it
+    -- cannot. It refuses if any loaded camp has an unreadable guild, and
+    -- refuses if two of them disagree - but base_camps is a FindAllOf, so it
+    -- only ever sees camps that are STREAMED IN. On a dedicated server that is
+    -- whichever bases happen to have somebody near them.
+    --
+    -- So on a server carrying an upgraded caps.txt with two guilds, if only
+    -- guild A is online, only A's camps load, "every camp agrees" is true, and
+    -- every shared ceiling silently became A's - written to disk, with the
+    -- wildcard deleted, and nothing to undo it. Guild B lost limits they were
+    -- relying on and gained no message saying so. The README promised this
+    -- happens only where every camp ON THE SERVER is one guild, which is a
+    -- thing this code cannot determine: there is no way to enumerate guilds,
+    -- only to read one off a camp that happens to be loaded.
+    --
+    -- Not fixed by looking harder, because the missing information is not
+    -- there to find. An irreversible cross-guild migration should be somebody
+    -- deciding, not a side effect of walking near your own base, so the pass
+    -- now says what it sees once per session and stops.
     if api.has_authority() then
         local sole = nil
         for _, camp in ipairs(camps) do
@@ -987,7 +1009,8 @@ function M.run_pass(cfg)
                 break
             end
         end
-        if sole then caps.adopt_wildcard(sole) end
+        M.adoptable = sole
+        if sole then caps.offer_adopt(sole) end
     end
 
     pass_totals = {}

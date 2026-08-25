@@ -468,6 +468,8 @@ COMMANDS.help = function()
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("  " .. p .. " guilds    write Guilds.txt")
     log.say("  " .. p .. " icons     probe the overlay icons")
+    log.say("  " .. p .. " adopt     make limits from before guild rules " ..
+            "this guild's")
     log.say("  " .. p .. " restore   give every pal its work back, unfence")
     log.say("keys, all on Alt, because Ctrl is crouch:")
     log.say("  Alt+F1 work rules        Alt+F2 run a pass")
@@ -729,6 +731,36 @@ end
 
 -- The same thing on demand, for a save that has been left fenced by a crash,
 -- a config error, or an uninstall that is about to happen.
+-- The wildcard upgrade, on purpose rather than by accident.
+--
+-- This used to run itself inside the pass. It cannot be done safely there:
+-- the test it depends on can only see camps that are streamed in, so on a
+-- server where one guild happened to be online it moved every shared limit to
+-- that guild, deleted the wildcard, and saved - with no way back and nothing
+-- said to the guild that lost them. Doing it from a command does not make the
+-- guess any better informed; it makes it somebody's decision, which is the
+-- part that was actually missing.
+COMMANDS.adopt = function()
+    if not api.has_authority() then
+        log.say("only the machine that owns the world can do this. Run it " ..
+            "on the server.")
+        return
+    end
+
+    local sole = scheduler.adoptable
+    if sole == nil then
+        log.say("not now: either no base camp is loaded yet, one of them " ..
+            "will not say which guild it belongs to, or the loaded camps " ..
+            "belong to more than one guild. Stand in your base and try again.")
+        return
+    end
+
+    local moved = caps.adopt_wildcard(sole)
+    if moved == 0 then
+        log.say("there was nothing left from before guild rules to adopt")
+    end
+end
+
 COMMANDS.restore = function()
     restore_all("restore")
 end
