@@ -489,8 +489,8 @@ lasted thirty seconds of stress.
 
 ## 22 August, 11:17: acquitted where it was convicted
 
-The client, in singleplayer, with every client-only mod loaded — the
-environment that killed five stress runs inside 25 passes — ran the migrated
+The client, in singleplayer, with every client-only mod loaded - the
+environment that killed five stress runs inside 25 passes - ran the migrated
 build at the same full rate:
 
     survived 300s, 673 passes executed, zero ref errors, game still up

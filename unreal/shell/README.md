@@ -1,7 +1,7 @@
 # Building the shell
 
 The widget blueprint the panel hosts on. Built headless, from code, with
-**stock Unreal 5.1.1** — the Palworld modding kit is not involved.
+**stock Unreal 5.1.1** - the Palworld modding kit is not involved.
 
 ## Why not the modding kit
 
@@ -27,7 +27,7 @@ that puts a widget into the tree rather than merely creating an object.
 
 ## The steps
 
-Scaffold a project around `unreal/PalWidgetGen` — a `.uproject` naming the
+Scaffold a project around `unreal/PalWidgetGen` - a `.uproject` naming the
 module, and a `ShellGenEditor.Target.cs`. Then:
 
     Build.bat ShellGenEditor Win64 Development -Project=<ShellGen.uproject>
@@ -40,7 +40,7 @@ module, and a `ShellGenEditor.Target.cs`. Then:
 
     UnrealPak.exe PalWorkPriority.pak -Create=<response> -compress
 
-The cook needs the asset pinned or it produces nothing — a widget no map
+The cook needs the asset pinned or it produces nothing - a widget no map
 references is not reachable, and the cooker reports success having done
 nothing at all:
 
@@ -55,7 +55,7 @@ is a working one. The mount point has to be
 `../../../Pal/Content/Mods/PalWorkPriority/`, which `tools/pakinfo.py` will
 confirm on any working mod's pak.
 
-Install into `Pal/Content/Paks/LogicMods/`, not `~WorkshopMods/` — paks there
+Install into `Pal/Content/Paks/LogicMods/`, not `~WorkshopMods/` - paks there
 mount only when the mod manager has that mod switched on.
 
 **The game holds the pak open while it runs.** Installing over it fails with

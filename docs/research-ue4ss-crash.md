@@ -15,7 +15,7 @@ maintainer diagnosis, workarounds only.
 exact crash. A Palworld **dedicated server** under load:
 EXCEPTION_ACCESS_VIOLATION reading `0xffffffffffffffff`, callstack a repeating
 cycle `94b75e -> 94a960 -> 95642b -> 94a129 -> 94aeb3 -> 94a774 -> 94282c ->
-95b121` — byte-for-byte the offsets recorded in [the-crash.md](the-crash.md)
+95b121` - byte-for-byte the offsets recorded in [the-crash.md](the-crash.md)
 from our own dumps. Their hooks were fully pcall-wrapped, like ours; the crash
 is below the Lua layer; it correlates with load, not with any call site. Open,
 unassigned. Their partial mitigation: **removing file I/O from hook callbacks**.
@@ -41,8 +41,8 @@ delayed-action system: `ExecuteInGameThreadWithDelay`,
 Installed: **UE4SS Experimental (Palworld), workshop package, version
 `experimental-palworld-6`** (Info.json; DLL dated 10 Aug). A binary string
 scan of that UE4SS.dll tonight found every PR #1128 function name present
-(`ExecuteInGameThreadWithDelay` ×9, `RetriggerableExecuteInGameThreadWithDelay`
-×4, `MakeActionHandle` ×3). The build therefore postdates Dec 2025 and carries
+(`ExecuteInGameThreadWithDelay` x9, `RetriggerableExecuteInGameThreadWithDelay`
+x4, `MakeActionHandle` x3). The build therefore postdates Dec 2025 and carries
 both #1128 and #1010. **No UE4SS update is needed; the safe API sits in the
 DLL we already run.**
 
@@ -55,7 +55,7 @@ mutates the Lua state while the game thread may simultaneously be inside a
 registry tears; then either UE4SS notices a ref is no longer a function and
 removes the engine-tick hook (our silent stop), or it dereferences garbage
 (our crashes). Decisive detail: fault address `0x0000656c676774a5` from the
-21:18 crash is the ASCII bytes of **"tggle"** — a fragment of "toggle", a
+21:18 crash is the ASCII bytes of **"tggle"** - a fragment of "toggle", a
 string this mod logs constantly. A pointer read landing inside Lua string
 memory is state corruption, not a bad game object.
 
@@ -69,11 +69,11 @@ Read from disk tonight, all of them:
 
 | mod | same data as us | scheduling discipline |
 |---|---|---|
-| **IntegratedStorage v2.3** ("ziyuan", by Sarfflow — the global base storage mod) | chests, via the game's own events: hooks `PalBaseCampModuleItemStorage:OnAvailableConcreteModel_ServerInternal` / `OnNotAvailable...` | **≤ 3 bootstrap scans, then latches forever**; one insurance rescan per ~10 min; a single 10s LoopAsync as driver; verbose logging off in release |
-| InfiniteWeightInCamp | camp inventory | comment verbatim: *"Crash-safe: no LoopAsync; the timer chain re-arms only inside ExecuteInGameThread."* — an independent local author already knew |
+| **IntegratedStorage v2.3** ("ziyuan", by Sarfflow - the global base storage mod) | chests, via the game's own events: hooks `PalBaseCampModuleItemStorage:OnAvailableConcreteModel_ServerInternal` / `OnNotAvailable...` | **<= 3 bootstrap scans, then latches forever**; one insurance rescan per ~10 min; a single 10s LoopAsync as driver; verbose logging off in release |
+| InfiniteWeightInCamp | camp inventory | comment verbatim: *"Crash-safe: no LoopAsync; the timer chain re-arms only inside ExecuteInGameThread."* - an independent local author already knew |
 | AutoAssignResearchLab | `GetCharacterHandleSlots` (the call we replaced) | zero loops; event-driven off `ClientRestart` and `OnRep_CurrentResearchId` |
 | BreedingHelper | `TargetContainer` / `ItemSlotArray` (identical read path) | reads only while its window is open; avoids "game-thread callback churn" |
-| PalBaseInfoGrid | roster via `WorkerDirector → CharacterContainer → SlotArray` (we adopted this) | reads when its window is open |
+| PalBaseInfoGrid | roster via `WorkerDirector -> CharacterContainer -> SlotArray` (we adopted this) | reads when its window is open |
 
 Common denominators: **events over polling; latch after bootstrap; work only
 while someone is looking; near-zero async-thread activity; no file I/O in hot
@@ -88,7 +88,7 @@ install; section 8 corrects that and reads the real pollers.)
    (`RetriggerableExecuteInGameThreadWithDelay`, or chains re-armed on the
    game thread). Probe `type(ExecuteInGameThreadWithDelay) == "function"` at
    startup; fall back to the InfiniteWeightInCamp pattern if absent.
-2. **Chest tracking**: adopt IntegratedStorage's shape — hook
+2. **Chest tracking**: adopt IntegratedStorage's shape - hook
    OnAvailable/OnNotAvailableConcreteModel, bounded bootstrap, latch, rare
    insurance scan. The per-pass sweep disappears; stock becomes an
    event-maintained table.
@@ -104,7 +104,7 @@ install; section 8 corrects that and reads the real pollers.)
   (`Mods/PalModSettings.ini`) as the client.
 - Install = mirror the client: copy `Mods/NativeMods/UE4SS` into
   `PalServer/Mods/NativeMods/`, set `bGlobalEnableMod=True` plus ActiveModList
-  entries for UE4SSExperimentalPW and PalWorkPriority only — a 2-mod
+  entries for UE4SSExperimentalPW and PalWorkPriority only - a 2-mod
   environment against the client's 29. The
   [pwmodding server guide](https://pwmodding.wiki/docs/users/ue4ss/installation-server)
   and the package's own Info.json (`"IsServer": true` install rule) both
@@ -127,42 +127,42 @@ install; section 8 corrects that and reads the real pollers.)
 ## 8. Addendum: the continuously-polling mods that survive (asked for and found)
 
 The claim in section 4 that PalWorkPriority is "the only continuously polling
-mod in the install" was **wrong** — a careless grep. A proper sweep found three
+mod in the install" was **wrong** - a careless grep. A proper sweep found three
 perpetual pollers on this very disk, all published mods, and reading them
 answers exactly how polling is done safely. Also verified online:
 **[issue #1180](https://github.com/UE4SS-RE/RE-UE4SS/issues/1180)**, "Crash in
-process_simple_actions from overlapping ExecuteInGameThread callbacks" — our
+process_simple_actions from overlapping ExecuteInGameThread callbacks" - our
 error, minimally reproduced, from overlapping deferred actions "whether through
 ExecuteWithDelay chains, direct scheduling from within callbacks, or multiple
 mods independently queuing work". A lock guard was added, but the crash class
 demonstrably persists (issue #1372, and our own dumps, are against newer
 builds).
 
-### BreedingHelper, sync.lua — a 100 ms ticker with a survival protocol
+### BreedingHelper, sync.lua - a 100 ms ticker with a survival protocol
 
 Its comments cite #1180 by number and a **field incident dated 2026-07-22 in
-which UE4SS dropped the shared EngineTick hook** — our exact silent-stop.
+which UE4SS dropped the shared EngineTick hook** - our exact silent-stop.
 Verbatim:
 
 > "refs are the registry-corruption vector (one bad ref and UE4SS removes the
-> shared EngineTick hook, killing every queued action mod-wide) — while a
+> shared EngineTick hook, killing every queued action mod-wide) - while a
 > zero-ref channel is available the async one stays silent."
 
 The protocol, readable in full in the file:
 
-1. **Single-flight latch** — at most ONE ExecuteInGameThread registration in
+1. **Single-flight latch** - at most ONE ExecuteInGameThread registration in
    existence, ever (`tick_inflight`); a generation counter invalidates stale
    posts.
-2. **Fail closed** — a queued action silent for 5 s is never "recovered" by
+2. **Fail closed** - a queued action silent for 5 s is never "recovered" by
    registering a second one; the whole manager disables itself for the session
    instead.
-3. **Zero-ref channel preferred** — while their panel's game-thread heartbeat
+3. **Zero-ref channel preferred** - while their panel's game-thread heartbeat
    (driven by widget hooks, no registry refs) is pumping, the async ticker
    stays completely silent.
-4. **Park when idle** — the 100 ms ticker exists only while a job runs, with a
+4. **Park when idle** - the 100 ms ticker exists only while a job runs, with a
    two-phase park to close the race on re-arming.
 
-### InfiniteWeightInCamp — a 100 ms poller with zero LoopAsync
+### InfiniteWeightInCamp - a 100 ms poller with zero LoopAsync
 
 The earlier "contradiction" was my grep matching the word LoopAsync inside its
 own comment. Its actual design, verbatim from the header: re-scan cost was
@@ -189,5 +189,5 @@ The delayed-action migration stands, and gains three field-proven rules:
 single-flight for every deferred registration (the pass AND the UI body),
 park-when-idle for both loops, and fail-closed rather than re-register on a
 stuck action. The demand-hook pulse channel we already have is precisely the
-kind of "zero-ref channel" BreedingHelper prefers — pulses arrive on the game
+kind of "zero-ref channel" BreedingHelper prefers - pulses arrive on the game
 thread with no deferred registrations at all.
