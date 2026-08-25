@@ -31,7 +31,7 @@ local pad = require("pad")
 local darnmenu = require("darnmenu")
 
 local MOD_NAME = "Pal Work Priority"
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 
 -- ---------------------------------------------------------------------------
 -- Paths
