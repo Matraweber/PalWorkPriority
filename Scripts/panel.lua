@@ -388,7 +388,20 @@ local LIST_W       = math.floor((ROW_W - LIST_GUTTER * (LIST_COLS - 1))
                                 / LIST_COLS)
 local LIST_H       = 36
 local LIST_PITCH   = LIST_H + 4
-local LIST_ROWS    = 6
+-- Ten, from the space that was already there.
+--
+-- At six, the picker wrapped fourteen items into three columns and then left
+-- 226 pixels of the panel empty below them - a third of its height - while
+-- paging every eighteen items. The layout was arguing with itself: it ran out
+-- of width and had height to spare.
+--
+-- Measured off the drawn panel rather than picked: the grid starts at y=402,
+-- the two footer rows take 68 with a 12 gap above them, and the panel ends at
+-- 889. That leaves 407, which is ten pitches of 40 with seven to spare.
+--
+-- Thirty per page rather than eighteen takes the full item list, with "show
+-- every item with a job" ticked, from thirteen pages to eight.
+local LIST_ROWS    = 10
 local LIST_PER_PAGE = LIST_COLS * LIST_ROWS
 local LIST_ICON    = 28
 local LIST_NAME_X  = 44
@@ -519,14 +532,25 @@ local DANGER_WELL_ON = { R = 0.320, G = 0.055, B = 0.048, A = 1.00 }
 -- against 1.94 for the bright version - while every token GAINS contrast:
 -- that same amber comes back at 7.3:1. Luminance is the wrong channel to
 -- carry this signal up; the caret and the accent bar carry it instead.
--- Hover shares the selection fill on purpose.
+-- Hover separates from selection by hue, at the same luminance.
 --
--- Its own darker value measured 1.20 against the panel body, so a hovered row
--- effectively vanished into the panel, and 1.34 against the selection, so
--- hovering made a row read as MORE selected than the selected one. Every fill
--- dark enough to sit below the selection lands within 1.5 of both. The signal
--- moved to the rail, which gets wider under the pointer.
-local ROW_HOVER = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
+-- It used to be the identical value, and the note explaining that is still
+-- right about what was tried: a darker hover measured 1.20 against the panel
+-- body, so it vanished, and 1.34 against the selection, so hovering made a row
+-- read as MORE selected than the selected one. Every fill dark enough to sit
+-- below the selection lands within 1.5 of both.
+--
+-- What that note then said was "the signal moved to the rail, which gets wider
+-- under the pointer" - and the rail is drawn by list_row, on tiles. A rules
+-- row has no rail. It has the caret, and the caret marks SELECTION, so on that
+-- list hover had no signal of its own at all: pointing at row two while row
+-- one was selected drew two rows in the same fill, told apart by one glyph.
+--
+-- Luminance cannot fix that without giving back the contrast the value below
+-- was chosen for. Chroma can. This is neutral slate where the selection is
+-- distinctly blue, at 0.062 against 0.060 - close enough that every token on
+-- the row keeps the contrast it measured at, far enough apart in hue to see.
+local ROW_HOVER = { R = 0.058, G = 0.062, B = 0.072, A = 1.00 }
 local RAIL_W      = 3
 local RAIL_W_HOT  = 6
 -- Where the keyboard is, quieter than where the mouse is.
@@ -1260,6 +1284,18 @@ local DEFAULT_PT = 20
 -- How far the title block sits below its plain row position, so there is a
 -- band of chrome between the tab strip and the words under it.
 local TITLE_DROP = 10
+-- The column headings, pushed down inside their own row.
+--
+-- The subtitle's descenders bottomed out two pixels above the headings' cap
+-- height: the "j" of "job", the "p" of "stop" and the "y" of "you" sat inside
+-- the row below and the two lines read as one smeared block. Two pixels is the
+-- tightest gap on the panel, between the two things that most need telling
+-- apart, while data rows get four and the title gets eighteen.
+--
+-- Done as a drop rather than by making the Sub row taller, because those
+-- heights are baked into the pak and this is a text position. The Head row is
+-- 28 tall carrying 12pt caps, so there is room to move down into.
+RB.HEAD_DROP = 8
 
 -- Resolved once, here, with a fallback.
 --
@@ -2557,8 +2593,8 @@ local function draw_list(cfg, totals)
         -- two spaces at 12pt are not two spaces at 17pt, so the heading came
         -- out five pixels left of the data it headed.
         RB.use_row("Head")
-        line("h_job",  0, PAD + MARK_W, "JOB",    "faint", 12)
-        line("h_item", 0, COL_ITEM, "ITEM",       "faint", 12)
+        line("h_job",  0, PAD + MARK_W, "JOB",    "faint", 12, RB.HEAD_DROP)
+        line("h_item", 0, COL_ITEM, "ITEM",       "faint", 12, RB.HEAD_DROP)
         -- Numeric headings are CENTRED over their column, not set from its
         -- right edge.
         --
@@ -2573,10 +2609,10 @@ local function draw_list(cfg, totals)
         -- right-aligned column is a normal table.
         line("h_have", 0,
             centre_x(COL2, COL2_R - COL2, "IN STORAGE", 12, CAPS_W),
-            "IN STORAGE", "faint", 12)
+            "IN STORAGE", "faint", 12, RB.HEAD_DROP)
         line("h_cap",  0,
             centre_x(COL_CAP - WELL_INSET, WELL_W, "LIMIT", 12, CAPS_W),
-            "LIMIT", "faint", 12)
+            "LIMIT", "faint", 12, RB.HEAD_DROP)
         -- PALS, not STATUS. The column sits 780 pixels right of the job it
         -- describes with three number columns in between, so "STATUS" had
         -- three things it could plausibly be the status OF - the job, the
@@ -2586,7 +2622,7 @@ local function draw_list(cfg, totals)
         -- which is the state of the job, and a heading reading PALS over
         -- those invites reading them as a count of pals. Wider than PALS but
         -- narrower than the values already under it, so the layout is unmoved.
-        line("h_st",   0, COL_DONE, "STATUS",     "faint", 12)
+        line("h_st",   0, COL_DONE, "STATUS",     "faint", 12, RB.HEAD_DROP)
         RB.done_row()
         row = row + 1
     end
@@ -3181,10 +3217,10 @@ local function draw_item_picker(cfg, totals)
     RB.pf.chrome = os.clock()
     for c = 0, LIST_COLS - 1 do
         local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
-        line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12)
+        line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12, RB.HEAD_DROP)
         line("h_st" .. c,
             0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
-            "IN STORAGE", "faint", 12)
+            "IN STORAGE", "faint", 12, RB.HEAD_DROP)
     end
     RB.done_row()
 
