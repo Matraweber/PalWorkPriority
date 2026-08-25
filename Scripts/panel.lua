@@ -1111,6 +1111,25 @@ local function slab(key, px, py, w, h, colour, hittable, current)
 end
 
 -- A full width row, which is what the rules list is made of.
+-- How far a hosted row's content is lifted so it lands centred in its host.
+--
+-- stripe and line both anchor to (row * LINE - 3), which predates the shell:
+-- back when every row was drawn at an absolute canvas position, -3 was simply
+-- where the bar went. Inside a row host that -3 is measured from the host's
+-- own top edge, so a 30 pixel bar in a 34 pixel row sat at -3..27 - three
+-- pixels above the box, with seven pixels of nothing under it.
+--
+-- Rows two and onward got away with it. Their overflow lands on the row above
+-- and is drawn normally, so they measure a full 30. The FIRST row's overflow
+-- leaves the body entirely and is clipped, so that row alone came out 27 tall
+-- with its text sitting low in what was left of it - which is the row a player
+-- looks at first, and the only one that ever looked wrong.
+--
+-- Taking this off the base moves everything the row draws - bar, caret, every
+-- column - down by five, landing the bar at 2..32 inside a 34 tall box. Two
+-- above, two below, and nothing outside it to clip.
+RB.ROW_LIFT = (LINE - ROW_H) / 2 + 3
+
 local function stripe(key, row, from, width, colour, hittable, current)
     slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable, current)
 end
@@ -1205,7 +1224,15 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
         pcall(function() slot:SetAutoSize(true) end)
         pcall(function() slot:SetZOrder(9000) end)
         pcall(function() tb:SetVisibility(passthrough and 3 or 0) end)
+        -- Offset AND colour. The offset alone has been here all along and
+        -- drew nothing, because UMG's ShadowColorAndOpacity defaults to fully
+        -- transparent - so the intent was in the file and the shadow was not.
+        -- It matters on a panel that sits over a moving 3D scene, and it is
+        -- also what the game's own text does.
         pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
+        pcall(function()
+            tb:SetShadowColorAndOpacity({ R = 0, G = 0, B = 0, A = 0.6 })
+        end)
         if points then set_size(tb, points) end
 
         blocks[key] = tb
@@ -1755,7 +1782,11 @@ local function list_row(key, at, item, have, top, limited)
     -- ScrollBox and the tiles keep their X inside it. Set here rather than at
     -- the caller because this is where both halves are already worked out.
     RB.slot = row_host(row, "ItemList", LIST_PITCH)
-    RB.base = RB.slot and (top + row * LIST_PITCH) or 0
+    -- Centred in its host for the same reason the rules rows are, though this
+    -- one never clipped: a 36 tall tile in a 40 tall row was flush against the
+    -- top with all four spare pixels below it.
+    RB.base = RB.slot
+        and (top + row * LIST_PITCH - (LIST_PITCH - LIST_H) / 2) or 0
     local px = ROW_INSET + col * (LIST_W + LIST_GUTTER)
     local py = top + row * LIST_PITCH
 
@@ -2494,6 +2525,14 @@ local function draw_tabs(active)
     hit("tab_close", { kind = "close" })
     slab("tabhit:close", W - 102, -6, 5 * 20 * 0.83 + 24, TAB_H, INVISIBLE, true)
     tile_face["tab_close"] = stripes["tabhit:close"]
+    -- The panel never said how to leave it. In a game that draws a keycap
+    -- beside every action in the corner of the screen - Command Pal 4, Summon
+    -- Pal E - a bare word is the loudest "this is not part of the game" tell
+    -- the panel has, and Alt+F1 appears nowhere on it.
+    -- Drop 4, not 6: 12pt beside 20pt shares a top edge at the same drop, not a
+    -- baseline. Measured off the drawn panel, 6 put ESC two pixels below
+    -- CLOSE'''s baseline.
+    line("tab_esc", 0, W - 148, "ESC", "faint", 12, 4)
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
 
     -- What this is and what it does, which the panel never said. Opening it
@@ -2660,7 +2699,7 @@ local function draw_list(cfg, totals)
             -- path, which leaves both of these nil and every primitive on the
             -- behaviour it has always had.
             RB.slot = row_host(i, "RuleList")
-            RB.base = RB.slot and (row * LINE) or 0
+            RB.base = RB.slot and (row * LINE - RB.ROW_LIFT) or 0
 
             local have = totals[rule.item] or 0
             local met = have >= rule.amount
