@@ -445,6 +445,24 @@ local function sweep_frame()
         -- sweep, which is the sweep. GetName() returns nothing on this build,
         -- which is why the original reached for GetFullName; the FName route
         -- is what PerfectPlacement walks widget trees with.
+        --
+        -- And leave UE4SS-settings.ini alone while you are here.
+        -- DefaultFNameToStringMethod looks like the setting that governs
+        -- this, and it is the obvious thing to reach for, so it was A/B
+        -- tested across two restarts, three bench runs each, on 25 August:
+        --
+        --                        Scan      Conv_NameToString
+        --   FindAllOf sweep      14-17ms   14-15ms
+        --   GetFullName walk     14ms      16-20ms
+        --   GetFName walk        11-12ms   12-14ms
+        --   whole sweep          26-29ms   26-29ms
+        --
+        -- Scan wins or ties everywhere, so the default stays. The reading
+        -- that explains the shape: GetFName():ToString() calls FName::ToString
+        -- directly and never consults the setting at all, while GetFullName
+        -- does - which is why the only row that moved much is the one this
+        -- loop stopped using. Changing it would have cost every other mod on
+        -- the machine something and bought this one nothing.
         local leaf
         pcall(function() leaf = tex:GetFName():ToString() end)
 
