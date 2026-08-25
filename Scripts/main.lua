@@ -30,7 +30,7 @@ local demandidx = require("demand")
 local pad = require("pad")
 
 local MOD_NAME = "Pal Work Priority"
-local VERSION = "0.1.0"
+local VERSION = "0.2.0"
 
 -- ---------------------------------------------------------------------------
 -- Paths
