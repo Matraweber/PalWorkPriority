@@ -922,7 +922,9 @@ function RB.tidy_rows()
             pcall(function() parts[row[1] .. "Row"]:SetVisibility(1) end)
         end
     end
-    RB.on = {}
+    -- Kept for "pwp panel rows", which runs a frame after the draw it is
+    -- asking about and would otherwise only ever see an empty table.
+    RB.on_last, RB.on = RB.on, {}
 end
 
 local function row_host(i, which, height)
@@ -4195,6 +4197,43 @@ function M.command(cfg, args)
         local ms = (os.clock() - t0) * 1000
         return string.format("100 scans over %d widgets: %.1fms total, %.3fms per scan",
             n, ms, ms / 100)
+    end
+
+    -- Per row state, for the chrome collapse that follows repeated reloads.
+    if verb == "rows" then
+        local parts = overlay.parts
+        if not parts then return "no parts at all" end
+
+        -- Which widget these parts actually belong to, against the canvas the
+        -- panel is drawing into. If a reload left the two disagreeing, that is
+        -- the answer on its own.
+        local function owner_of(w)
+            local n = "nil"
+            if w ~= nil then
+                pcall(function() n = w:GetFullName() end)
+            end
+            return tostring(n):match("(WBP_WorkRules_C_%d+)") or tostring(n)
+        end
+        log.say("  parts.Root belongs to: " .. owner_of(parts.Root))
+        log.say("  drawing into:          " .. owner_of(root))
+
+        local on = RB.on_last or {}
+        for _, row in ipairs(RB.rows) do
+            local name = row[1]
+            local slot, wrapper = parts[name], parts[name .. "Row"]
+            log.say(string.format(
+                "  %-8s slot %-5s row %-5s used %-5s host %s",
+                name,
+                tostring(alive(slot)), tostring(alive(wrapper)),
+                tostring(on[name] == true),
+                tostring(RB.hosts[name .. ":0"] ~= nil)))
+        end
+        for _, name in ipairs({ "ItemList", "RuleList" }) do
+            log.say(string.format("  %-8s slot %-5s row %-5s", name,
+                tostring(alive(parts[name])),
+                tostring(alive(parts[name .. "Row"]))))
+        end
+        return "row report done"
     end
 
     -- Candidate cheap routes to the player controller. Read-only, every

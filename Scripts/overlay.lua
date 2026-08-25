@@ -361,6 +361,23 @@ local function build_blueprint(class)
     widget, tree, canvas = made, made_tree, parts.Root
     M.parts = parts
     M.fit_width()
+
+    -- Show it if the panel is already open on the widget this just replaced.
+    --
+    -- Collapsed is right at world load, where this normally runs and nothing
+    -- is open. It is wrong when the class arrives mid session - which is what
+    -- host() re-asking after a reload now makes possible - because M.open
+    -- stays true while the widget carrying it has been swapped for a
+    -- collapsed one. The panel then reports open=true with nothing on screen,
+    -- and the only way back was another toggle.
+    --
+    -- The input mode does not need re-asserting: it lives on the player
+    -- controller rather than the widget, so it survived the swap. Focus does
+    -- not, because focus was given to the widget that is now gone.
+    if M.open then
+        pcall(function() made:SetVisibility(0) end)
+        pcall(function() made:SetKeyboardFocus() end)
+    end
     -- Stamped here as well as in the hand built path, and this was missing.
     -- built_under is what host() compares the current controller against to
     -- notice a world change; left nil, that guard can never fire, and the
@@ -601,6 +618,30 @@ function M.host()
     -- share that object's lifetime.
     M.parts = nil
     fitted = nil
+
+    -- Ask again if nobody has, before giving up on the blueprint.
+    --
+    -- main.lua calls prepare() once at world load and does not hot reload, so
+    -- after "pwp reload" - which re-arms bp_state to unasked and drops
+    -- M.parts - nothing ever asked a second time. host() fell straight
+    -- through to the hand built canvas below, which has no named rows, so
+    -- use_row failed for every chrome row, tidy_rows collapsed all seven, and
+    -- the header drew onto the bare canvas at absolute coordinates: tabs,
+    -- title, subtitle, caption and column headings stacked on one line with
+    -- the lists still correctly placed below. It reads exactly like a layout
+    -- regression, which is how it was chased - reverting a commit reproduced
+    -- it, because the cause was the reload rather than the code.
+    --
+    -- prepare() returns immediately unless bp_state is "unasked", so this
+    -- cannot loop and cannot re-ask something already in flight. The answer
+    -- arrives through a callback that builds the widget and reassigns widget,
+    -- tree and canvas, so the next host() leaves by the fast path above and
+    -- ensure_root notices the canvas changed and rebuilds the panel's caches.
+    -- Until then this call keeps returning the hand built canvas, which is
+    -- what it did before and is still a working panel.
+    if bp_state == "unasked" then
+        pcall(function() M.prepare() end)
+    end
 
     -- The blueprint widget is built at world load, inside the callback that
     -- receives its class, and the alive(widget) fast path above returns it.
