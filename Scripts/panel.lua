@@ -1973,6 +1973,26 @@ local function blank_unused()
         if not used["s:" .. key] and alive(border)
             and drawn["s:" .. key] ~= "clear" then
             pcall(function() border:SetBrushColor(CLEAR) end)
+
+            -- And it stops taking hit tests, which clearing the colour does
+            -- not do. An invisible stripe still answered IsHovered, and two
+            -- screens put a full width bar at the same place in the same
+            -- canvas: "+ Add a rule" on the rules list, "Show every item with
+            -- a job" in the picker. Identical rectangles, identical ZOrder,
+            -- and the one added later wins the hit test. So after a visit to
+            -- ADD, hovering the add bar hovered the picker's ghost, whose key
+            -- is not in hits on that screen, and the click went nowhere.
+            --
+            -- The words kept working because labels sit at 9000 and stripes
+            -- at 8995, which is exactly the "only the text is clickable"
+            -- report, and why nothing was ever wrong with the row itself.
+            --
+            -- Safe because slab re-applies SetVisibility on every draw,
+            -- outside both the construction branch and the placed cache, so a
+            -- stripe blanked here comes back hit testable the moment its own
+            -- screen draws it again.
+            pcall(function() border:SetVisibility(3) end)
+
             drawn["s:" .. key] = "clear"
         end
     end
@@ -2544,7 +2564,19 @@ local function draw_tabs(active)
     -- back asks for a position measured from the row's own top left - and
     -- -PAD there is Body's padding, which is what lets the band run to the
     -- backdrop's edges instead of stopping short of them.
-    slab("tabbar", -PAD, -PAD, W + PAD * 2, ROW_H + PAD - 3, CHROME_BG)
+    -- Hit testable, which chrome normally would not need to be.
+    --
+    -- Under Game-and-UI a click that lands on no widget goes on to the game
+    -- viewport, which takes mouse capture and spends it. This band runs to the
+    -- backdrop's edges and sat HitTestInvisible, so every click that missed the
+    -- small per-tab targets was donated to the world behind the panel, and the
+    -- NEXT one was the first the tabs actually saw. That is the "I have to
+    -- click ADD and RULES twice" report.
+    --
+    -- It cannot steal from the tabs themselves: the tabhit slabs below are
+    -- constructed after this one, and with equal ZOrder the later child of a
+    -- canvas wins the hit test.
+    slab("tabbar", -PAD, -PAD, W + PAD * 2, ROW_H + PAD - 3, CHROME_BG, true)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
@@ -3833,6 +3865,10 @@ function M.refresh(cfg)
         pcall(function() overlay.watch_input() end)
     end
 
+    if overlay.watch_cursor then
+        pcall(function() overlay.watch_cursor() end)
+    end
+
     -- The pad, driving the same verbs the arrow keys drive.
     --
     -- Hung off RB rather than a top-level local because this file sits four
@@ -4039,6 +4075,8 @@ local function blank_everything()
     for key, border in pairs(stripes) do
         if alive(border) then
             pcall(function() border:SetBrushColor(CLEAR) end)
+            -- Hit tests too. See blank_unused.
+            pcall(function() border:SetVisibility(3) end)
             drawn["s:" .. key] = "clear"
         end
     end
@@ -4579,6 +4617,102 @@ function M.command(cfg, args)
     if verb == "pawn" then
         if not overlay.release_pawn then return "this build cannot do that" end
         return overlay.release_pawn()
+    end
+
+    -- Is the gate seeing anything at all?
+    --
+    -- The cursor fix rests on api.game_ui_active being written by main.lua's
+    -- hook. If that value is nil the hook never fired, which would mean the
+    -- game does not call IsAnyOverlayUIActive for the inventory, and the fix
+    -- was built on a reading that never happens.
+    if verb == "ui" then
+        local out = "api.game_ui_active = " .. tostring(api.game_ui_active)
+
+        -- Asked directly as well, so "the hook never fires" and "the hook
+        -- fires and the answer is false" can be told apart.
+        local hud, direct
+        pcall(function() hud = FindFirstOf("PalHUDInGame") end)
+        if hud == nil then pcall(function() hud = FindFirstOf("PalHUDService") end) end
+        if hud ~= nil then
+            pcall(function() direct = hud:IsAnyOverlayUIActive() end)
+            out = out .. ", direct = " .. tostring(direct)
+        else
+            out = out .. ", no HUD found"
+        end
+
+        log.say(out)
+        return out
+    end
+
+    -- What the pointer is actually over, and what the panel thinks it owns.
+    --
+    -- "Only the text is clickable, not the bar" has survived two fixes that
+    -- both looked right in the source, so this reports the geometry rather
+    -- than reasoning about it again.
+    if verb == "hover" then
+        log.say("hover_key = " .. tostring(hover_key))
+
+        -- EVERYTHING under the pointer, not just the key being blamed.
+        --
+        -- The add-bar ghost was a second widget at identical coordinates that
+        -- nobody thought to look for, and it cost two wrong fixes before an
+        -- agent found it by reading. Asking Slate directly which widgets say
+        -- they are hovered finds that class of bug in one reading.
+        local hot = {}
+        pcall(function()
+            for k, w in pairs(stripes) do
+                if alive(w) then
+                    local h
+                    pcall(function() h = w:IsHovered() end)
+                    if h then hot[#hot + 1] = "stripe " .. k end
+                end
+            end
+            for k, w in pairs(blocks) do
+                if alive(w) then
+                    local h
+                    pcall(function() h = w:IsHovered() end)
+                    if h then hot[#hot + 1] = "text " .. k end
+                end
+            end
+        end)
+
+        if #hot == 0 then
+            log.say("  NOTHING under the pointer")
+        else
+            log.say("  under the pointer, " .. #hot .. ":")
+            for _, name in ipairs(hot) do
+                -- Marked when the panel would not act on it, which is the
+                -- shape of the bug: hovered, but not a key this screen owns.
+                local key = name:match("^%a+ (.+)$")
+                local owned = (key ~= nil and hits[key] ~= nil)
+                log.say("    " .. name .. (owned and "  <- clickable" or ""))
+            end
+        end
+
+        local key = rest or "new"
+        local face = tile_face[key]
+        log.say("  tile_face[" .. key .. "] alive = " .. tostring(alive(face)))
+
+        if alive(face) then
+            local hovered, vis
+            pcall(function() hovered = face:IsHovered() end)
+            pcall(function() vis = face:GetVisibility() end)
+            log.say("  hovered = " .. tostring(hovered)
+                .. ", visibility = " .. tostring(vis) .. " (0 is hit testable)")
+
+            local slot, pos, size
+            pcall(function() slot = face.Slot end)
+            if alive(slot) then
+                pcall(function() pos = slot:GetPosition() end)
+                pcall(function() size = slot:GetSize() end)
+                if pos then log.say(string.format("  at %.0f,%.0f", pos.X, pos.Y)) end
+                if size then log.say(string.format("  size %.0fx%.0f", size.X, size.Y)) end
+            end
+        end
+
+        local block = blocks[key]
+        log.say("  blocks[" .. key .. "] alive = " .. tostring(alive(block)))
+        return "hover report in the log"
     end
 
     if verb == "pad" then

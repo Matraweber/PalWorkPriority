@@ -804,6 +804,9 @@ local function set_input_now(on)
             -- it. When the game has UI up, the cursor is the game's business
             -- and the honest thing is to leave it alone. cursor_was is still
             -- cleared, because the record has served its purpose either way.
+            -- One condition for all three, which is what was wrong before:
+            -- the cursor flag was guarded and the two statements that actually
+            -- hid the pointer were not.
             if api.game_ui_active ~= true then
                 pc.bShowMouseCursor = cursor_was
             end
@@ -820,7 +823,21 @@ local function set_input_now(on)
 
     if not on then
         -- Two parameters, not one. The second is bFlushInput.
-        pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+        --
+        -- Not while the game has its own UI up, and this is THE bug rather
+        -- than a precaution. GameOnly turns on high precision mouse movement,
+        -- and Slate hides the platform cursor for that BELOW the level
+        -- bShowMouseCursor works at. Proven from a session log: the close path
+        -- left the cursor flag true, watch_cursor recorded no change for four
+        -- seconds, and the pointer was gone the whole time. Every theory about
+        -- restoring the flag was fixing a statement that was never the cause.
+        --
+        -- So when a menu of the game's own is open, its input mode is its
+        -- business and this leaves it alone. With nothing open, GameOnly is
+        -- still exactly right and still runs.
+        if api.game_ui_active ~= true then
+            pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+        end
 
         -- And the focus, which the input mode does not carry.
         --
@@ -860,7 +877,12 @@ local function set_input_now(on)
         -- close goes through, for the same reason EnableInput is here.
         pcall(function() suppress_pawn(false) end)
 
-        pcall(function() lib:SetFocusToGameViewport() end)
+        -- Same condition: this yanks focus off EVERY widget, including one
+        -- the game owns, which is a global assertion this module cannot make
+        -- safely while someone else's menu is up.
+        if api.game_ui_active ~= true then
+            pcall(function() lib:SetFocusToGameViewport() end)
+        end
 
         -- Cleared here, not only in reset. This is the flag the watchdog reads
         -- to tell "we applied a UI route and never took it back" apart from
@@ -1150,6 +1172,26 @@ function M.reapply_input()
     input_route = nil
     pcall(function() set_input_now(true) end)
     return "route is now " .. tostring(input_route)
+end
+
+-- Who turns the cursor off, and when.
+--
+-- The release path now logs its own decision, so if the cursor still vanishes
+-- after it decided to leave it alone, something later did it. This says so
+-- rather than leaving that as the only remaining theory.
+M.cursor_log_last = nil
+
+function M.watch_cursor()
+    local pc = api.player_controller()
+    if not alive(pc) then return end
+
+    local now
+    pcall(function() now = pc.bShowMouseCursor end)
+    if now == M.cursor_log_last then return end
+
+    log.debug(string.format("cursor went %s (panel open=%s, game_ui=%s)",
+        tostring(now), tostring(M.open), tostring(api.game_ui_active)))
+    M.cursor_log_last = now
 end
 
 function M.reassert_input()
