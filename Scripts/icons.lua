@@ -147,6 +147,106 @@ local PATIENCE = 150
 
 local PREFIX = "T_itemicon_"
 
+-- Icon names this mod worked out for itself, kept between sessions.
+--
+-- icondex covers 858 of about 2466 items, because the pak's directory index
+-- is compressed and the generator can only read names embedded in
+-- uncompressed asset data. Everything it misses is answered at runtime - by
+-- look_around, which sweeps all 7072 loaded textures for 26ms, or by the
+-- category guesser, which is bounded to a few ids per session on purpose.
+--
+-- Both answers were then thrown away when the game closed, so every session
+-- paid the 26ms again the first time the picker met an id the index lacks.
+-- That sweep was the whole of the 59ms first open measured after the frame
+-- slice landed.
+--
+-- What is learned is a fact about the shipped game, not about this save: the
+-- texture for an item id does not change. So it is written down, and the
+-- second session onwards starts knowing it. The file grows to cover what a
+-- player actually stores rather than the whole catalogue, which is the part
+-- that matters.
+--
+-- The path is worked out here rather than handed in by main.lua, so this
+-- module keeps hot reloading on its own.
+local function mod_dir()
+    local src = debug.getinfo(1, "S").source
+    local scripts = src:sub(2):match("^(.*[\\/])") or ""
+    return scripts:match("^(.*[\\/])[Ss]cripts[\\/]$") or scripts
+end
+
+local LEARNED_PATH = mod_dir() .. "iconnames.txt"
+local learned = {}
+local learned_dirty = false
+
+local function load_learned()
+    local f = io.open(LEARNED_PATH, "r")
+    if not f then return 0 end
+
+    local n = 0
+    for line in f:lines() do
+        if line ~= "" and line:sub(1, 1) ~= "#" then
+            local key, name = line:match("^([^|]+)|(.+)$")
+            if key and name then
+                learned[key] = name
+                n = n + 1
+            end
+        end
+    end
+    f:close()
+    return n
+end
+
+-- Only ever adds. A name that is wrong for this build would be corrected by
+-- the loader failing and the id being resolved again, and a name that is
+-- merely unused costs one table entry.
+local function learn(key, name)
+    if type(name) ~= "string" or name == "" then return end
+    if learned[key] == name or icondex.NAMES[key] == name then return end
+    learned[key], learned_dirty = name, true
+end
+
+local function save_learned()
+    if not learned_dirty then return false end
+
+    local f, err = io.open(LEARNED_PATH, "wb")
+    if not f then
+        -- Said once, not once a beat: losing this costs a 26ms sweep next
+        -- session, not correctness.
+        if not M.learned_warned then
+            M.learned_warned = true
+            log.warn("could not write " .. LEARNED_PATH .. ": " ..
+                tostring(err))
+        end
+        return false
+    end
+
+    f:write("# Pal Work Priority - item id to icon texture name.\n")
+    f:write("# Worked out at runtime for ids icondex.lua does not cover.\n")
+    f:write("# Safe to delete; it will be learned again.\n")
+
+    -- Sorted, so the file does not reshuffle on every write.
+    local keys = {}
+    for key in pairs(learned) do keys[#keys + 1] = key end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        f:write(key .. "|" .. learned[key] .. "\n")
+    end
+
+    f:close()
+    learned_dirty = false
+    return true
+end
+
+-- Read once here, and again on every hot reload, which is what makes the
+-- reload path safe: a swapped module starts from the file rather than from an
+-- empty table, so nothing already known has to be swept for a second time.
+do
+    local n = load_learned()
+    if n > 0 then
+        log.debug("icons: " .. n .. " learned icon name(s) loaded")
+    end
+end
+
 -- Is this object real?
 --
 -- StaticFindObject does not answer with nil when it fails. It hands back a
@@ -266,12 +366,19 @@ local function pump()
     if #queue == 0 then
         pumping = false
         clock.cancel(PUMP_ENTRY)
+        -- Written here rather than as names are learned: the queue draining
+        -- is exactly when a page has finished arriving, it is on the clock
+        -- rather than in a draw, and it cannot happen twice for one batch.
+        pcall(save_learned)
     end
 end
 
 -- Called by the reloader before this module is replaced, so the outgoing copy
 -- takes its queue and its timer with it.
 function M.shutdown()
+    -- The outgoing module takes its queue with it, so anything it learned
+    -- since the last drain would go too.
+    pcall(save_learned)
     queue, queued = {}, {}
     pumping = false
     clock.cancel(PUMP_ENTRY)
@@ -558,7 +665,9 @@ function M.get(item_id)
     if name == false then return nil end
 
     if name == nil then
-        name = icondex.NAMES[key] or look_around()[key] or self_named(key)
+        -- learned before look_around: the whole point is not to sweep.
+        name = icondex.NAMES[key] or learned[key]
+            or look_around()[key] or self_named(key)
         if name == nil then
             -- Nothing recorded and nothing loaded that matches.
             --
@@ -616,6 +725,7 @@ function M.get(item_id)
                         local found = find(alt)
                         if found ~= nil then
                             resolved[key] = alt
+                            learn(key, alt)
                             alternates[key] = nil
                             waited[key] = nil
                             return found
@@ -632,6 +742,7 @@ function M.get(item_id)
             return nil
         end
         resolved[key] = name
+        learn(key, name)
     end
 
     local texture = find(name)
@@ -779,6 +890,29 @@ function M.bench()
     end
     local walk = (os.clock() - t1) * 1000
 
+    -- The other half of the comparison, which had never actually been run:
+    -- the note in this file says StaticFindObject averages 9.4ms and gets
+    -- asked once per tile, but "finds: 0" says it was never asked at all
+    -- once the sweep took over, so that figure was inherited rather than
+    -- measured. Timed here against a path known to be loaded.
+    local probe_path, probe_got = nil, 0
+    for key in pairs(resolved) do
+        if type(resolved[key]) == "string" then
+            probe_path = object_path(resolved[key])
+            break
+        end
+    end
+    local direct = -1
+    if probe_path then
+        local t2 = os.clock()
+        for _ = 1, 20 do
+            local o
+            pcall(function() o = StaticFindObject(probe_path) end)
+            if o ~= nil then probe_got = probe_got + 1 end
+        end
+        direct = (os.clock() - t2) * 1000 / 20
+    end
+
     log.say("icon lookup bench:")
     log.say(string.format("  textures in memory:      %d", #all))
     log.say(string.format("  FindAllOf sweep:         %.1fms", sweep))
@@ -788,6 +922,8 @@ function M.bench()
     log.say(string.format("  StaticFindObject so far: %d finds, %.2fms average, %.0fms total",
         M.finds or 0, (M.finds or 0) > 0 and (M.find_ms / M.finds) or 0,
         M.find_ms or 0))
+    log.say(string.format("  StaticFindObject direct: %.2fms per call (%d/20 hit, %s)",
+        direct, probe_got, tostring(probe_path)))
     log.say(string.format("  sweep misses:            %d, of which the lookup then found: %d",
         M.sweep_misses or 0, M.fallback_hits or 0))
     log.say(string.format("  sweeps run:              %d, %.0fms total",

@@ -3089,6 +3089,7 @@ local function picker_source(totals)
 end
 
 local function draw_item_picker(cfg, totals)
+    RB.pf = { t = os.clock() }
     icons.new_frame()
 
     local source, everything = picker_source(totals)
@@ -3111,7 +3112,9 @@ local function draw_item_picker(cfg, totals)
     -- full, so the line is gone and everything below moved up into the space
     -- it was holding. That is where the column headings now sit, and the
     -- panel is no taller than it was.
+    RB.pf.pre_search = os.clock()
     ensure_search(3)
+    RB.pf.post_search = os.clock()
 
     -- Ours, in a colour the panel controls, and only while the field is
     -- empty. The bar was otherwise flat dark with no border and no words,
@@ -3173,6 +3176,7 @@ local function draw_item_picker(cfg, totals)
     -- Repeated over each of the three columns, because each column is its own
     -- little table.
     RB.use_row("Head")
+    RB.pf.chrome = os.clock()
     for c = 0, LIST_COLS - 1 do
         local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
         line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12)
@@ -3236,6 +3240,7 @@ local function draw_item_picker(cfg, totals)
 
     -- Back to the canvas for the pager and everything under it, and grid rows
     -- left over from a fuller page put away.
+    RB.pf.tiles = os.clock()
     RB.slot, RB.base = nil, 0
     hide_rows_from(math.ceil(grid_count / LIST_COLS), "ItemList")
 
@@ -3343,6 +3348,18 @@ local function draw_item_picker(cfg, totals)
     line("back", r_back, PAD + MARK_W + GLYPH_SLOT, "Back", "action", ROW_PT)
 
     RB.done_row()
+
+    local pf = RB.pf
+    if pf and (os.clock() - pf.t) > 0.020 then
+        log.say(string.format(
+            "picker draw %.0fms  (to search %.0f, search %.0f, rest of " ..
+            "chrome %.0f, tiles %.0f, %d tiles)",
+            (os.clock() - pf.t) * 1000,
+            ((pf.pre_search or pf.t) - pf.t) * 1000,
+            ((pf.post_search or pf.t) - (pf.pre_search or pf.t)) * 1000,
+            ((pf.chrome or pf.t) - (pf.post_search or pf.t)) * 1000,
+            ((pf.tiles or pf.t) - (pf.chrome or pf.t)) * 1000, grid_count))
+    end
 
     return row + 2
 end
