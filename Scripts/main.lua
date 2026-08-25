@@ -1301,8 +1301,19 @@ end
 local function decide_write_or_send()
     if api.has_authority() then
         caps.submit = nil
+
+        -- The authority tells everyone when its own rules move. Set here
+        -- rather than at load for the same reason submit is: there is no world
+        -- when a mod starts, so this question has no answer yet.
+        caps.on_change = function()
+            pcall(function() net.push_rules(caps, cfg, nil) end)
+        end
         return
     end
+
+    -- A client never pushes. Its own edits go up as requests and come back
+    -- down as the server's answer, which is the only copy that counts.
+    caps.on_change = nil
 
     caps.submit = function(kind, work, item, amount, _guild)
         -- The guild is deliberately not sent. The server files the rule under
@@ -1381,27 +1392,6 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         pcall(function() overlay.prepare() end)
     end
 
-    -- Deliberately NOT behind `switched`, unlike the three below it.
-    --
-    -- It should be. Re-announcing on a respawn costs the host a FindAllOf over
-    -- the whole object array plus one reliable RPC per rule, and dying is not
-    -- a world change. But the host drops a client from its registry after two
-    -- minutes of silence and there is no keepalive, so this accidental
-    -- re-announce is currently the only thing that puts a player back on the
-    -- list. Guarding it here without a keepalive in place would turn a waste
-    -- into a client that silently stops receiving rules.
-    --
-    -- The two belong in one change. When the registry learns to keep a client
-    -- that still resolves - which is the real fix, since a departed player's
-    -- component stops resolving and is dropped by the check that already
-    -- follows the TTL - this moves inside the guard with the rest.
-    clock.once(18000, function()
-        if not api.has_authority() then
-            if net.to_server(net.PREFIX .. "Hello", 1) then
-                log.debug("announced to the server, waiting for the rules")
-            end
-        end
-    end)
 
     -- Only on an actual world change, which is what these were always for.
     --
@@ -1415,6 +1405,26 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- The authority answer cannot change without a world change, and its
     -- warning is the one a client sees; unguarded it printed on every death.
     if switched then
+        -- A client announces itself so the server knows to push rules to it,
+        -- and gets the current set back in reply. Delayed with everything
+        -- else, because the network component does not exist the instant a
+        -- world loads.
+        --
+        -- Behind the guard now. It used to run on every spawn, which cost the
+        -- host a full object-array walk plus one RPC per rule on every death,
+        -- and it was left that way on purpose for one commit: the register
+        -- dropped a client after two minutes of silence, so this accidental
+        -- re-announce was the only thing putting a player back on the list.
+        -- The register keeps anyone who still resolves now, so the crutch can
+        -- go with the thing it was propping up.
+        clock.once(18000, function()
+            if not api.has_authority() then
+                if net.to_server(net.PREFIX .. "Hello", 1) then
+                    log.debug("announced to the server, waiting for the rules")
+                end
+            end
+        end)
+
         -- Checked here rather than at load. There is no world when a mod
         -- starts, so PalGameMode does not exist yet and every single player
         -- session reported itself as a client on a dedicated server.

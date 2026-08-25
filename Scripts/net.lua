@@ -36,7 +36,6 @@ local api = require("palapi")
 local M = {}
 
 local PREFIX = "PWP_"
-local CLIENT_TTL = 120          -- seconds before an unheard-from client is dropped
 
 M.installed = false
 
@@ -256,23 +255,6 @@ function M.to_client(comp, message)
     return true
 end
 
--- Several messages to one client, resolving that client exactly once.
---
--- push_rules sends a Reset, one line per rule, and a Done. Routing each of
--- those through M.to_client meant a full FindAllOf sweep per message per
--- client - twenty rules across four clients is 88 sweeps in one synchronous
--- burst on the game thread, every time a rule changes, and rule changes come
--- from clicking a tile. Resolve once, send the batch, drop the client if the
--- component has gone.
-function M.send_batch(name, messages)
-    local comp = live_client(name)
-    if not api.valid(comp) then return false end
-
-    for _, message in ipairs(messages) do
-        if not M.to_client(comp, message) then return false end
-    end
-    return true
-end
 
 
 -- ---------------------------------------------------------------------------
@@ -297,24 +279,49 @@ end
 -- reached through the component's outer, because GetOuter hands back a
 -- wrapper without the actor function table and GetOwner on it silently fails.
 -- That cost an afternoon once already.
-function M.guild_of_sender(comp)
-    if not api.valid(comp) then return nil end
-
-    local outer
-    pcall(function() outer = comp:GetOuter() end)
-    local want = api.valid(outer) and full_name(outer) or nil
-    if not want then return nil end
-
-    local tx
-    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
-    for _, t in ipairs(tx or {}) do
-        if api.valid(t) and full_name(t) == want then
-            local owner
-            pcall(function() owner = t:GetOwner() end)
-            if api.valid(owner) then return api.guild_of(owner) end
+-- Every transmitter in memory, by name, from one walk.
+--
+-- Built by the caller and passed down, because who needs it decides how often
+-- the walk happens: once for a single inbound message, once for a whole push
+-- to every client. It used to be walked inside the per-client answer, which is
+-- the shape this split exists to break.
+local function transmitters()
+    local out = {}
+    for _, t in ipairs(FindAllOf("PalNetworkTransmitter") or {}) do
+        if api.valid(t) then
+            local n = full_name(t)
+            if n then out[n] = t end
         end
     end
-    return nil
+    return out
+end
+
+-- The guild behind a base camp component, against a prebuilt lookup.
+--
+-- The lookup is a membership test as much as a shortcut: the component's outer
+-- is only accepted as a transmitter because a class-filtered walk found it
+-- under that name, rather than because GetOuter said so.
+local function guild_via(comp, tx_by_name)
+    local outer
+    pcall(function() outer = comp:GetOuter() end)
+    if not api.valid(outer) then return nil end
+
+    local want = full_name(outer)
+    if not want then return nil end
+
+    local t = tx_by_name[want]
+    if not api.valid(t) then return nil end
+
+    local owner
+    pcall(function() owner = t:GetOwner() end)
+    if not api.valid(owner) then return nil end
+    return api.guild_of(owner)
+end
+
+-- One message, one sender: the walk is worth it here and happens once.
+function M.guild_of_sender(comp)
+    if not api.valid(comp) then return nil end
+    return guild_via(comp, transmitters())
 end
 
 function M.who(comp)
@@ -505,9 +512,13 @@ function M.push_rules(caps, cfg, comp)
         return true
     end
 
-    -- Everyone we have heard from. Each is resolved exactly once and then
-    -- both asked its guild and sent to, rather than going through send_batch
-    -- which would resolve it a second time. Dropping a key during pairs is
+    -- Nobody to tell. Checked before the two walks below rather than after,
+    -- so a single player session pays nothing at all for being wired up to
+    -- announce every rule it changes.
+    if next(M.clients) == nil then return false end
+
+    -- Everyone we have heard from, resolved once for the whole loop and
+    -- then both asked its guild and sent to. Dropping a key during pairs is
     -- defined behaviour in Lua; adding one is not, and nothing here adds.
     --
     -- Note what M.clients stores: a name and a timestamp, never a component.
@@ -516,31 +527,83 @@ function M.push_rules(caps, cfg, comp)
     -- dereference demand.lua was purged of, and on a busy server clients
     -- churn exactly like work objects. That function has been deleted (it was
     -- dead, and stale enough to hand M.to_client a name where it wants a
-    -- component), but the rule it was written for is the reason this loop
-    -- resolves live_client first and only then asks api.valid: the object
-    -- being validated came from this call, not from the table.
+    -- component), but the rule it was written for is why the map below is
+    -- built fresh on every push and never kept: every object in it came out of
+    -- a walk inside this call, and api.valid is asked before a name is ever
+    -- read off one. What the table holds between pushes is still only strings.
+
+    -- Two walks for the whole push, not two per recipient.
+    --
+    -- live_client and guild_of_sender each read the entire object array, and
+    -- both used to be called once per client: 2N full walks per rule change,
+    -- at 10-19ms each on this build, synchronously on the game thread, every
+    -- time somebody clicks a tile. Four clients was most of a tenth of a
+    -- second of frozen game to deliver twenty short strings.
+    --
+    -- send_batch's comment made this exact argument once already, about
+    -- sweeping per MESSAGE rather than per client. This is the same argument
+    -- one level further out, and it is why that function is now gone: its job
+    -- is done properly by resolving everything up front.
+    local live_by_name, resolved = {}, 0
+    for _, comp in ipairs(FindAllOf("PalNetworkBaseCampComponent") or {}) do
+        if api.valid(comp) then
+            local n = full_name(comp)
+            if n then
+                live_by_name[n] = comp
+                resolved = resolved + 1
+            end
+        end
+    end
+
+    -- Nothing resolved while the register is not empty is a failed lookup, not
+    -- proof that every player left at once. Dropping the whole register on it
+    -- would be unrecoverable: nothing re-adds a client except a message from
+    -- that client, so a single bad walk would silently cut off everybody until
+    -- they each happened to edit something.
+    if resolved == 0 and next(M.clients) ~= nil then
+        log.debug("no base camp components resolved, so nothing was pushed " ..
+            "and no client was dropped")
+        return false
+    end
+
+    local tx_by_name = transmitters()
+
+    -- Presence decides who stays, not the clock.
+    --
+    -- This used to drop any client that had not SENT anything for two
+    -- minutes, checked before it asked whether the player was still there. A
+    -- client only ever sends when it edits a rule, so a player who joined,
+    -- received their rules and then simply played was deleted at the first
+    -- push after their second minute - and nothing re-adds a client except a
+    -- message from that client, so they quietly stopped receiving rules for
+    -- the rest of the session.
+    --
+    -- The timestamp was never the right question. A player who leaves takes
+    -- their component with them, so it stops resolving and the branch below
+    -- drops them on the same push; a player who is still here resolves,
+    -- whatever the clock says. CLIENT_TTL is gone rather than widened, because
+    -- a longer wrong answer is still a wrong answer.
     local now = os.clock()
     local sent = 0
     for name, entry in pairs(M.clients) do
-        if (now - entry.at) > CLIENT_TTL then
+        local live = live_by_name[name]
+        if live == nil then
             M.clients[name] = nil
         else
-            local live = live_client(name)
-            if not api.valid(live) then
-                M.clients[name] = nil
+            local ok = true
+            for _, msg in ipairs(batch_for(guild_via(live, tx_by_name))) do
+                if not M.to_client(live, msg) then
+                    ok = false
+                    break
+                end
+            end
+            if ok then
+                -- Kept for "pwp net", which reports how long since each client
+                -- was last reached. Nothing decides anything on it now.
+                entry.at = now
+                sent = sent + 1
             else
-                local ok = true
-                for _, msg in ipairs(batch_for(M.guild_of_sender(live))) do
-                    if not M.to_client(live, msg) then
-                        ok = false
-                        break
-                    end
-                end
-                if ok then
-                    sent = sent + 1
-                else
-                    M.clients[name] = nil
-                end
+                M.clients[name] = nil
             end
         end
     end

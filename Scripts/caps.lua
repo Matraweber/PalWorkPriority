@@ -189,6 +189,13 @@ function M.save()
     end
 
     f:close()
+
+    -- After the write, not before: a listener should never be told about a
+    -- ruleset that failed to reach the disk. pcall'd because a push walks the
+    -- object array and talks to the network, and none of that is worth losing
+    -- a saved rule over.
+    if M.on_change then pcall(M.on_change) end
+
     return true
 end
 
@@ -196,6 +203,25 @@ end
 -- whoever owns the world rather than a local write, so two players cannot
 -- drift apart and a client cannot invent rules the server never agreed to.
 M.submit = nil
+
+-- Called after any change that reached the file, set by main.lua.
+--
+-- The rules were pushed to clients from exactly one place: the handler for an
+-- inbound client message. So a client that edited something got everyone's
+-- copy updated, and the host editing the same rule in its own panel told
+-- nobody - connected players kept drawing the previous ruleset until they
+-- happened to edit something themselves or respawned. For a mod whose point
+-- is that a base behaves the same for everyone in it, that is the wrong way
+-- round.
+--
+-- Hung off save() rather than off the six edit sites, because a seventh edit
+-- site is the likeliest thing to be added next and it would forget. save() is
+-- the one place every committed change already passes through, and it is
+-- refused on a client, so this cannot fire from a machine with no authority.
+--
+-- caps stays ignorant of the network. It says the rules moved; main.lua
+-- decides that means a push, exactly as it does for submit above.
+M.on_change = nil
 
 -- A write with no guild is refused rather than widened.
 --
