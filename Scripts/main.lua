@@ -28,6 +28,7 @@ local net = require("net")
 local overlay = require("overlay")
 local demandidx = require("demand")
 local pad = require("pad")
+local darnmenu = require("darnmenu")
 
 local MOD_NAME = "Pal Work Priority"
 local VERSION = "0.2.0"
@@ -171,8 +172,19 @@ local function load_config()
         loaded = result
     end
 
+    -- Whatever the player set in DarnMenu, on top of config.lua and before
+    -- validate sees it, so a value from the menu is checked by exactly the
+    -- same rules as a value typed into the file. Absent DarnMenu, or absent a
+    -- saved file, this changes nothing.
+    pcall(function() darnmenu.apply(loaded) end)
+
     cfg = validate(loaded)
     log.set_level(cfg.log_level)
+
+    -- Written on every load, so an edit to the schema reaches the menu without
+    -- anyone remembering to do it by hand. Idempotent: it only writes when the
+    -- bytes differ.
+    pcall(function() darnmenu.register() end)
     return true
 end
 
