@@ -1381,9 +1381,20 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         pcall(function() overlay.prepare() end)
     end
 
-    -- A client announces itself so the server knows to push rules to it, and
-    -- gets the current set back in reply. Delayed with everything else,
-    -- because the network component does not exist the instant a world loads.
+    -- Deliberately NOT behind `switched`, unlike the three below it.
+    --
+    -- It should be. Re-announcing on a respawn costs the host a FindAllOf over
+    -- the whole object array plus one reliable RPC per rule, and dying is not
+    -- a world change. But the host drops a client from its registry after two
+    -- minutes of silence and there is no keepalive, so this accidental
+    -- re-announce is currently the only thing that puts a player back on the
+    -- list. Guarding it here without a keepalive in place would turn a waste
+    -- into a client that silently stops receiving rules.
+    --
+    -- The two belong in one change. When the registry learns to keep a client
+    -- that still resolves - which is the real fix, since a departed player's
+    -- component stops resolving and is dropped by the check that already
+    -- follows the TTL - this moves inside the guard with the rest.
     clock.once(18000, function()
         if not api.has_authority() then
             if net.to_server(net.PREFIX .. "Hello", 1) then
@@ -1392,31 +1403,43 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         end
     end)
 
-    -- Checked here rather than at load. There is no world when a mod starts,
-    -- so PalGameMode does not exist yet and every single player session
-    -- reported itself as a client on a dedicated server.
-    clock.once(20000, function()
-        decide_write_or_send()
+    -- Only on an actual world change, which is what these were always for.
+    --
+    -- ClientRestart fires on every spawn, so all three ran again on every
+    -- death: a redundant authority decision, a whole extra pass, and a dev
+    -- probe, fifteen to twenty five seconds after each one. The comment on the
+    -- guard above names "re-queued four one-shots" as part of what it was
+    -- written to stop, but the guard was only ever put around the cache
+    -- resets, so this half of the problem stayed.
+    --
+    -- The authority answer cannot change without a world change, and its
+    -- warning is the one a client sees; unguarded it printed on every death.
+    if switched then
+        -- Checked here rather than at load. There is no world when a mod
+        -- starts, so PalGameMode does not exist yet and every single player
+        -- session reported itself as a client on a dedicated server.
+        clock.once(20000, function()
+            decide_write_or_send()
 
-        if not api.has_authority() then
-            log.warn("no authority here, so this looks like a client on a " ..
-                "dedicated server. Work demand will be estimated from the " ..
-                "camp's own work objects rather than read from the server's " ..
-                "pulses, which is coarser.")
-        end
-    end)
-
-    if cfg.run_on_world_load then
-        -- Base camps and their worker slots are not populated the instant
-        -- the controller restarts, so the first look is late on purpose.
-        clock.once(15000, function() run_pass("world load") end)
-
-
-        -- One question, asked once: does the game hand out item icons itself?
-        -- If it does, most of icons.lua stops being necessary.
-        clock.once(25000, function()
-            pcall(function() icons.data_probe() end)
+            if not api.has_authority() then
+                log.warn("no authority here, so this looks like a client on " ..
+                    "a dedicated server. Work demand will be estimated from " ..
+                    "the camp's own work objects rather than read from the " ..
+                    "server's pulses, which is coarser.")
+            end
         end)
+
+        if cfg.run_on_world_load then
+            -- Base camps and their worker slots are not populated the instant
+            -- the controller restarts, so the first look is late on purpose.
+            clock.once(15000, function() run_pass("world load") end)
+
+            -- One question, asked once: does the game hand out item icons
+            -- itself? If it does, most of icons.lua stops being necessary.
+            clock.once(25000, function()
+                pcall(function() icons.data_probe() end)
+            end)
+        end
     end
     start_timer()
     start_ui()

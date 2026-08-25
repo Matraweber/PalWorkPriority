@@ -583,6 +583,13 @@ function M.host()
     if built_under ~= nil and now_owner ~= built_under then
         widget, tree, canvas = nil, nil, nil
         M.parts = nil
+        -- With the parts, always. fitted names the width of a backdrop that
+        -- has just been let go of, and the next one comes out of the pak at
+        -- its baked 900. Left set, fit_width sees its own stale number still
+        -- matching M.width, returns early, and the panel draws 1110 of content
+        -- on a 900 slab for the rest of the session - which is precisely the
+        -- thing runtime sizing exists to stop.
+        fitted = nil
         -- Re-armed, so the next world's ClientRestart loads and builds again.
         if bp_state == "hosted" then bp_state = "unasked" end
         built_under = nil
@@ -844,6 +851,7 @@ end
 function M.reset()
     widget, tree, canvas = nil, nil, nil
     M.parts = nil
+    fitted = nil
     if bp_state == "hosted" then bp_state = "unasked" end
     built_under = nil
     owner_cached, owner_at = nil, -1

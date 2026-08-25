@@ -4813,9 +4813,52 @@ function M.apply(cfg, what, dir, from_mouse)
         if at < 1 then at = #works end
 
         local moved = works[at]
-        caps.clear(rule.work, rule.item, mine())
-        caps.set(moved, rule.item, rule.amount, mine())
-        log.say(rule.item .. " is now made by " .. workdefs.label(moved))
+
+        -- Moving a rule to another job is a clear and then a set, and either
+        -- half can refuse. Both answers used to be discarded and the move
+        -- announced regardless, which produced two different lies.
+        --
+        -- A rule from before guild scoping is drawn as an ordinary row,
+        -- because merged_for layers the wildcard in - but clear refuses it,
+        -- since it belongs to every guild that has not set its own. The set
+        -- then succeeded, and the item ended up capped under BOTH jobs while
+        -- the panel said it had moved.
+        --
+        -- On a client the two halves are two separate requests against a
+        -- budget of ten per ten seconds. At nine, the clear lands and the set
+        -- is dropped: the ceiling is gone entirely and the panel still says it
+        -- moved.
+        --
+        -- The drop branch below already learned this - "This used to discard
+        -- it and say 'rule removed' either way" - and this branch was missed.
+        if not caps.clear(rule.work, rule.item, mine()) then
+            announce(string.format(
+                "could not move the limit on %s: it is not your guild's " ..
+                "rule, it applies to every guild that has not set its own",
+                rule.item))
+            return true
+        end
+
+        if not caps.set(moved, rule.item, rule.amount, mine()) then
+            -- The clear already happened, so the rule is gone rather than
+            -- moved. Said plainly, with the number, because re-adding it by
+            -- hand is the only way back and the player needs to know both
+            -- halves of what to type.
+            announce(string.format(
+                "the %s limit on %s was removed but could not be set on %s: " ..
+                "add it again with a ceiling of %d",
+                workdefs.label(rule.work), rule.item,
+                workdefs.label(moved), rule.amount))
+            M.wants_pass = true
+            return true
+        end
+
+        if caps.submit then
+            announce("asked the server to move the limit on " .. rule.item ..
+                " to " .. workdefs.label(moved))
+        else
+            announce(rule.item .. " is now made by " .. workdefs.label(moved))
+        end
         M.wants_pass = true
         return true
     end
