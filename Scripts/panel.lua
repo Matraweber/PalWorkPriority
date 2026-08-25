@@ -563,7 +563,16 @@ local ROW_HOVER = { R = 0.058, G = 0.062, B = 0.072, A = 1.00 }
 local RAIL_W      = 3
 local RAIL_W_HOT  = 6
 -- Where the keyboard is, quieter than where the mouse is.
-local ROW_SEL   = { R = 0.025, G = 0.065, B = 0.117, A = 1.00 }
+--
+-- Measured against the backdrop: this was 1.12:1 while an ORDINARY row is
+-- 1.54:1, so selecting a row made it FAINTER than its neighbours. On a two
+-- rule list the selected row read as a gap and the unselected one read as the
+-- only row in the table, leaving the 10px caret to carry the whole cursor.
+--
+-- Raised above ROW_BG rather than below it. "Quieter than the mouse" was the
+-- right intent in the wrong direction: quieter means less than the hover
+-- tint, not less than nothing.
+local ROW_SEL   = { R = 0.105, G = 0.140, B = 0.190, A = 1.00 }
 -- The cyan edge that says "this one", independent of fill luminance. A row
 -- has the caret; a tile has no room for one and gets this instead.
 local ACCENT    = { R = 0.42,  G = 0.80,  B = 1.00,  A = 1.00 }
@@ -2667,7 +2676,13 @@ local function draw_tabs(active)
     end
 
     hit("tab_close", { kind = "close" })
-    slab("tabhit:close", W - 102, -6, 5 * 20 * 0.83 + 24, TAB_H, INVISIBLE, true)
+    -- Wide enough to include ESC.
+    --
+    -- The hit box started at W-102 while the word ESC is drawn about 45px
+    -- further left, so the panel printed a shortcut label that did nothing
+    -- when clicked. Advertising a control and then refusing the click is
+    -- worse than not advertising it.
+    slab("tabhit:close", W - 150, -6, 150, TAB_H, INVISIBLE, true)
     tile_face["tab_close"] = stripes["tabhit:close"]
     -- The panel never said how to leave it. In a game that draws a keycap
     -- beside every action in the corner of the screen - Command Pal 4, Summon
@@ -2822,11 +2837,19 @@ local function draw_list(cfg, totals)
         -- some is right bound" looked like from the outside. Centring halves
         -- the error and makes it symmetric, and a centred heading over a
         -- right-aligned column is a normal table.
+        -- Right aligned, like the picker's, and like the figures beneath.
+        --
+        -- Centring was argued above as halving a width-estimate error and
+        -- making it symmetric. Measured, it halved nothing: IN STORAGE ended
+        -- 31px left of its own numbers and LIMIT 41px left of its own well.
+        -- That is a design offset, not an estimate error, and it reads as the
+        -- label having drifted off its column. The picker right-aligns the
+        -- same kind of heading and lands within 3px.
         line("h_have", 0,
-            centre_x(COL2, COL2_R - COL2, "IN STORAGE", 12, CAPS_W),
+            right_x(COL2_R, "IN STORAGE", 12, CAPS_W),
             "IN STORAGE", "faint", 12, RB.HEAD_DROP)
         line("h_cap",  0,
-            centre_x(COL_CAP - WELL_INSET, WELL_W, "LIMIT", 12, CAPS_W),
+            right_x(COL_CAP - WELL_INSET + WELL_W, "LIMIT", 12, CAPS_W),
             "LIMIT", "faint", 12, RB.HEAD_DROP)
         -- PALS, not STATUS. The column sits 780 pixels right of the job it
         -- describes with three number columns in between, so "STATUS" had
@@ -3160,9 +3183,9 @@ local function draw_list(cfg, totals)
             if can_next then hit("rnext", { kind = "rpage", by = 1 }) end
 
             slab("rprevbox", PAD, row * LINE - 1, 200, ROW_H - 4,
-                can_prev and BUTTON_BG or ROW_BG, can_prev)
+                can_prev and BUTTON_BG or CHROME_BG, can_prev)
             slab("rnextbox", PAD + 212, row * LINE - 1, 200, ROW_H - 4,
-                can_next and BUTTON_BG or ROW_BG, can_next)
+                can_next and BUTTON_BG or CHROME_BG, can_next)
             if can_prev then tile_face["rprev"] = stripes["rprevbox"] end
             if can_next then tile_face["rnext"] = stripes["rnextbox"] end
 
@@ -3598,9 +3621,9 @@ local function draw_item_picker(cfg, totals)
         if can_next then hit("next", { kind = "page", by = 1 }) end
 
         slab("prevbox", PAD, row * LINE - 1, PAGE_W, ROW_H - 4,
-            can_prev and BUTTON_BG or ROW_BG, can_prev)
+            can_prev and BUTTON_BG or CHROME_BG, can_prev)
         slab("nextbox", PAD + PAGE_W + 12, row * LINE - 1, PAGE_W, ROW_H - 4,
-            can_next and BUTTON_BG or ROW_BG, can_next)
+            can_next and BUTTON_BG or CHROME_BG, can_next)
         if can_prev then tile_face["prev"] = stripes["prevbox"] end
         if can_next then tile_face["next"] = stripes["nextbox"] end
 
@@ -4149,6 +4172,18 @@ function M.refresh(cfg)
     -- Y is set from TOP_Y at load and nothing else ever writes it, so the
     -- redraw-on-move branch that used to sit here could not run. It was left
     -- over from the centred layout, where the height decided the offset.
+
+    -- The same row count the local backdrop uses, handed to the shell, which
+    -- is the one that actually draws when the blueprint mounted. ensure_backdrop
+    -- has sized to content all along but returns early whenever overlay.parts
+    -- exists, which is every real session.
+    --
+    -- PAD * 2 for the top and bottom margins, plus one row of slack so the
+    -- last row is not flush against the bottom edge.
+    if overlay.fit_width then
+        overlay.height = rows * LINE + PAD * 2 + LINE
+        pcall(function() overlay.fit_width() end)
+    end
 
     ensure_backdrop(rows)
     local tb = os.clock()

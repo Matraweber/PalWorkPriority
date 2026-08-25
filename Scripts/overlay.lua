@@ -1029,17 +1029,47 @@ end
 --
 -- Idempotent and guarded on the value, so calling it from host() every time
 -- costs one table read on the settled path and repairs itself on any other.
+-- The height the panel currently needs. Set by panel.lua before it draws.
+--
+-- 700 was a literal here. Measured on a two rule list, the drawn content ended
+-- 451 pixels above the bottom edge - 64% of the panel was empty fill, and the
+-- void was nearly twice the content. Two rules floating in the top third of a
+-- fixed slab does not read as a spacious design, it reads as the rest having
+-- failed to load.
+M.height = 700
+
+local fitted_h
+
 function M.fit_width()
     local parts = M.parts
     if not (parts and M.width) then return end
-    if fitted == M.width then return end
+
+    local want_h = math.floor(M.height or 700)
+    if want_h < 220 then want_h = 220 end
+    if want_h > 700 then want_h = 700 end
+
+    if fitted == M.width and fitted_h == want_h then return end
     if not alive(parts.Backdrop) then return end
 
     local ok = pcall(function()
         local slot = parts.Backdrop.Slot
-        if slot then slot:SetSize({ X = M.width + 36, Y = 700 }) end
+        if slot then
+            -- Size only. NOT position.
+            --
+            -- Setting the position to minus half the size, to pin the top
+            -- edge, put the panel off the left of the screen: the slot is
+            -- centre ANCHORED and its alignment already does the centring, so
+            -- position (0,0) is what centres it and any offset moves it. The
+            -- top edge therefore follows half the height change, and the tab
+            -- strip shifts a little between a short list and a long one.
+            -- Measured against 451 pixels of empty fill, that is the better
+            -- trade, and it is reversible in one line if it grates.
+            slot:SetSize({ X = M.width + 36, Y = want_h })
+        end
     end)
-    if ok then fitted = M.width end
+    if ok then
+        fitted, fitted_h = M.width, want_h
+    end
 end
 
 
