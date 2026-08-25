@@ -28,7 +28,7 @@
 local M = {}
 
 -- Bumped by hand when this file changes, so a report says which copy ran.
-M.VERSION = 7
+M.VERSION = 12
 
 local api = require("palapi")
 local log = require("log")
@@ -62,6 +62,16 @@ M.PAD = {
 -- when RegisterKeyBind does not.
 M.KEYS = {
     "Up", "Down", "Left", "Right", "Enter", "Escape", "SpaceBar",
+
+    -- The movement and action keys, which are here to catch a controller that
+    -- is not arriving as a controller.
+    --
+    -- Steam Input can present a pad to the game as keyboard and mouse, and
+    -- then every Gamepad_* FKey is dead forever while the player is visibly
+    -- walking around. That is indistinguishable from "the mod broke" unless
+    -- these are sampled: if pushing the stick lights up W, the game is being
+    -- handed keystrokes and no amount of fixing the pad reader will help.
+    "W", "A", "S", "D", "E", "Q", "F", "Tab", "LeftShift",
 }
 
 local keys = {}
@@ -111,9 +121,63 @@ function M.probe()
     end
 
     log.say("pad probe (pad.lua v" .. tostring(M.VERSION) .. "):")
-    log.say("  pad keys answered:      " .. pad_ok .. " of " .. #M.PAD)
-    log.say("  keyboard keys answered: " .. key_ok .. " of " .. #M.KEYS)
+    -- "Answered" means the call succeeded, NOT that anything was pressed.
+    -- Reading "16 of 16" as "16 buttons are dead" is a mistake that was
+    -- actually made, and it sent an investigation down a false trail, so the
+    -- wording says which question it answers.
+    log.say("  pad keys readable:      " .. pad_ok .. " of " .. #M.PAD
+        .. "  (readable, not pressed)")
+    log.say("  keyboard keys readable: " .. key_ok .. " of " .. #M.KEYS)
+
+    -- Anything actually down right now, which is the question a person asking
+    -- "does my controller work" is really asking.
+    local down = {}
+    for _, list in ipairs({ M.PAD, M.KEYS }) do
+        for _, name in ipairs(list) do
+            if M.down(name) then down[#down + 1] = name end
+        end
+    end
+    log.say("  down right now:         "
+        .. (#down == 0 and "nothing" or table.concat(down, ", ")))
     log.say("  could not be asked:     " .. unreadable)
+
+    -- Do the names we are asking about even resolve?
+    --
+    -- Never checked until now, and it is the one link in the chain that can
+    -- fail completely silently. FName(str) for a name the engine has not
+    -- registered yields None, and IsInputKeyDown(None) is false for every
+    -- button forever, which looks exactly like a controller nobody pressed.
+    local sample = { "Gamepad_DPad_Up", "Gamepad_FaceButton_Bottom", "Up" }
+    for _, name in ipairs(sample) do
+        local k = key_for(name)
+        local got = "no FKey built"
+        if k then
+            got = "unreadable"
+            pcall(function() got = k.KeyName:ToString() end)
+        end
+        log.say(string.format("  name %-26s -> %s", name, got))
+    end
+
+    -- Analog, which answers a different question from the buttons.
+    --
+    -- A button reads false whether it is up or whether nothing is plugged in.
+    -- The sticks distinguish those: a connected pad almost always has some
+    -- drift, so any non-zero here means the game is seeing a device, and all
+    -- of them being exactly 0.0 alongside dead buttons is what a disconnected
+    -- or sleeping controller looks like.
+    local pc = api.player_controller()
+    if pc then
+        for _, axis in ipairs({
+            "Gamepad_LeftX", "Gamepad_LeftY",
+            "Gamepad_RightX", "Gamepad_RightY",
+            "Gamepad_LeftTriggerAxis", "Gamepad_RightTriggerAxis",
+        }) do
+            local k = key_for(axis)
+            local v
+            if k then pcall(function() v = pc:GetInputAnalogKeyState(k) end) end
+            log.say(string.format("  %-26s %s", axis, tostring(v)))
+        end
+    end
 
     if pad_ok == 0 and key_ok == 0 then
         return "nothing could be read, so IsInputKeyDown is not usable here"
@@ -122,6 +186,108 @@ function M.probe()
 end
 
 local SAMPLE_MS = 50
+
+-- Driving the panel from a pad.
+--
+-- Gamepad only, deliberately. The arrow keys already reach the panel through
+-- their RegisterKeyBind now that the route is Game-and-UI, and polling them
+-- here as well would move the selection twice per press.
+--
+-- The verbs are the ones the panel already understands, so this adds a reader
+-- and nothing else: no new navigation model, no second idea of where the
+-- selection is.
+local DRIVE = {
+    { "Gamepad_DPad_Up",            "up" },
+    { "Gamepad_DPad_Down",          "down" },
+    { "Gamepad_DPad_Left",          "left" },
+    { "Gamepad_DPad_Right",         "right" },
+    { "Gamepad_FaceButton_Bottom",  "enter" },
+}
+
+-- Buttons that act once per press, never on a repeat.
+--
+-- LeftShoulder is FullSphereSummon's summon button. That mod reads the pad
+-- only during the game's own summon action, so taking it here is safe while
+-- this panel is up. Shoulders for tabs is what every console menu does.
+local TAPS = {
+    { "Gamepad_FaceButton_Right",  "close" },
+    { "Gamepad_LeftShoulder",      "tab_prev" },
+    { "Gamepad_RightShoulder",     "tab_next" },
+    { "Gamepad_FaceButton_Left",   "remove" },
+}
+
+-- Held down means repeat, at a menu's pace rather than a poll's.
+--
+-- clock's floor is 100ms, so these are in ticks and cannot be finer. Four
+-- ticks before the first repeat, two between.
+local FIRST_REPEAT = 4
+local NEXT_REPEAT = 2
+
+local held = {}
+
+local function pressed_verbs()
+    local out, n = nil, 0
+
+    for _, entry in ipairs(DRIVE) do
+        local name, verb = entry[1], entry[2]
+        local down = M.down(name) == true
+        local h = held[name]
+
+        if not down then
+            held[name] = nil
+        elseif h == nil then
+            held[name] = 1
+            n = n + 1
+            out = out or {}
+            out[n] = verb
+        else
+            h = h + 1
+            -- enter does not repeat. A held confirm firing every 200ms would
+            -- walk down a list of rules deleting things.
+            if verb ~= "enter" and h >= FIRST_REPEAT
+                and ((h - FIRST_REPEAT) % NEXT_REPEAT) == 0 then
+                n = n + 1
+                out = out or {}
+                out[n] = verb
+            end
+            held[name] = h
+        end
+    end
+
+    return out
+end
+
+-- Called on the beat while the panel is open.
+--
+-- The actions are passed in rather than required, so this module never has to
+-- know what a panel is. Anything missing from the table is simply not bound.
+function M.drive(actions)
+    local verbs = pressed_verbs()
+    if verbs and actions.nav then
+        for _, verb in ipairs(verbs) do
+            pcall(actions.nav, verb)
+        end
+    end
+
+    for _, entry in ipairs(TAPS) do
+        local name, action = entry[1], entry[2]
+        local down = M.down(name) == true
+
+        if not down then
+            held[name] = nil
+        elseif not held[name] then
+            held[name] = 1
+            local fn = actions[action]
+            if fn then pcall(fn) end
+        end
+    end
+end
+
+-- Forget what was held, so a button still down when the panel shuts does not
+-- fire the instant it reopens.
+function M.forget()
+    held = {}
+end
 
 -- Opening the panel from a pad.
 --
@@ -181,9 +347,14 @@ function M.watch(on)
         beats = beats + 1
         if beats % 100 == 0 then
             local pc = api.player_controller()
+            -- Counted in BEATS, not in the interval this entry ASKED for.
+            -- clock's floor is BEAT_MS, so a request below it runs at the
+            -- floor, and reporting beats * SAMPLE_MS understated elapsed time
+            -- by more than two to one. Every timing read off this line was
+            -- wrong in the same direction.
             log.say(string.format(
-                "pad watch alive, %ds, controller %s",
-                math.floor(beats * SAMPLE_MS / 1000),
+                "pad watch alive, ~%ds (%d beats), controller %s",
+                math.floor(beats * 100 / 1000), beats,
                 pc and "yes" or "NO"))
         end
 

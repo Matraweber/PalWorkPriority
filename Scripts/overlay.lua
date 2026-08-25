@@ -728,6 +728,23 @@ M.pawn_held = false
 local function suppress_pawn(on)
     on = (on == true)
 
+    -- Once per state change, never once per call.
+    --
+    -- SetIgnoreMoveInput is REFERENCE COUNTED in UE, not a boolean:
+    -- IgnoreMoveInput = max(IgnoreMoveInput + (b and 1 or -1), 0). And
+    -- set_input_now(true) calls this, while reassert_input calls
+    -- set_input_now(true) again from the panel refresh whenever it finds the
+    -- cursor taken. Every one of those pushed the counter up and only a close
+    -- pushed it down, so a session that reasserted more than once left the
+    -- count stuck above zero, and the character silently could not walk even
+    -- after the panel was shut. The clamp at zero means the surplus never
+    -- drains on its own.
+    --
+    -- Latent rather than active so far, because reassert_input has a guard
+    -- that fires rarely. It is the same shape as the bug that cost this
+    -- morning, so it goes now rather than when it finally bites.
+    if M.pawn_held == on then return true end
+
     local pc = api.player_controller()
     if not alive(pc) then return false end
 

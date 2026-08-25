@@ -3889,7 +3889,23 @@ function M.refresh(cfg)
                 if ok and type(result) == "table" then built = result end
             end
         end
+
+        -- Fall back to whatever is already loaded, the way the pad command
+        -- has all along. Without this the two paths disagree: the command
+        -- keeps working while the driver silently does not exist, so the pad
+        -- reads perfectly in a probe and moves nothing in the panel. That is
+        -- an unpleasant shape of bug and it costs one line to rule out.
+        if type(built) ~= "table" then
+            built = package.loaded["pad"]
+            if type(built) ~= "table" then
+                local got, req = pcall(require, "pad")
+                built = (got and type(req) == "table") and req or false
+            end
+        end
+
         RB.pad = built
+        log.debug("panel: pad driver " ..
+            (type(RB.pad) == "table" and "loaded" or "NOT AVAILABLE"))
     end
 
     if RB.pad and RB.pad.drive then
@@ -4625,6 +4641,16 @@ function M.command(cfg, args)
     -- hook. If that value is nil the hook never fired, which would mean the
     -- game does not call IsAnyOverlayUIActive for the inventory, and the fix
     -- was built on a reading that never happens.
+    -- Is the driver actually there, and is it being called?
+    if verb == "drive" then
+        local have = (type(RB.pad) == "table")
+        local out = "pad driver " .. (have and "loaded" or "NOT LOADED")
+            .. ", drive=" .. tostring(have and type(RB.pad.drive) == "function")
+            .. ", panel open=" .. tostring(M.open)
+        log.say(out)
+        return out
+    end
+
     if verb == "ui" then
         local out = "api.game_ui_active = " .. tostring(api.game_ui_active)
 
