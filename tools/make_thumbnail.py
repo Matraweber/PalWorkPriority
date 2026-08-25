@@ -55,64 +55,60 @@ def centre(text, f, y, fill):
     d.text(((S - w) / 2, y), text, font=f, fill=fill)
 
 
-title = font("seguibl.ttf", 74)
-centre("PAL WORK", title, 30, WHITE)
-centre("PRIORITY", title, 108, WHITE)
+# ---------------------------------------------------------------------------
+# Laid out for 150 pixels, not for 512.
+#
+# Measured on the previous version at Steam's browse size: the tagline came out
+# at 5.3px of cap height and the 1-5 numerals at 5.0px. Both were reasoning that
+# held at full size and collapsed at the size the tile is actually seen. Steam
+# shows this in a grid; almost nobody ever looks at it at 512.
+#
+# So: three elements, all of which survive a fifth-scale. The name, the coloured
+# ladder as a SHAPE rather than as five labelled bars, and four words.
+#
+# The critical content also sits inside the middle 60% vertically, because
+# Workshop grids are wider than tall and a square gets centre-cropped.
+# ---------------------------------------------------------------------------
 
-# a hairline under the title, the same accent the panel uses for selection
-d.rectangle([166, 200, S - 166, 203], fill=CYAN)
+title = font("seguibl.ttf", 92)
+centre("PAL WORK", title, 74, WHITE)
+centre("PRIORITY", title, 168, WHITE)
 
-# ---- left symbol: ranked jobs, descending bars ----
-lx, base_y = 74, 372
-bw, gap = 26, 12
-heights = [104, 84, 66, 48, 32]
+# The accent rule, thicker so it is still a line and not a grey artefact.
+d.rectangle([150, 274, S - 150, 280], fill=CYAN)
+
+# ---- left: the priority ladder, as a shape ----
+#
+# No numerals. They were 17px and said nothing the descending heights and the
+# mod's own green-to-grey scale do not already say, and they were the first
+# thing to disappear when the tile was scaled.
+lx, base_y = 96, 418
+bw, gap = 34, 14
+heights = [122, 99, 78, 57, 38]
 for i, (h, col) in enumerate(zip(heights, BARS)):
     x = lx + i * (bw + gap)
     d.rectangle([x, base_y - h, x + bw, base_y], fill=col)
 
-# ---- right symbol: a stockpile filled to its limit ----
-rx0, rx1 = 300, 438
-top, bot = base_y - 104, base_y
-d.rectangle([rx0, top, rx1, bot], outline=(60, 72, 88), width=3)
+# ---- right: a stockpile against its ceiling ----
+rx0, rx1 = 332, 428
+top, bot = base_y - 122, base_y
+d.rectangle([rx0, top, rx1, bot], outline=(72, 86, 104), width=3)
 
-# Contents up to the line, with air above so the line reads as a lid the
-# stack has met rather than something drawn through it. The first version ran
-# the rule past both edges of the box, which read as a strikethrough.
-fill_top = top + 40
-d.rectangle([rx0 + 5, fill_top + 7, rx1 - 5, bot - 4], fill=(61, 140, 220))
-d.rectangle([rx0 + 3, fill_top, rx1 - 3, fill_top + 5], fill=(255, 68, 68))
+fill_top = top + 34
+d.rectangle([rx0 + 3, fill_top, rx1 - 3, bot - 2], fill=(70, 132, 214))
 
-# Numerals under the bars, in the bars' own colours.
-#
-# This is the mod's actual scale - 1 green through 5 grey - so the thumbnail
-# teaches the thing the panel then uses, and a reader who has seen it once
-# recognises the row of numbers on the Monitoring Stand.
-#
-# They replace the words PRIORITIES and LIMITS, which were 21pt on a 512
-# square. Steam draws this at well under half that in a browse grid, where
-# 21pt becomes about eight pixels and turns to mush. Shapes and numerals
-# survive that scale; small words do not, and the tagline underneath already
-# says which half is which.
-num = font("seguibl.ttf", 24)
-for i, col in enumerate(BARS):
-    x = lx + i * (bw + gap)
-    ch = str(i + 1)
-    cw = d.textbbox((0, 0), ch, font=num)[2]
-    d.text((x + (bw - cw) / 2, base_y + 12), ch, font=num, fill=col)
+# The ceiling line, 9px rather than 3. It was the one mark carrying the whole
+# right-hand idea and it vanished first; at this weight it reads as a lid even
+# when the box below it is a blue smudge.
+d.rectangle([rx0 - 6, fill_top - 9, rx1 + 6, fill_top], fill=(232, 86, 86))
 
-# A red lid on the stockpile, echoed as the one number that is not a rank:
-# the limit. Same weight as the numerals opposite so the two symbols read as
-# a pair rather than as a chart beside a diagram.
-cap = font("seguibl.ttf", 24)
-cw = d.textbbox((0, 0), "MAX", font=cap)[2]
-d.text((rx0 + ((rx1 - rx0) - cw) / 2, base_y + 12), "MAX",
-       font=cap, fill=(232, 86, 86))
+# ---- four words, large enough to read ----
+tag = font("seguibl.ttf", 38)
+centre("RANK JOBS. CAP STOCK.", tag, 448, CYAN)
 
-# 25pt, not 27. At 27 the line ran to within 22 pixels of both edges, which
-# reads as crowded at full size and as edge-to-edge noise once Steam scales it
-# down. This leaves a margin the eye can find the block against.
-tag = font("segoeuib.ttf", 25)
-centre("RANK THE JOBS. CAP THE STOCKPILE.", tag, 452, CYAN)
+# A silhouette. Steam's browse page is dark and so is this, so without an edge
+# the tile bleeds into the page and loses its own outline.
+d.rectangle([0, 0, S - 1, S - 1], outline=(48, 62, 80), width=3)
 
 # Written beside this script's repo rather than to an absolute path.
 #
