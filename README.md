@@ -681,6 +681,19 @@ them, so rather than draw numbers it cannot honour, the mod leaves the screen al
   `CreativeMenu.pak` alongside ours. `AutoHatch` is the mod to copy here - a Lua mod that ships a
   widget pak exactly this way.
 
+**Check the pak before packaging.** `build/PalWorkPriority.pak` is an artefact, not a build
+step, so it can sit stale while a newer one is installed and working. That happened: a pak six
+hours older than the live one shipped, the panel found 7 of its 21 named widgets and fell back to
+the blueprint's own defaults, and it read as a broken layout rather than as the wrong file.
+
+```
+python tools/pakcheck.py
+```
+
+It compares what you are about to ship against the pak the game is running, which is the only one
+you have evidence about. It cannot check the CONTENTS - the pak index does not expose so much as
+a file name, so the widget names are unreachable without real Unreal tooling.
+
 Then upload with Pocketpair's [PalworldModUploader](https://github.com/pocketpairjp/PalworldModUploader).
 Bump `Version` on every update, the loader compares it as a plain string and only reinstalls
 when it changes.
