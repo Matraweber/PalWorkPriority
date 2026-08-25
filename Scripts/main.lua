@@ -1543,6 +1543,50 @@ if cfg and cfg.enabled then
     start_ui()
 end
 
+-- Tell the game an overlay is up while the panel is up.
+--
+-- The problem this solves: with the panel open on a Game-and-UI route, pad
+-- buttons and keys still reach the game, so a face button pressed to confirm
+-- something in the panel also threw a sphere behind it.
+--
+-- The obvious answer, DisableInput on the controller, was tried and is much
+-- worse than the problem. A disabled controller ignores every menu the game
+-- draws, so the player could not click anything in their own inventory. It
+-- stopped the leak by breaking the game.
+--
+-- This is BreedingHelper's approach and the difference matters. Nothing is
+-- taken away from anyone: the game is asked "is an overlay UI active" and,
+-- while our panel is on screen, the honest answer is yes. The game then
+-- suppresses its own gameplay actions the way it does for its own menus, and
+-- its menus keep working because nothing was disabled.
+--
+-- Registered here rather than in overlay or panel because a hook cannot be
+-- unregistered and this file is never swapped. It reads panel.open through the
+-- upvalue that reload hands back, so a swap does not strand it on a dead table.
+--
+-- Both classes, because which one the build routes through is not worth
+-- guessing at. Registering a hook for a function that is not there fails
+-- harmlessly and is reported.
+for _, path in ipairs({
+    "/Script/Pal.PalHUDService:IsAnyOverlayUIActive",
+    "/Script/Pal.PalHUDInGame:IsAnyOverlayUIActive",
+}) do
+    local ok = pcall(function()
+        RegisterHook(path, function() end, function(_, ReturnValue)
+            if not (panel and panel.open) then return end
+
+            -- Both shapes. Some UE4SS builds take the returned value, others
+            -- want the out parameter written, and which one this build wants
+            -- is not worth a separate experiment when doing both is free.
+            pcall(function() ReturnValue:set(true) end)
+            return true
+        end)
+    end)
+    if not ok then
+        log.debug("overlay gate: could not hook " .. path)
+    end
+end
+
 RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
     local ok, err = pcall(function()
         local received = message:get()

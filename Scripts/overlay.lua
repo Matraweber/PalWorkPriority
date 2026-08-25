@@ -739,23 +739,24 @@ local function suppress_pawn(on)
 
     pcall(function() pc:SetIgnoreMoveInput(on) end)
 
-    -- The controller too, not only the pawn.
+    -- NOT DisableInput on the controller.
     --
-    -- Suppressing the pawn stops the character walking, and that is all it
-    -- stops: with Game-and-UI the pad still reaches the game, so a face button
-    -- pressed to confirm something in this panel also opened the inventory
-    -- behind it. BreedingHelper disables the controller on open for exactly
-    -- this reason and enables it on close, which is the pair this module was
-    -- missing entirely until this morning.
+    -- It was here for one afternoon and it broke the game: with the panel open
+    -- the player could not click anything in their own inventory, because a
+    -- disabled controller ignores every menu the game draws, not just the pad
+    -- buttons that were leaking into gameplay. It did stop the leak. It also
+    -- took the game's UI down with it, which is far worse than the leak.
     --
-    -- Polling is unaffected: IsInputKeyDown reads key state rather than the
-    -- input stack, which is the whole reason FreeCam can read a pad while the
-    -- player it suppressed cannot act on one.
-    if on then
-        pcall(function() pc:DisableInput(pc) end)
-    else
-        pcall(function() pc:EnableInput(pc) end)
-    end
+    -- The leak is answered by main.lua's overlay gate instead, which tells the
+    -- game an overlay UI is already active while this panel is open. That is
+    -- BreedingHelper's shape, and the difference is the whole point: it does
+    -- not TAKE input away, it tells the game something true about the state of
+    -- the screen and lets the game suppress its own actions. Menus keep
+    -- working because nothing was disabled.
+    --
+    -- EnableInput on release stays, over in set_input_now. It is a no-op when
+    -- nothing disabled input, and the morning was spent on a session where
+    -- something had.
 
     if alive(pawn) then
         if on then
