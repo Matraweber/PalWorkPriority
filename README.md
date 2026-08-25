@@ -72,6 +72,10 @@ you say "never" to this mod.**
 
 - Palworld, game revision 82182 or newer
 - UE4SS, the [Experimental Palworld build](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587) is what this was developed against
+- `PalWorkPriority.pak`, which carries the panel's widget. It is part of the mod rather than an
+  optional extra: without it the panel falls back to a plain canvas with no named rows, and the
+  header collapses onto one line. Every comparable mod ships one the same way, including
+  `BreedingHelperUI_P.pak` and `PerfectPlacement_NativeUI_P.pak`
 
 ## Installing for development
 
@@ -82,6 +86,22 @@ you say "never" to this mod.**
 This copies `Scripts/` into `<Palworld>/Mods/NativeMods/UE4SS/Mods/PalWorkPriority` and adds the
 mod to `mods.txt`, keeping the built-in `Keybinds` entry last as UE4SS requires. Pass
 `-GamePath` if Palworld is not at the default Steam location, and `-Remove` to uninstall.
+
+`deploy.ps1` deliberately does not touch the pak. The Lua reloads in place a hundred times an
+hour and the pak changes when the widget does, which is rarely, so they are built by different
+commands on purpose:
+
+```powershell
+python tools\pak_mod.py
+```
+
+That cooks nothing by itself - it takes what the editor already cooked under `Saved/Cooked`, and
+writes `build/PalWorkPriority.pak` into `<Palworld>/Pal/Content/Paks/LogicMods`. Pass `--stage` to
+build without installing. `unreal/shell/README.md` covers producing the cooked assets from stock
+UE 5.1.1, with no Palworld SDK and no Wwise.
+
+`build/` is git-ignored: the pak is a build artifact, reproducible from the sources in `unreal/`,
+and a binary in the history would be rewritten on every widget change.
 
 A mod installed this way does **not** appear under **Options > Mod Management**. That list comes
 from Palworld's own manager, which only knows mods it deployed from a Steam subscription. Writing
@@ -479,6 +499,12 @@ the following pass usually succeeds. Hosting or singleplayer needs none of this.
   `"PalSchema"`. A numeric ID there makes the Mod Uploader fail to read the file at all, and the
   mod shows up in its list with a blank name
 - add a `thumbnail.png`
+- **include `build/PalWorkPriority.pak`**. This is the step that is easy to miss, because the mod
+  runs on the developer machine whether or not the pak is in the package - it was installed by
+  `pak_mod.py` months ago and stays there. A subscriber gets only what the package carries, so
+  leaving it out ships a panel whose header is collapsed onto one line, and it looks like a
+  layout bug rather than a missing file. Name it with the `_P` suffix the other Workshop mods
+  use, `PalWorkPriority_P.pak`, so it mounts at priority
 
 Then upload with Pocketpair's [PalworldModUploader](https://github.com/pocketpairjp/PalworldModUploader).
 Bump `Version` on every update, the loader compares it as a plain string and only reinstalls
