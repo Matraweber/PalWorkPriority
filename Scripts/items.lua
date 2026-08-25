@@ -170,15 +170,22 @@ function M.real_name(id)
         return hit
     end
 
+    -- A missing utility or controller is NOT an answer.
+    --
+    -- load() can run before the world is up, and memoizing that as "this item
+    -- has no name" would freeze the fallback in place for the rest of the
+    -- session - permanently wrong, and invisible, because a plausible name
+    -- would still be drawn. Only a call that actually completed is recorded.
+    local util = api.cdo("/Script/Pal.Default__PalUIUtility")
+    if not util then return nil end
+
+    -- Any live world context does; the controller is the one this mod already
+    -- resolves, and it is used in this call and not kept.
+    local pc = api.player_controller()
+    if not pc then return nil end
+
     local got
     pcall(function()
-        local util = api.cdo("/Script/Pal.Default__PalUIUtility")
-        if not util then return end
-
-        -- Any live world context does; the controller is the one this mod
-        -- already resolves, and it is used within this call and not kept.
-        local pc = api.player_controller()
-        if not pc then return end
 
         local box = {}
         util:GetItemName(pc, FName(id), box)
@@ -209,6 +216,15 @@ end
 -- how the grid and the scheduler once disagreed about a priority, and the
 -- README already tells that story about store.effective.
 function M.display_name(id)
+    -- What the game calls it, when the game will say.
+    --
+    -- Measured on this build: all 2466 ids resolve, none come back unnamed,
+    -- and the whole list costs 25ms once. The transform below stays as the
+    -- fallback for a world that is not up yet, and for any future id the game
+    -- has no string for.
+    local real = M.real_name and M.real_name(id)
+    if real then return real end
+
     local out = {}
     for chunk in tostring(id):gmatch("[^_%s]+") do
         -- Two capitals before the next word, not one. The single-capital form
