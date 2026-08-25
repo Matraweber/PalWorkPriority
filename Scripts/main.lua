@@ -27,6 +27,7 @@ local icons = require("icons")
 local net = require("net")
 local overlay = require("overlay")
 local demandidx = require("demand")
+local pad = require("pad")
 
 local MOD_NAME = "Pal Work Priority"
 local VERSION = "0.1.0"
@@ -642,6 +643,20 @@ end
 -- again. This is the last panel command that should ever need adding here.
 COMMANDS.panel = function(args)
     log.say(panel.command(cfg, args))
+end
+
+-- What the controller can and cannot see, asked rather than assumed.
+--
+-- "pwp pad" watches for a few seconds so things can be pressed while it runs.
+-- "pwp pad probe" answers the narrower question of whether the reading works
+-- at all, without needing anything held down.
+COMMANDS.pad = function(args)
+    args = (args or ""):match("^%s*(.-)%s*$")
+    if args == "probe" then
+        log.say(pad.probe())
+        return
+    end
+    log.say(pad.sample(args ~= "" and args or nil))
 end
 
 COMMANDS.click = function(args)
