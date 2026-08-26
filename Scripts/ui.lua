@@ -74,6 +74,7 @@ local last_ask = -math.huge    -- when this client last asked for stand data
 local ask_gap = 10             -- seconds until the next ask, doubling
 local asked_gen = nil          -- net.pals_gen at the moment of the last ask
 local missing_gen = nil        -- generation we last asked about a missing pal
+local missing_key = nil        -- which pal that was, so it is asked about once
 local ASK_GAP_MAX = 120
 local last_hook_try = -math.huge
 local menu_likely_open = false
@@ -161,6 +162,7 @@ function M.reset()
     said_client = false
     said_none = false
     missing_gen = nil
+    missing_key = nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -871,26 +873,49 @@ function M.refresh(cfg)
             -- server that genuinely has no pals for this guild is not asked
             -- repeatedly" - and that is the one case where it was asked
             -- forever.
-            if asked_gen ~= nil and net.pals_gen ~= asked_gen then
-                if not said_none then
-                    said_none = true
-                    log.debug("stand: the server has no pals for this guild")
-                end
-                return false
+            -- An empty answer slows the asking down; it does not end it.
+            --
+            -- This used to latch and return for good. The server declines an
+            -- unresolvable guild now, but a guild that resolves fine and simply
+            -- has no camps streamed in yet still answers empty - a player who
+            -- joins away from their base, which is the common case. Latching
+            -- there meant a vanilla grid for the rest of the session, and the
+            -- return also sat above try_hook_bind, so the row hook was never
+            -- registered either and no later data could have drawn anyway.
+            --
+            -- The backoff is the brake: it doubles to two minutes and the
+            -- server allows two hellos a minute per sender, so a client that
+            -- genuinely has nothing costs almost nothing while still
+            -- recovering on its own when its camps load.
+            if asked_gen ~= nil and net.pals_gen ~= asked_gen and not said_none then
+                said_none = true
+                log.debug("stand: the server had nothing for this guild, " ..
+                    "asking less often")
             end
 
             -- Backing off, because the reasons this is empty are mostly not
             -- ones another ask will fix.
+            -- Committed only once the message has actually gone.
+            --
+            -- These three were set before the send was attempted and never
+            -- rolled back, so while the network component was still resolving
+            -- - the first eighteen seconds, which is exactly why the announce
+            -- waits that long - the client burned 10, 20, 40, 80 seconds of
+            -- backoff without a single message leaving, and armed asked_gen
+            -- for an answer that could never come.
             local now = os.clock()
             if now - last_ask > ask_gap then
-                last_ask = now
-                ask_gap = math.min(ask_gap * 2, ASK_GAP_MAX)
-                asked_gen = net.pals_gen
+                local sent = false
                 pcall(function()
-                    if net.to_server(net.PREFIX .. "Hello", 1) then
-                        log.debug("stand: asked the server for pal data")
-                    end
+                    sent = net.to_server(net.PREFIX .. "Hello", 1)
                 end)
+
+                if sent then
+                    last_ask = now
+                    ask_gap = math.min(ask_gap * 2, ASK_GAP_MAX)
+                    asked_gen = net.pals_gen
+                    log.debug("stand: asked the server for pal data")
+                end
             end
         end
     end
@@ -946,9 +971,18 @@ function M.refresh(cfg)
                 end
             end
 
-            if absent then
+            -- Once per unknown pal, not once per generation.
+            --
+            -- The server's answer is a push, which moves the generation, which
+            -- made this condition true again - so a key that stays absent (a
+            -- pal of another guild on the same stand, or one stand_rows skipped
+            -- because its parameter was momentarily invalid) re-asked on every
+            -- tick until the hello budget ran out, and restarted every time
+            -- anyone edited anything.
+            if absent and absent ~= missing_key then
                 missing_gen = net.pals_gen
-                log.debug("stand: no data for " .. absent .. ", asking again")
+                missing_key = absent
+                log.debug("stand: no data for " .. absent .. ", asking once")
                 pcall(function()
                     net.to_server(net.PREFIX .. "Hello", 1)
                 end)
@@ -964,10 +998,11 @@ function M.refresh(cfg)
         -- drew nothing at all - the numbers appeared only when a row happened
         -- to rebind, which is what clicking a vanilla checkbox does.
         --
-        -- The saving this guard was written for is kept: while the stand is
-        -- shut, menu_likely_open is false and nothing below runs. What it must
-        -- not do is skip the draw for a menu it has never drawn.
-        if not menu_likely_open then return false end
+        -- The saving this guard was written for is kept by the
+        -- menu_likely_open test near the top of this function: while the stand
+        -- is shut nothing below runs. What it must not do is skip the draw for
+        -- a menu it has never drawn, which is why the generation check now
+        -- happens after live_menu rather than here.
     end
 
     local menu = live_menu()

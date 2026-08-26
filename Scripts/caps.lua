@@ -162,6 +162,16 @@ end
 function M.save()
     if not M.path then return false end
 
+    -- A client owns no rules file.
+    --
+    -- This guard was deleted when the write was made atomic, and two comments
+    -- elsewhere still cite it as the reason a client cannot push a ruleset -
+    -- one in this file and one in main.lua. Nothing reaches it today, because
+    -- set/clear short-circuit on M.submit and apply_set/apply_clear are only
+    -- called from the authority-gated message handler. It is back because
+    -- those comments are load-bearing for the next person who adds a caller.
+    if M.submit then return false end
+
     -- Built in memory, written to a temp file, then renamed into place. The
     -- reasoning is store.save's, and it matters more here: this save is not
     -- debounced, so it runs on every single rule change.
@@ -228,8 +238,21 @@ function M.save()
     os.remove(M.path)
     local moved, mv_err = os.rename(tmp, M.path)
     if not moved then
-        log.warn("could not move " .. tmp .. " into place: " .. tostring(mv_err))
-        return false
+        -- Put it back by hand rather than leave nothing there.
+        --
+        -- The remove has already happened by this point, so returning here
+        -- would delete the live file outright - worse than the truncating
+        -- write this replaced. Nothing ever reads .tmp back, so it is not a
+        -- recovery path on its own.
+        log.warn("could not move " .. tmp .. " into place: " ..
+            tostring(mv_err) .. ", writing the ceilings directly")
+
+        local back = io.open(M.path, "wb")
+        if not back then return false end
+        local ok_back = pcall(function() back:write(table.concat(out)) end)
+        back:close()
+        if not ok_back then return false end
+        os.remove(tmp)
     end
 
     -- After the write, not before: a listener should never be told about a

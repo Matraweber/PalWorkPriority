@@ -357,11 +357,18 @@ local function pump_one()
         -- file opens on the game thread announcing that made-up paths do not
         -- exist. Issue #1372's reporter mitigated this very crash class by
         -- taking file I/O out of hot callbacks.
-        if guessed[name] then
-            log.debug(string.format("icon load %-28s asked for", name))
-        else
-            log.say(string.format("icon load %-28s did not arrive", name))
-        end
+        -- Whether it arrived is not known here any more.
+        --
+        -- The old line branched on arrived[name], which pump_one used to fill
+        -- with its own StaticFindObject. That lookup is gone - the sweep
+        -- answers instead - so arrived[name] is deliberately nil at this point
+        -- and the "did not arrive" branch fired for EVERY name that was not a
+        -- guess. That is most of the picker, it is a log.say so it opens,
+        -- writes and closes a file per line, and at twelve names per beat it
+        -- put back the hundred-odd file opens a second the comment above says
+        -- it removed. It also asserted the opposite of the truth for icons
+        -- that were visibly on screen.
+        log.debug(string.format("icon load %-28s asked for", name))
         guessed[name] = nil
     end
 

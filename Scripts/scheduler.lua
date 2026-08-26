@@ -438,6 +438,43 @@ local function plan_fences(cfg, pals, demand, objects, stats, capped)
                         -- Fenced to the whole level, not only the one type it
                         -- is best at: a pal should be free to move between
                         -- equally-wanted jobs without waiting on a re-plan.
+                        --
+                        -- And to everything MORE important than this level.
+                        --
+                        -- The fence was built with "== level", and apply_pal
+                        -- switches off every capable type the plan omits - so
+                        -- a pal fenced at level 2 had its level 1 work
+                        -- UNTICKED. It could not answer a level 1 job when one
+                        -- appeared, so it was never the pal that satisfied the
+                        -- pulse, so that work's demand stayed at zero, so it
+                        -- stayed fenced at level 2. The loop sustained itself,
+                        -- and picking the pal up did not break it because the
+                        -- next pass rebuilt the same fence.
+                        --
+                        -- Reported by a player as "I set Handiwork to 1 and
+                        -- Refining to 2, yet my Incinerams still prefer
+                        -- Refining", which was written off as a ranking
+                        -- surprise. The mod was not failing to prefer level 1,
+                        -- it was revoking it.
+                        --
+                        -- Demand decides where a pal is PULLED. Priority
+                        -- decides what it is PERMITTED to do. Those are
+                        -- different questions and only the first one needs a
+                        -- live pulse. PalPriority draws the same line -
+                        -- "types above the bar stay enabled" - and does not
+                        -- have this bug.
+                        --
+                        -- Built from pal.base, which base_allowed has already
+                        -- stripped of X'd and CAPPED types, so a ceiling that
+                        -- has been met still bars the work.
+                        for value in pairs(pal.base) do
+                            local p = store.effective(cfg, pal,
+                                workdefs.name(value), value)
+                            if type(p) == "number" and p <= level then
+                                fence[value] = true
+                            end
+                        end
+
                         plan[pal.key] = fence
                         fenced[pal.key] = true
                         if consumes then taken[best] = (taken[best] or 0) + 1 end
@@ -552,41 +589,24 @@ local function apply_pal(cfg, pal, want, stats)
 
         local should_be_on = want[value] == true
 
-        -- Never switch off the work this pal is doing RIGHT NOW.
+        -- The "never switch off what this pal is doing right now" guard that
+        -- used to sit here is gone, and both of its reasons went with it.
         --
-        -- Reported from a real session: electric pals stop generating and
-        -- cannot be forced back on. The chain is ours end to end. A generator
-        -- is a CONTINUOUS station - one work object, and once it is manned it
-        -- stops asking for a worker, so no further demand pulse arrives. A
-        -- furnace or a mine makes a fresh work object per item and keeps
-        -- pulsing, which is why those never show it.
+        -- It was added for a player report: electric pals stopping mid-job
+        -- because a manned generator stops pulsing, the hold clock expires and
+        -- the type drops out of a single-level fence. Widening the fence above
+        -- fixes that at the cause - Generating is at or above the pal's fenced
+        -- level, so it stays permitted whether or not anything is asking.
         --
-        -- With demand at zero, keeps() stops restarting the hold clock and the
-        -- type ages out of the fence at HOLD_SECONDS. The fence is one
-        -- priority level, so the type is then simply absent from `want`, and
-        -- this loop switches off the permission of a pal that is at that
-        -- moment generating power. The player sees a "1" painted over a
-        -- checkbox the mod has just unticked, and cannot click it back because
-        -- the grid hides the checkbox and rebinds the click.
+        -- And the guard was actively wrong. It tested store.effective, which
+        -- knows about priorities and X and nothing about ceilings - but a met
+        -- ceiling is removed from `allowed` in base_allowed, so the ceiling was
+        -- often the ONLY reason want[value] was false. The guard forced it back
+        -- on, the pal kept working, so pal.current stayed that value on the
+        -- next pass and the ceiling never fired for it at all. On a continuous
+        -- station that was permanent: the panel read "Stopped" while the pal
+        -- carried on. It defeated max_pals_per_work_type the same way.
         --
-        -- The comment above keeps() already states the intended contract - "to
-        -- KEEP a pal where it is takes only that work of that type still
-        -- exists" - and this loop is what breaks it. pal.current is read from
-        -- the engine each pass, so it is live truth rather than a timer, which
-        -- is why it can be trusted here where the hold clock could not.
-        --
-        -- X still wins. A type the player marked never is switched off even
-        -- mid-job, because that is what never means.
-        if not should_be_on and pal.current == value then
-            local wanted_name = workdefs.name(value)
-            if store.effective(cfg, pal, wanted_name, value) ~= false then
-                should_be_on = true
-                log.debug(string.format(
-                    "kept %s on %s: it is doing that work right now",
-                    tostring(pal.name), workdefs.label(wanted_name)))
-            end
-        end
-
         local is_on = not off[value]
 
         if should_be_on ~= is_on then

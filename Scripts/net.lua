@@ -355,10 +355,25 @@ function M.who(comp)
     return full_name(comp)
 end
 
-local function remember(context)
+-- Resolve without recording.
+--
+-- Echo needs a component to answer on and must NOT put it on the push list:
+-- the up hook fires for the machine's own outgoing calls, so on a host
+-- '!pwp net' filed the HOST's own component as a connected client. Nothing
+-- evicts it - it always resolves - so from then on the session believed a
+-- client was present. That made chat_is_trusted false, refusing every
+-- changing command from chat for the rest of the session, and made every
+-- edit pay a full base walk pushing to a client that is the machine itself.
+local function resolve(context)
     local comp
     pcall(function() comp = context:get() end)
     if not api.valid(comp) then return nil end
+    return comp
+end
+
+local function remember(context)
+    local comp = resolve(context)
+    if comp == nil then return nil end
 
     local name = full_name(comp)
     if name then
@@ -390,15 +405,20 @@ function M.install()
                     if not api.has_authority() then return end
 
                     M.stats.got_up = M.stats.got_up + 1
-                    local comp = remember(Context)
                     local value = read_int(C)
 
                     -- Phase 0. Answered before anything else and regardless of
                     -- role wiring, so the round trip can be proved on its own.
+                    --
+                    -- Resolved rather than remembered: see resolve() above.
+                    -- An echo proves the pipe, it does not announce a player.
                     if command == PREFIX .. "Echo" then
-                        M.to_client(comp, PREFIX .. "EchoBack|" .. value)
+                        M.to_client(resolve(Context),
+                            PREFIX .. "EchoBack|" .. value)
                         return
                     end
+
+                    local comp = remember(Context)
 
                     if M.on_command then M.on_command(command, value, comp) end
                 end)

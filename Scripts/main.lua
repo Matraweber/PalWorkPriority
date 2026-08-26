@@ -139,6 +139,35 @@ local function validate(c)
     -- A ceiling on a work type that does not exist, or one whose value is
     -- not a number, would never fire. Say so rather than let someone
     -- believe a cap is in force.
+    -- pal_overrides is the third way a priority reaches plan_fences, and it
+    -- was the one left unchecked. store.effective reads it directly, so a
+    -- fractional value here lands in exactly the same place a fractional
+    -- work_priority did: never equal to any whole level, so the pal is
+    -- silently never fenced for that work.
+    c.pal_overrides = c.pal_overrides or {}
+    for who, entry in pairs(c.pal_overrides) do
+        if type(entry) ~= "table" then
+            log.warn("config.pal_overrides['" .. tostring(who) ..
+                "'] should be a table of work = priority. Ignoring it.")
+            c.pal_overrides[who] = nil
+        else
+            for name, prio in pairs(entry) do
+                if prio ~= false then
+                    local n = math.tointeger(tonumber(prio))
+                    if n == nil or n < 1 or n > store.MAX then
+                        log.warn("config.pal_overrides['" .. tostring(who) ..
+                            "']['" .. tostring(name) .. "'] should be a whole " ..
+                            "number from 1 to " .. store.MAX .. ", or false. " ..
+                            "Ignoring " .. tostring(prio) .. ".")
+                        entry[name] = nil
+                    else
+                        entry[name] = n
+                    end
+                end
+            end
+        end
+    end
+
     c.work_caps = c.work_caps or {}
 
     -- Read BEFORE the loop, because the loop variable below is also named
@@ -220,7 +249,10 @@ local function load_config()
     local loaded
     -- Text only. config.lua is a literal table and has no business
     -- being bytecode, and mode "bt" would load it if it were.
-    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua", "t")
+    -- Text only AND no environment. config.lua is a literal table and
+    -- needs nothing from _G; mode "bt" alone would still have loaded
+    -- bytecode, and _ENV = _G still handed a chunk io and os.execute.
+    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua", "t", {})
 
     if chunk then
         local ok_chunk, result = pcall(chunk)
@@ -1379,9 +1411,34 @@ local SAFE_FROM_CHAT = {
 --
 -- Refusing is the right default while that is unknown. A refused command is an
 -- annoyance; an accepted one from a stranger is someone else's base stopped.
+-- Anyone else in the world at all, modded or not.
+--
+-- net.clients only ever holds MODDED clients - it is filled from the mod's own
+-- message hook - so on a listen host with vanilla co-op partners it is empty,
+-- and reading that as "solo" left the exact hole this gate was added to close:
+-- another player types '!pwp adopt' in chat and it runs with full authority on
+-- the host, and caps.lua says plainly that adopting cannot be undone.
+--
+-- Controllers are the honest count. One walk, and only when somebody types a
+-- changing command, which is rare.
+local function others_connected()
+    local n = 0
+    local ok = pcall(function()
+        for _, pc in ipairs(FindAllOf("PalPlayerController") or {}) do
+            if api.valid(pc) then n = n + 1 end
+        end
+    end)
+
+    -- Could not tell, so assume company. Refusing costs a command; guessing
+    -- wrong the other way costs somebody their base.
+    if not ok or n == 0 then return true end
+    return n > 1
+end
+
 local function chat_is_trusted()
     if not api.has_authority() then return false end
-    return next(net.clients) == nil
+    if next(net.clients) ~= nil then return false end
+    return not others_connected()
 end
 
 local warned_chat_refusal = false
@@ -1396,19 +1453,25 @@ local function handle_command(text, from_chat)
 
     local key = verb:lower()
 
-    if from_chat and not SAFE_FROM_CHAT[key] and not chat_is_trusted() then
+    local fn = COMMANDS[key]
+
+    -- Only a real command is refused. Checked before the gate so a typo does
+    -- not write a warn line per keystroke - and so an unknown verb still gets
+    -- the ordinary "try !pwp help" reply rather than a lecture about chat.
+    if fn and from_chat and not SAFE_FROM_CHAT[key] and not chat_is_trusted() then
         log.warn("refused '" .. key .. "' from chat: chat reaches every " ..
             "player, so it only carries read-only commands while anyone " ..
             "else is connected")
         if not warned_chat_refusal then
             warned_chat_refusal = true
             log.say("commands that change something are refused from chat " ..
-                "in multiplayer. Use the server console or remote.txt.")
+                "while anyone else is connected, because chat reaches every " ..
+                "player. To use them here, create an empty remote.txt next " ..
+                "to priority.log and restart.")
         end
         return true
     end
 
-    local fn = COMMANDS[key]
     if fn then
         local ok, err = pcall(fn, args)
         if not ok then log.error("command '" .. verb .. "' failed: " .. tostring(err)) end
@@ -1634,6 +1697,22 @@ local function push_stand(comp, only_key)
         return rows
     end
 
+    -- Nothing to say is not the same as "you have nothing".
+    --
+    -- A guild that resolves fine but whose camps are not streamed in yields
+    -- zero rows, and a full push then sends PalReset+PalDone - an empty table
+    -- that moves the client's generation and reads to it as a definite answer.
+    -- Its backoff latched on that and stopped asking for the session, so a
+    -- player who joined away from their base got a vanilla grid for ever.
+    --
+    -- Only the addressed-reply case: a broadcast with no rows for a guild is
+    -- ordinary and must still clear that guild's clients.
+    if comp ~= nil and not only_key and seen == 0 then
+        log.debug("no camps loaded for that guild yet, so nothing was sent " ..
+            "and the client will ask again")
+        return
+    end
+
     local sent = false
     local ok, err = pcall(function()
         sent = net.push_pals(rows_for, comp, only_key)
@@ -1652,7 +1731,6 @@ net.on_command = function(command, _, comp)
     local verb = parts[1]
 
     if verb == net.PREFIX .. "Hello" then
-        if not may_announce(comp) then return end
 
         -- "I cannot tell yet" is not "you have nothing".
         --
@@ -1674,6 +1752,13 @@ net.on_command = function(command, _, comp)
                 "leaving it to ask again")
             return
         end
+
+        -- Budget spent only on a hello that will actually be answered.
+        -- Charged before the guild check, a normal join - which sends one
+        -- from the world-load one-shot and one or two from the grid while it
+        -- waits - could burn the allowance on requests that were refused
+        -- anyway, and then be told off for it.
+        if not may_announce(comp) then return end
 
         -- A modded client announced itself, so send it the world as it
         -- stands. Its own component, not a broadcast: an unmodded client

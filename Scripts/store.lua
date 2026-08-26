@@ -168,8 +168,21 @@ function M.save()
     os.remove(M.path)
     local moved, mv_err = os.rename(tmp, M.path)
     if not moved then
-        log.warn("could not move " .. tmp .. " into place: " .. tostring(mv_err))
-        return false
+        -- Put it back by hand rather than leave nothing there.
+        --
+        -- The remove has already happened by this point, so returning here
+        -- would delete the live file outright - worse than the truncating
+        -- write this replaced. Nothing ever reads .tmp back, so it is not a
+        -- recovery path on its own.
+        log.warn("could not move " .. tmp .. " into place: " ..
+            tostring(mv_err) .. ", writing the priorities directly")
+
+        local back = io.open(M.path, "wb")
+        if not back then return false end
+        local ok_back = pcall(function() back:write(table.concat(out)) end)
+        back:close()
+        if not ok_back then return false end
+        os.remove(tmp)
     end
 
     dirty_at = nil

@@ -183,8 +183,28 @@ local function write_if_changed(path, source)
         return false
     end
 
+    -- If the rename cannot happen, put the content back by hand.
+    --
+    -- os.rename will not replace an existing file on Windows, so the real file
+    -- has to go first - and that inverted the very protection this was written
+    -- for. M.register treats a PRESENT but unreadable index as "leave it
+    -- alone" and an ABSENT one as "start fresh", so dying between the remove
+    -- and the rename left the shared index missing, and the next launch
+    -- rewrote it containing only this mod. Every other mod's settings page
+    -- would have gone - the exact harm the temp file was meant to prevent.
+    --
+    -- Absent is the one state that must not be left behind, so a failed rename
+    -- falls back to writing in place. That is no worse than the old behaviour
+    -- and strictly better than a missing file.
     os.remove(path)
-    return os.rename(tmp, path) and true or false
+    if os.rename(tmp, path) then return true end
+
+    local back = io.open(path, "wb")
+    if not back then return false end
+    local ok_back = pcall(function() back:write(source) end)
+    back:close()
+    os.remove(tmp)
+    return ok_back
 end
 
 local function serialize_index(names)

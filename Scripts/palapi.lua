@@ -70,6 +70,14 @@ local auth = nil
 --
 -- false rather than nil, so the default is a definite answer, and M.reset puts
 -- it back with the rest of the world state.
+--
+-- Being honest about what this does NOT fix: every reader tests `~= true`, and
+-- false is not true either, so a session where both hook paths fail behaves
+-- exactly as it did before and the cursor is still restored over the game's
+-- own menus. What changed is that the field is declared where it lives, so a
+-- static check can see the contract and a rename cannot fail silently. The
+-- behavioural half needs the readers to distinguish "no" from "not known",
+-- which none of them currently do.
 M.game_ui_active = false
 
 -- Reads a property without letting a missing name take the pass down.
