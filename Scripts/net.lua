@@ -589,7 +589,18 @@ end
 -- the server - and it is those keys the write path then accepted. push_rules
 -- has been per guild since it was written; this is the same rule on the same
 -- channel.
-function M.push_pals(rows_for, comp)
+-- only_key sends just that pal's row, as a bare Pal line with no Reset or
+-- Done around it.
+--
+-- One changed cell used to re-push the entire table: PalReset, fourteen Pal
+-- lines and PalDone, so sixteen RPCs to report one number. Measured on a
+-- client, a single RPC costs about seventeen milliseconds of game thread, so
+-- the round trip for one click was pushing four hundred, and it was visible as
+-- a hitch on every click. Sending the one row that moved makes that one RPC.
+--
+-- The receiving end needed nothing new: a Pal line with no batch open already
+-- merges straight into M.pals.
+function M.push_pals(rows_for, comp, only_key)
     if type(rows_for) ~= "function" then return false end
 
     local n = 14
@@ -600,15 +611,21 @@ function M.push_pals(rows_for, comp)
         local cache_key = guild or "<none>"
         if built[cache_key] then return built[cache_key] end
 
-        local batch = { PREFIX .. "PalReset" }
+        local batch = {}
+        if not only_key then batch[1] = PREFIX .. "PalReset" end
+
         for _, row in ipairs(rows_for(guild) or {}) do
-            if type(row.key) == "string" and row.key ~= "" then
+            if type(row.key) == "string" and row.key ~= ""
+                and (only_key == nil or row.key == only_key) then
                 batch[#batch + 1] = string.format("%sPal|%s|%s|%s", PREFIX,
                     row.key, encode_ranks(row.ranks, n),
                     encode_prios(row.prios, n))
             end
         end
-        batch[#batch + 1] = PREFIX .. "PalDone"
+
+        -- An empty batch is the ordinary answer for a guild that does not own
+        -- the pal that moved, not a failure.
+        if not only_key then batch[#batch + 1] = PREFIX .. "PalDone" end
 
         built[cache_key] = batch
         return batch
@@ -706,6 +723,18 @@ function M.on_pal_message(message)
 
     local into = pal_incoming or M.pals
     into[key] = { ranks = decode_ranks(ranks, 14), prios = decode_prios(prios, 14) }
+
+    -- A line outside a batch is a single-row update, and it is finished the
+    -- moment it lands: there is no PalDone coming to commit it. So the
+    -- generation moves here, or the grid holds the old number until something
+    -- unrelated pushes a full table.
+    --
+    -- Inside a batch this must NOT move, or the grid repaints once per row and
+    -- draws a half-applied table fourteen times over.
+    if into == M.pals then
+        M.pals_gen = M.pals_gen + 1
+    end
+
     return true
 end
 

@@ -53,6 +53,12 @@ end
 
 local unwrap, valid = M.unwrap, M.valid
 
+-- Whether this machine is the authority. nil means not yet asked.
+-- Declared here rather than beside has_authority because M.reset, which
+-- clears it, is defined further up this file - and a local declared below its
+-- first use is a silent global write, not a shared variable.
+local auth = nil
+
 -- Reads a property without letting a missing name take the pass down.
 local function prop(obj, name)
     local ok, v = pcall(function() return obj[name] end)
@@ -138,6 +144,9 @@ M.as_int = as_int
 local cdo_cache = {}
 
 function M.reset()
+    -- The authority answer belongs to the world, so it goes with it.
+    auth = nil
+
     cdo_cache = {}
     M._suitability_source = nil
     M._unknown_worktype = {}
@@ -353,10 +362,38 @@ function M.owned_network_component()
     return nil
 end
 
+-- Memoised, because on a client this is the single most expensive question
+-- the mod asks and it is asked hundreds of times per grid repaint.
+--
+-- FindFirstOf can only stop early on a class with MANY instances - the comment
+-- on pc_memo above measures it at 9.8ms and explains why. PalGameMode is the
+-- pathological case of that rule: there are ZERO instances on a client, so no
+-- early exit is possible even in principle and every call reads the entire
+-- GUObjectArray. On the machine with the largest array, because a client holds
+-- every replicated actor.
+--
+-- The "never keep an engine object" rule does not apply. This keeps a boolean.
+-- There is no wrapper to go stale, only an answer - and the answer cannot
+-- change inside a world: a machine does not stop being the authority without a
+-- world change, and M.reset clears the memo on exactly that.
+--
+-- Unlatched it still probes, so an early caller gets a correct answer at the
+-- old price rather than a cheap wrong one.
 function M.has_authority()
+    if auth ~= nil then return auth end
+
     local gm
     pcall(function() gm = FindFirstOf("PalGameMode") end)
     return valid(gm)
+end
+
+-- Probe once and remember. Always probes, never reads the memo, so a second
+-- call can correct a first one taken before the world was fully up.
+function M.latch_authority()
+    local gm
+    pcall(function() gm = FindFirstOf("PalGameMode") end)
+    auth = valid(gm)
+    return auth
 end
 
 -- A string that changes when the world does, and does not change when the

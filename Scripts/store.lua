@@ -137,8 +137,29 @@ end
 -- copy that counts is the one that comes back down.
 M.submit = nil
 
+-- Which machine this is, decided after the world loads.
+--
+-- false means not yet asked, and that is deliberately not the same as "I am
+-- the authority". Undecided used to fall through to the local write, so for
+-- the twenty seconds between a world loading and main.lua working out where
+-- it was, a client's grid click wrote a file the server never reads. The change
+-- showed on screen, went nowhere, and was overwritten by the next push from
+-- the server, which reads exactly like the feature being broken.
+--
+-- A refused click with a reason is a far better twenty seconds than a
+-- silently discarded one.
+M.decided = false
+
+local function undecided()
+    if M.decided then return false end
+    log.say("still working out whether this is a server or a client, " ..
+        "try that again in a moment")
+    return true
+end
+
 function M.set(key, value, prio)
     if not key then return end
+    if undecided() then return false end
     if M.submit then return M.submit("set", key, value, prio) end
     return M.apply_set(key, value, prio)
 end
@@ -150,12 +171,13 @@ function M.apply_set(key, value, prio)
     M.data[key] = M.data[key] or {}
     M.data[key][value] = prio
     dirty_at = os.clock()
-    if M.on_change then pcall(M.on_change) end
+    if M.on_change then pcall(M.on_change, key) end
 end
 
 -- Clears a pal's edit for one work type, dropping it back to config policy.
 function M.clear(key, value)
     if not key then return end
+    if undecided() then return false end
     if M.submit then return M.submit("clear", key, value, nil) end
     return M.apply_clear(key, value)
 end
@@ -166,7 +188,7 @@ function M.apply_clear(key, value)
     byPal[value] = nil
     if next(byPal) == nil then M.data[key] = nil end
     dirty_at = os.clock()
-    if M.on_change then pcall(M.on_change) end
+    if M.on_change then pcall(M.on_change, key) end
 end
 
 -- Called after any applied write, so the authority can tell everyone. Set by

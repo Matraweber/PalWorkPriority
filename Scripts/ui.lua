@@ -55,6 +55,7 @@ local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
 local painted_gen = nil        -- which net.pals generation the cells show
+local last_ask = -math.huge    -- when this client last asked for stand data
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -567,6 +568,25 @@ end
 -- the rows bind while ranks are still empty - and a row is not rebound until
 -- the list scrolls or the menu is reopened. The grid came up vanilla and
 -- stayed vanilla, which is indistinguishable from the feature being off.
+-- Has the server sent a batch this module has not drawn yet?
+--
+-- Called from the fast beat so a push repaints on the next tick rather than at
+-- the next grid second.
+--
+-- The integer test goes FIRST, and the comment here used to claim the whole
+-- function was "two integers" while its first line was a full object array
+-- walk - ten milliseconds, ten times a second, for the entire session whether
+-- or not the stand was ever opened. The generation is unchanged on almost
+-- every call, so testing it first skips the expensive question outright.
+--
+-- The order is safe: on the authority painted_gen is never assigned and stays
+-- nil while net.pals_gen is 0, so the first test falls through and the second
+-- answers false exactly as it did before.
+function M.wants_repaint()
+    if painted_gen == net.pals_gen then return false end
+    return not api.has_authority()
+end
+
 local function shown_ranks(pal)
     if not api.has_authority() then
         local entry = pal.key and net.pals and net.pals[pal.key]
@@ -775,6 +795,29 @@ function M.refresh(cfg)
             if not said_client then
                 said_client = true
                 log.debug("stand grid waiting: no pal data from the server yet")
+            end
+
+            -- Ask, rather than wait for a hello that already happened.
+            --
+            -- The server pushes on Hello, and Hello is sent once, from the
+            -- world-load handler. Rejoin a world the client considers the same
+            -- one - "respawn in the same world, caches kept" - and that branch
+            -- does not run, so a freshly launched process that reconnects
+            -- never announces itself and never receives anything. The grid
+            -- then draws nothing, for the rest of the session, and looks
+            -- exactly like the feature being switched off.
+            --
+            -- Only while there is nothing to draw, and at most once every ten
+            -- seconds, so a server that genuinely has no pals for this guild
+            -- is not asked repeatedly.
+            local now = os.clock()
+            if now - last_ask > 10 then
+                last_ask = now
+                pcall(function()
+                    if net.to_server(net.PREFIX .. "Hello", 1) then
+                        log.debug("stand: asked the server for pal data")
+                    end
+                end)
             end
         end
     end

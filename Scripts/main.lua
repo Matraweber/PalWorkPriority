@@ -325,7 +325,18 @@ local last_panel_error = nil
 local function ui_body()
     -- The grid stays on its second, because refreshing it means a FindAllOf
     -- over every cell and it has nothing to gain from ten times the rate.
-    if grid_owed >= 1000 then
+    -- A second, or immediately when the server has sent something new.
+    --
+    -- The grid's own reason for a one second beat is that noticing an edit
+    -- means a FindAllOf over every cell. That holds while hosting, where a
+    -- change can come from anywhere. On a client a change can only arrive as a
+    -- batch, and net.pals_gen says exactly when one has - so waiting out the
+    -- rest of the second afterwards is latency for nothing. It is what made
+    -- clicking feel slow: the edit reached the server and came back in well
+    -- under a second, then sat unpainted until the beat came round.
+    local pushed = (ui.wants_repaint ~= nil) and ui.wants_repaint() or false
+
+    if grid_owed >= 1000 or pushed then
         grid_owed = 0
         pcall(function() ui.refresh(cfg) end)
     end
@@ -1373,7 +1384,13 @@ local function stand_rows(want_guild)
 end
 
 -- Only when somebody is listening, and only from the authority.
-local function push_stand(comp)
+-- only_key pushes just the one pal whose row moved.
+--
+-- A full table is right when a client is meeting the server for the first
+-- time; it is sixteen RPCs to report a single changed number in every other
+-- case, and on a client each RPC costs roughly seventeen milliseconds of game
+-- thread. That was the per-click hitch.
+local function push_stand(comp, only_key)
     if not api.has_authority() then return end
 
     -- Nobody to tell, so nothing to walk.
@@ -1406,13 +1423,16 @@ local function push_stand(comp)
     end
 
     local sent = false
-    local ok, err = pcall(function() sent = net.push_pals(rows_for, comp) end)
+    local ok, err = pcall(function()
+        sent = net.push_pals(rows_for, comp, only_key)
+    end)
     if not ok then
         log.warn("stand push failed: " .. tostring(err))
         return
     end
 
-    log.debug("stand push: " .. seen .. " pal(s), sent=" .. tostring(sent))
+    log.debug("stand push: " .. (only_key and ("1 row of " .. seen) or
+        (seen .. " pal(s)")) .. ", sent=" .. tostring(sent))
 end
 
 net.on_command = function(command, _, comp)
@@ -1522,10 +1542,16 @@ net.on_command = function(command, _, comp)
         log.say(string.format("priority %s set to %s by a player",
             workdefs.ORDER[value] or tostring(value), tostring(raw)))
 
-        -- NOT push_stand here. store.apply_set already fired store.on_change,
-        -- which is push_stand on the authority, so calling it again sent the
-        -- whole batch to every client twice per edit - and each push is an
-        -- object-array walk this build measures at 10-19ms.
+        -- Pushed explicitly, and this was removed once on the reasoning that
+        -- store.apply_set fires store.on_change which does the same job. The
+        -- reasoning was sound and the result was that NOTHING was pushed:
+        -- every edit applied on the server and no client was ever told. The
+        -- log said so plainly - a priority line with no stand push after it.
+        --
+        -- So the explicit call is back, because a duplicate push is a cost and
+        -- a missing one is a broken feature. Whether on_change fires at all is
+        -- now logged rather than assumed.
+        push_stand(nil, key)
         run_pass("priority change")
         return
     end
@@ -1619,7 +1645,15 @@ end
 -- The same trap is called out twenty lines below for the demand estimate. It
 -- was worth writing down once and then obeying in both places.
 local function decide_write_or_send()
-    if api.has_authority() then
+    store.decided = true
+    caps.decided = true
+
+    -- Probed once here and remembered, which is the whole point of doing this
+    -- on a timer: every later caller reads a boolean instead of walking the
+    -- object array. A client's grid repaint asked this twice per cell, so a
+    -- fourteen column grid over fifteen pals paid four hundred full array
+    -- walks - seconds of game thread - for one clicked cell.
+    if api.latch_authority() then
         caps.submit = nil
 
         -- The authority tells everyone when its own rules move. Set here
@@ -1633,8 +1667,8 @@ local function decide_write_or_send()
         -- reaches every client the same way a client's request does, so the
         -- grid is the same picture wherever it is opened.
         store.submit = nil
-        store.on_change = function()
-            pcall(function() push_stand(nil) end)
+        store.on_change = function(key)
+            pcall(function() push_stand(nil, key) end)
         end
         return
     end
@@ -1677,6 +1711,10 @@ end
 
 -- The world the caches were built against. nil until the first spawn.
 local world_key = nil
+
+-- Said once. The decision it reports is re-made on every spawn now, and
+-- a player does not need telling on each death that this is a client.
+local said_client_warning = false
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
   -- Every line below runs under one pcall.
@@ -1773,20 +1811,6 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
             end
         end)
 
-        -- Checked here rather than at load. There is no world when a mod
-        -- starts, so PalGameMode does not exist yet and every single player
-        -- session reported itself as a client on a dedicated server.
-        clock.once(20000, function()
-            decide_write_or_send()
-
-            if not api.has_authority() then
-                log.warn("no authority here, so this looks like a client on " ..
-                    "a dedicated server. No passes will run on this machine " ..
-                    "and the Monitoring Stand grid stays off - the server " ..
-                    "decides both. Rules you set are sent to it.")
-            end
-        end)
-
         if cfg.run_on_world_load then
             -- Base camps and their worker slots are not populated the instant
             -- the controller restarts, so the first look is late on purpose.
@@ -1799,6 +1823,33 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
             end)
         end
     end
+    -- Not behind the switched guard, and not on a twenty second delay.
+    --
+    -- Both were wrong for the same reason. Behind the guard, a respawn the
+    -- client considers the same world never re-ran this; at twenty seconds,
+    -- there was a long opening window where the grid was already drawn and
+    -- taking clicks that store.set had nowhere to send. Clicks made in it
+    -- were written to the client's own file and then overwritten by the
+    -- server's next push.
+    --
+    -- Two seconds is enough: has_authority is one FindFirstOf for PalGameMode,
+    -- which exists as soon as the world is up and never appears on a client.
+    -- It does not wait on base camps or worker slots like the first pass does.
+    -- Asked again at twenty in case two was optimistic on a slow load; the
+    -- function is idempotent, so a second answer only ever confirms the first.
+    clock.once(2000, function() decide_write_or_send() end)
+    clock.once(20000, function()
+        decide_write_or_send()
+
+        if not api.has_authority() and not said_client_warning then
+            said_client_warning = true
+            log.warn("no authority here, so this looks like a client on " ..
+                "a dedicated server. No passes will run on this machine " ..
+                "and the Monitoring Stand grid stays off - the server " ..
+                "decides both. Rules you set are sent to it.")
+        end
+    end)
+
     start_timer()
     start_ui()
 

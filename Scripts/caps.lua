@@ -204,6 +204,26 @@ end
 -- drift apart and a client cannot invent rules the server never agreed to.
 M.submit = nil
 
+-- Which machine this is, decided after the world loads.
+--
+-- false means not yet asked, and that is deliberately not the same as "I am
+-- the authority". Undecided used to fall through to the local write, so for
+-- the twenty seconds between a world loading and main.lua working out where
+-- it was, a client's ceiling edit wrote a file the server never reads. The change
+-- showed on screen, went nowhere, and was overwritten by the next push from
+-- the server, which reads exactly like the feature being broken.
+--
+-- A refused click with a reason is a far better twenty seconds than a
+-- silently discarded one.
+M.decided = false
+
+local function undecided()
+    if M.decided then return false end
+    log.say("still working out whether this is a server or a client, " ..
+        "try that again in a moment")
+    return true
+end
+
 -- Called after any change that reached the file, set by main.lua.
 --
 -- The rules were pushed to clients from exactly one place: the handler for an
@@ -243,6 +263,7 @@ end
 -- to every caller - including the panel, which then reported a limit it had
 -- not set.
 function M.set(work_name, item, ceiling, guild)
+    if undecided() then return false end
     if M.submit then
         return M.submit("set", work_name, item, ceiling, guild)
     end
@@ -250,6 +271,7 @@ function M.set(work_name, item, ceiling, guild)
 end
 
 function M.clear(work_name, item, guild)
+    if undecided() then return false end
     if M.submit then return M.submit("clear", work_name, item, 0, guild) end
     return M.apply_clear(work_name, item, guild)
 end
