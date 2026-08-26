@@ -380,7 +380,12 @@ def exports_of(clean):
 
     # Anything on the left of an assignment, including a comma list.
     for line in clean.splitlines():
-        head = line.split("=")[0] if "=" in line and "==" not in line else None
+        # Comparisons removed rather than the whole line skipped.
+        #
+        # Skipping any line containing == meant M.ready = (1 == 1) never
+        # registered ready as an export, so every consumer of it failed.
+        bare = re.sub(r"[=~<>]=", "  ", line)
+        head = bare.split("=")[0] if "=" in bare else None
         if head:
             names.update(re.findall(esc + r"\.(\w+)", head))
 
@@ -420,7 +425,15 @@ def cross_module(src, clean, path, exports):
     for alias, mod in sorted(aliases.items()):
         if alias == own:
             continue
-        for field in re.findall(re.escape(alias) + r"[.:](\w+)", clean):
+        # Whole word only, and not a chain segment.
+        #
+        # Unanchored, this matched work_api.ping as api.ping and
+        # cfg.log.level as log.level, then failed the deploy naming a
+        # module that had nothing to do with either. The aliases here
+        # are api, net, ui, log, pad, caps - short, common word
+        # endings, so this was a matter of time.
+        pat = r"(?<![\w.])" + re.escape(alias) + r"[.:](\w+)"
+        for field in re.findall(pat, clean):
             if field in exports[mod] or (mod, field) in seen:
                 continue
             seen.add((mod, field))
@@ -435,32 +448,56 @@ def cross_module(src, clean, path, exports):
 EXTERNAL_MODULES = {"UEHelpers"}
 
 
-def missing_requires(src, path, exports):
+def missing_requires(src, clean, path):
+    """A require naming a module that is not there.
+
+    Resolved against the FILESYSTEM, not against what this run happened to
+    scan. Checking the scan set meant "luacheck.py Scripts/main.lua" failed
+    every require in the file - the tool crying wolf on a good file, which is
+    the one thing a checker must never do.
+
+    Comment lines are skipped by consulting the stripped text, because this
+    codebase quotes code in its comments constantly and a require written
+    inside one is not a require.
+    """
     problems = []
-    for mod in re.findall(r"""require\([ 	]*["'](\w[\w.]*)["'][ 	]*\)""", src):
-        if mod in EXTERNAL_MODULES or mod in exports:
+    here = os.path.dirname(path) or "."
+    src_lines, clean_lines = src.splitlines(), clean.splitlines()
+    seen = set()
+    pat = re.compile(r"""require\([ \t]*["'](\w[\w.]*)["'][ \t]*\)""")
+
+    for i, line in enumerate(src_lines):
+        if "require" not in line:
             continue
-        problems.append(
-            "%s: require(\"%s\") names no module in this scan and is not a "
-            "known UE4SS one" % (path, mod))
+        if i >= len(clean_lines) or "require" not in clean_lines[i]:
+            continue
+        for mod in pat.findall(line):
+            if mod in EXTERNAL_MODULES or mod in seen:
+                continue
+            if os.path.exists(os.path.join(here, mod + ".lua")):
+                continue
+            seen.add(mod)
+            problems.append(
+                '%s:%d: require("%s") names no module beside this file and '
+                "is not a known UE4SS one" % (path, i + 1, mod))
+
     return problems
 
-
 def duplicate_keys(clean, path):
-    """A key written twice in one table constructor.
+    """A numeric key written twice in one table constructor.
 
-    Lua takes the last one silently. In a map from an engine enum to a work
-    type - WORKTYPE_TO_SUIT and friends - a repeated [16] does not error, it
-    just quietly remaps one work type to another, and the only symptom is pals
-    doing the wrong job.
+    Lua keeps the last one silently. In a map from an engine enum to a work
+    type, a repeated [16] does not error - it quietly remaps one work type to
+    another, and the only symptom is pals doing the wrong job.
 
-    Bracketed keys only. Named keys are duplicated legitimately often enough
-    inside nested constructors that checking them would cost more in false
-    alarms than it catches, and the enum maps are where the damage is.
+    Numeric keys only: strip() blanks string CONTENTS, so ["Wood"] reads as
+    [""] and a table of string keys would report itself as entirely
+    duplicated. The enum maps this exists for are numeric anyway.
     """
     problems = []
     stack = []
     i, n = 0, len(clean)
+    key_re = re.compile(r"\[(\d+)\]\s*=(?!=)")
 
     while i < n:
         ch = clean[i]
@@ -470,14 +507,15 @@ def duplicate_keys(clean, path):
             if stack:
                 stack.pop()
         elif ch == "[" and stack:
-            # NUMERIC keys only. strip() blanks string contents, so every
-            # ["Wood"] key reads as [""] by the time this sees it and a table
-            # of string keys would report itself as entirely duplicated. The
-            # enum maps this exists for - work type to suitability - are
-            # numeric anyway, and that is where a silent remap does damage.
-            m = re.match(r"\[(\d+)\]\s*=(?!=)", clean[i:])
+            # A constructor key follows { or , - never an identifier.
+            #
+            # Without this, out[1] = "a" inside a function DEFINED IN a table
+            # constructor read as a duplicate key: a Lua function body has no
+            # braces of its own, so it stays at the table's depth.
+            before = clean[:i].rstrip()
+            m = key_re.match(clean, i) if before[-1:] in "{," else None
             if m:
-                key = m.group(1).strip()
+                key = m.group(1)
                 line = clean.count(chr(10), 0, i) + 1
                 seen = stack[-1]
                 if key in seen:
@@ -487,7 +525,7 @@ def duplicate_keys(clean, path):
                         "one silently" % (path, line, key, seen[key]))
                 else:
                     seen[key] = line
-                i += m.end() - 1
+                i = m.end() - 1
         i += 1
 
     return problems
@@ -508,7 +546,7 @@ def check(path, exports=None):
     problems.extend(duplicate_keys(clean, path))
     if exports:
         problems.extend(cross_module(src, clean, path, exports))
-        problems.extend(missing_requires(src, path, exports))
+        problems.extend(missing_requires(src, clean, path))
 
     opens = closes = 0
     for word in words(clean):

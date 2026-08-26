@@ -55,7 +55,10 @@ local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
 local said_none = false
-local said_hook_failed = false
+-- Registration failing is normal until the blueprint class loads, so the
+-- warning waits for a run of failures rather than the first one.
+local hook_fails = 0
+local HOOK_FAIL_WARN = 5
 local painted_gen = nil        -- which net.pals generation the cells show
 -- Bumped every time the injected cells are dropped.
 --
@@ -307,18 +310,36 @@ local function try_hook_bind()
 
     if ok then
         bind_hooked = true
+        if hook_fails >= HOOK_FAIL_WARN then
+            -- Retracted at the same level it was warned at, or the warn sits
+            -- in the log describing a state that has since fixed itself.
+            log.warn("the Monitoring Stand's row bind is hooked after all, " ..
+                "the grid will draw")
+        end
         log.debug("BindFromSlot hook registered")
-    elseif not said_hook_failed then
-        -- Said once, and loudly.
+    else
+        -- Only after it has failed for a while, and only once.
         --
-        -- There was no else at all. If RegisterHook fails the grid never works
-        -- - no row ever binds, so row_pal stays empty and every cell falls
-        -- back to the vanilla checkbox - and this retries every five seconds
-        -- for the rest of the session with nothing written at any level. That
-        -- is indistinguishable from the mod being switched off.
-        said_hook_failed = true
-        log.warn("could not hook the Monitoring Stand's row bind, so the " ..
-            "priority grid cannot draw: " .. tostring(err))
+        -- There was no else at all, and a failure that nobody is told about
+        -- kills the whole grid: no row binds, row_pal stays empty, every cell
+        -- falls back to the vanilla checkbox, and this retries every few
+        -- seconds for the session with nothing written at any level.
+        --
+        -- But the FIRST failures are expected and normal - the comment at the
+        -- top of this function says so. The blueprint class loads on demand,
+        -- so registration fails until a stand has been opened once, and on a
+        -- headless server it never loads at all. Warning on the first attempt
+        -- put a line saying "the priority grid cannot draw" at the top of
+        -- every log, including sessions where it drew perfectly.
+        --
+        -- Five attempts is roughly half a minute of retrying, which is well
+        -- past "the class has not loaded yet" and into "something is wrong".
+        hook_fails = hook_fails + 1
+        if hook_fails == HOOK_FAIL_WARN then
+            log.warn("could not hook the Monitoring Stand's row bind after " ..
+                HOOK_FAIL_WARN .. " tries, so the priority grid cannot " ..
+                "draw: " .. tostring(err))
+        end
     end
 end
 

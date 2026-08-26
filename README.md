@@ -711,10 +711,13 @@ Two things worth knowing when running one:
   without a player present, and there is no player controller to send changes
   through, so the pass stands down rather than sending into the void. It
   resumes on its own when somebody joins.
-- **Chat commands are refused while anyone else is connected.** Chat reaches
-  every player, so anything that changes state is limited to the machine's own
-  console or `remote.txt`. Read-only commands - `help`, `status`, `net` - always
-  work.
+- **Your own chat commands work; another player's do not.** A chat message
+  carries who sent it, so the mod compares it against the player at this
+  machine. Anything that changes something is refused when it came from someone
+  else - chat reaches everybody, and some of these cannot be undone. If the
+  sender cannot be identified at all, changing commands are refused while
+  anyone else is connected. Read-only commands - `help`, `status`, `net` -
+  always work, and the server console and `remote.txt` are never restricted.
 
 ## Publishing to Steam Workshop
 

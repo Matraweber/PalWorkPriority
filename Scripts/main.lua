@@ -1498,14 +1498,24 @@ local function handle_command(text, from_chat, from_me)
     -- id something this does not try.
     if fn and from_chat and not SAFE_FROM_CHAT[key]
         and not from_me and not chat_is_trusted() then
-        log.warn("refused '" .. key .. "' from chat: it did not come from " ..
-            "this machine's player, and chat reaches everyone")
+        -- Worded for what was actually established.
+        --
+        -- from_me is tri-state: true, false, or nil for "could not tell" -
+        -- no controller yet, or a build whose PlayerState names its id
+        -- something my_player_uid does not try. The old wording asserted the
+        -- line came from someone else on all three, which points a person
+        -- diagnosing a broken sender check away from the real cause.
+        log.warn("refused '" .. key .. "' from chat: " ..
+            (from_me == false
+                and "it came from another player, and chat reaches everyone"
+                or "could not tell whose line it was, and chat reaches " ..
+                   "everyone"))
         if not warned_chat_refusal then
             warned_chat_refusal = true
-            log.say("commands that change something are refused from chat " ..
-                "while anyone else is connected, because chat reaches every " ..
-                "player. To use them here, create an empty remote.txt next " ..
-                "to priority.log and restart.")
+            log.say("your own commands work from chat. This one could not " ..
+                "be attributed to you, and chat reaches every player, so " ..
+                "anything that changes something is refused. The server " ..
+                "console and remote.txt always work.")
         end
         return true
     end

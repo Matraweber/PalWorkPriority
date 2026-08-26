@@ -64,8 +64,10 @@ Two holes that let one guild affect another, both closed:
   roster. Unidentifiable now means refused, not permitted.
 - **Chat is no longer an admin channel.** Chat reaches every player, and any
   line anyone typed ran on every machine with the mod - including commands that
-  cannot be undone. Only read-only commands travel by chat while anyone else is
-  connected.
+  cannot be undone. A chat message carries who sent it, so your own commands
+  still work from chat anywhere; another player's are refused if they would
+  change something. When the sender cannot be identified at all, changing
+  commands are refused while anyone else is connected.
 
 Also: the settings file the DarnMenu integration reads is executed in an empty
 environment and refuses precompiled bytecode, and a client can no longer be

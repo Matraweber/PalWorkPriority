@@ -45,6 +45,9 @@ local HOLD_SECONDS = 90
 -- that hold began.
 local hold_since = {}
 
+-- Whether the "nothing owns a component" warn has already been said.
+local said_no_component = false
+
 -- What the bases were holding at the last pass, merged across camps.
 --
 -- Published because the panel needs the same numbers and was scanning every
@@ -1088,6 +1091,13 @@ function M.run_pass(cfg)
     -- not run base work while no player is on, so there is nothing to
     -- schedule either.
     pass_comp = api.owned_network_component()
+    if pass_comp ~= nil and said_no_component then
+        -- Somebody is here now. Say so, so the earlier warn does not sit in
+        -- the log looking like the current state.
+        said_no_component = false
+        log.info("a base camp component is available again, passes resume")
+    end
+
     if pass_comp == nil then
         -- Warn, not debug, and recorded so the caller can say the right
         -- thing.
@@ -1100,9 +1110,24 @@ function M.run_pass(cfg)
         -- blocked_reason, NOT blocked: stats.blocked already exists on this
         -- table as a boolean, and concatenating it into a message throws.
         stats.blocked_reason = "no base camp component this machine owns"
-        log.warn("no base camp component this machine owns, so nothing can " ..
-            "be changed and nothing is sent. On a dedicated server this is " ..
-            "normal while nobody is connected.")
+
+        -- Said once per spell, not once per pass.
+        --
+        -- Raising this from debug to warn made an idle dedicated server write
+        -- a line every ten seconds for ever - and log.say/warn open, write and
+        -- close a file per line on the game thread, which log.lua records as
+        -- the thing taken OUT of hot callbacks for issue #1372. It also warned
+        -- about a state the README documents as normal.
+        --
+        -- The reason still reaches stats.blocked_reason every time, so an
+        -- explicit '!pwp run' always names the real cause; only the unsolicited
+        -- line is rationed.
+        if not said_no_component then
+            said_no_component = true
+            log.warn("no base camp component this machine owns, so nothing " ..
+                "can be changed and nothing is sent. On a dedicated server " ..
+                "this is normal while nobody is connected; this is said once.")
+        end
         return released(stats)
     end
 
