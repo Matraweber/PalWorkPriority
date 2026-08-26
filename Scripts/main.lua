@@ -1354,9 +1354,27 @@ end
 local function stand_rows(want_guild)
     local rows = {}
 
+    -- No guild means NO rows, never every row.
+    --
+    -- This used to read "want_guild == nil or camp_guild == want_guild", so an
+    -- unresolvable guild silently widened to every camp on the server. Both
+    -- callers are network paths - the ownership check for an incoming edit and
+    -- the batch built for one client - so that turned the ownership test back
+    -- into "does this pal exist anywhere", which is the exact defect the
+    -- comment in the Prio handler says was fixed, and made the push hand one
+    -- client every guild's roster.
+    --
+    -- nil is an ordinary state, not an error: a player in no guild, or one
+    -- whose guild has not replicated yet. palapi says what to do with it -
+    -- "Callers must read that as 'no scope known', never as 'applies
+    -- everywhere'." The ceilings path already refuses; this now does too.
+    if type(want_guild) ~= "string" or want_guild == "" then
+        return rows
+    end
+
     for _, camp in ipairs(api.base_camps() or {}) do
         local camp_guild = api.camp_guild(camp)
-        if want_guild == nil or camp_guild == want_guild then
+        if camp_guild == want_guild then
         for _, pal in ipairs(api.camp_pals(camp) or {}) do
             if type(pal.key) == "string" and api.valid(pal.param) then
                 local ranks, prios = {}, {}
@@ -1507,6 +1525,16 @@ net.on_command = function(command, _, comp)
         -- component the message arrived on, which a client cannot forge, for
         -- exactly the reason the ceiling path takes it from there too.
         local sender_guild = net.guild_of_sender(comp)
+
+        -- Refused, not widened. stand_rows would now return nothing for a nil
+        -- guild anyway, but an edit that cannot be attributed to a guild
+        -- should say so rather than fail an ownership test it was never
+        -- really given the chance to pass.
+        if type(sender_guild) ~= "string" or sender_guild == "" then
+            log.warn("refused a priority from the network: cannot say which " ..
+                "guild the sender is in")
+            return
+        end
 
         local known = false
         for _, row in ipairs(stand_rows(sender_guild)) do

@@ -611,6 +611,22 @@ function M.push_pals(rows_for, comp, only_key)
         local cache_key = guild or "<none>"
         if built[cache_key] then return built[cache_key] end
 
+        -- A recipient whose guild will not resolve is sent nothing.
+        --
+        -- Belt and braces: stand_rows refuses a nil guild too, so rows_for
+        -- already answers empty. This is here because push_pals takes rows_for
+        -- as an argument and cannot see what it does, and the cost of that
+        -- assumption being wrong is one client receiving every guild's roster.
+        --
+        -- A full push still brackets with Reset and Done, so the client ends
+        -- up holding an empty table rather than a stale one.
+        if type(guild) ~= "string" or guild == "" then
+            local empty = only_key and {}
+                or { PREFIX .. "PalReset", PREFIX .. "PalDone" }
+            built[cache_key] = empty
+            return empty
+        end
+
         local batch = {}
         if not only_key then batch[1] = PREFIX .. "PalReset" end
 

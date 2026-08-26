@@ -551,6 +551,42 @@ local function apply_pal(cfg, pal, want, stats)
         end
 
         local should_be_on = want[value] == true
+
+        -- Never switch off the work this pal is doing RIGHT NOW.
+        --
+        -- Reported from a real session: electric pals stop generating and
+        -- cannot be forced back on. The chain is ours end to end. A generator
+        -- is a CONTINUOUS station - one work object, and once it is manned it
+        -- stops asking for a worker, so no further demand pulse arrives. A
+        -- furnace or a mine makes a fresh work object per item and keeps
+        -- pulsing, which is why those never show it.
+        --
+        -- With demand at zero, keeps() stops restarting the hold clock and the
+        -- type ages out of the fence at HOLD_SECONDS. The fence is one
+        -- priority level, so the type is then simply absent from `want`, and
+        -- this loop switches off the permission of a pal that is at that
+        -- moment generating power. The player sees a "1" painted over a
+        -- checkbox the mod has just unticked, and cannot click it back because
+        -- the grid hides the checkbox and rebinds the click.
+        --
+        -- The comment above keeps() already states the intended contract - "to
+        -- KEEP a pal where it is takes only that work of that type still
+        -- exists" - and this loop is what breaks it. pal.current is read from
+        -- the engine each pass, so it is live truth rather than a timer, which
+        -- is why it can be trusted here where the hold clock could not.
+        --
+        -- X still wins. A type the player marked never is switched off even
+        -- mid-job, because that is what never means.
+        if not should_be_on and pal.current == value then
+            local wanted_name = workdefs.name(value)
+            if store.effective(cfg, pal, wanted_name, value) ~= false then
+                should_be_on = true
+                log.debug(string.format(
+                    "kept %s on %s: it is doing that work right now",
+                    tostring(pal.name), workdefs.label(wanted_name)))
+            end
+        end
+
         local is_on = not off[value]
 
         if should_be_on ~= is_on then
