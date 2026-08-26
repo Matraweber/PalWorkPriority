@@ -56,6 +56,7 @@ local bind_hooked = false
 local said_client = false
 local said_none = false
 local painted_gen = nil        -- which net.pals generation the cells show
+local painted_menu = nil       -- which menu instance those cells belong to
 local last_ask = -math.huge    -- when this client last asked for stand data
 local ask_gap = 10             -- seconds until the next ask, doubling
 local asked_gen = nil          -- net.pals_gen at the moment of the last ask
@@ -140,6 +141,7 @@ function M.reset()
     -- nothing for my guild", so carrying it into a DIFFERENT server would stop
     -- that client ever asking again.
     painted_gen = nil
+    painted_menu = nil
     last_ask = -math.huge
     ask_gap = 10
     asked_gen = nil
@@ -939,8 +941,19 @@ function M.refresh(cfg)
             end
         end
 
-        if painted_gen == net.pals_gen then return false end
-        painted_gen = net.pals_gen
+        -- The generation is NOT consumed here.
+        --
+        -- This used to return before live_menu() ran, which is the only thing
+        -- that notices a new menu instance. So opening the stand after the
+        -- data had already arrived left painted_gen equal to pals_gen, the
+        -- refresh returned immediately, refresh_cells never ran, and the grid
+        -- drew nothing at all - the numbers appeared only when a row happened
+        -- to rebind, which is what clicking a vanilla checkbox does.
+        --
+        -- The saving this guard was written for is kept: while the stand is
+        -- shut, menu_likely_open is false and nothing below runs. What it must
+        -- not do is skip the draw for a menu it has never drawn.
+        if not menu_likely_open then return false end
     end
 
     local menu = live_menu()
@@ -953,7 +966,19 @@ function M.refresh(cfg)
         return false
     end
 
+    -- Decided AFTER the menu is known, and consumed only once a draw has
+    -- actually happened. A generation marked as painted by a refresh that
+    -- painted nothing is what made the grid blank.
+    if not api.has_authority() then
+        if painted_gen == net.pals_gen and painted_menu == menu_name then
+            return false
+        end
+    end
+
     refresh_cells(cfg)
+
+    painted_gen = net.pals_gen
+    painted_menu = menu_name
     return true
 end
 
