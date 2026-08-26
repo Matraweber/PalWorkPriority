@@ -1686,7 +1686,15 @@ local function push_stand(comp, only_key)
     -- a function because net.lua caches one batch per guild and calls this
     -- once for each distinct guild it is actually sending to.
     local seen = 0
+    local built_rows = {}
+
     local function rows_for(guild)
+        -- Cached per guild, because the zero-row check below has to ask the
+        -- same question push_pals is about to ask and neither should pay for
+        -- a second base walk.
+        local ck = guild or "<none>"
+        if built_rows[ck] then return built_rows[ck] end
+
         local rows = {}
         local ok, err = pcall(function() rows = stand_rows(guild) end)
         if not ok then
@@ -1694,6 +1702,7 @@ local function push_stand(comp, only_key)
             return {}
         end
         seen = seen + #rows
+        built_rows[ck] = rows
         return rows
     end
 
@@ -1707,10 +1716,20 @@ local function push_stand(comp, only_key)
     --
     -- Only the addressed-reply case: a broadcast with no rows for a guild is
     -- ordinary and must still clear that guild's clients.
-    if comp ~= nil and not only_key and seen == 0 then
-        log.debug("no camps loaded for that guild yet, so nothing was sent " ..
-            "and the client will ask again")
-        return
+    if comp ~= nil and not only_key then
+        -- Asked, not assumed.
+        --
+        -- This read `seen == 0` directly, and seen is only incremented INSIDE
+        -- rows_for - which push_pals calls lazily, after this line. So it was
+        -- always zero here and the guard fired on every single hello: the
+        -- server refused to answer any client at all, while logging a reason
+        -- that sounded plausible. Exactly the shape this whole audit keeps
+        -- finding, written while fixing it.
+        if #rows_for(net.guild_of_sender(comp)) == 0 then
+            log.debug("no camps loaded for that guild yet, so nothing was " ..
+                "sent and the client will ask again")
+            return
+        end
     end
 
     local sent = false
@@ -1765,7 +1784,7 @@ net.on_command = function(command, _, comp)
         -- must receive nothing at all.
         net.push_rules(caps, cfg, comp)
         push_stand(comp)
-        log.debug("a modded client said hello, sent it the rules and the stand")
+        log.debug("a modded client said hello, rules sent")
         return
     end
 
