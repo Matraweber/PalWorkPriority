@@ -22,6 +22,7 @@
 local log = require("log")
 local api = require("palapi")
 local workdefs = require("workdefs")
+local net = require("net")
 local store = require("store")
 
 local M = {}
@@ -52,7 +53,8 @@ local ftext_mode = nil          -- "direct" | "kismet"
 local row_pal = {}              -- row full name -> { key, name, species }
 local bind_hooked = false
 -- One line per session when the grid stands down on a client.
-local said_client = false       -- never reset: the hook survives world switches
+local said_client = false
+local said_readonly = false       -- never reset: the hook survives world switches
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -195,14 +197,44 @@ local function try_hook_bind()
                     -- is not capable of.
                     local name, species
                     local ranks = {}
+                    local from_server = nil
+
+                    -- On a client the ranks come down the wire, because
+                    -- asking for them here is what kills the process.
+                    --
+                    -- GetWorkSuitabilityRank on a replicated pal is an access
+                    -- violation rather than a Lua error, so the pcall below
+                    -- would catch nothing. The name and species reads are
+                    -- property reads and stay safe either way, which is why
+                    -- only the rank loop moves.
+                    if not api.has_authority() then
+                        from_server = net.pals and net.pals[key] or nil
+                        if from_server then ranks = from_server.ranks or {} end
+                    end
+
                     pcall(function()
                         local param = handle:TryGetIndividualParameter()
                         if alive(param) then
                             name = api.pal_name(param)
                             species = api.pal_species(param)
-                            for t = 1, #workdefs.ORDER do
-                                local r = api.suitability_rank(param, t)
-                                if type(r) == "number" and r > 0 then ranks[t] = r end
+                            -- AUTHORITY, not "the server sent nothing".
+                            --
+                            -- This crashed the game. The condition was
+                            -- from_server == nil, which is true on a client
+                            -- that has not received a push yet - so the fatal
+                            -- call ran in exactly the state it was written to
+                            -- avoid. A hook cannot be unregistered either, so
+                            -- a session that registered this while hosting
+                            -- keeps firing it after joining a server.
+                            --
+                            -- The only safe test is who owns the pal. A client
+                            -- with no data draws nothing, which is the correct
+                            -- answer to "I do not know yet".
+                            if api.has_authority() then
+                                for t = 1, #workdefs.ORDER do
+                                    local r = api.suitability_rank(param, t)
+                                    if type(r) == "number" and r > 0 then ranks[t] = r end
+                                end
                             end
                         end
                     end)
@@ -223,6 +255,9 @@ local function try_hook_bind()
                     row_pal[rname] = {
                         key = key, name = name, species = species,
                         ranks = ranks, raw = raw,
+                        -- Carried so the draw can read priorities the server
+                        -- sent rather than a local file the server never sees.
+                        server_prios = from_server and from_server.prios or nil,
                     }
                     -- rows binding means the screen is opening or scrolling;
                     -- either way the cell list has moved
@@ -550,7 +585,18 @@ local function handle_cell(cfg, cell)
     local pal = row_pal[rname]
     if not pal then return end
 
-    local prio = store.effective(cfg, pal, work_name, t)
+    -- The server's answer on a client, the local store on the authority.
+    --
+    -- store.effective reads priorities.txt, which on a client is a file the
+    -- server never looks at - so drawing from it showed numbers that meant
+    -- nothing. That is half of why this grid was switched off entirely rather
+    -- than merely made read-only.
+    local prio
+    if pal.server_prios ~= nil then
+        prio = pal.server_prios[t]
+    else
+        prio = store.effective(cfg, pal, work_name, t)
+    end
 
     -- Hand the cell back to the game when we have nothing to say about it:
     -- the pal cannot do this work at all, or the work type is not configured.
@@ -673,13 +719,25 @@ function M.refresh(cfg)
     -- never registered on a machine that must not run it. Vanilla's own grid
     -- is untouched underneath.
     if not api.has_authority() then
-        if not said_client then
-            said_client = true
-            log.debug("stand grid is off on a client: the server owns work " ..
-                "priorities, and asking a replicated pal for its rank is fatal")
+        -- A client draws the grid from what the server sent, or not at all.
+        --
+        -- The three reasons this was off are answered separately. The fatal
+        -- rank call is gone from the client path entirely - the ranks arrive
+        -- over the wire. The numbers are the server's priorities rather than a
+        -- local file it never reads. And clicks are refused below, because the
+        -- protocol carries no priority edits upward yet.
+        --
+        -- No data means no grid, rather than an empty one: before the server's
+        -- first push there is nothing honest to draw, and a grid of dashes
+        -- reads as "this pal can do nothing" instead of "not known yet".
+        if not (net.pals and next(net.pals) ~= nil) then
+            if not said_client then
+                said_client = true
+                log.debug("stand grid waiting: no pal data from the server yet")
+            end
+            M.detach()
+            return false
         end
-        M.detach()
-        return false
     end
 
     try_hook_bind()
@@ -773,6 +831,25 @@ local function cell_target(cell)
     -- grid leaves those to vanilla, and an invisible edit sitting under a
     -- dash would surface later as a mystery.
     if not (pal.ranks and pal.ranks[t]) then return nil end
+
+    -- Read only on a client, for now.
+    --
+    -- store.lua has no submit indirection the way caps.lua does, so a click
+    -- here would write the client's own priorities.txt - a file the server
+    -- never reads - and then ask for a pass that returns immediately for want
+    -- of authority. Showing the server's numbers is honest; pretending to
+    -- change them is not.
+    if not api.has_authority() then
+        -- Once per session, not once per click. A refusal repeated on every
+        -- click of a grid somebody is exploring is noise, and the first one
+        -- has already said everything the rest would.
+        if not said_readonly then
+            said_readonly = true
+            log.say("priorities are set on the server, so this grid is read " ..
+                "only here. Ceilings you set in the Alt+F1 panel do reach it.")
+        end
+        return nil
+    end
 
     return pal, t, work_name, cname
 end

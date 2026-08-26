@@ -417,6 +417,16 @@ function M.install()
                     -- the next set. One line, for something that expensive.
                     if api.has_authority() then return end
 
+                    -- Stand data first, and it never reaches on_state.
+                    --
+                    -- on_state is main.lua's rule applier, which accumulates
+                    -- into a batch and swaps it in on Done. Feeding pal lines
+                    -- through it would have that batch grow entries it cannot
+                    -- read and then write them over caps.txt. Two protocols
+                    -- sharing one channel need to part company at the top of
+                    -- the handler, not inside the consumer.
+                    if M.on_pal_message(message) then return end
+
                     if M.on_state then M.on_state(message) end
                 end)
             end)
@@ -474,6 +484,142 @@ end
 
 -- Called on the authority to push every rule to one client, or to all of
 -- them when comp is nil.
+-- Per-pal ranks and priorities, server to client.
+--
+-- The stand grid needs two things for every cell: whether the pal CAN do that
+-- work, and what priority it is set to. On a client the first is unobtainable
+-- - GetWorkSuitabilityRank on a replicated pal is an access violation, not a
+-- Lua error, so no pcall saves the process - and the second lives in a file
+-- only the server reads. That is why the grid has always been authority-only.
+--
+-- Both are cheap to send. One line per pal carries fourteen ranks and
+-- fourteen priorities as one character each, so a fourteen pal base is
+-- fourteen short lines rather than four hundred values.
+--
+--   PWP_Pal|<key>|<ranks>|<prios>
+--
+-- ranks are '0'-'5' by work index, prios are '1'-'5', 'X' for never, '-' for
+-- unset. Position IS the work type, which is why both strings are fixed
+-- length and why a missing entry is a character rather than an omission.
+M.pals = {}
+
+local function encode_ranks(ranks, n)
+    local out = {}
+    for t = 1, n do
+        local r = ranks and ranks[t] or 0
+        if type(r) ~= "number" or r < 0 or r > 5 then r = 0 end
+        out[t] = tostring(math.floor(r))
+    end
+    return table.concat(out)
+end
+
+local function encode_prios(prios, n)
+    local out = {}
+    for t = 1, n do
+        local p = prios and prios[t]
+        if p == false then out[t] = "X"
+        elseif type(p) == "number" and p >= 1 and p <= 5 then
+            out[t] = tostring(math.floor(p))
+        else out[t] = "-" end
+    end
+    return table.concat(out)
+end
+
+local function decode_ranks(text, n)
+    local out = {}
+    for t = 1, n do
+        local c = text:sub(t, t)
+        local v = tonumber(c)
+        if v and v > 0 then out[t] = v end
+    end
+    return out
+end
+
+local function decode_prios(text, n)
+    local out = {}
+    for t = 1, n do
+        local c = text:sub(t, t)
+        if c == "X" then out[t] = false
+        elseif c ~= "-" and c ~= "" then
+            local v = tonumber(c)
+            if v then out[t] = v end
+        end
+    end
+    return out
+end
+
+-- rows is { { key = ..., ranks = {..}, prios = {..} }, ... }, built by the
+-- caller because only it knows how to ask a pal for a rank safely.
+function M.push_pals(rows, comp)
+    if type(rows) ~= "table" or #rows == 0 then return false end
+
+    local n = 14
+    local batch = { PREFIX .. "PalReset" }
+    for _, row in ipairs(rows) do
+        if type(row.key) == "string" and row.key ~= "" then
+            batch[#batch + 1] = string.format("%sPal|%s|%s|%s", PREFIX,
+                row.key, encode_ranks(row.ranks, n), encode_prios(row.prios, n))
+        end
+    end
+    batch[#batch + 1] = PREFIX .. "PalDone"
+
+    if comp then
+        for _, msg in ipairs(batch) do
+            if not M.to_client(comp, msg) then return false end
+        end
+        return true
+    end
+
+    if next(M.clients) == nil then return false end
+
+    local sent = false
+    for _, c in pairs(M.clients) do
+        if api.valid(c) then
+            for _, msg in ipairs(batch) do
+                if not M.to_client(c, msg) then break end
+            end
+            sent = true
+        end
+    end
+    return sent
+end
+
+-- Applied on the client. Kept whole rather than merged, so a pal that leaves
+-- the base stops being answered for instead of lingering at its last known
+-- ranks.
+local pal_incoming = nil
+
+function M.on_pal_message(message)
+    if message == PREFIX .. "PalReset" then
+        pal_incoming = {}
+        return true
+    end
+
+    if message == PREFIX .. "PalDone" then
+        if pal_incoming then
+            M.pals = pal_incoming
+            pal_incoming = nil
+
+            -- Counted by walking, not by #. M.pals is keyed by pal key, so the
+            -- length operator answers 0 however many are in it - which it did,
+            -- reporting "0 pal(s)" while fourteen were on screen. A log line
+            -- that contradicts the thing it is describing is worse than none.
+            local n = 0
+            for _ in pairs(M.pals) do n = n + 1 end
+            log.debug("stand data: " .. n .. " pal(s) from the server")
+        end
+        return true
+    end
+
+    local key, ranks, prios =
+        message:match("^" .. PREFIX .. "Pal|([^|]+)|([^|]*)|([^|]*)$")
+    if key == nil then return false end
+
+    local into = pal_incoming or M.pals
+    into[key] = { ranks = decode_ranks(ranks, 14), prios = decode_prios(prios, 14) }
+    return true
+end
+
 function M.push_rules(caps, cfg, comp)
     -- One batch per guild, built on demand and reused.
     --

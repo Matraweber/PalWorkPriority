@@ -1327,6 +1327,74 @@ local function may_change(comp)
     return true
 end
 
+-- Ranks and priorities for every base pal, for a client's stand grid.
+--
+-- Built here rather than in net.lua because only this side can ask a pal for
+-- its rank at all: GetWorkSuitabilityRank on a replicated pal is an access
+-- violation, so the call must happen where the pals are real and the answer
+-- must travel. That asymmetry is the whole reason the grid was authority-only.
+--
+-- Walked on demand rather than cached off a pass. A pass runs every ten
+-- seconds and a client's grid is open for a few of them, so caching would
+-- keep a table of engine-derived values warm for minutes to save a walk
+-- nobody is waiting on.
+local function stand_rows()
+    local rows = {}
+
+    for _, camp in ipairs(api.base_camps() or {}) do
+        for _, pal in ipairs(api.camp_pals(camp) or {}) do
+            if type(pal.key) == "string" and api.valid(pal.param) then
+                local ranks, prios = {}, {}
+
+                for t = 1, #workdefs.ORDER do
+                    local value = workdefs.value(workdefs.ORDER[t])
+                    local r = api.suitability_rank(pal.param, value)
+                    if type(r) == "number" and r > 0 then
+                        ranks[t] = r
+                        -- Only where the pal is capable. A priority on work it
+                        -- cannot do would draw a number over the vanilla dash,
+                        -- which is the one thing the grid promises never to do.
+                        prios[t] = store.effective(cfg, pal,
+                            workdefs.ORDER[t], value)
+                    end
+                end
+
+                rows[#rows + 1] = { key = pal.key, ranks = ranks, prios = prios }
+            end
+        end
+    end
+
+    return rows
+end
+
+-- Only when somebody is listening, and only from the authority.
+local function push_stand(comp)
+    if not api.has_authority() then return end
+
+    -- Said out loud, because the failure this had was silent.
+    --
+    -- The first version called api.camps(), which does not exist - the name is
+    -- base_camps - so stand_rows threw inside a pcall, returned nothing, and
+    -- the client drew the vanilla grid exactly as if the feature were still
+    -- switched off. luacheck does not see undefined calls, so nothing caught
+    -- it but the game.
+    local rows = {}
+    local ok, err = pcall(function() rows = stand_rows() end)
+
+    if not ok then
+        log.warn("stand push failed: " .. tostring(err))
+        return
+    end
+    if #rows == 0 then
+        log.debug("stand push: no pals to send")
+        return
+    end
+
+    local sent = false
+    pcall(function() sent = net.push_pals(rows, comp) end)
+    log.debug("stand push: " .. #rows .. " pal(s), sent=" .. tostring(sent))
+end
+
 net.on_command = function(command, _, comp)
     local parts = net.split(command)
     local verb = parts[1]
@@ -1336,7 +1404,8 @@ net.on_command = function(command, _, comp)
         -- stands. Its own component, not a broadcast: an unmodded client
         -- must receive nothing at all.
         net.push_rules(caps, cfg, comp)
-        log.debug("a modded client said hello, sent it the rules")
+        push_stand(comp)
+        log.debug("a modded client said hello, sent it the rules and the stand")
         return
     end
 
