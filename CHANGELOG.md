@@ -76,8 +76,9 @@ told to hold an unbounded amount of data.
 ### Notes
 
 - `panel.lua` is two top-level locals short of Lua's 200 ceiling.
-- The item picker's pager overlaps two rows when "show all craftable items" is
-  on and there is more than one page. Known, see `docs/audit-2026-08-26.md`.
+- The item picker's pager is drawn across rows 7 and 8 when "show all craftable
+  items" is on and there is more than one page, partly hiding both. Known, see
+  `docs/audit-2026-08-26.md`.
 - The panel's tab strip shifts between the rules list and the picker. Known and
   deliberate; the alternative was worse to look at.
 
