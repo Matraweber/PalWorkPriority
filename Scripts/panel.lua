@@ -3830,7 +3830,20 @@ end
 
 -- icons calls this from inside the frame that swept, which is the only frame
 -- those textures are safe in.
-pcall(function() icons.on_sweep = pin_from_sweep end)
+-- Wired loudly, because this is what makes sweeps stop happening.
+--
+-- A discarded pcall here is the "callback was not wired" shape: if icons or
+-- pin_from_sweep were nil the assignment silently did not happen, nothing
+-- pinned anything, and the only symptom is a ~26ms sweep twice a second for
+-- as long as the picker is open. A performance fault with no error and no
+-- visible breakage is the hardest kind to find.
+--
+-- Written as an if rather than capturing the result, because this sits at file
+-- top level and panel.lua is two locals short of Lua's 200 ceiling.
+if not pcall(function() icons.on_sweep = pin_from_sweep end) then
+    log.warn("could not wire icon pinning, so the picker will keep " ..
+        "re-sweeping every time it draws")
+end
 
 -- One row's tint, recomputed in place. The frame-rate half of hover.
 --

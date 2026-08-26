@@ -59,6 +59,7 @@ local said_none = false
 -- warning waits for a run of failures rather than the first one.
 local said_painted_none = false
 local last_cell_error = nil
+local last_bind_error = nil
 local hook_fails = 0
 local HOOK_FAIL_WARN = 5
 local painted_gen = nil        -- which net.pals generation the cells show
@@ -216,7 +217,20 @@ local function try_hook_bind()
 
     local ok, err = pcall(function()
         RegisterHook(ROW_BIND_FN, function(Context, SlotParam)
-            pcall(function()
+            -- The message is kept, once per distinct error.
+            --
+            -- This body is where row_pal is filled, and row_pal is what every
+            -- cell needs to draw a number. A throw anywhere in it - a renamed
+            -- api function, a rank call that faults, a shape the wire format
+            -- did not expect - leaves the table empty, every cell falls back
+            -- to the vanilla checkbox, and the grid looks exactly like the
+            -- feature being switched off. That is the api.camps() shape, at
+            -- the single most load-bearing point in the grid, and it was a
+            -- bare pcall.
+            --
+            -- Keyed on the message because this fires once per row bound, so
+            -- an unkeyed warn would be one line per row per open.
+            local ok_bind, err_bind = pcall(function()
                 local row = Context:get()
                 if not alive(row) then return end
                 local rname = full_name(row)
@@ -307,6 +321,18 @@ local function try_hook_bind()
                     invalidate_cells()
                 end
             end)
+
+            if not ok_bind then
+                err_bind = tostring(err_bind)
+                if err_bind ~= last_bind_error then
+                    last_bind_error = err_bind
+                    log.warn("a Monitoring Stand row could not be read, so " ..
+                        "the grid will not draw numbers for it: " .. err_bind)
+                end
+            elseif last_bind_error ~= nil then
+                last_bind_error = nil
+                log.say("the Monitoring Stand rows are readable again")
+            end
         end)
     end)
 
@@ -1044,12 +1070,22 @@ function M.refresh(cfg)
             -- tick until the hello budget ran out, and restarted every time
             -- anyone edited anything.
             if absent and absent ~= missing_key then
-                missing_gen = net.pals_gen
-                missing_key = absent
-                log.debug("stand: no data for " .. absent .. ", asking once")
+                -- Committed only once the message has gone, as the backoff
+                -- above already is. Setting the memos first meant a send
+                -- attempted before the network component resolves - the first
+                -- eighteen seconds - latched "already asked about this pal"
+                -- for a message that never left, and the log line said
+                -- "asking once" on a path where nothing was sent.
+                local sent = false
                 pcall(function()
-                    net.to_server(net.PREFIX .. "Hello", 1)
+                    sent = net.to_server(net.PREFIX .. "Hello", 1)
                 end)
+
+                if sent then
+                    missing_gen = net.pals_gen
+                    missing_key = absent
+                    log.debug("stand: no data for " .. absent .. ", asked once")
+                end
             end
         end
 

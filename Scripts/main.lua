@@ -471,6 +471,7 @@ local grid_owed = 0
 -- is logged once rather than a hundred times.
 local last_panel_error = nil
 local last_grid_error = nil
+local last_tick_error = nil
 
 
 local function ui_body()
@@ -613,7 +614,17 @@ local function start_ui()
         local ok = pcall(function()
             LoopInGameThreadWithDelay(16, function()
                 if panel.open and panel.hover_tick then
-                    pcall(panel.hover_tick)
+                    -- The message is kept. A throw here kills the gamepad and hover entirely,
+    -- and this is three discards deep otherwise - panel wraps its own body,
+    -- pad wraps its handlers, and this wrapped the lot.
+    local ok_hover, err_hover = pcall(panel.hover_tick)
+    if not ok_hover then
+        err_hover = tostring(err_hover)
+        if err_hover ~= last_tick_error then
+            last_tick_error = err_hover
+            log.warn("the panel's hover and pad tick stopped: " .. err_hover)
+        end
+    end
                 end
                 -- A page being shown for the first time draws eight
                 -- milliseconds of tiles per frame and asks to be called back
@@ -621,7 +632,17 @@ local function start_ui()
                 -- reason: panel hot swaps, and a session can briefly run an
                 -- older one without this.
                 if panel.open and panel.fill_tick then
-                    pcall(panel.fill_tick)
+                    -- Same, and this is the one refresh path that reported nothing. A throw
+    -- mid-fill leaves RB.pending true and repeats at 16ms for ever, so the
+    -- picker sits half drawn with no error anywhere.
+    local ok_fill, err_fill = pcall(panel.fill_tick)
+    if not ok_fill then
+        err_fill = tostring(err_fill)
+        if err_fill ~= last_tick_error then
+            last_tick_error = err_fill
+            log.warn("the panel's fill tick stopped: " .. err_fill)
+        end
+    end
                 end
             end)
         end)
@@ -2079,7 +2100,13 @@ local function decide_write_or_send()
         -- rather than at load for the same reason submit is: there is no world
         -- when a mod starts, so this question has no answer yet.
         caps.on_change = function()
-            pcall(function() net.push_rules(caps, cfg, nil) end)
+            local ok_push, err_push = pcall(function()
+                net.push_rules(caps, cfg, nil)
+            end)
+            if not ok_push then
+                log.warn("pushing the ceilings to clients failed: " ..
+                    tostring(err_push))
+            end
         end
 
         -- Same for priorities. A change made at the server's own keyboard
