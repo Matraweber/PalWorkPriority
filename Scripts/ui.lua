@@ -796,7 +796,12 @@ end
 -- ---------------------------------------------------------------------------
 
 function M.refresh(cfg)
-    -- The stand grid is authority-only, and the reason is a crash rather than
+    -- The stand grid used to be authority-only, and the reason was a crash
+    -- rather than a preference. It draws on a client now - from what the
+    -- server sends, never from a local read - and the paragraph below records
+    -- why the original restriction existed, because the hazard it names is
+    -- still real for anything that reads a pal directly.
+    --
     -- a preference.
     --
     -- Binding a row reaches api.suitability_rank, which is
@@ -826,8 +831,9 @@ function M.refresh(cfg)
         -- The three reasons this was off are answered separately. The fatal
         -- rank call is gone from the client path entirely - the ranks arrive
         -- over the wire. The numbers are the server's priorities rather than a
-        -- local file it never reads. And clicks are refused below, because the
-        -- protocol carries no priority edits upward yet.
+        -- local file it never reads. Clicks are sent to the server now; the
+        -- protocol carries PWP_Prio upward and the server's answer back down,
+        -- so the number that changes on screen is the server's.
         --
         -- No data means no grid, rather than an empty one: before the server's
         -- first push there is nothing honest to draw, and a grid of dashes

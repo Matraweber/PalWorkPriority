@@ -661,20 +661,60 @@ needs demand resolution for value 14, not a config change.
 
 ## Multiplayer
 
-The mod runs client-side and only issues RPCs the vanilla UI already issues, so other players do
-not need it installed.
+**Install it on the server as well as on every player who wants the UI.** The
+server is where the work actually gets decided, so a client-only install does
+nothing: no passes run, the grid stays empty and every edit is sent to a server
+that is not listening. Subscribing handles this automatically for a server that
+subscribes to Workshop mods; for a manually managed server, see
+[Dedicated servers](#dedicated-servers) below.
 
-On a pure multiplayer client **the mod does not run passes at all** - the server decides, and
-`run_pass` returns immediately without authority. So the request-replication path described in
-older versions of this file cannot execute on a client: it lives inside a pass, and a client
-never reaches one. Nothing is estimated client-side either, because nothing runs.
+The server owns both data files and makes every decision. A client owns nothing:
+it draws what the server sends and sends back what the player clicks.
 
-What a client does do is edit rules, which are sent to the server, and draw the panel. Hosting or
-singleplayer needs none of this.
+**Priorities and production limits are guild-scoped.** Each guild sees and edits
+only its own, and the server files an incoming change under whichever guild the
+message arrived from - which a client cannot forge, because the guild is never
+part of the payload. A player in no guild is refused rather than given
+everyone's.
 
-**The Monitoring Stand grid is switched off entirely on a client.** No numbers, no clicks, the
-vanilla checkboxes untouched. Priorities are the server's to decide and a client cannot write
-them, so rather than draw numbers it cannot honour, the mod leaves the screen alone.
+**The Monitoring Stand grid works on a client.** The server sends each pal's
+ranks and priorities, the client draws them, and a click goes back up as a
+request that the server validates, applies, saves and pushes to everyone. The
+number that changes on screen is the server's answer, not a local guess.
+
+**Passes only run on the server.** `run_pass` returns immediately without
+authority, so nothing is estimated or decided client-side. `!pwp status` on a
+client says so.
+
+**Players without the mod are unaffected.** Everything travels on two RPCs the
+vanilla UI already uses, addressed to one connection at a time, and an unmodded
+client is never sent anything.
+
+### Dedicated servers
+
+The mod has to be installed on the server itself, under the server's own UE4SS
+Mods directory, exactly as on a client:
+
+    PalServer/Mods/NativeMods/UE4SS/Mods/PalWorkPriority/
+
+`Info.json` declares a server install rule, so a server that subscribes through
+Workshop gets it without any manual step:
+
+    { "Type": "Lua", "IsServer": true, "Targets": ["./Scripts"] }
+
+The pak is deliberately NOT installed on a server - it carries only the panel's
+widget, and a headless server draws no UI.
+
+Two things worth knowing when running one:
+
+- **With nobody connected the server does nothing.** The game runs no base work
+  without a player present, and there is no player controller to send changes
+  through, so the pass stands down rather than sending into the void. It
+  resumes on its own when somebody joins.
+- **Chat commands are refused while anyone else is connected.** Chat reaches
+  every player, so anything that changes state is limited to the machine's own
+  console or `remote.txt`. Read-only commands - `help`, `status`, `net` - always
+  work.
 
 ## Publishing to Steam Workshop
 

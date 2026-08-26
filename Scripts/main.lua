@@ -31,7 +31,7 @@ local pad = require("pad")
 local darnmenu = require("darnmenu")
 
 local MOD_NAME = "Pal Work Priority"
-local VERSION = "0.3.0"
+local VERSION = "0.4.0"
 
 -- ---------------------------------------------------------------------------
 -- Paths
@@ -675,8 +675,8 @@ COMMANDS.status = function()
         -- that cannot execute, which is the same class of error as
         -- documenting a keybind that never fires.
         or "NO, this is a client. No passes run here and the Monitoring " ..
-           "Stand grid is off; the server decides. Rules you edit are sent " ..
-           "to it"))
+           "Stand grid is drawn from what the server sends, and your edits " ..
+           "go back up to it"))
     log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
         (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
     log.say("  ceilings measured against: " ..
@@ -2205,8 +2205,9 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
             said_client_warning = true
             log.warn("no authority here, so this looks like a client on " ..
                 "a dedicated server. No passes will run on this machine " ..
-                "and the Monitoring Stand grid stays off - the server " ..
-                "decides both. Rules you set are sent to it.")
+                "and the priorities are the server's - it sends them " ..
+                "down for the Monitoring Stand grid to draw, and your " ..
+                "edits go back up to it.")
         end
     end)
 
