@@ -1038,6 +1038,14 @@ end
 -- failed to load.
 M.height = 700
 
+-- The height the panel's top edge is pinned against.
+--
+-- fit_width anchors the top edge rather than the centre, so this decides where
+-- the panel sits. 340 is the settled rules list, which is what opens first, so
+-- a short panel lands exactly where the old centre-aligned one did and a tall
+-- one grows down into the space below it.
+local BASE_H = 340
+
 local fitted_h
 
 function M.fit_width()
@@ -1054,16 +1062,28 @@ function M.fit_width()
     local ok = pcall(function()
         local slot = parts.Backdrop.Slot
         if slot then
-            -- Size only. NOT position.
+            -- Grow downward from a fixed top edge.
             --
-            -- Setting the position to minus half the size, to pin the top
-            -- edge, put the panel off the left of the screen: the slot is
-            -- centre ANCHORED and its alignment already does the centring, so
-            -- position (0,0) is what centres it and any offset moves it. The
-            -- top edge therefore follows half the height change, and the tab
-            -- strip shifts a little between a short list and a long one.
-            -- Measured against 451 pixels of empty fill, that is the better
-            -- trade, and it is reversible in one line if it grates.
+            -- The slot is centre anchored with centre ALIGNMENT, so half of
+            -- every height change moved the top edge - measured at 181 pixels
+            -- between the rules list and the picker, which takes the tab you
+            -- just clicked out from under the pointer. panel.lua records this
+            -- exact regression as already fixed, but that fix lives on the
+            -- hand-built canvas path, which never runs once the pak is
+            -- installed.
+            --
+            -- The earlier attempt offset the POSITION by minus half the size
+            -- and put the panel off the left of the screen, because it moved X
+            -- as well and the alignment was still centring. Alignment is the
+            -- thing to change: Y = 0 makes the slot's top edge sit at the
+            -- anchor, X = 0.5 keeps the horizontal centring that already
+            -- worked. The fixed Y offset then places that top edge where a
+            -- list-height panel used to sit, so nothing appears to move.
+            pcall(function()
+                slot:SetAlignment({ X = 0.5, Y = 0.0 })
+                slot:SetPosition({ X = 0, Y = -0.5 * BASE_H })
+            end)
+
             slot:SetSize({ X = M.width + 36, Y = want_h })
         end
     end)

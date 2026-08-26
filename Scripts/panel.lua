@@ -1291,7 +1291,16 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
     -- Tabs keep their own colour. The selection tint was overriding it, so on
     -- the picker the inactive RULES tab rendered brighter than the active ADD
     -- tab and the underline was the only thing still telling the truth.
-    local shown = (selected and not key:match("^tab_")) and "hover" or colour_key
+    --
+    -- So do the colours that MEAN something. danger is the armed Remove and
+    -- quiet is the unarmed one, and the tint turned both cyan the moment the
+    -- pointer landed on them - so the only destructive control in the panel
+    -- lost its warning colour exactly when it was armed and one click from
+    -- firing. Selection is already carried by the stripe, the rail and the
+    -- caret; it does not also need to repaint the text.
+    local keeps_colour = colour_key == "danger" or colour_key == "quiet"
+    local shown = (selected and not key:match("^tab_") and not keeps_colour)
+        and "hover" or colour_key
 
     -- The marker used to be glued on here, as a "> " or "  " prefix on every
     -- clickable string. That put a 13 pixel slot inside three different
@@ -3096,6 +3105,17 @@ local function draw_list(cfg, totals)
             -- the purpose line and the tile counts: six unrelated things, one
             -- of which destroys a rule. It had no confirm step either, so a
             -- misclick was silent and final.
+            -- Expired here, not only on the next click.
+            --
+            -- The four second window was checked in handle_click alone, so a
+            -- row sat reading "Sure?" for ever and a click after the window
+            -- re-armed instead of deleting - nothing changed on screen, which
+            -- reads as a dead button. This runs ten times a second while the
+            -- panel is open, so the label goes back on its own.
+            if pending_drop ~= nil and (os.clock() - pending_at) > 4.0 then
+                pending_drop = nil
+            end
+
             local asking = pending_drop ~= nil
                 and pending_drop.work == rule.work
                 and pending_drop.item == rule.item
@@ -3705,10 +3725,20 @@ local function draw_item_picker(cfg, totals)
     stripe("all", r_all, PAD, ROW_W, BUTTON_BG, true)
     tile_face["all"] = stripes["all"]
     line("mk_all", r_all, PAD, row_is_current("all") and ">" or "", "hover", ROW_PT)
+    -- The state was one character in the label's own colour, in the glyph
+    -- slot the row below uses for a "<" caret - so the eye had learned that
+    -- slot is decoration. A pixel diff across a toggle attempt found ZERO
+    -- differing pixels in this row. Colour now carries it as well as shape,
+    -- and the label says which way it is rather than only what it does.
+    --
+    -- "with a job" also read as a pal's work type. It means craftable.
     line("g_all", r_all, PAD + MARK_W,
-        everything and "[x]" or "[  ]", "action", ROW_PT)
+        everything and "[X]" or "[  ]",
+        everything and "action" or "dim", ROW_PT)
     line("all", r_all, PAD + MARK_W + GLYPH_SLOT,
-        "Show every item with a job", "action", ROW_PT)
+        everything and "Showing all craftable items"
+            or "Show all craftable items",
+        everything and "action" or "item", ROW_PT)
 
     hit("back", { kind = "back" })
     stripe("back", r_back, PAD, ROW_W, BUTTON_BG, true)
@@ -4313,6 +4343,18 @@ function M.toggle()
     if not M.open then
         blank_everything()
         overlay.hide()
+
+        -- The height goes back with the screen it belonged to.
+        --
+        -- mode is reset here and overlay.height was not, so after one visit to
+        -- the picker every later open began at the picker's height - a
+        -- 1146x700 slab for a rules list that needs 340, which then collapsed
+        -- 360 pixels once the first draw landed.
+        -- Set to the rules list's own height rather than cleared: fit_width
+        -- reads "M.height or 700", so nil is the slab height this is trying
+        -- to avoid. The next draw corrects it either way.
+        pcall(function() overlay.height = 340 end)
+
         mode, page, show_all = "list", 0, false
         pcall(function() scheduler.want_totals = false end)
 
@@ -4351,6 +4393,21 @@ function M.toggle()
     pcall(function() scheduler.want_totals = true end)
 
     want_first_row = true
+
+    -- Drawn now, not on the next beat.
+    --
+    -- overlay.show() makes the shell visible immediately and toggle returned
+    -- without drawing anything, so the first thing on screen was a large empty
+    -- rectangle - no tabs, no title, no CLOSE - until ui_body's 100ms beat
+    -- filled it. It read as a failed load, which is exactly what overlay.lua's
+    -- own comment says empty fill reads as.
+    --
+    -- RB.cfg is whatever the last refresh was given; main.lua calls refresh
+    -- every second while the world is up, so it is set long before a player
+    -- can press the key. If it is not, the beat still does its job.
+    if RB.cfg then
+        pcall(function() M.refresh(RB.cfg) end)
+    end
 
     log.say("Production Limits open, Alt+F1 or Esc to close")
 end
@@ -5475,8 +5532,16 @@ function M.click_named(cfg, kind, what_arg, dir)
     end
 
     if wanted == nil then
-        return "nothing on this screen matches " .. tostring(kind) ..
+        -- Said on screen too.
+        --
+        -- This only ever went back to the caller, which logs it - and a log
+        -- file is not something a player has open. A click that names
+        -- something this screen does not have looked exactly like a click
+        -- that did nothing.
+        local said = "nothing on this screen matches " .. tostring(kind) ..
             " " .. tostring(what_arg)
+        announce(said)
+        return said
     end
 
     local ok, result = pcall(M.apply, cfg, wanted, dir, true)
@@ -5687,10 +5752,16 @@ function M.apply(cfg, what, dir, from_mouse)
         end
 
         if caps.submit then
-            announce("asked the server to move the limit on " .. rule.item ..
+            announce("asked the server to move the limit on " ..
+                pretty_name(rule.item) ..
                 " to " .. workdefs.label(moved))
         else
-            announce(rule.item .. " is now made by " .. workdefs.label(moved))
+            -- pretty_name, as the picker and the rules row already use.
+            -- Picking "Mushroom Quiche" and being told "Mushroom_Quiche" is
+            -- the mod dropping back into its own internal vocabulary at the
+            -- one moment the player is looking for confirmation.
+            announce(pretty_name(rule.item) .. " is now made by " ..
+                workdefs.label(moved))
         end
         M.wants_pass = true
         return true

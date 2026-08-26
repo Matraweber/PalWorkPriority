@@ -510,8 +510,16 @@ local COLOUR = {
     blank    = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
     -- Ceilings are blue on purpose. Nothing in the priority run is blue, so
     -- a number in the header can never be mistaken for a priority.
-    cap_set  = { R = 0.40, G = 0.78, B = 1.00, A = 1.0 },
-    cap_none = { R = 0.45, G = 0.45, B = 0.48, A = 0.75 },
+    -- cap_set and cap_none used to sit here, blue and grey, for a ceiling
+    -- drawn in the work type's column HEADER - a number there can never be
+    -- mistaken for a priority. That marker was never built, and neither colour
+    -- was referenced anywhere, so the grid shows a priority for a job the
+    -- panel is reporting as Stopped and nothing connects the two.
+    --
+    -- Removed rather than left looking implemented. Marking a capped column is
+    -- a design job with real risk - it means injecting into vanilla header
+    -- widgets - and it is recorded as an open item in docs/audit-2026-08-26.md
+    -- rather than half-present here.
 }
 
 local function colour_for(prio)
