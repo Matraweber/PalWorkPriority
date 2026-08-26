@@ -1025,6 +1025,31 @@ local function run_camp(cfg, camp, stats)
 end
 
 function M.run_pass(cfg)
+    -- Asked fresh, not read from the memo, and asked HERE rather than trusted
+    -- from the caller.
+    --
+    -- Everything below reaches suitability_rank and current_work_suitability,
+    -- which are UFunction calls on pal parameters. On a dedicated server
+    -- client those are replicated proxies and the call is an access violation
+    -- rather than an error, so no pcall on the way down catches it. M.restore
+    -- already gates itself for exactly this reason and its comment argues the
+    -- general case: a dangerous primitive that every caller has to remember to
+    -- guard is the shape of the bug the gate closes. run_pass is strictly more
+    -- dangerous and had only an owned-component test, which a client passes.
+    --
+    -- latch_authority rather than has_authority, deliberately. The memo is
+    -- cleared by api.reset, which runs only when world_key says the world
+    -- changed - and world_key is derived from the map package path, which may
+    -- not differ between hosting and joining a server. If it does not, a
+    -- session that hosted first carries a stale "yes" into a client session
+    -- with the pass timer still armed. Probing here re-latches every pass, so
+    -- a stale answer survives at most one interval and cannot reach the calls
+    -- below. On a host the lookup exits early; on a client it is one walk to
+    -- return false, once per pass.
+    if not api.latch_authority() then
+        return M.blank_stats()
+    end
+
     local stats = M.blank_stats()
     M.pass_id = M.pass_id + 1
 

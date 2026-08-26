@@ -229,6 +229,18 @@ local function pass_body()
     end
 end
 
+-- Defined further down, needed here.
+--
+-- Switching the mod off has to give the pals back, and the only place that
+-- reliably notices "off" is the pass gate below: a config edit, a DarnMenu
+-- save and a fresh launch all arrive as cfg.enabled being false with nothing
+-- calling COMMANDS.off.
+local restore_all
+
+-- One give-back per disabled session, so the sweep is not re-run every
+-- interval once it has nothing left to do.
+local restored_for_disabled = false
+
 local function run_pass(reason, explicit)
     if not cfg then return end
 
@@ -248,8 +260,35 @@ local function run_pass(reason, explicit)
         if explicit then
             log.say(reason .. ": disabled. Use '" .. cfg.chat_prefix .. " on' to enable")
         end
+
+        -- Off means give the pals back, not just stop touching them.
+        --
+        -- COMMANDS.off already does this and its comment explains why it must:
+        -- the fences are the game's own saved data, so they outlive the mod,
+        -- and a save left fenced has twelve of thirteen work suitabilities
+        -- unchecked on every base pal with no way back but the stand, by hand.
+        --
+        -- That fix only ever covered the chat command. Every other way of
+        -- switching the mod off - editing config.lua, unticking "Assign Pals
+        -- to jobs" in DarnMenu, '!pwp reload' - lands here instead, and here
+        -- only stopped. So the documented promise, "false leaves the game
+        -- completely untouched", was the one route that did not keep it.
+        --
+        -- This also covers the case a transition check would miss: disabled
+        -- BEFORE the game started, which is exactly what a player does after
+        -- deciding to turn the mod off. There is no edge to detect in that
+        -- session, only leftover fences. The sweep is idempotent, so when
+        -- there is nothing fenced it sends nothing.
+        if not restored_for_disabled then
+            restored_for_disabled = true
+            log.say("disabled, so giving every pal its work back")
+            restore_all("disabled")
+        end
         return
     end
+
+    -- Armed again, so a later switch-off sweeps again.
+    restored_for_disabled = false
 
     -- One pass at a time.
     --
@@ -773,7 +812,7 @@ end
 -- Looped, because one sweep is bounded to MAX_TOGGLES_PER_PASS and a real base
 -- needs several. Bounded itself so a pal whose permissions cannot be read
 -- cannot spin here for ever.
-local function restore_all(why)
+function restore_all(why)
     -- The fences belong to whoever set them, and a client never set any: the
     -- passes run on the authority, for the reason given at run_pass. So there
     -- is nothing here to give back.
@@ -1240,7 +1279,43 @@ COMMANDS.limit = function(args)
     end)
 end
 
-local function handle_command(text)
+-- Commands that only READ. Everything else changes something.
+--
+-- Chat is not an admin channel. OnReceivedChat fires when the chat box
+-- RECEIVES a message, and Palworld replicates chat to everyone, so any line a
+-- stranger types runs on every modded machine that can see it. On a listen
+-- host that is full authority - '!pwp adopt' moves every wildcard ceiling into
+-- the host's guild and caps.lua says plainly that adopting cannot be undone.
+-- On a dedicated server it is a confused deputy: the line runs on other
+-- players' clients, and each one then submits a request under ITS OWN guild,
+-- which satisfies every check on the network path because it genuinely did
+-- come from a member of that guild.
+--
+-- The list is short on purpose. discover, worksuit and stock each do a full
+-- object walk and a file write, and worksuit is not authority gated, so none
+-- of them belongs on a channel a stranger can type into.
+local SAFE_FROM_CHAT = {
+    help = true, status = true, net = true,
+}
+
+-- Whether a chat line can be trusted to have come from this machine's player.
+--
+-- Provably solo is the only case that can be answered today: the authority,
+-- with no modded client registered, is a session where the only person who can
+-- type is the one at the keyboard. Anything else waits for the sender check,
+-- which needs a field name this build has not been measured for - see the
+-- probe in the chat hook.
+--
+-- Refusing is the right default while that is unknown. A refused command is an
+-- annoyance; an accepted one from a stranger is someone else's base stopped.
+local function chat_is_trusted()
+    if not api.has_authority() then return false end
+    return next(net.clients) == nil
+end
+
+local warned_chat_refusal = false
+
+local function handle_command(text, from_chat)
     local prefix = cfg.chat_prefix
     if text:sub(1, #prefix):lower() ~= prefix:lower() then return false end
 
@@ -1248,7 +1323,21 @@ local function handle_command(text)
     local verb = rest:match("^(%S+)") or "help"
     local args = rest:match("^%S+%s+(.*)$") or ""
 
-    local fn = COMMANDS[verb:lower()]
+    local key = verb:lower()
+
+    if from_chat and not SAFE_FROM_CHAT[key] and not chat_is_trusted() then
+        log.warn("refused '" .. key .. "' from chat: chat reaches every " ..
+            "player, so it only carries read-only commands while anyone " ..
+            "else is connected")
+        if not warned_chat_refusal then
+            warned_chat_refusal = true
+            log.say("commands that change something are refused from chat " ..
+                "in multiplayer. Use the server console or remote.txt.")
+        end
+        return true
+    end
+
+    local fn = COMMANDS[key]
     if fn then
         local ok, err = pcall(fn, args)
         if not ok then log.error("command '" .. verb .. "' failed: " .. tostring(err)) end
@@ -1317,6 +1406,40 @@ net.install()
 local RULE_CHANGES = 10
 local RULE_WINDOW = 10.0
 local rule_budget = {}
+
+-- Hello gets its own, far tighter budget.
+--
+-- It was not budgeted at all, and it is the most expensive message the server
+-- handles: two full transmitter walks, a base camp walk, and fourteen native
+-- rank calls per pal. Roughly 40-60ms of game thread each on a populated
+-- server, so a client sending them in a loop freezes the game for everyone.
+--
+-- A legitimate client sends exactly one, once per spawn. Two per minute is
+-- generous for that and still refuses a loop outright.
+local HELLO_MAX = 2
+local HELLO_WINDOW = 60.0
+local hello_budget = {}
+
+local function may_announce(comp)
+    local who = net.who and net.who(comp) or "unknown"
+    local now = os.clock()
+    local b = hello_budget[who]
+
+    if b == nil or (now - b.at) > HELLO_WINDOW then
+        hello_budget[who] = { at = now, n = 1 }
+        return true
+    end
+
+    b.n = b.n + 1
+    if b.n > HELLO_MAX then
+        if b.n == HELLO_MAX + 1 then
+            log.warn("ignoring repeated announcements from one player, " ..
+                "too many at once")
+        end
+        return false
+    end
+    return true
+end
 
 local function may_change(comp)
     local who = net.who and net.who(comp) or "unknown"
@@ -1458,6 +1581,8 @@ net.on_command = function(command, _, comp)
     local verb = parts[1]
 
     if verb == net.PREFIX .. "Hello" then
+        if not may_announce(comp) then return end
+
         -- A modded client announced itself, so send it the world as it
         -- stands. Its own component, not a broadcast: an unmodded client
         -- must receive nothing at all.
@@ -1792,6 +1917,17 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         log.debug("respawn in the same world, caches kept")
     end
 
+    -- Printed so the question can be answered from a log rather than argued.
+    --
+    -- world_key is the level's own object path, and Palworld runs one
+    -- persistent map - so it is not obvious that single player and a dedicated
+    -- server produce different strings. If they do not, "switched" is false for
+    -- every reconnect and the whole reset list stops running. Play solo once,
+    -- join the server once, compare these two lines.
+    if switched then
+        log.say("world key: " .. tostring(now_key))
+    end
+
     world_key = now_key
 
     -- Registration is idempotent and cheap; this covers a world load that
@@ -1950,11 +2086,42 @@ for _, path in ipairs({
     end
 end
 
+-- What does a chat message actually carry?
+--
+-- Nothing in this repo records it, and the sender check that would make chat
+-- safe needs a real field name. Guessing one is how this codebase crashed
+-- before, so this reads a list of candidates once, inside pcall, and writes
+-- down which ones exist. One chat message in game answers it.
+local probed_chat = false
+
+local function probe_chat_fields(received)
+    if probed_chat then return end
+    probed_chat = true
+
+    local found = {}
+    for _, name in ipairs({
+        "PlayerName", "SenderPlayerName", "SenderName", "Sender",
+        "PlayerUId", "SenderPlayerUId", "UniqueId", "PlayerId",
+        "Category", "ChatType", "ReceiverPlayerUId", "Message",
+    }) do
+        local ok, v = pcall(function() return received[name] end)
+        if ok and v ~= nil then
+            local shown
+            pcall(function() shown = tostring(v) end)
+            found[#found + 1] = name .. "=" .. tostring(shown)
+        end
+    end
+
+    log.say("chat message fields: " ..
+        (#found > 0 and table.concat(found, ", ") or "none of the candidates"))
+end
+
 RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
     local ok, err = pcall(function()
         local received = message:get()
         if not (received and received.Message) then return end
-        handle_command(received.Message:ToString())
+        probe_chat_fields(received)
+        handle_command(received.Message:ToString(), true)
     end)
     if not ok then log.debug("chat hook: " .. tostring(err)) end
 end)

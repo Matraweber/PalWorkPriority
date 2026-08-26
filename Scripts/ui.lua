@@ -54,8 +54,12 @@ local row_pal = {}              -- row full name -> { key, name, species }
 local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
+local said_none = false
 local painted_gen = nil        -- which net.pals generation the cells show
 local last_ask = -math.huge    -- when this client last asked for stand data
+local ask_gap = 10             -- seconds until the next ask, doubling
+local asked_gen = nil          -- net.pals_gen at the moment of the last ask
+local ASK_GAP_MAX = 120
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -125,6 +129,21 @@ function M.reset()
     menu_likely_open = false
     ftext_mode = nil
     warned = {}
+
+    -- The ask state belongs to the world too.
+    --
+    -- None of this was cleared. painted_gen surviving meant net.reset's
+    -- generation bump left wants_repaint() true until a stand was opened, and
+    -- said_client re-used a notice from the previous server. The new backoff
+    -- would have been worse than either: said_none latches "this server has
+    -- nothing for my guild", so carrying it into a DIFFERENT server would stop
+    -- that client ever asking again.
+    painted_gen = nil
+    last_ask = -math.huge
+    ask_gap = 10
+    asked_gen = nil
+    said_client = false
+    said_none = false
 end
 
 -- ---------------------------------------------------------------------------
@@ -810,9 +829,37 @@ function M.refresh(cfg)
             -- Only while there is nothing to draw, and at most once every ten
             -- seconds, so a server that genuinely has no pals for this guild
             -- is not asked repeatedly.
+            -- An answer of "nothing" is still an answer.
+            --
+            -- The generation moves when a batch commits, empty or not. So if
+            -- it has moved since the last ask and there is still nothing to
+            -- draw, the server has told us it has no pals for this guild -
+            -- and asking again will get the same reply for the rest of the
+            -- session.
+            --
+            -- Without this the retry was permanent. A guild with no camps
+            -- streamed in leaves net.pals empty forever, so a re-ask every ten
+            -- seconds ran for the whole session, on every such client, and
+            -- each one costs the server a base walk plus fourteen native rank
+            -- calls per pal. The comment here used to claim the opposite - "a
+            -- server that genuinely has no pals for this guild is not asked
+            -- repeatedly" - and that is the one case where it was asked
+            -- forever.
+            if asked_gen ~= nil and net.pals_gen ~= asked_gen then
+                if not said_none then
+                    said_none = true
+                    log.debug("stand: the server has no pals for this guild")
+                end
+                return false
+            end
+
+            -- Backing off, because the reasons this is empty are mostly not
+            -- ones another ask will fix.
             local now = os.clock()
-            if now - last_ask > 10 then
+            if now - last_ask > ask_gap then
                 last_ask = now
+                ask_gap = math.min(ask_gap * 2, ASK_GAP_MAX)
+                asked_gen = net.pals_gen
                 pcall(function()
                     if net.to_server(net.PREFIX .. "Hello", 1) then
                         log.debug("stand: asked the server for pal data")
@@ -947,6 +994,27 @@ end
 -- dir -1 for left click (towards priority 1), +1 for right click.
 local function bump(cfg, dir)
     if not menu_likely_open then return end
+
+    -- Prove the menu is the one these caches were built against, before
+    -- touching any of them.
+    --
+    -- live_menu is the only thing that calls forget_injected, and on a client
+    -- M.refresh returns at the generation check ABOVE it - so once the grid
+    -- has painted, live_menu may never run again. Two consequences, both
+    -- reached only from here. menu_likely_open is never cleared, so every left
+    -- click for the rest of the session pays a full cell-class walk whether
+    -- the stand is open or shut. And cell_text keeps widgets belonging to a
+    -- destroyed menu instance, which the reopened stand hands back under the
+    -- SAME generated names - so alive() lands on a freed widget, and that is
+    -- the crash rather than an error.
+    --
+    -- It costs one more object walk on a click that was already paying one.
+    -- Clicks are rare and user-initiated; the alternative is a stale
+    -- dereference on the one path that can still reach it.
+    if not live_menu() then
+        menu_likely_open = false
+        return
+    end
 
     local cell = hovered_cell()
     if not cell then return end
