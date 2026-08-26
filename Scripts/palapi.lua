@@ -59,6 +59,19 @@ local unwrap, valid = M.unwrap, M.valid
 -- first use is a silent global write, not a shared variable.
 local auth = nil
 
+-- Whether one of the game's own full-screen menus is up.
+--
+-- Declared HERE, in the module that owns the table, because main.lua writes it
+-- from inside a hook while overlay.lua and panel.lua read it as a gate.
+-- Nothing declared it, so no static check could see the contract and a rename
+-- would have failed silently - and if both hook paths fail it stayed nil for
+-- ever, so "api.game_ui_active ~= true" was always true and the cursor was
+-- restored over the player's own open inventory.
+--
+-- false rather than nil, so the default is a definite answer, and M.reset puts
+-- it back with the rest of the world state.
+M.game_ui_active = false
+
 -- Reads a property without letting a missing name take the pass down.
 local function prop(obj, name)
     local ok, v = pcall(function() return obj[name] end)
@@ -146,6 +159,7 @@ local cdo_cache = {}
 function M.reset()
     -- The authority answer belongs to the world, so it goes with it.
     auth = nil
+    M.game_ui_active = false
 
     cdo_cache = {}
     M._suitability_source = nil

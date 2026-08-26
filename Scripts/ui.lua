@@ -59,6 +59,7 @@ local painted_gen = nil        -- which net.pals generation the cells show
 local last_ask = -math.huge    -- when this client last asked for stand data
 local ask_gap = 10             -- seconds until the next ask, doubling
 local asked_gen = nil          -- net.pals_gen at the moment of the last ask
+local missing_gen = nil        -- generation we last asked about a missing pal
 local ASK_GAP_MAX = 120
 local last_hook_try = -math.huge
 local menu_likely_open = false
@@ -144,6 +145,7 @@ function M.reset()
     asked_gen = nil
     said_client = false
     said_none = false
+    missing_gen = nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -905,6 +907,38 @@ function M.refresh(cfg)
     -- A rebind still repaints through the hook, so only the polling half is
     -- skipped.
     if not api.has_authority() then
+        -- A pal the server has never told us about.
+        --
+        -- The full table is sent once, on Hello, and a single-row push can add
+        -- or overwrite a key but never announce one the client has not heard
+        -- of in some other way. So a pal CAUGHT after joining is bound to a row
+        -- here, has no entry in net.pals, and its cells fall back to vanilla -
+        -- a stand where old pals show numbers and new ones show plain
+        -- checkboxes, which reads as the mod being half broken.
+        --
+        -- Asking is cheaper than a periodic full push from the server, and the
+        -- client is the side that can actually see the discrepancy. Once per
+        -- generation: if the answer arrives and the key is still missing,
+        -- net.pals_gen has moved and this will not fire again for it.
+        if next(net.pals) ~= nil and missing_gen ~= net.pals_gen then
+            local absent = nil
+            for _, pal in pairs(row_pal) do
+                if type(pal) == "table" and type(pal.key) == "string"
+                    and net.pals[pal.key] == nil then
+                    absent = pal.key
+                    break
+                end
+            end
+
+            if absent then
+                missing_gen = net.pals_gen
+                log.debug("stand: no data for " .. absent .. ", asking again")
+                pcall(function()
+                    net.to_server(net.PREFIX .. "Hello", 1)
+                end)
+            end
+        end
+
         if painted_gen == net.pals_gen then return false end
         painted_gen = net.pals_gen
     end

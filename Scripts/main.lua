@@ -82,6 +82,17 @@ do
         log.warn("last session was in the middle of: " .. was)
     end
 end
+-- The wire format's width has to match the work list it describes.
+--
+-- net.lua carries its own constant because it deliberately requires only log
+-- and palapi. Checked here, where workdefs is in scope, so adding a work type
+-- fails loudly at load rather than silently truncating the new column.
+if net.WORKS ~= #workdefs.ORDER then
+    log.error("the network format carries " .. tostring(net.WORKS) ..
+        " work types but workdefs lists " .. #workdefs.ORDER ..
+        ". Update net.WORKS or the grid will be missing a column.")
+end
+
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
@@ -102,8 +113,26 @@ local function validate(c)
         if not workdefs.is_known(name) then
             log.warn("config.work_priority has unknown work type '" .. tostring(name) ..
                 "', check the spelling against workdefs.lua")
-        elseif prio ~= false and (type(prio) ~= "number" or prio < 1) then
-            log.warn("config.work_priority['" .. name .. "'] should be a number >= 1 or false")
+        elseif prio ~= false then
+            -- Dropped, not merely warned about.
+            --
+            -- A fractional priority passed this and then did nothing at all:
+            -- plan_fences matches "== level" against whole levels, so 2.5 is
+            -- never equal to any of them and the pal simply falls through
+            -- unfenced. Worse, a click on that cell wrote 1.5, and the loader
+            -- matches the priority with (%w+) - which a dot is not - so the
+            -- line was silently dropped on the next launch. The network path
+            -- already refuses fractions for exactly this reason and said so;
+            -- the config path only shrugged.
+            local n = math.tointeger(tonumber(prio))
+            if n == nil or n < 1 or n > store.MAX then
+                log.warn("config.work_priority['" .. name .. "'] should be a " ..
+                    "whole number from 1 to " .. store.MAX .. ", or false. " ..
+                    "Ignoring " .. tostring(prio) .. ".")
+                c.work_priority[name] = nil
+            else
+                c.work_priority[name] = n
+            end
         end
     end
 
@@ -111,6 +140,14 @@ local function validate(c)
     -- not a number, would never fire. Say so rather than let someone
     -- believe a cap is in force.
     c.work_caps = c.work_caps or {}
+
+    -- Read BEFORE the loop, because the loop variable below is also named
+    -- `caps` and shadows the module for the whole body. Asking the module for
+    -- its ceiling limit inside the loop gets the per-work-type table instead,
+    -- which has no such field, and comparing a number against nil throws -
+    -- during config validation, so the mod would come up with no config.
+    local max_ceiling = caps.MAX_CEILING
+
     for name, caps in pairs(c.work_caps) do
         if not workdefs.is_known(name) then
             log.warn("config.work_caps has unknown work type '" .. tostring(name) .. "'")
@@ -118,9 +155,23 @@ local function validate(c)
             log.warn("config.work_caps['" .. name .. "'] should be a table of item = amount")
         else
             for item, ceiling in pairs(caps) do
-                if type(ceiling) ~= "number" then
-                    log.warn("config.work_caps['" .. name .. "']['" .. tostring(item) ..
-                        "'] should be a number")
+                -- Dropped, not merely warned about.
+                --
+                -- The warning left the bad value in cfg, merged_for copies
+                -- cfg.work_caps verbatim - bypassing valid_rule, which is the
+                -- only thing that floors - and push_rules formats it with %d.
+                -- On Lua 5.4 that throws for anything with no integer form,
+                -- inside the pcall every caller wraps it in, and the batch is
+                -- never cached. So one "5000.5" in config.lua meant NO client
+                -- ever received any ceiling, for the whole session, with
+                -- nothing in the log.
+                local n = math.tointeger(tonumber(ceiling))
+                if n == nil or n < 1 or n > max_ceiling then
+                    log.warn("config.work_caps['" .. name .. "']['" ..
+                        tostring(item) .. "'] should be a whole number from " ..
+                        "1 to " .. max_ceiling .. ". Ignoring " ..
+                        tostring(ceiling) .. ".")
+                    caps[item] = nil
                 end
             end
         end

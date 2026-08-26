@@ -35,6 +35,15 @@ local api = require("palapi")
 
 local M = {}
 
+-- How many work types the wire format carries.
+--
+-- It was the literal 14, written twice, against #workdefs.ORDER - which is 14
+-- today. Adding a work type would have silently truncated the new column in
+-- one direction only, with nothing anywhere to notice. net.lua deliberately
+-- requires only log and palapi, so this is named here and CHECKED against
+-- workdefs once at load in main.lua, where that module is already in scope.
+M.WORKS = 14
+
 local PREFIX = "PWP_"
 
 M.installed = false
@@ -195,7 +204,24 @@ function M.to_server(command, value)
     -- the fallback so the authority - where ownership is not a question -
     -- behaves exactly as before.
     local comp, route = owned_component()
-    if not api.valid(comp) then
+
+    -- No fallback on a client.
+    --
+    -- api.network_component() is FindFirstOf, which returns whichever of the
+    -- two components the engine lists first - and that order FLIPS after a
+    -- server restart. Sending through the unowned one is dropped by Unreal
+    -- before the wire while sent_up still counts it, which is the transport
+    -- bug this codebase spent a day on. scheduler.run_pass and
+    -- scheduler.restore both deleted this same fallback for that reason.
+    --
+    -- to_server kept it, and it is the one send site whose result is reported
+    -- to the PLAYER as success: store.submit and caps.submit only say "could
+    -- not reach the server" when this returns false. So the fallback turned a
+    -- refusal the player could see into a click that was accepted on screen
+    -- and never happened.
+    --
+    -- Kept under authority, where ownership genuinely is not in question.
+    if not api.valid(comp) and api.has_authority() then
         comp, route = api.network_component(), "findfirst"
     end
     if not api.valid(comp) then return false end
@@ -603,7 +629,7 @@ end
 function M.push_pals(rows_for, comp, only_key)
     if type(rows_for) ~= "function" then return false end
 
-    local n = 14
+    local n = M.WORKS
 
     -- One batch per guild, built on demand and reused, as push_rules does.
     local built = {}
@@ -738,7 +764,7 @@ function M.on_pal_message(message)
     if key == nil then return false end
 
     local into = pal_incoming or M.pals
-    into[key] = { ranks = decode_ranks(ranks, 14), prios = decode_prios(prios, 14) }
+    into[key] = { ranks = decode_ranks(ranks, M.WORKS), prios = decode_prios(prios, M.WORKS) }
 
     -- A line outside a batch is a single-row update, and it is finished the
     -- moment it lands: there is no PalDone coming to commit it. So the
@@ -865,10 +891,26 @@ function M.push_rules(caps, cfg, comp)
     -- a longer wrong answer is still a wrong answer.
     local now = os.clock()
     local sent = 0
+    -- A miss is a strike, not an eviction.
+    --
+    -- Both branches below used to drop the client outright, and nothing
+    -- re-adds one except an inbound message - so a player who joined, got
+    -- their rules and then simply PLAYED was never pushed to again, and their
+    -- panel and grid froze for the rest of the session. That is the failure
+    -- the old CLIENT_TTL was removed to prevent, coming back through the error
+    -- path. A component can be briefly absent from a walk for ordinary reasons:
+    -- a respawn, level streaming, a partial FindAllOf.
+    local STRIKES = 3
+
     for name, entry in pairs(M.clients) do
         local live = live_by_name[name]
         if live == nil then
-            M.clients[name] = nil
+            entry.misses = (entry.misses or 0) + 1
+            if entry.misses >= STRIKES then
+                log.debug("dropping " .. name ..
+                    " from the push list after " .. STRIKES .. " misses")
+                M.clients[name] = nil
+            end
         else
             local ok = true
             for _, msg in ipairs(batch_for(guild_via(live, tx_by_name))) do
@@ -881,9 +923,16 @@ function M.push_rules(caps, cfg, comp)
                 -- Kept for "pwp net", which reports how long since each client
                 -- was last reached. Nothing decides anything on it now.
                 entry.at = now
+                entry.misses = nil
                 sent = sent + 1
             else
-                M.clients[name] = nil
+                entry.misses = (entry.misses or 0) + 1
+                if entry.misses >= STRIKES then
+                    log.debug("dropping " .. name ..
+                        " from the push list after " .. STRIKES ..
+                        " failed pushes")
+                    M.clients[name] = nil
+                end
             end
         end
     end

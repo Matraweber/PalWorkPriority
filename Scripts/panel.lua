@@ -4070,7 +4070,7 @@ function M.refresh(cfg)
 
     -- The pad, driving the same verbs the arrow keys drive.
     --
-    -- Hung off RB rather than a top-level local because this file sits four
+    -- Hung off RB rather than a top-level local because this file sits TWO
     -- short of Lua's 200-local ceiling, and going over breaks hot reload
     -- silently, which is exactly the tool being used to develop this.
     --
@@ -4859,7 +4859,16 @@ function M.command(cfg, args)
         -- in the asset, not the route.
         try("ModActor", "/Game/Mods/PalWorkPriority/ModActor", "ModActor_C")
 
-        ExecuteWithDelay(1500, function()
+        -- clock.once, not ExecuteWithDelay.
+    --
+    -- clock.lua states the rule plainly: nothing else in the mod may schedule
+    -- its own timers. ExecuteWithDelay fires on a background thread and mints
+    -- a Lua registry reference from it, which is the churn clock.lua and
+    -- reload.lua exist to remove. Diagnostic path, so it was easy to miss.
+    --
+    -- Required inline rather than as a top-level local: this file is two short
+    -- of the 200 ceiling and a require here would spend one of them.
+    require("clock").once(1500, function()
             try("WBP_WorkRules",
                 "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules",
                 "WBP_WorkRules_C")
@@ -5552,6 +5561,17 @@ end
 
 function M.handle_click(cfg, dir)
     if not M.open then return false end
+
+    -- The same window hover_tick refuses outside, and for the same reason.
+    --
+    -- hovered() reaches tile_face and blocks, which are widget wrappers from
+    -- an earlier frame. A world or level transition destroys everything
+    -- outered to the player controller, and ensure_root is what notices - so
+    -- a click landing between the transition and the next refresh calls
+    -- IsValid on a freed widget, which is the crash rather than an error. The
+    -- polling path was given this guard; the click path, which is
+    -- asynchronous to the draw, was not.
+    if (os.clock() - (RB.validated or -1)) > 0.15 then return false end
 
     local what = hovered()
 
