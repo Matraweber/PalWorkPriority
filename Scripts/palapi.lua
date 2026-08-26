@@ -502,6 +502,44 @@ function M.my_guild()
     return M.guild_of(M.player_controller())
 end
 
+-- This machine's own player id, as a key comparable with a chat message's
+-- SenderPlayerUId.
+--
+-- Measured on this build: PlayerState.PlayerUId answers, and guid_key reads it
+-- as "1390738380-0-0-0". PlayerState.IndividualHandleId.PlayerUId holds the
+-- same value, and PlayerID/PlayerId are a small session integer rather than
+-- the id a chat message carries.
+--
+-- The list is kept, and the one that answered is logged once, because a game
+-- update renaming this would otherwise be a silent loss of the sender check
+-- rather than a visible one. Every read is a plain property read on the local
+-- PlayerState - never a call - so the worst case is nil rather than the
+-- access violation a wrong UFunction would be.
+local uid_prop = nil
+
+function M.my_player_uid()
+    local pc = M.player_controller()
+    if not valid(pc) then return nil end
+
+    local ps = prop(pc, "PlayerState")
+    if not valid(ps) then return nil end
+
+    if uid_prop then return M.guid_key(prop(ps, uid_prop)) end
+
+    for _, name in ipairs({
+        "PlayerUId", "PlayerUid", "PlayerID", "PlayerId", "UId", "Uid",
+    }) do
+        local key = M.guid_key(prop(ps, name))
+        if key then
+            uid_prop = name
+            log.say("player id read from PlayerState." .. name)
+            return key
+        end
+    end
+
+    return nil
+end
+
 -- ---------------------------------------------------------------------------
 -- Pals in a base
 -- ---------------------------------------------------------------------------

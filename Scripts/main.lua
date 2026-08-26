@@ -1443,7 +1443,7 @@ end
 
 local warned_chat_refusal = false
 
-local function handle_command(text, from_chat)
+local function handle_command(text, from_chat, from_me)
     local prefix = cfg.chat_prefix
     if text:sub(1, #prefix):lower() ~= prefix:lower() then return false end
 
@@ -1458,10 +1458,22 @@ local function handle_command(text, from_chat)
     -- Only a real command is refused. Checked before the gate so a typo does
     -- not write a warn line per keystroke - and so an unknown verb still gets
     -- the ordinary "try !pwp help" reply rather than a lecture about chat.
-    if fn and from_chat and not SAFE_FROM_CHAT[key] and not chat_is_trusted() then
-        log.warn("refused '" .. key .. "' from chat: chat reaches every " ..
-            "player, so it only carries read-only commands while anyone " ..
-            "else is connected")
+    -- Refused only when this is somebody ELSE's chat line.
+    --
+    -- The probe answered what a chat message carries: Sender, a name, and
+    -- SenderPlayerUId, a struct that guid_key reads. So the sender can be
+    -- compared against this machine's own player, which is the check the gate
+    -- always wanted and could not make. When it answers, it decides on its
+    -- own - the player at this keyboard keeps every command in every session,
+    -- and another player's line is refused even in a two-person game.
+    --
+    -- chat_is_trusted stays as the fallback for when the comparison cannot be
+    -- made at all: no controller yet, or a build whose PlayerState names the
+    -- id something this does not try.
+    if fn and from_chat and not SAFE_FROM_CHAT[key]
+        and not from_me and not chat_is_trusted() then
+        log.warn("refused '" .. key .. "' from chat: it did not come from " ..
+            "this machine's player, and chat reaches everyone")
         if not warned_chat_refusal then
             warned_chat_refusal = true
             log.say("commands that change something are refused from chat " ..
@@ -2283,42 +2295,26 @@ for _, path in ipairs({
     end
 end
 
--- What does a chat message actually carry?
---
--- Nothing in this repo records it, and the sender check that would make chat
--- safe needs a real field name. Guessing one is how this codebase crashed
--- before, so this reads a list of candidates once, inside pcall, and writes
--- down which ones exist. One chat message in game answers it.
-local probed_chat = false
-
-local function probe_chat_fields(received)
-    if probed_chat then return end
-    probed_chat = true
-
-    local found = {}
-    for _, name in ipairs({
-        "PlayerName", "SenderPlayerName", "SenderName", "Sender",
-        "PlayerUId", "SenderPlayerUId", "UniqueId", "PlayerId",
-        "Category", "ChatType", "ReceiverPlayerUId", "Message",
-    }) do
-        local ok, v = pcall(function() return received[name] end)
-        if ok and v ~= nil then
-            local shown
-            pcall(function() shown = tostring(v) end)
-            found[#found + 1] = name .. "=" .. tostring(shown)
-        end
-    end
-
-    log.say("chat message fields: " ..
-        (#found > 0 and table.concat(found, ", ") or "none of the candidates"))
-end
-
 RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
     local ok, err = pcall(function()
         local received = message:get()
         if not (received and received.Message) then return end
-        probe_chat_fields(received)
-        handle_command(received.Message:ToString(), true)
+        -- Whose line is this?
+        --
+        -- nil means "could not tell" and is deliberately NOT the same as
+        -- "somebody else": the gate falls back to refusing while anyone is
+        -- connected, rather than either trusting a stranger or locking the
+        -- player out of their own commands.
+        local from_me = nil
+        pcall(function()
+            local mine = api.my_player_uid()
+            if mine == nil then return end
+            local theirs = api.guid_key(received.SenderPlayerUId)
+            if theirs == nil then return end
+            from_me = (theirs == mine)
+        end)
+
+        handle_command(received.Message:ToString(), true, from_me)
     end)
     if not ok then log.debug("chat hook: " .. tostring(err)) end
 end)
