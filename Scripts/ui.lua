@@ -56,7 +56,20 @@ local bind_hooked = false
 local said_client = false
 local said_none = false
 local painted_gen = nil        -- which net.pals generation the cells show
-local painted_menu = nil       -- which menu instance those cells belong to
+-- Bumped every time the injected cells are dropped.
+--
+-- The menu's own name cannot answer this. Closing and reopening the stand
+-- builds a NEW instance whose cells carry the SAME generated full names - the
+-- comment on live_menu below says so - so comparing names reported "same
+-- menu" for a tree whose widgets had all just been thrown away, and the
+-- repaint was skipped. Measured: reopening logged
+-- "cells=0 same_menu=true", and the grid stayed vanilla until an unrelated
+-- server push happened to move the generation.
+--
+-- A counter cannot be fooled that way: whatever drops the cells bumps it, and
+-- a paint records the value it painted at.
+local inject_epoch = 0
+local painted_epoch = -1
 local last_ask = -math.huge    -- when this client last asked for stand data
 local ask_gap = 10             -- seconds until the next ask, doubling
 local asked_gen = nil          -- net.pals_gen at the moment of the last ask
@@ -141,7 +154,7 @@ function M.reset()
     -- nothing for my guild", so carrying it into a DIFFERENT server would stop
     -- that client ever asking again.
     painted_gen = nil
-    painted_menu = nil
+    painted_epoch = -1
     last_ask = -math.huge
     ask_gap = 10
     asked_gen = nil
@@ -328,6 +341,7 @@ local function forget_injected(why)
     if next(cell_text) == nil and next(cell_last) == nil then return end
     log.debug("stand: dropping injected cell text (" .. why .. ")")
     cell_text, cell_last, cell_cb, cell_row = {}, {}, {}, {}
+    inject_epoch = inject_epoch + 1
 end
 
 local function live_menu()
@@ -970,7 +984,7 @@ function M.refresh(cfg)
     -- actually happened. A generation marked as painted by a refresh that
     -- painted nothing is what made the grid blank.
     if not api.has_authority() then
-        if painted_gen == net.pals_gen and painted_menu == menu_name then
+        if painted_gen == net.pals_gen and painted_epoch == inject_epoch then
             return false
         end
     end
@@ -978,7 +992,7 @@ function M.refresh(cfg)
     refresh_cells(cfg)
 
     painted_gen = net.pals_gen
-    painted_menu = menu_name
+    painted_epoch = inject_epoch
     return true
 end
 
