@@ -1338,10 +1338,14 @@ end
 -- seconds and a client's grid is open for a few of them, so caching would
 -- keep a table of engine-derived values warm for minutes to save a walk
 -- nobody is waiting on.
-local function stand_rows()
+-- want_guild nil means every camp, which is what a local pass wants. A guild
+-- means only that guild's camps, which is what a client may see or write.
+local function stand_rows(want_guild)
     local rows = {}
 
     for _, camp in ipairs(api.base_camps() or {}) do
+        local camp_guild = api.camp_guild(camp)
+        if want_guild == nil or camp_guild == want_guild then
         for _, pal in ipairs(api.camp_pals(camp) or {}) do
             if type(pal.key) == "string" and api.valid(pal.param) then
                 local ranks, prios = {}, {}
@@ -1362,6 +1366,7 @@ local function stand_rows()
                 rows[#rows + 1] = { key = pal.key, ranks = ranks, prios = prios }
             end
         end
+        end
     end
 
     return rows
@@ -1371,6 +1376,13 @@ end
 local function push_stand(comp)
     if not api.has_authority() then return end
 
+    -- Nobody to tell, so nothing to walk.
+    --
+    -- push_rules checks this BEFORE its object walks and this did not, so
+    -- every grid click in a solo session paid a full base walk plus fourteen
+    -- native rank calls per pal, built a batch, and discarded it.
+    if comp == nil and next(net.clients) == nil then return end
+
     -- Said out loud, because the failure this had was silent.
     --
     -- The first version called api.camps(), which does not exist - the name is
@@ -1378,21 +1390,29 @@ local function push_stand(comp)
     -- the client drew the vanilla grid exactly as if the feature were still
     -- switched off. luacheck does not see undefined calls, so nothing caught
     -- it but the game.
-    local rows = {}
-    local ok, err = pcall(function() rows = stand_rows() end)
+    -- Each recipient gets their own guild's pals, and nobody else's. Passed as
+    -- a function because net.lua caches one batch per guild and calls this
+    -- once for each distinct guild it is actually sending to.
+    local seen = 0
+    local function rows_for(guild)
+        local rows = {}
+        local ok, err = pcall(function() rows = stand_rows(guild) end)
+        if not ok then
+            log.warn("stand rows failed: " .. tostring(err))
+            return {}
+        end
+        seen = seen + #rows
+        return rows
+    end
 
+    local sent = false
+    local ok, err = pcall(function() sent = net.push_pals(rows_for, comp) end)
     if not ok then
         log.warn("stand push failed: " .. tostring(err))
         return
     end
-    if #rows == 0 then
-        log.debug("stand push: no pals to send")
-        return
-    end
 
-    local sent = false
-    pcall(function() sent = net.push_pals(rows, comp) end)
-    log.debug("stand push: " .. #rows .. " pal(s), sent=" .. tostring(sent))
+    log.debug("stand push: " .. seen .. " pal(s), sent=" .. tostring(sent))
 end
 
 net.on_command = function(command, _, comp)
@@ -1434,7 +1454,20 @@ net.on_command = function(command, _, comp)
         local value = tonumber(parts[3])
         local raw = parts[4]
 
+        -- WHOLE numbers. tonumber("3.5") is 3.5 and passed every check here.
+        --
+        -- It reached store.apply_set, which writes with %d - and on Lua 5.4
+        -- that raises "number has no integer representation" INSIDE save,
+        -- after the file was already opened "wb" and truncated. dirty_at is
+        -- never cleared, so flush retries every second, re-truncating and
+        -- re-failing, and every priority sorting after the poisoned entry is
+        -- gone from disk for the rest of the session. On a listen host the
+        -- throw also propagates out of store.flush at the top of ui.refresh
+        -- and stops the host's own grid repainting.
+        --
+        -- One crafted packet, permanent damage. Rejected at the door.
         if type(key) ~= "string" or key == "" or value == nil
+            or value ~= math.floor(value)
             or value < 1 or value > #workdefs.ORDER then
             log.warn("refused a priority from the network: bad key or work")
             return
@@ -1444,12 +1477,24 @@ net.on_command = function(command, _, comp)
         -- stops a client writing priorities for a base it has nothing to do
         -- with, and it is the same principle as taking the guild from the
         -- component rather than from the message.
+        -- The pal must belong to the SENDER'S guild, not merely exist.
+        --
+        -- This walked every loaded base and accepted any pal it found
+        -- anywhere. Combined with a push that sent every guild's keys to every
+        -- client, that let a player set X on a rival guild's pals - ten edits
+        -- per ten seconds, so a fifteen pal base fully disabled in a few
+        -- minutes, logged only as "a player". The guild comes from the
+        -- component the message arrived on, which a client cannot forge, for
+        -- exactly the reason the ceiling path takes it from there too.
+        local sender_guild = net.guild_of_sender(comp)
+
         local known = false
-        for _, row in ipairs(stand_rows()) do
+        for _, row in ipairs(stand_rows(sender_guild)) do
             if row.key == key then known = true break end
         end
         if not known then
-            log.warn("refused a priority from the network: unknown pal")
+            log.warn("refused a priority from the network: that pal is not " ..
+                "in the sender's guild")
             return
         end
 
@@ -1458,7 +1503,14 @@ net.on_command = function(command, _, comp)
         elseif raw == "-" then prio = nil
         else
             prio = tonumber(raw)
-            if prio == nil or prio < 1 or prio > 5 then
+            -- Whole numbers here too, and against store.MAX rather than a
+            -- hardcoded 5. A fractional priority writes fine and then fails
+            -- to parse on the next load, so the pal is silently never
+            -- scheduled for that work - quieter than a crash and harder to
+            -- find. net.request_prio floors, but a hand-rolled client does
+            -- not, and this side is the one that has to be sure.
+            if prio == nil or prio ~= math.floor(prio)
+                or prio < 1 or prio > (store.MAX or 5) then
                 log.warn("refused a priority from the network: bad value")
                 return
             end
@@ -1470,9 +1522,10 @@ net.on_command = function(command, _, comp)
         log.say(string.format("priority %s set to %s by a player",
             workdefs.ORDER[value] or tostring(value), tostring(raw)))
 
-        -- Everyone, not just the asker, which is the whole point: one player
-        -- sets a priority and every client's grid shows it.
-        push_stand(nil)
+        -- NOT push_stand here. store.apply_set already fired store.on_change,
+        -- which is push_stand on the authority, so calling it again sent the
+        -- whole batch to every client twice per edit - and each push is an
+        -- object-array walk this build measures at 10-19ms.
         run_pass("priority change")
         return
     end
@@ -1598,10 +1651,16 @@ local function decide_write_or_send()
     -- carried on exactly as before. The old comment in ui.lua called that a
     -- decoration, which is precisely what it was.
     store.submit = function(kind, key, value, prio)
-        if kind == "clear" then
-            return net.request_prio(key, value, nil)
+        local ok = net.request_prio(key, value,
+            kind == "clear" and nil or prio)
+
+        -- Said, as the ceiling path says it. A click made before the network
+        -- component resolves is a no-op, and silence there reads as the grid
+        -- being broken rather than as the click not having gone anywhere.
+        if not ok then
+            log.say("could not reach the server, that priority was not set")
         end
-        return net.request_prio(key, value, prio)
+        return ok
     end
 
     caps.submit = function(kind, work, item, amount, _guild)

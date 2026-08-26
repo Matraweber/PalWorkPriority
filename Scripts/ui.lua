@@ -254,9 +254,6 @@ local function try_hook_bind()
                     row_pal[rname] = {
                         key = key, name = name, species = species,
                         ranks = ranks, raw = raw,
-                        -- Carried so the draw can read priorities the server
-                        -- sent rather than a local file the server never sees.
-                        server_prios = from_server and from_server.prios or nil,
                     }
                     -- rows binding means the screen is opening or scrolling;
                     -- either way the cell list has moved
@@ -554,6 +551,39 @@ end
 -- What a cell should show
 -- ---------------------------------------------------------------------------
 
+-- What a cell currently says, from whichever side owns the answer.
+--
+-- Both the draw and the click go through this. They used to disagree: the
+-- draw read the server's value while bump read the client's own store, so a
+-- click cycled from a number nobody could see - the cell showed 5, the local
+-- default was 3, and a left click sent "2". The repaint then re-read the
+-- stale snapshot and the cell did not move at all, so the grid looked dead
+-- while the server was applying edits correctly.
+-- What this pal can do, from whichever side owns the answer.
+--
+-- Live, not the bind-time copy, for the same reason shown_prio is. The hook
+-- only registers once the client HAS data, so on the first open after joining
+-- the rows bind while ranks are still empty - and a row is not rebound until
+-- the list scrolls or the menu is reopened. The grid came up vanilla and
+-- stayed vanilla, which is indistinguishable from the feature being off.
+local function shown_ranks(pal)
+    if not api.has_authority() then
+        local entry = pal.key and net.pals and net.pals[pal.key]
+        if entry and entry.ranks then return entry.ranks end
+        return nil
+    end
+    return pal.ranks
+end
+
+local function shown_prio(cfg, pal, work_name, t)
+    if not api.has_authority() then
+        local entry = pal.key and net.pals and net.pals[pal.key]
+        if entry and entry.prios then return entry.prios[t] end
+        return nil
+    end
+    return store.effective(cfg, pal, work_name, t)
+end
+
 local function handle_cell(cfg, cell)
     if not alive(cell) then return end
     local cell_name = full_name(cell)
@@ -584,24 +614,29 @@ local function handle_cell(cfg, cell)
     local pal = row_pal[rname]
     if not pal then return end
 
+    -- Read LIVE from net.pals, not from a snapshot taken when the row bound.
+    --
+    -- row_pal.server_prios used to hold a reference captured at bind time, and
+    -- a push replaces M.pals wholesale with fresh sub-tables - so the
+    -- reference was orphaned the moment new data arrived. row_pal is only
+    -- rewritten when BindFromSlot fires, i.e. when the list scrolls or the
+    -- menu is reopened. Two players with the stand open: one sets a priority,
+    -- the other's client receives it and keeps drawing the old number.
+    --
     -- The server's answer on a client, the local store on the authority.
     --
     -- store.effective reads priorities.txt, which on a client is a file the
     -- server never looks at - so drawing from it showed numbers that meant
     -- nothing. That is half of why this grid was switched off entirely rather
     -- than merely made read-only.
-    local prio
-    if pal.server_prios ~= nil then
-        prio = pal.server_prios[t]
-    else
-        prio = store.effective(cfg, pal, work_name, t)
-    end
+    local prio = shown_prio(cfg, pal, work_name, t)
 
     -- Hand the cell back to the game when we have nothing to say about it:
     -- the pal cannot do this work at all, or the work type is not configured.
     -- Vanilla draws a dash for the first case, and a number there would claim
     -- the pal will do something it is incapable of.
-    local capable = pal.ranks and pal.ranks[t] ~= nil
+    local ranks = shown_ranks(pal)
+    local capable = ranks and ranks[t] ~= nil
     if not capable or prio == nil then
         local existing = cell_text[cell_name]
         local usable = false
@@ -729,13 +764,17 @@ function M.refresh(cfg)
         -- No data means no grid, rather than an empty one: before the server's
         -- first push there is nothing honest to draw, and a grid of dashes
         -- reads as "this pal can do nothing" instead of "not known yet".
+        -- The hook is registered either way, and the DRAW is what waits.
+        --
+        -- Returning here also skipped try_hook_bind, so the hook only existed
+        -- once data had arrived - and rows bound before that were never bound
+        -- again. Registering is safe with no data: the rank loop inside is
+        -- gated on authority, and a pal with no entry draws nothing.
         if not (net.pals and next(net.pals) ~= nil) then
             if not said_client then
                 said_client = true
                 log.debug("stand grid waiting: no pal data from the server yet")
             end
-            M.detach()
-            return false
         end
     end
 
@@ -829,7 +868,8 @@ local function cell_target(cell)
     -- Never write a priority into a cell for work the pal cannot do: the
     -- grid leaves those to vanilla, and an invisible edit sitting under a
     -- dash would surface later as a mystery.
-    if not (pal.ranks and pal.ranks[t]) then return nil end
+    local ranks = shown_ranks(pal)
+    if not (ranks and ranks[t]) then return nil end
 
     -- A client's click is allowed now, because it goes somewhere.
     --
@@ -854,7 +894,7 @@ local function bump(cfg, dir)
     local pal, t, work_name, cname = cell_target(cell)
     if not pal then return end
 
-    local current = store.effective(cfg, pal, work_name, t)
+    local current = shown_prio(cfg, pal, work_name, t)
     local next_prio = store.cycle(current, dir)
     if next_prio == current then return end
 

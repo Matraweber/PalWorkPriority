@@ -455,6 +455,17 @@ end
 
 function M.reset()
     M.clients = {}
+
+    -- The stand cache goes with the world it describes.
+    --
+    -- This cleared only M.clients, so pal data from a previous session
+    -- survived a world switch. The client grid's gate asks "is net.pals
+    -- non-empty", which stale data satisfies - so the gate stopped meaning
+    -- "the server has told me about THIS world" and started meaning "a server
+    -- once told me about some world". A half-received batch left in
+    -- pal_incoming would linger the same way.
+    M.pals = {}
+    M.clear_pal_incoming()
 end
 
 -- ---------------------------------------------------------------------------
@@ -548,23 +559,42 @@ local function decode_prios(text, n)
     return out
 end
 
--- rows is { { key = ..., ranks = {..}, prios = {..} }, ... }, built by the
--- caller because only it knows how to ask a pal for a rank safely.
-function M.push_pals(rows, comp)
-    if type(rows) ~= "table" or #rows == 0 then return false end
+-- rows_for(guild) returns { { key, ranks, prios }, ... } for that guild, and
+-- is called by the caller's own code because only it can ask a pal for a rank.
+--
+-- A FUNCTION rather than a list, so each recipient gets their own guild's
+-- pals. The first version took one flat list and sent it to everybody, which
+-- handed every player the pal keys and priority table of every other guild on
+-- the server - and it is those keys the write path then accepted. push_rules
+-- has been per guild since it was written; this is the same rule on the same
+-- channel.
+function M.push_pals(rows_for, comp)
+    if type(rows_for) ~= "function" then return false end
 
     local n = 14
-    local batch = { PREFIX .. "PalReset" }
-    for _, row in ipairs(rows) do
-        if type(row.key) == "string" and row.key ~= "" then
-            batch[#batch + 1] = string.format("%sPal|%s|%s|%s", PREFIX,
-                row.key, encode_ranks(row.ranks, n), encode_prios(row.prios, n))
+
+    -- One batch per guild, built on demand and reused, as push_rules does.
+    local built = {}
+    local function batch_for(guild)
+        local cache_key = guild or "<none>"
+        if built[cache_key] then return built[cache_key] end
+
+        local batch = { PREFIX .. "PalReset" }
+        for _, row in ipairs(rows_for(guild) or {}) do
+            if type(row.key) == "string" and row.key ~= "" then
+                batch[#batch + 1] = string.format("%sPal|%s|%s|%s", PREFIX,
+                    row.key, encode_ranks(row.ranks, n),
+                    encode_prios(row.prios, n))
+            end
         end
+        batch[#batch + 1] = PREFIX .. "PalDone"
+
+        built[cache_key] = batch
+        return batch
     end
-    batch[#batch + 1] = PREFIX .. "PalDone"
 
     if comp then
-        for _, msg in ipairs(batch) do
+        for _, msg in ipairs(batch_for(M.guild_of_sender(comp))) do
             if not M.to_client(comp, msg) then return false end
         end
         return true
@@ -572,56 +602,59 @@ function M.push_pals(rows, comp)
 
     if next(M.clients) == nil then return false end
 
-    -- Names resolved to components by one walk, exactly as push_rules does.
+    -- Names resolved to components by one walk, and guilds by one more.
     --
-    -- This read M.clients as though its values were components and asked
-    -- api.valid of each. They are not: the register holds a NAME and a
-    -- timestamp, deliberately, because an IsValid on a component wrapper kept
-    -- from an earlier frame is the stored-wrapper dereference this whole
-    -- codebase is arranged to avoid. So every entry failed the check, nothing
-    -- was ever sent, and the push reported sent=false while claiming fourteen
-    -- pals - which is exactly what the log said and what took a while to read
-    -- as a bug rather than as an empty server.
-    --
-    -- One walk for the whole push rather than one per recipient. FindAllOf is
-    -- 10-19ms on this build with the object array cache off, and push_rules
-    -- carries the long version of why that matters.
-    local live, resolved = {}, 0
+    -- M.clients holds a NAME and a timestamp, never a component: an IsValid on
+    -- a wrapper kept from an earlier frame is the stored-wrapper dereference
+    -- this codebase is arranged around. Reading those entries as components is
+    -- what made every push report sent=false while claiming fourteen pals.
+    local live_by_name, resolved = {}, 0
     for _, c in ipairs(FindAllOf("PalNetworkBaseCampComponent") or {}) do
         if api.valid(c) then
-            local n = full_name(c)
-            if n then
-                live[n] = c
+            local nm = full_name(c)
+            if nm then
+                live_by_name[nm] = c
                 resolved = resolved + 1
             end
         end
     end
 
-    -- Nothing resolved is a failed lookup, not proof everybody left. Said
-    -- rather than swallowed, because the symptom otherwise is a grid that
-    -- quietly stops agreeing with the server.
     if resolved == 0 then
         log.debug("stand push: no components resolved, nothing sent")
         return false
     end
 
-    local sent = false
+    local tx_by_name = transmitters()
+    local sent = 0
+
     for name in pairs(M.clients) do
-        local c = live[name]
-        if c ~= nil and api.valid(c) then
-            for _, msg in ipairs(batch) do
-                if not M.to_client(c, msg) then break end
+        local live = live_by_name[name]
+        if live ~= nil then
+            local ok = true
+            for _, msg in ipairs(batch_for(guild_via(live, tx_by_name))) do
+                if not M.to_client(live, msg) then
+                    ok = false
+                    break
+                end
             end
-            sent = true
+            -- A client that took only part of a batch is left holding an
+            -- unfinished one, so it is not counted as reached.
+            if ok then sent = sent + 1 end
         end
     end
-    return sent
+
+    return sent > 0
 end
 
 -- Applied on the client. Kept whole rather than merged, so a pal that leaves
 -- the base stops being answered for instead of lingering at its last known
 -- ranks.
 local pal_incoming = nil
+
+-- Reachable from M.reset, which is declared above this upvalue.
+function M.clear_pal_incoming()
+    pal_incoming = nil
+end
 
 function M.on_pal_message(message)
     if message == PREFIX .. "PalReset" then
