@@ -1029,13 +1029,6 @@ end
 --
 -- Idempotent and guarded on the value, so calling it from host() every time
 -- costs one table read on the settled path and repairs itself on any other.
--- The height the panel currently needs. Set by panel.lua before it draws.
---
--- 700 was a literal here. Measured on a two rule list, the drawn content ended
--- 451 pixels above the bottom edge - 64% of the panel was empty fill, and the
--- void was nearly twice the content. Two rules floating in the top third of a
--- fixed slab does not read as a spacious design, it reads as the rest having
--- failed to load.
 -- Set from panel.lua's input diagnostics to force the UI-only route.
 --
 -- Declared here for the same reason as icons.on_sweep: overlay owns this table,
@@ -1044,6 +1037,13 @@ end
 -- to Game-and-UI with nothing said - and the whole input model turns on it.
 M.prefer_ui_only = false
 
+-- The height the panel currently needs. Set by panel.lua before it draws.
+--
+-- 700 was a literal here. Measured on a two rule list, the drawn content ended
+-- 451 pixels above the bottom edge - 64% of the panel was empty fill, and the
+-- void was nearly twice the content. Two rules floating in the top third of a
+-- fixed slab does not read as a spacious design, it reads as the rest having
+-- failed to load.
 M.height = 700
 
 

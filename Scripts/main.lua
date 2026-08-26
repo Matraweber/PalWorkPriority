@@ -1429,11 +1429,13 @@ local SAFE_FROM_CHAT = {
 
 -- Whether a chat line can be trusted to have come from this machine's player.
 --
--- Provably solo is the only case that can be answered today: the authority,
--- with no modded client registered, is a session where the only person who can
--- type is the one at the keyboard. Anything else waits for the sender check,
--- which needs a field name this build has not been measured for - see the
--- probe in the chat hook.
+-- The FALLBACK, not the main answer. The sender check below decides first:
+-- a chat message carries SenderPlayerUId, which is compared against this
+-- machine's own player. This is what happens when that comparison cannot be
+-- made at all - no controller yet, or a build whose PlayerState names its id
+-- something my_player_uid does not try. Provably solo means the authority,
+-- with no modded client registered and no second player controller, which is a
+-- session where the only person who can type is the one at the keyboard.
 --
 -- Refusing is the right default while that is unknown. A refused command is an
 -- annoyance; an accepted one from a stranger is someone else's base stopped.
@@ -1728,8 +1730,10 @@ local function push_stand(comp, only_key)
     -- The first version called api.camps(), which does not exist - the name is
     -- base_camps - so stand_rows threw inside a pcall, returned nothing, and
     -- the client drew the vanilla grid exactly as if the feature were still
-    -- switched off. luacheck does not see undefined calls, so nothing caught
-    -- it but the game.
+    -- switched off. Nothing caught it but the game: luacheck could not see an
+    -- undefined cross-module call at the time. It can now - that is what the
+    -- cross_module check in tools/luacheck.py was added for, and api.camps()
+    -- is the case it is tested against.
     -- Each recipient gets their own guild's pals, and nobody else's. Passed as
     -- a function because net.lua caches one batch per guild and calls this
     -- once for each distinct guild it is actually sending to.
@@ -1746,7 +1750,15 @@ local function push_stand(comp, only_key)
         local rows = {}
         local ok, err = pcall(function() rows = stand_rows(guild) end)
         if not ok then
+            -- Cached like a success, or the failure is paid for twice.
+            --
+            -- The zero-row guard and net.push_pals each call rows_for for the
+            -- same guild, so an uncached throw meant two full base walks and
+            -- two identical warns per hello. An empty result is a real answer
+            -- here - the guard reads it as "nothing to send", which is the
+            -- right thing to do with a guild whose rows could not be built.
             log.warn("stand rows failed: " .. tostring(err))
+            built_rows[ck] = {}
             return {}
         end
         seen = seen + #rows

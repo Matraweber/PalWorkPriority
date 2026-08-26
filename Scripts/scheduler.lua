@@ -1070,7 +1070,17 @@ function M.run_pass(cfg)
     -- below. On a host the lookup exits early; on a client it is one walk to
     -- return false, once per pass.
     if not api.latch_authority() then
-        return M.blank_stats()
+        -- Named, like the component abort below.
+        --
+        -- Without it a client running '!pwp run' fell through to main.lua's
+        -- camp-streaming advice, which is exactly wrong: the pass stopped
+        -- because this machine is not the authority, not because a camp is
+        -- not loaded. This is also the path the fresh re-probe exists for, so
+        -- it is the one worth naming.
+        local blank = M.blank_stats()
+        blank.blocked_reason = "this machine is not the authority, so the " ..
+            "server decides assignments"
+        return blank
     end
 
     local stats = M.blank_stats()

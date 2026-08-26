@@ -3544,6 +3544,23 @@ local function draw_item_picker(cfg, totals)
     -- the moment anything was typed, which is precisely when somebody is
     -- about to click a tile for the first time.
     caption = caption .. "   |   Click an item to limit it"
+
+    -- The picker can say things too.
+    --
+    -- RB.use_row("Notice") existed only inside draw_list, so every announce()
+    -- made while this screen is up went into a buffer this screen never drew.
+    -- That included the one fired on ENTERING the picker, and every refusal -
+    -- so "a refused click says so on screen", added as the fix for C5, worked
+    -- everywhere except the screen C5 was about.
+    --
+    -- Same shape as the rules list: borrow a row while there is something to
+    -- say, and take no space when there is not.
+    if notice and (os.clock() - notice_at) < NOTICE_FOR then
+        RB.use_row("Notice")
+        line("why", 0, PAD, notice, "action", 14)
+        RB.done_row()
+    end
+
     RB.use_row("Caption")
     line("sub", 0, PAD, caption, "dim", 13)
     RB.done_row()

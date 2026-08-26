@@ -99,8 +99,6 @@ local PUMP_MS = 100
 -- and over and found nothing. Twelve loads is under 4ms a beat.
 local PUMP_BATCH = 12
 
--- icon name -> whether its load actually produced an object. Written by the
--- pump, which is the only code that finds out.
 -- Called with the frame's name -> texture map at the end of a sweep, if
 -- anything wants it. panel.lua sets this to pin what it did not ask for, which
 -- is what makes sweeps stop happening.
@@ -111,6 +109,8 @@ local PUMP_BATCH = 12
 -- check now refuses that shape.
 M.on_sweep = nil
 
+-- icon name -> whether its load actually produced an object. Written by the
+-- pump, which is the only code that finds out.
 local arrived = {}
 
 -- Names loaded this session whose arrival the next sweep will confirm.

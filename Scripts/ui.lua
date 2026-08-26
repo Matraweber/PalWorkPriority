@@ -835,8 +835,6 @@ function M.refresh(cfg)
     -- why the original restriction existed, because the hazard it names is
     -- still real for anything that reads a pal directly.
     --
-    -- a preference.
-    --
     -- Binding a row reaches api.suitability_rank, which is
     -- GetWorkSuitabilityRank on the pal's individual parameter. On a client
     -- those pals are replicated proxies and that call faults outright - not a
