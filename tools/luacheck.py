@@ -430,6 +430,69 @@ def cross_module(src, clean, path, exports):
 
     return problems
 
+# Modules UE4SS provides. A require of anything else has to resolve to a file
+# in the same scan, or it is a typo that fails only when that line first runs.
+EXTERNAL_MODULES = {"UEHelpers"}
+
+
+def missing_requires(src, path, exports):
+    problems = []
+    for mod in re.findall(r"""require\([ 	]*["'](\w[\w.]*)["'][ 	]*\)""", src):
+        if mod in EXTERNAL_MODULES or mod in exports:
+            continue
+        problems.append(
+            "%s: require(\"%s\") names no module in this scan and is not a "
+            "known UE4SS one" % (path, mod))
+    return problems
+
+
+def duplicate_keys(clean, path):
+    """A key written twice in one table constructor.
+
+    Lua takes the last one silently. In a map from an engine enum to a work
+    type - WORKTYPE_TO_SUIT and friends - a repeated [16] does not error, it
+    just quietly remaps one work type to another, and the only symptom is pals
+    doing the wrong job.
+
+    Bracketed keys only. Named keys are duplicated legitimately often enough
+    inside nested constructors that checking them would cost more in false
+    alarms than it catches, and the enum maps are where the damage is.
+    """
+    problems = []
+    stack = []
+    i, n = 0, len(clean)
+
+    while i < n:
+        ch = clean[i]
+        if ch == "{":
+            stack.append({})
+        elif ch == "}":
+            if stack:
+                stack.pop()
+        elif ch == "[" and stack:
+            # NUMERIC keys only. strip() blanks string contents, so every
+            # ["Wood"] key reads as [""] by the time this sees it and a table
+            # of string keys would report itself as entirely duplicated. The
+            # enum maps this exists for - work type to suitability - are
+            # numeric anyway, and that is where a silent remap does damage.
+            m = re.match(r"\[(\d+)\]\s*=(?!=)", clean[i:])
+            if m:
+                key = m.group(1).strip()
+                line = clean.count(chr(10), 0, i) + 1
+                seen = stack[-1]
+                if key in seen:
+                    problems.append(
+                        "%s:%d: table key [%s] is set twice in one "
+                        "constructor, first at line %d - Lua keeps the last "
+                        "one silently" % (path, line, key, seen[key]))
+                else:
+                    seen[key] = line
+                i += m.end() - 1
+        i += 1
+
+    return problems
+
+
 def check(path, exports=None):
     src = open(path, encoding="utf-8").read()
     problems = []
@@ -442,8 +505,10 @@ def check(path, exports=None):
     problems.extend(use_before_local(clean, path))
     problems.extend(undeclared_writes(clean, path))
     problems.extend(toplevel_locals(clean, path))
+    problems.extend(duplicate_keys(clean, path))
     if exports:
         problems.extend(cross_module(src, clean, path, exports))
+        problems.extend(missing_requires(src, path, exports))
 
     opens = closes = 0
     for word in words(clean):
