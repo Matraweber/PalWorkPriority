@@ -103,6 +103,12 @@ local PUMP_BATCH = 12
 -- pump, which is the only code that finds out.
 local arrived = {}
 
+-- Names loaded this session whose arrival the next sweep will confirm.
+local awaiting = {}
+
+-- Whether frame_tex holds a real sweep, or was emptied by the throttle.
+local frame_swept = false
+
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
 
@@ -312,8 +318,21 @@ local function pump_one()
         -- failed lookup, a load that went nowhere, a texture that would
         -- not go on a brush and a brush with no size, and telling them
         -- apart from a screenshot has not been possible once.
-        local landed
-        pcall(function() landed = StaticFindObject(path) end)
+        -- The sweep already knows, and it reads the same object array.
+        --
+        -- This was one StaticFindObject per pumped name, purely to record
+        -- whether the load landed. Twelve per 100ms beat at 9-12ms each is
+        -- 1.0 to 1.4 SECONDS of game thread per second - more than the beat
+        -- budget, so the clock could not keep up and the game froze until the
+        -- queue drained. It went unnoticed because M.finds and M.find_ms are
+        -- initialised and never incremented, so the bench printed "0 finds,
+        -- 0.00ms average" while this ran.
+        --
+        -- The comment in find() already spells out why it is unnecessary:
+        -- FindAllOf and StaticFindObject read the same array, so anything the
+        -- sweep cannot see is not loaded. The answer is deferred to the next
+        -- sweep, which is already paid for. nil means "not known yet" and the
+        -- alternates scan already waits on exactly that.
         -- Debug, not say. log.say always writes to file, and to_file does an
         -- open/write/close per line - so filling one page of the picker was
         -- eight file opens per beat alongside eight blocking loads, on the
@@ -327,7 +346,8 @@ local function pump_one()
         -- engine about all two dozen candidates, at roughly 10ms per
         -- StaticFindObject, once a second for every unresolved item on the
         -- page. That is the ADD tab's remaining lag, and it is a table lookup.
-        arrived[name] = real(landed)
+        arrived[name] = nil
+        awaiting[name] = true
 
         -- A guess that misses is expected and silent. Only a name the index
         -- promised is worth shouting about.
@@ -337,9 +357,8 @@ local function pump_one()
         -- file opens on the game thread announcing that made-up paths do not
         -- exist. Issue #1372's reporter mitigated this very crash class by
         -- taking file I/O out of hot callbacks.
-        if arrived[name] or guessed[name] then
-            log.debug(string.format("icon load %-28s %s", name,
-                arrived[name] and "arrived" or "did not arrive"))
+        if guessed[name] then
+            log.debug(string.format("icon load %-28s asked for", name))
         else
             log.say(string.format("icon load %-28s did not arrive", name))
         end
@@ -472,6 +491,21 @@ local function sweep_frame()
         end
     end
 
+    -- One pass answers every outstanding load.
+    --
+    -- The sweep enumerates every texture in memory, so a name it found is
+    -- loaded and a name it did not find is not. Recording that here is what
+    -- lets pump_one stop asking the engine per name.
+    for rest in pairs(out) do
+        if awaiting[rest] then awaiting[rest] = nil end
+        arrived[rest] = true
+    end
+
+    for name in pairs(awaiting) do
+        arrived[name] = false
+        awaiting[name] = nil
+    end
+
     M.sweep_ms = (M.sweep_ms or 0) + (os.clock() - _t) * 1000
     return out
 end
@@ -495,16 +529,31 @@ local function find(name)
             -- once and the panel then throws all but the eighteen it is
             -- drawing away - so the next page sweeps again. Letting the panel
             -- pin what it did not ask for is what makes sweeps stop.
+            frame_swept = true
             if M.on_sweep then pcall(function() M.on_sweep(frame_tex) end) end
         else
             -- Everything misses this frame, which costs the tile its picture
             -- for a tenth of a second and costs the frame nothing at all.
             frame_tex = {}
+            frame_swept = false
         end
     end
 
     local hit = frame_tex[name]
     if hit ~= nil and real(hit) then return hit end
+
+    -- "Not swept this frame" is not the same as "not loaded".
+    --
+    -- On a throttled frame frame_tex is emptied, so every lookup fell through
+    -- to the miss path below - which clears `requested` and calls want(),
+    -- re-queueing textures that were already loaded AND already pinned. At
+    -- three icons per refresh on the 16ms loop that is up to 187 re-queues a
+    -- second against a drain rate of 120, so the queue grew faster than it
+    -- emptied and the pump above never got to stop while the picker was open.
+    --
+    -- Returning here costs the tile its picture until the next sweep, which
+    -- is what the comment above already says the throttle costs.
+    if not frame_swept then return nil end
 
     -- A miss is a no, and taken as one. No lookup.
     --
@@ -1021,6 +1070,7 @@ function M.reset()
     resolved, requested, waited = {}, {}, {}
     retried, alternates, idle_waits = {}, {}, {}
     arrived = {}
+    awaiting = {}
     retries_left = RETRY_BUDGET
     queue, queued, guessed = {}, {}, {}
     sighted, sighted_at = nil, 0

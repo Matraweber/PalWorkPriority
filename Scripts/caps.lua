@@ -107,9 +107,19 @@ local function parse_line(line)
     end
     if not work then return nil end
 
-    ceiling = tonumber(ceiling)
-    if not ceiling or ceiling < 1 then return nil end
-    return guild, work, item, math.floor(ceiling)
+    -- A whole number in range, or the line is dropped.
+    --
+    -- "99999999999999999999" matches (%d+), overflows Lua 5.4's integer parse
+    -- and comes back as a float that math.floor cannot bring back. It loaded
+    -- cleanly and destroyed the next write, and caps.save is not debounced, so
+    -- the very first rule change took every guild's ceilings with it - inside
+    -- a bare pcall, so nothing was logged. math.tointeger asks exactly the
+    -- question the writer is about to ask.
+    ceiling = math.tointeger(tonumber(ceiling))
+    if ceiling == nil or ceiling < 1 or ceiling > M.MAX_CEILING then
+        return nil
+    end
+    return guild, work, item, ceiling
 end
 
 local function put(guild, work, item, ceiling)
@@ -150,25 +160,24 @@ end
 -- bursts and batch nicely; a ceiling is one typed command at a time, and
 -- the debounce only buys a lost write if the game closes first.
 function M.save()
-    if M.submit then return false end   -- a client owns no rules file
     if not M.path then return false end
 
-    local f, err = io.open(M.path, "wb")
-    if not f then
-        log.warn("could not write " .. M.path .. ": " .. tostring(err))
-        return false
-    end
-
-    f:write("# Pal Work Priority - stock limits set with !pwp limit.\n")
-    f:write("# Guild|WorkType|ItemId|Ceiling\n")
-    f:write("# A guild of " .. M.ANY_GUILD .. " applies to any guild that " ..
-        "has not set its own.\n")
+    -- Built in memory, written to a temp file, then renamed into place. The
+    -- reasoning is store.save's, and it matters more here: this save is not
+    -- debounced, so it runs on every single rule change.
+    local out = {
+        "# Pal Work Priority - stock limits set with !pwp limit.\n",
+        "# Guild|WorkType|ItemId|Ceiling\n",
+        "# A guild of " .. M.ANY_GUILD .. " applies to any guild that " ..
+            "has not set its own.\n",
+    }
 
     -- Sorted so the file does not reshuffle on every write.
     local guilds = {}
     for guild in pairs(M.data) do guilds[#guilds + 1] = guild end
     table.sort(guilds)
 
+    local dropped = 0
     for _, guild in ipairs(guilds) do
         local works = {}
         for work in pairs(M.data[guild]) do works[#works + 1] = work end
@@ -182,13 +191,46 @@ function M.save()
             table.sort(items)
 
             for _, item in ipairs(items) do
-                f:write(string.format("%s|%s|%s|%d\n", guild, work, item,
-                    M.data[guild][work][item]))
+                local n = math.tointeger(M.data[guild][work][item])
+                if n == nil then
+                    dropped = dropped + 1
+                else
+                    out[#out + 1] = string.format("%s|%s|%s|%d\n",
+                        guild, work, item, n)
+                end
             end
         end
     end
 
+    if dropped > 0 then
+        log.warn(dropped .. " ceiling(s) could not be written and were " ..
+            "dropped. A value that is not a whole number is the usual cause.")
+    end
+
+    local tmp = M.path .. ".tmp"
+    local f, err = io.open(tmp, "wb")
+    if not f then
+        log.warn("could not write " .. tmp .. ": " .. tostring(err))
+        return false
+    end
+
+    local wrote = pcall(function() f:write(table.concat(out)) end)
     f:close()
+
+    if not wrote then
+        os.remove(tmp)
+        log.warn("could not write " .. tmp .. ", the existing file is intact")
+        return false
+    end
+
+    -- Remove then rename: Lua's os.rename will not replace an existing file on
+    -- Windows. The temp file holds the new content if the process dies between.
+    os.remove(M.path)
+    local moved, mv_err = os.rename(tmp, M.path)
+    if not moved then
+        log.warn("could not move " .. tmp .. " into place: " .. tostring(mv_err))
+        return false
+    end
 
     -- After the write, not before: a listener should never be told about a
     -- ruleset that failed to reach the disk. pcall'd because a push walks the

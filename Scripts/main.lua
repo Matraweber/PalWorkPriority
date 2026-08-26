@@ -49,7 +49,25 @@ local SCRIPT_DIR = script_dir()
 local DIR = SCRIPT_DIR:match("^(.*[\\/])[Ss]cripts[\\/]$") or SCRIPT_DIR
 
 log.file_path = DIR .. "priority.log"
-remote.path = DIR .. "remote.txt"
+-- Only when the file is actually there.
+--
+-- This was wired unconditionally, so every subscriber's game did a synchronous
+-- open/read/close of remote.txt once a second for the whole session - a
+-- developer-only control channel, in a release build, on the game thread. It
+-- is small per call and it is pure waste, and it is the best structural match
+-- for the "micro-stutters every second in the open field" report on the
+-- Workshop page.
+--
+-- Checked once here rather than every poll: someone who wants the channel
+-- creates the file and restarts, which is what the testing doc already tells
+-- them to do.
+local remote_file = DIR .. "remote.txt"
+local remote_probe = io.open(remote_file, "r")
+if remote_probe then
+    remote_probe:close()
+    remote.path = remote_file
+    log.say("remote.txt found, the remote control channel is on")
+end
 trace.path = DIR .. "trace.txt"
 
 -- What was in flight when the last session ended.
@@ -149,7 +167,9 @@ local function load_config()
     -- back, printed "config reloaded", and never once picked up an edit to
     -- config.lua - which the file's own header tells the user it does.
     local loaded
-    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua")
+    -- Text only. config.lua is a literal table and has no business
+    -- being bytecode, and mode "bt" would load it if it were.
+    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua", "t")
 
     if chunk then
         local ok_chunk, result = pcall(chunk)

@@ -138,7 +138,19 @@ local function shared_dir()
 end
 
 local function read_table(path)
-    local chunk = loadfile(path)
+    -- Text only, and no environment at all.
+    --
+    -- loadfile defaults to mode "bt", so it will happily load precompiled
+    -- BYTECODE - and Lua 5.4's bytecode verifier is not a security boundary,
+    -- so crafted bytecode is memory corruption that no pcall can catch. The
+    -- chunk also ran with _ENV = _G, reaching io, os.execute and the whole
+    -- UE4SS binding surface.
+    --
+    -- The comment below on KEYS says this file "refuses rather than trusts",
+    -- and it does - but only AFTER the file has already run. Both of these are
+    -- supposed to be a literal table, so "t" refuses the bytecode outright and
+    -- {} means the chunk has nothing to reach even if it tries.
+    local chunk = loadfile(path, "t", {})
     if chunk == nil then return nil end
     local ok, value = pcall(chunk)
     return (ok and type(value) == "table") and value or nil
@@ -153,11 +165,26 @@ local function write_if_changed(path, source)
         f:close()
         if had == source then return true end
     end
-    f = io.open(path, "wb")
+
+    -- Temp file then rename, because one of the two files this writes is
+    -- SHARED. DarnMenu_schema_index.lua lists every mod that has registered a
+    -- settings page, and opening it "wb" truncates it before a single byte is
+    -- written - so a failure or a crash in the middle left it empty and took
+    -- every other mod's page with it. Ours is the only thing entitled to
+    -- break when ours breaks.
+    local tmp = path .. ".tmp"
+    f = io.open(tmp, "wb")
     if not f then return false end
     local ok = pcall(function() f:write(source) end)
     f:close()
-    return ok
+
+    if not ok then
+        os.remove(tmp)
+        return false
+    end
+
+    os.remove(path)
+    return os.rename(tmp, path) and true or false
 end
 
 local function serialize_index(names)

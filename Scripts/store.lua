@@ -16,6 +16,13 @@ local M = {}
 -- Priorities run 1 (first) to MAX (last), with false meaning never assign.
 M.MAX = 5
 
+-- The widest work-type index the file may name.
+--
+-- workdefs.ORDER has 14 entries and store deliberately does not require
+-- workdefs, so this is written down rather than derived. Generous on purpose:
+-- it exists to refuse absurd values, not to police the work list.
+local MAX_WORK = 64
+
 M.path = nil
 M.data = {}          -- pal key -> { [work value] = number | false }
 
@@ -42,14 +49,26 @@ local function parse_line(line)
     local key, value, prio = line:match("^([%w%-]+)|(%d+)|(%w+)$")
     if not key then return nil end
 
-    value = tonumber(value)
-    if not value then return nil end
+    -- Whole numbers in range, or the line is dropped.
+    --
+    -- `tonumber` alone was not enough. "99999999999999999999" matches (%d+),
+    -- overflows Lua 5.4's integer parse and comes back as a FLOAT - and
+    -- math.floor of a float that large is still a float. It loaded cleanly and
+    -- then killed the next save: the file was already truncated by the time
+    -- string.format("%d", ...) threw, dirty_at was never cleared, the handle
+    -- leaked, and flush retried the whole cycle every tick. One hand-edited
+    -- digit cost every priority on the machine, for the session, silently.
+    --
+    -- math.tointeger answers nil for anything with no integer representation,
+    -- which is exactly the question the writer is about to ask.
+    value = math.tointeger(tonumber(value))
+    if value == nil or value < 1 or value > MAX_WORK then return nil end
 
     if prio == "X" then return key, value, false end
 
-    prio = tonumber(prio)
-    if not prio or prio < 1 then return nil end
-    return key, value, math.floor(prio)
+    prio = math.tointeger(tonumber(prio))
+    if prio == nil or prio < 1 or prio > M.MAX then return nil end
+    return key, value, prio
 end
 
 function M.load(path)
@@ -80,14 +99,21 @@ end
 function M.save()
     if not M.path then return false end
 
-    local f, err = io.open(M.path, "wb")
-    if not f then
-        log.warn("could not write " .. M.path .. ": " .. tostring(err))
-        return false
-    end
-
-    f:write("# Pal Work Priority - per-pal edits from the Monitoring Stand.\n")
-    f:write("# palkey|worktype|priority   (X = never assign)\n")
+    -- Built in memory, written to a temp file, then renamed into place.
+    --
+    -- The old shape opened the real file "wb" - truncating it - and formatted
+    -- each row as it went, so anything that threw mid-loop left the file
+    -- destroyed and the handle open. Not hypothetical: this process has died
+    -- mid-operation before, which is what docs/the-crash.md is about, and
+    -- discover.lua already calls unbuffered() so a dump survives it. The data
+    -- files never got the same treatment.
+    --
+    -- Now a row that cannot be formatted costs that row and a warning, and a
+    -- crash costs nothing: the real file is untouched until the rename.
+    local out = {
+        "# Pal Work Priority - per-pal edits from the Monitoring Stand.\n",
+        "# palkey|worktype|priority   (X = never assign)\n",
+    }
 
     -- Sorted so the file does not reshuffle itself on every save, which makes
     -- it diffable and makes a hand edit survive the next write.
@@ -95,6 +121,7 @@ function M.save()
     for key in pairs(M.data) do keys[#keys + 1] = key end
     table.sort(keys)
 
+    local dropped = 0
     for _, key in ipairs(keys) do
         local values = {}
         for value in pairs(M.data[key]) do values[#values + 1] = value end
@@ -102,12 +129,49 @@ function M.save()
 
         for _, value in ipairs(values) do
             local prio = M.data[key][value]
-            f:write(string.format("%s|%d|%s\n", key, value,
-                prio == false and "X" or tostring(prio)))
+            local n = math.tointeger(value)
+            local p = (prio == false) and false or math.tointeger(prio)
+
+            if n == nil or p == nil then
+                dropped = dropped + 1
+            else
+                out[#out + 1] = string.format("%s|%d|%s\n", key, n,
+                    p == false and "X" or tostring(p))
+            end
         end
     end
 
+    if dropped > 0 then
+        log.warn(dropped .. " priority row(s) could not be written and were " ..
+            "dropped. A value that is not a whole number is the usual cause.")
+    end
+
+    local tmp = M.path .. ".tmp"
+    local f, err = io.open(tmp, "wb")
+    if not f then
+        log.warn("could not write " .. tmp .. ": " .. tostring(err))
+        return false
+    end
+
+    local wrote = pcall(function() f:write(table.concat(out)) end)
     f:close()
+
+    if not wrote then
+        os.remove(tmp)
+        log.warn("could not write " .. tmp .. ", the existing file is intact")
+        return false
+    end
+
+    -- Remove then rename, because Lua's os.rename will not replace an existing
+    -- file on Windows. The gap between the two is the one unsafe moment, and
+    -- the temp file still holds the new content if the process dies inside it.
+    os.remove(M.path)
+    local moved, mv_err = os.rename(tmp, M.path)
+    if not moved then
+        log.warn("could not move " .. tmp .. " into place: " .. tostring(mv_err))
+        return false
+    end
+
     dirty_at = nil
     return true
 end
