@@ -1654,6 +1654,27 @@ net.on_command = function(command, _, comp)
     if verb == net.PREFIX .. "Hello" then
         if not may_announce(comp) then return end
 
+        -- "I cannot tell yet" is not "you have nothing".
+        --
+        -- A client announces itself as soon as it can, which can be before its
+        -- guild has replicated to the server - so guild_of_sender answers nil,
+        -- the per-guild batch is correctly empty, and the client is handed a
+        -- table saying it owns no pals. That is a real answer as far as the
+        -- client is concerned: the generation moves, and the backoff added for
+        -- the runaway retry then latches "this server has nothing for my
+        -- guild" and stops asking for the rest of the session.
+        --
+        -- Seen in the log as "stand data: 0 pal(s)" immediately before a
+        -- correct one. It recovered only because a second, scheduled Hello
+        -- happened to follow. Not answering leaves the generation where it is,
+        -- so the client keeps asking on its own backoff until the guild is
+        -- there - which is what an unanswerable question deserves.
+        if net.guild_of_sender(comp) == nil then
+            log.debug("a client said hello before its guild resolved, " ..
+                "leaving it to ask again")
+            return
+        end
+
         -- A modded client announced itself, so send it the world as it
         -- stands. Its own component, not a broadcast: an unmodded client
         -- must receive nothing at all.
