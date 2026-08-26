@@ -1038,13 +1038,6 @@ end
 -- failed to load.
 M.height = 700
 
--- The height the panel's top edge is pinned against.
---
--- fit_width anchors the top edge rather than the centre, so this decides where
--- the panel sits. 340 is the settled rules list, which is what opens first, so
--- a short panel lands exactly where the old centre-aligned one did and a tall
--- one grows down into the space below it.
-local BASE_H = 340
 
 local fitted_h
 
@@ -1062,28 +1055,24 @@ function M.fit_width()
     local ok = pcall(function()
         local slot = parts.Backdrop.Slot
         if slot then
-            -- Grow downward from a fixed top edge.
+            -- Size only. NOT position, and NOT alignment.
             --
-            -- The slot is centre anchored with centre ALIGNMENT, so half of
-            -- every height change moved the top edge - measured at 181 pixels
-            -- between the rules list and the picker, which takes the tab you
-            -- just clicked out from under the pointer. panel.lua records this
-            -- exact regression as already fixed, but that fix lives on the
-            -- hand-built canvas path, which never runs once the pak is
-            -- installed.
+            -- The slot is centre ANCHORED and centre ALIGNED, so it grows
+            -- equally in both directions and the top edge follows half of any
+            -- height change. That does mean the tab strip shifts between a
+            -- short list and a tall one - measured at 181 pixels between the
+            -- rules list and the picker - and an audit called that out as a
+            -- defect worth fixing.
             --
-            -- The earlier attempt offset the POSITION by minus half the size
-            -- and put the panel off the left of the screen, because it moved X
-            -- as well and the alignment was still centring. Alignment is the
-            -- thing to change: Y = 0 makes the slot's top edge sit at the
-            -- anchor, X = 0.5 keeps the horizontal centring that already
-            -- worked. The fixed Y offset then places that top edge where a
-            -- list-height panel used to sit, so nothing appears to move.
-            pcall(function()
-                slot:SetAlignment({ X = 0.5, Y = 0.0 })
-                slot:SetPosition({ X = 0, Y = -0.5 * BASE_H })
-            end)
-
+            -- It was fixed, by pinning the top edge, and the result was worse
+            -- to actually look at: the panel sat high and the tall picker hung
+            -- a long way down the screen. Reverted on the user's say-so, which
+            -- outranks the audit here - where a window sits is a matter of
+            -- taste and they are the one looking at it.
+            --
+            -- So the jump stays, knowingly. If it is ever worth another go,
+            -- the answer is a shell that reserves its full height and lets the
+            -- list scroll inside it, not arithmetic on the slot.
             slot:SetSize({ X = M.width + 36, Y = want_h })
         end
     end)
