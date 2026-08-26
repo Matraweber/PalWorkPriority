@@ -1124,17 +1124,29 @@ local function walk_chests(opts, accept)
         for _, m in ipairs(FindAllOf(M.CONTAINER_BASE_CLASS) or {}) do
             pcall(function()
                 if not valid(m) then return end
-                if not accept(m) then return end
 
-                -- Container first, class name second. Most of what derives
-                -- from the base class is scenery, walls and floors and
-                -- fences, and reading a class name means building a string
-                -- per object. Doing that only for things that actually hold
-                -- items keeps a pass over a large base cheap.
+                -- Container FIRST, then whose it is, then the class name.
+                --
+                -- accept() used to run before any of this, and for the
+                -- per-camp caller it is a GetBaseCampIdBelongTo plus a guid
+                -- string build - paid for every wall, floor and fence that
+                -- derives from the container base class, which is most of a
+                -- built-up base. Measured in the panel's own timing line: a
+                -- refresh whose worst frame was 48ms spent 47 of them here.
+                --
+                -- Asking for the container module is the cheapest question
+                -- that excludes scenery, so it goes first. This is the same
+                -- ordering the next paragraph already argues for the class
+                -- name, applied one step earlier - the comment was right and
+                -- accept() was sitting above the thing it described.
                 local module
                 pcall(function() module = m:GetItemContainerModule() end)
                 if not valid(module) then return end
 
+                if not accept(m) then return end
+
+                -- Class name last. Reading one means building a string per
+                -- object, so it is done only for things that hold items.
                 local container = prop(module, "TargetContainer")
                 if not valid(container) then return end
 
