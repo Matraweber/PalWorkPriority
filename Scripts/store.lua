@@ -129,21 +129,49 @@ function M.get(key, value)
     return byPal[value]
 end
 
+-- Set when this machine owns no priorities file, exactly as caps.submit is.
+--
+-- A client's clicks used to write M.data and priorities.txt here, which the
+-- server never reads - so the numbers changed on screen and nothing else
+-- happened. With this set the write becomes a request instead, and the only
+-- copy that counts is the one that comes back down.
+M.submit = nil
+
 function M.set(key, value, prio)
+    if not key then return end
+    if M.submit then return M.submit("set", key, value, prio) end
+    return M.apply_set(key, value, prio)
+end
+
+-- The write itself, with no opinion about who asked. The authority reaches it
+-- directly; a client only ever through a message coming back down.
+function M.apply_set(key, value, prio)
     if not key then return end
     M.data[key] = M.data[key] or {}
     M.data[key][value] = prio
     dirty_at = os.clock()
+    if M.on_change then pcall(M.on_change) end
 end
 
 -- Clears a pal's edit for one work type, dropping it back to config policy.
 function M.clear(key, value)
+    if not key then return end
+    if M.submit then return M.submit("clear", key, value, nil) end
+    return M.apply_clear(key, value)
+end
+
+function M.apply_clear(key, value)
     local byPal = key and M.data[key]
     if byPal == nil then return end
     byPal[value] = nil
     if next(byPal) == nil then M.data[key] = nil end
     dirty_at = os.clock()
+    if M.on_change then pcall(M.on_change) end
 end
+
+-- Called after any applied write, so the authority can tell everyone. Set by
+-- main.lua once there is a world, for the same reason submit is.
+M.on_change = nil
 
 -- ---------------------------------------------------------------------------
 -- Effective priority

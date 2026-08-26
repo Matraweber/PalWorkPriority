@@ -54,7 +54,6 @@ local row_pal = {}              -- row full name -> { key, name, species }
 local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
-local said_readonly = false       -- never reset: the hook survives world switches
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -832,24 +831,15 @@ local function cell_target(cell)
     -- dash would surface later as a mystery.
     if not (pal.ranks and pal.ranks[t]) then return nil end
 
-    -- Read only on a client, for now.
+    -- A client's click is allowed now, because it goes somewhere.
     --
-    -- store.lua has no submit indirection the way caps.lua does, so a click
-    -- here would write the client's own priorities.txt - a file the server
-    -- never reads - and then ask for a pass that returns immediately for want
-    -- of authority. Showing the server's numbers is honest; pretending to
-    -- change them is not.
-    if not api.has_authority() then
-        -- Once per session, not once per click. A refusal repeated on every
-        -- click of a grid somebody is exploring is noise, and the first one
-        -- has already said everything the rest would.
-        if not said_readonly then
-            said_readonly = true
-            log.say("priorities are set on the server, so this grid is read " ..
-                "only here. Ceilings you set in the Alt+F1 panel do reach it.")
-        end
-        return nil
-    end
+    -- store.set routes through store.submit on a client, which sends the edit
+    -- to the server; the server validates it, writes it, and pushes the new
+    -- picture to every client. So the number a player sees change is the
+    -- server's answer arriving, not a local write pretending to be one.
+    --
+    -- This used to be refused, and the refusal was right at the time: there
+    -- was no submit path, so a click wrote a file the server never reads.
 
     return pal, t, work_name, cname
 end

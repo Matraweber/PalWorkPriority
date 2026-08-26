@@ -572,9 +572,43 @@ function M.push_pals(rows, comp)
 
     if next(M.clients) == nil then return false end
 
-    local sent = false
-    for _, c in pairs(M.clients) do
+    -- Names resolved to components by one walk, exactly as push_rules does.
+    --
+    -- This read M.clients as though its values were components and asked
+    -- api.valid of each. They are not: the register holds a NAME and a
+    -- timestamp, deliberately, because an IsValid on a component wrapper kept
+    -- from an earlier frame is the stored-wrapper dereference this whole
+    -- codebase is arranged to avoid. So every entry failed the check, nothing
+    -- was ever sent, and the push reported sent=false while claiming fourteen
+    -- pals - which is exactly what the log said and what took a while to read
+    -- as a bug rather than as an empty server.
+    --
+    -- One walk for the whole push rather than one per recipient. FindAllOf is
+    -- 10-19ms on this build with the object array cache off, and push_rules
+    -- carries the long version of why that matters.
+    local live, resolved = {}, 0
+    for _, c in ipairs(FindAllOf("PalNetworkBaseCampComponent") or {}) do
         if api.valid(c) then
+            local n = full_name(c)
+            if n then
+                live[n] = c
+                resolved = resolved + 1
+            end
+        end
+    end
+
+    -- Nothing resolved is a failed lookup, not proof everybody left. Said
+    -- rather than swallowed, because the symptom otherwise is a grid that
+    -- quietly stops agreeing with the server.
+    if resolved == 0 then
+        log.debug("stand push: no components resolved, nothing sent")
+        return false
+    end
+
+    local sent = false
+    for name in pairs(M.clients) do
+        local c = live[name]
+        if c ~= nil and api.valid(c) then
             for _, msg in ipairs(batch) do
                 if not M.to_client(c, msg) then break end
             end
@@ -764,6 +798,21 @@ function M.request(kind, work, item, amount)
     end
     return M.to_server(
         string.format("%sSet|%s|%s|%d", PREFIX, work, item, amount or 0), 0)
+end
+
+-- A priority edit, client to server.
+--
+-- prio is 1-5, false for never, or nil to drop the pal back to config policy.
+-- Encoded as one character for the same reason the push is: the value is
+-- small and fixed, and a character cannot be mistaken for a count.
+function M.request_prio(key, value, prio)
+    local c
+    if prio == false then c = "X"
+    elseif type(prio) == "number" then c = tostring(math.floor(prio))
+    else c = "-" end
+
+    return M.to_server(
+        string.format("%sPrio|%s|%d|%s", PREFIX, key, value, c), 0)
 end
 
 -- ---------------------------------------------------------------------------

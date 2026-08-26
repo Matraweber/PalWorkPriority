@@ -1420,6 +1420,63 @@ net.on_command = function(command, _, comp)
     -- the ceiling would then stop work at bases it has nothing to do with.
     -- Unresolvable means the rule is refused, not filed somewhere convenient:
     -- caps refuses a write with no guild rather than widening it to everyone.
+    -- A priority edit from a client's Monitoring Stand.
+    --
+    -- Rate limited by the same may_change gate the ceilings use, and validated
+    -- rather than trusted: the key must look like one this machine actually
+    -- knows, the work value must be in range, and the priority must be one of
+    -- the six things a cell can hold. A client naming a pal it cannot see
+    -- would otherwise write priorities for somebody else's base.
+    if verb == net.PREFIX .. "Prio" and #parts >= 4 then
+        if not may_change(comp) then return end
+
+        local key = parts[2]
+        local value = tonumber(parts[3])
+        local raw = parts[4]
+
+        if type(key) ~= "string" or key == "" or value == nil
+            or value < 1 or value > #workdefs.ORDER then
+            log.warn("refused a priority from the network: bad key or work")
+            return
+        end
+
+        -- The pal must be one this server can see right now. That is what
+        -- stops a client writing priorities for a base it has nothing to do
+        -- with, and it is the same principle as taking the guild from the
+        -- component rather than from the message.
+        local known = false
+        for _, row in ipairs(stand_rows()) do
+            if row.key == key then known = true break end
+        end
+        if not known then
+            log.warn("refused a priority from the network: unknown pal")
+            return
+        end
+
+        local prio
+        if raw == "X" then prio = false
+        elseif raw == "-" then prio = nil
+        else
+            prio = tonumber(raw)
+            if prio == nil or prio < 1 or prio > 5 then
+                log.warn("refused a priority from the network: bad value")
+                return
+            end
+        end
+
+        if prio == nil then store.apply_clear(key, value)
+        else store.apply_set(key, value, prio) end
+
+        log.say(string.format("priority %s set to %s by a player",
+            workdefs.ORDER[value] or tostring(value), tostring(raw)))
+
+        -- Everyone, not just the asker, which is the whole point: one player
+        -- sets a priority and every client's grid shows it.
+        push_stand(nil)
+        run_pass("priority change")
+        return
+    end
+
     if verb == net.PREFIX .. "Set" and #parts >= 4 then
         if not may_change(comp) then return end
         local guild = net.guild_of_sender(comp)
@@ -1518,12 +1575,34 @@ local function decide_write_or_send()
         caps.on_change = function()
             pcall(function() net.push_rules(caps, cfg, nil) end)
         end
+
+        -- Same for priorities. A change made at the server's own keyboard
+        -- reaches every client the same way a client's request does, so the
+        -- grid is the same picture wherever it is opened.
+        store.submit = nil
+        store.on_change = function()
+            pcall(function() push_stand(nil) end)
+        end
         return
     end
 
     -- A client never pushes. Its own edits go up as requests and come back
     -- down as the server's answer, which is the only copy that counts.
     caps.on_change = nil
+    store.on_change = nil
+
+    -- A client's grid click becomes a request, not a write.
+    --
+    -- Without this, store.set wrote the client's own priorities.txt - a file
+    -- the server never reads - so the number changed on screen and the pal
+    -- carried on exactly as before. The old comment in ui.lua called that a
+    -- decoration, which is precisely what it was.
+    store.submit = function(kind, key, value, prio)
+        if kind == "clear" then
+            return net.request_prio(key, value, nil)
+        end
+        return net.request_prio(key, value, prio)
+    end
 
     caps.submit = function(kind, work, item, amount, _guild)
         -- The guild is deliberately not sent. The server files the rule under
