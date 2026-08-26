@@ -243,12 +243,50 @@ end
 
 -- The write itself, with no opinion about who asked. The authority reaches it
 -- directly; a client only ever through a message coming back down.
+-- Tell whoever is listening, and say so if telling them failed.
+--
+-- This was "if M.on_change then pcall(M.on_change, key) end". A nil callback
+-- and a throwing one were both silent, and on the authority this callback is
+-- what pushes an edit to every client - so a priority could be applied, saved,
+-- and told to nobody, with nothing in the log.
+--
+-- main.lua's own comment on that push says "Whether on_change fires at all is
+-- now logged rather than assumed". It was not. This is that line.
+local said_change_error = nil
+
+local function fire_change(key)
+    if M.on_change == nil then
+        -- Only the authority is expected to have a listener. A client sets
+        -- M.submit and deliberately sets on_change to nil, because its edits
+        -- travel up as requests rather than down as pushes - so "nothing is
+        -- listening" is correct there and worth saying nothing about.
+        if M.submit == nil and said_change_error ~= "unwired" then
+            said_change_error = "unwired"
+            log.warn("a priority changed but nothing is listening, so no " ..
+                "client will be told")
+        end
+        return
+    end
+
+    local ok, err = pcall(M.on_change, key)
+    if ok then
+        said_change_error = nil
+        return
+    end
+
+    err = tostring(err)
+    if err ~= said_change_error then
+        said_change_error = err
+        log.warn("telling the clients about a priority change failed: " .. err)
+    end
+end
+
 function M.apply_set(key, value, prio)
     if not key then return end
     M.data[key] = M.data[key] or {}
     M.data[key][value] = prio
     dirty_at = os.clock()
-    if M.on_change then pcall(M.on_change, key) end
+    fire_change(key)
 end
 
 -- Clears a pal's edit for one work type, dropping it back to config policy.
@@ -265,7 +303,7 @@ function M.apply_clear(key, value)
     byPal[value] = nil
     if next(byPal) == nil then M.data[key] = nil end
     dirty_at = os.clock()
-    if M.on_change then pcall(M.on_change, key) end
+    fire_change(key)
 end
 
 -- Called after any applied write, so the authority can tell everyone. Set by

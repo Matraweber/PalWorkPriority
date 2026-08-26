@@ -1786,7 +1786,17 @@ local function push_stand(comp, only_key)
         -- that sounded plausible. Exactly the shape this whole audit keeps
         -- finding, written while fixing it.
         if #rows_for(net.guild_of_sender(comp)) == 0 then
-            log.debug("no camps loaded for that guild yet, so nothing was " ..
+            -- Warn, not debug.
+            --
+            -- This is the server deciding not to answer a client at all, and
+            -- at the shipped level it was invisible. Tonight's "seen == 0"
+            -- bug - the guard that read a counter before the thing that fills
+            -- it had run, so every hello was refused - lived on this exact
+            -- line. The guard was fixed and the diagnostic was left where it
+            -- could not be seen, which is how it would go unnoticed again.
+            --
+            -- Bounded: hello is budgeted at two per minute per sender.
+            log.warn("no camps loaded for that guild yet, so nothing was " ..
                 "sent and the client will ask again")
             return
         end

@@ -259,7 +259,24 @@ function M.save()
     -- ruleset that failed to reach the disk. pcall'd because a push walks the
     -- object array and talks to the network, and none of that is worth losing
     -- a saved rule over.
-    if M.on_change then pcall(M.on_change) end
+    -- Told, and said if telling failed. Same reasoning as store.fire_change:
+    -- on the authority this callback is what pushes a ruleset to every client,
+    -- so a discarded error meant the rules were saved and nobody was informed.
+    if M.on_change == nil then
+        -- Authority only: a client sets M.submit and has no listener by
+        -- design, because its edits go up as requests. (M.save already refuses
+        -- on a client, so this is belt and braces.)
+        if M.submit == nil then
+            log.warn("ceilings changed but nothing is listening, so no " ..
+                "client will be told")
+        end
+    else
+        local ok_tell, tell_err = pcall(M.on_change)
+        if not ok_tell then
+            log.warn("telling the clients about a ceiling change failed: " ..
+                tostring(tell_err))
+        end
+    end
 
     return true
 end
@@ -359,8 +376,15 @@ function M.apply_set(work_name, item, ceiling, guild)
     if not guild then return false end
 
     put(guild, work_name, item, clean)
-    M.save()
-    return true
+
+    -- The save's answer IS the answer.
+    --
+    -- M.save has five ways to return false - no path, a write that would not
+    -- open, a formatting failure, a rename that could not happen. All were
+    -- discarded here, and the caller in main.lua trusts this `true`: it then
+    -- says the limit was set, in chat, and pushes it to every client. The
+    -- ceiling was on screen everywhere and gone at the next restart.
+    return M.save()
 end
 
 function M.apply_clear(work_name, item, guild)
@@ -395,8 +419,8 @@ function M.apply_clear(work_name, item, guild)
     by_work[item] = nil
     if next(by_work) == nil then by_guild[work_name] = nil end
     if next(by_guild) == nil then M.data[guild] = nil end
-    M.save()
-    return true
+    -- The save's answer IS the answer, as in apply_set above.
+    return M.save()
 end
 
 -- The client's whole view, replaced by what the server pushed.

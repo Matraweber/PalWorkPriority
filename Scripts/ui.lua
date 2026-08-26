@@ -57,6 +57,8 @@ local said_client = false
 local said_none = false
 -- Registration failing is normal until the blueprint class loads, so the
 -- warning waits for a run of failures rather than the first one.
+local said_painted_none = false
+local last_cell_error = nil
 local hook_fails = 0
 local HOOK_FAIL_WARN = 5
 local painted_gen = nil        -- which net.pals generation the cells show
@@ -793,16 +795,39 @@ local function live_cells()
     return out
 end
 
+-- Returns how many cells it actually painted, so the caller can tell a draw
+-- that happened from one that did not.
 local function refresh_cells(cfg)
     local cells = live_cells()
-    if #cells == 0 then return end
+    if #cells == 0 then return 0 end
 
     local seen = {}
+    local painted = 0
+
     for _, cell in ipairs(cells) do
         local name = full_name(cell)
         if name then seen[name] = true end
-        pcall(function() handle_cell(cfg, cell) end)
+
+        -- Counted, and the error kept.
+        --
+        -- This was a bare pcall per cell, so every one of them could throw and
+        -- the caller still recorded the frame as painted. handle_cell reaches
+        -- shown_prio, shown_ranks and the injected TextBlocks, so one bad
+        -- assumption in any of them blanks the whole grid silently. Said once
+        -- per distinct message, because it fires per cell.
+        local ok, err = pcall(function() handle_cell(cfg, cell) end)
+        if ok then
+            painted = painted + 1
+        else
+            err = tostring(err)
+            if err ~= last_cell_error then
+                last_cell_error = err
+                log.warn("a stand cell could not be drawn: " .. err)
+            end
+        end
     end
+
+    if painted > 0 then last_cell_error = nil end
 
     -- Entries whose cell no longer exists are dropped.
     --
@@ -822,6 +847,8 @@ local function refresh_cells(cfg)
             cell_row[name] = nil
         end
     end
+
+    return painted
 end
 
 -- ---------------------------------------------------------------------------
@@ -1061,8 +1088,26 @@ function M.refresh(cfg)
         end
     end
 
-    refresh_cells(cfg)
+    -- Committed only if something was drawn.
+    --
+    -- The comment on the gate above already states this invariant - "consumed
+    -- only once a draw has actually happened. A generation marked as painted
+    -- by a refresh that painted nothing is what made the grid blank" - and the
+    -- code did not implement it. refresh_cells returned nothing, and every
+    -- per-cell paint inside it is a discarded pcall, so all 62 could fail and
+    -- the epoch still committed. The gate then returned early for ever after.
+    local painted = refresh_cells(cfg)
 
+    if painted == 0 then
+        if not said_painted_none then
+            said_painted_none = true
+            log.warn("the stand grid found rows but painted no cells, so the " ..
+                "numbers will not appear")
+        end
+        return false
+    end
+
+    said_painted_none = false
     painted_gen = net.pals_gen
     painted_epoch = inject_epoch
     return true
