@@ -54,6 +54,7 @@ local row_pal = {}              -- row full name -> { key, name, species }
 local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
+local painted_gen = nil        -- which net.pals generation the cells show
 local last_hook_try = -math.huge
 local menu_likely_open = false
 
@@ -793,6 +794,22 @@ function M.refresh(cfg)
     -- Plain Lua read while the stand has never been opened: zero engine calls
     -- is the whole idle cost of the mod.
     if not menu_likely_open then return false end
+
+    -- On a client, nothing changes between pushes.
+    --
+    -- Below here is a FindAllOf over the menu class and another over every
+    -- cell, once a second. On the authority that is the price of noticing an
+    -- edit made anywhere. On a client the numbers can only change when the
+    -- server sends a batch, and the object array a client walks is far larger
+    -- because it holds every replicated actor - so the same two walks that
+    -- cost 20-40ms while hosting are what made the stand hitch every second.
+    --
+    -- A rebind still repaints through the hook, so only the polling half is
+    -- skipped.
+    if not api.has_authority() then
+        if painted_gen == net.pals_gen then return false end
+        painted_gen = net.pals_gen
+    end
 
     local menu = live_menu()
     if not menu then

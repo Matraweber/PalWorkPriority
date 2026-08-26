@@ -465,6 +465,7 @@ function M.reset()
     -- once told me about some world". A half-received batch left in
     -- pal_incoming would linger the same way.
     M.pals = {}
+    M.pals_gen = M.pals_gen + 1
     M.clear_pal_incoming()
 end
 
@@ -514,11 +515,31 @@ end
 -- length and why a missing entry is a character rather than an omission.
 M.pals = {}
 
+-- Bumped whenever a batch lands, so a client can tell "nothing has changed"
+-- from "I have not looked yet" without comparing tables.
+M.pals_gen = 0
+
 local function encode_ranks(ranks, n)
     local out = {}
     for t = 1, n do
         local r = ranks and ranks[t] or 0
-        if type(r) ~= "number" or r < 0 or r > 5 then r = 0 end
+
+        -- Clamped UP, not down to zero.
+        --
+        -- This mapped anything above 5 to '0', and '0' decodes as "cannot do
+        -- this work" - so the cell was handed back to vanilla. Ranks DO exceed
+        -- 5: suitability_rank prefers GetWorkSuitabilityRankWithCharacterRank,
+        -- which folds in condenser rank, so an upgraded pal reads higher than
+        -- its base. The effect was that a condensed pal lost exactly the work
+        -- types it was best at, and only on a client, because only a client
+        -- goes through this encoding.
+        --
+        -- Nine rather than five, because only "is it above zero" decides
+        -- capability and a single character is what keeps the line short. The
+        -- colour scale still tops out at 5; a rank is not a priority.
+        if type(r) ~= "number" or r < 0 then r = 0 end
+        if r > 9 then r = 9 end
+
         out[t] = tostring(math.floor(r))
     end
     return table.concat(out)
@@ -665,6 +686,7 @@ function M.on_pal_message(message)
     if message == PREFIX .. "PalDone" then
         if pal_incoming then
             M.pals = pal_incoming
+            M.pals_gen = M.pals_gen + 1
             pal_incoming = nil
 
             -- Counted by walking, not by #. M.pals is keyed by pal key, so the
