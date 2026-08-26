@@ -1089,8 +1089,20 @@ function M.run_pass(cfg)
     -- schedule either.
     pass_comp = api.owned_network_component()
     if pass_comp == nil then
-        log.debug("no base camp component this machine owns, so nothing can " ..
-            "be changed and nothing is sent")
+        -- Warn, not debug, and recorded so the caller can say the right
+        -- thing.
+        --
+        -- At the shipped log level this was invisible, and stats.camps stays
+        -- zero - so a manual '!pwp run' fell through to main.lua's "no base
+        -- camp loaded, stand inside your base and try again", which is the
+        -- wrong advice for six of the seven ways a pass can abort and sends
+        -- the hunt to camp streaming rather than component ownership.
+        -- blocked_reason, NOT blocked: stats.blocked already exists on this
+        -- table as a boolean, and concatenating it into a message throws.
+        stats.blocked_reason = "no base camp component this machine owns"
+        log.warn("no base camp component this machine owns, so nothing can " ..
+            "be changed and nothing is sent. On a dedicated server this is " ..
+            "normal while nobody is connected.")
         return released(stats)
     end
 

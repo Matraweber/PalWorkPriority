@@ -101,6 +101,16 @@ local PUMP_BATCH = 12
 
 -- icon name -> whether its load actually produced an object. Written by the
 -- pump, which is the only code that finds out.
+-- Called with the frame's name -> texture map at the end of a sweep, if
+-- anything wants it. panel.lua sets this to pin what it did not ask for, which
+-- is what makes sweeps stop happening.
+--
+-- Declared HERE because icons owns this table. It was written by panel and read
+-- by icons and declared by neither, so a rename would have silently stopped the
+-- pinning and nothing would have said so. tools/luacheck.py's cross-module
+-- check now refuses that shape.
+M.on_sweep = nil
+
 local arrived = {}
 
 -- Names loaded this session whose arrival the next sweep will confirm.

@@ -320,6 +320,14 @@ local function pass_body()
         local stats = scheduler.run_pass(cfg)
         if stats.camps > 0 then
             log.info(pass_reason .. ": " .. scheduler.format_stats(cfg, stats))
+        elseif pass_explicit and stats.blocked_reason then
+            -- The cause the pass actually hit, rather than a guess at it.
+            --
+            -- Every silent-abort path returns before stats.camps is
+            -- incremented, so a manual run fell through to the camp-streaming
+            -- advice below whatever the real reason was. That is right for one
+            -- of the seven ways a pass can stop and wrong for the rest.
+            log.say(pass_reason .. ": " .. stats.blocked_reason)
         elseif pass_explicit then
             log.say(pass_reason .. ": no base camp loaded. Camps only exist while " ..
                 "streamed in, so stand inside your base and try again.")
@@ -462,6 +470,7 @@ local grid_owed = 0
 -- The last panel error reported, so a throw that repeats ten times a second
 -- is logged once rather than a hundred times.
 local last_panel_error = nil
+local last_grid_error = nil
 
 
 local function ui_body()
@@ -480,7 +489,24 @@ local function ui_body()
 
     if grid_owed >= 1000 or pushed then
         grid_owed = 0
-        pcall(function() ui.refresh(cfg) end)
+        -- The message is kept, as panel.refresh's is a few lines below.
+        --
+        -- This was a bare pcall, so a grid that threw simply stopped updating
+        -- with nothing anywhere to say why - which is exactly how a
+        -- use-before-local in panel.lua hid for a session, and the panel got
+        -- this treatment for it while the grid did not. Rate limited to one
+        -- line per distinct error, because this runs on a beat.
+        local ok_grid, err_grid = pcall(function() ui.refresh(cfg) end)
+        if not ok_grid then
+            err_grid = tostring(err_grid)
+            if err_grid ~= last_grid_error then
+                last_grid_error = err_grid
+                log.warn("the stand grid stopped drawing: " .. err_grid)
+            end
+        elseif last_grid_error ~= nil then
+            last_grid_error = nil
+            log.say("the stand grid is drawing again")
+        end
     end
 
     -- Drawn independently: the panel opens on a hotkey and has to keep

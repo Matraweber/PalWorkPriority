@@ -1036,6 +1036,14 @@ end
 -- void was nearly twice the content. Two rules floating in the top third of a
 -- fixed slab does not read as a spacious design, it reads as the rest having
 -- failed to load.
+-- Set from panel.lua's input diagnostics to force the UI-only route.
+--
+-- Declared here for the same reason as icons.on_sweep: overlay owns this table,
+-- and a field written by one module and read by another belongs to whoever
+-- reads it as state. Undeclared, a rename would have quietly reverted the route
+-- to Game-and-UI with nothing said - and the whole input model turns on it.
+M.prefer_ui_only = false
+
 M.height = 700
 
 

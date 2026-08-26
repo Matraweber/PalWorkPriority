@@ -11,6 +11,7 @@ that block keywords and brackets balance, which is what a bad patch breaks.
     python tools/luacheck.py Scripts/*.lua
 """
 
+import os
 import re
 import sys
 import glob
@@ -324,7 +325,112 @@ def toplevel_locals(clean, path):
     return []
 
 
-def check(path):
+
+# ---------------------------------------------------------------------------
+# Cross-module fields
+# ---------------------------------------------------------------------------
+#
+# The class of error nothing here could see, and the one that has cost this
+# project the most: a call or a field on ANOTHER module that the other module
+# does not have.
+#
+# api.camps() instead of api.base_camps() threw inside a pcall and drew an empty
+# grid for a whole session. api.game_ui_active was written by main.lua, read as
+# a gate by two other files and declared by nobody, so a rename would have
+# failed silently. Neither is a syntax error and neither is a local, so
+# use_before_local and undeclared_writes are both blind to them.
+#
+# This resolves `local x = require("y")` and then checks every `x.field` against
+# what y actually exports. It is deliberately conservative: only aliases whose
+# module was scanned in the same run are checked, only the first level of a
+# chain, and a module whose returned table cannot be identified is skipped
+# entirely.
+
+def module_table(clean):
+    """The name of the table a module returns, usually M."""
+    returned = re.findall(r"(?m)^return\s+([A-Za-z_]\w*)\s*$", clean)
+    if len(returned) == 1:
+        return returned[0]
+    return None
+
+
+def exports_of(clean):
+    """Every field the module gives its own table.
+
+    Deliberately generous. A checker that reports a field as missing when it is
+    merely assigned in a shape this did not anticipate is worse than no checker
+    at all - it trains people to ignore it. Three shapes cost real time here:
+
+        M.resolved, M.unresolved = 0, 0        multiple assignment
+        if got then M.resolved = M.resolved+1  not at the start of a line
+        local M = { data = {} }                given in the constructor
+
+    So this takes the left-hand side of every assignment, wherever it sits, and
+    counts every M.field on it.
+    """
+    table = module_table(clean)
+    if table is None:
+        return None
+
+    esc = re.escape(table)
+    names = set()
+
+    # function M.x() and function M:x()
+    names.update(re.findall(r"function\s+" + esc + r"[.:](\w+)", clean))
+
+    # Anything on the left of an assignment, including a comma list.
+    for line in clean.splitlines():
+        head = line.split("=")[0] if "=" in line and "==" not in line else None
+        if head:
+            names.update(re.findall(esc + r"\.(\w+)", head))
+
+    # Fields given in the constructor: local M = { a = 1, b = 2 }
+    head = re.search(r"(?m)^local\s+" + esc + r"\s*=\s*\{(.*?)\}", clean, re.S)
+    if head:
+        names.update(re.findall(r"(\w+)\s*=", head.group(1)))
+
+    return names
+
+def cross_module(src, clean, path, exports):
+    """Fields used on another module that the other module does not export."""
+    problems = []
+
+    # The module NAME comes from the RAW source, because strip() blanks string
+    # contents - require("icons") reads as require("") by the time the rest of
+    # this file sees it. That mistake made the first version of this check find
+    # nothing on a tree with three known faults in it.
+    #
+    # The alias is then confirmed against the stripped text, so a require
+    # written inside a comment or a string cannot invent one.
+    alias_re = re.compile(
+        r"(?m)^[ 	]*local[ 	]+(\w+)[ 	]*=[ 	]*require\([ 	]*"
+        r"[\"'](\w[\w.]*)[\"'][ 	]*\)")
+
+    aliases = {}
+    for name, mod in alias_re.findall(src):
+        if exports.get(mod) is None:
+            continue
+        if re.search(r"(?m)^[ 	]*local[ 	]+" + re.escape(name) +
+                     r"[ 	]*=[ 	]*require\(", clean):
+            aliases[name] = mod
+
+    own = module_table(clean)
+    seen = set()
+
+    for alias, mod in sorted(aliases.items()):
+        if alias == own:
+            continue
+        for field in re.findall(re.escape(alias) + r"[.:](\w+)", clean):
+            if field in exports[mod] or (mod, field) in seen:
+                continue
+            seen.add((mod, field))
+            problems.append(
+                "%s: %s.%s is used here but %s.lua exports no '%s'"
+                % (path, alias, field, mod, field))
+
+    return problems
+
+def check(path, exports=None):
     src = open(path, encoding="utf-8").read()
     problems = []
 
@@ -336,6 +442,8 @@ def check(path):
     problems.extend(use_before_local(clean, path))
     problems.extend(undeclared_writes(clean, path))
     problems.extend(toplevel_locals(clean, path))
+    if exports:
+        problems.extend(cross_module(src, clean, path, exports))
 
     opens = closes = 0
     for word in words(clean):
@@ -367,9 +475,19 @@ def main(argv):
         print("no files matched")
         return 2
 
+    # Every module's exports first, so the second pass can resolve an alias
+    # against the module it actually names.
+    exports = {}
+    for path in paths:
+        mod = os.path.splitext(os.path.basename(path))[0]
+        try:
+            exports[mod] = exports_of(strip(open(path, encoding="utf-8").read(), path))
+        except SyntaxError:
+            exports[mod] = None
+
     failed = 0
     for path in paths:
-        problems = check(path)
+        problems = check(path, exports)
         if problems:
             failed += 1
             for problem in problems:

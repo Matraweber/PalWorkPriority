@@ -55,6 +55,7 @@ local bind_hooked = false
 -- One line per session when the grid stands down on a client.
 local said_client = false
 local said_none = false
+local said_hook_failed = false
 local painted_gen = nil        -- which net.pals generation the cells show
 -- Bumped every time the injected cells are dropped.
 --
@@ -208,7 +209,7 @@ local function try_hook_bind()
 
     pcall(function() LoadAsset(ROW_BP_PATH) end)
 
-    local ok = pcall(function()
+    local ok, err = pcall(function()
         RegisterHook(ROW_BIND_FN, function(Context, SlotParam)
             pcall(function()
                 local row = Context:get()
@@ -307,6 +308,17 @@ local function try_hook_bind()
     if ok then
         bind_hooked = true
         log.debug("BindFromSlot hook registered")
+    elseif not said_hook_failed then
+        -- Said once, and loudly.
+        --
+        -- There was no else at all. If RegisterHook fails the grid never works
+        -- - no row ever binds, so row_pal stays empty and every cell falls
+        -- back to the vanilla checkbox - and this retries every five seconds
+        -- for the rest of the session with nothing written at any level. That
+        -- is indistinguishable from the mod being switched off.
+        said_hook_failed = true
+        log.warn("could not hook the Monitoring Stand's row bind, so the " ..
+            "priority grid cannot draw: " .. tostring(err))
     end
 end
 
