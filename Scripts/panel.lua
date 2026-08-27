@@ -155,6 +155,9 @@ local RB = {
     -- Where a draw's time actually goes, per primitive. Counted rather than
     -- reasoned about: "it must be the icons" was wrong once already.
     prof = {},
+    -- Last visibility written per widget key, so an unchanged state is not
+    -- re-marshalled to the engine every refresh. Same discipline as `drawn`.
+    vis = {},
     -- Top left, for widgets inside a row box. The panel's own canvas is
     -- centre anchored, which is what X = -(W/2) exists to undo; a row box
     -- already starts where its row starts, so centre anchoring there put
@@ -990,7 +993,10 @@ local function row_host(i, which, height)
 
     local have = RB.hosts[i]
     if have and alive(have.box) and alive(have.canvas) then
-        pcall(function() have.box:SetVisibility(0) end)
+        if RB.vis["h:" .. i] ~= 0 then
+            pcall(function() have.box:SetVisibility(0) end)
+            RB.vis["h:" .. i] = 0
+        end
         return have.canvas
     end
 
@@ -1042,7 +1048,10 @@ local function hide_rows_from(n, which)
     for i, h in pairs(RB.hosts) do
         local mine = tostring(i):match("^" .. prefix .. "(%d+)$")
         if mine and tonumber(mine) >= n and h and alive(h.box) then
-            pcall(function() h.box:SetVisibility(1) end)
+            if RB.vis["h:" .. i] ~= 1 then
+                pcall(function() h.box:SetVisibility(1) end)
+                RB.vis["h:" .. i] = 1
+            end
         end
     end
 end
@@ -1086,9 +1095,16 @@ local function slab(key, px, py, w, h, colour, hittable, current)
         stripes[key] = border
     end
 
-    -- Re-applied every time, not only at construction: a recycled border may
-    -- have been made for a different role last frame.
-    pcall(function() border:SetVisibility(hittable and 0 or 3) end)
+    -- Re-applied when the ROLE changes, not on every call: a recycled
+    -- border may have been made for a different role last frame, and the
+    -- shadow token is what says whether this one was. The unconditional
+    -- version was ~300-450 reflected calls a second with the panel open,
+    -- all but a handful writing the value already there.
+    local vw = hittable and 0 or 3
+    if RB.vis["s:" .. key] ~= vw then
+        pcall(function() border:SetVisibility(vw) end)
+        RB.vis["s:" .. key] = vw
+    end
 
     -- X and Y are the canvas's centring offsets. A row canvas spans the list
     -- from its own left edge, so inside one the caller's px is already right
@@ -1315,15 +1331,26 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
+        -- One token, two writes, and only the writes that changed. The
+        -- colour is a struct-marshalled call and most text changes - counts
+        -- ticking, names scrolling in - keep their colour, so re-sending it
+        -- with every SetText was pure engine traffic. The token stays whole
+        -- (splitting it into two cached keys would double the invalidation
+        -- surface, the bug class the audits keep finding), so blank_unused's
+        -- prune still clears everything with one delete.
+        local prev = drawn[key]
+        local prev_shown = prev and prev:match("|([^|]*)$")
         local ft = make_ftext(text)
         if ft then
             pcall(function() tb:SetText(ft) end)
-            pcall(function()
-                tb:SetColorAndOpacity({
-                    SpecifiedColor = COLOUR[shown],
-                    ColorUseRule = 0,
-                })
-            end)
+            if prev_shown ~= shown then
+                pcall(function()
+                    tb:SetColorAndOpacity({
+                        SpecifiedColor = COLOUR[shown],
+                        ColorUseRule = 0,
+                    })
+                end)
+            end
             drawn[key] = token
         end
     end
@@ -3923,17 +3950,22 @@ function M.pad_tick()
 
     RB.pad.tick_ms = 16
 
-    pcall(function()
-        RB.pad.drive({
-            nav      = function(verb) M.nav(cfg, verb) end,
+    -- Built once, not per 16ms tick: seven closures and a table every
+    -- frame was ~45KB/s of garbage doing nothing. The closures read
+    -- RB.pad_cfg at call time, so a config reload changes what they see
+    -- without rebuilding them.
+    if RB.pad_actions == nil then
+        RB.pad_actions = {
+            nav      = function(verb) M.nav(RB.pad_cfg, verb) end,
             close    = function() M.toggle() end,
-            tab_prev = function() M.tab_step(cfg, -1) end,
-            tab_next = function() M.tab_step(cfg, 1) end,
-            remove   = function() M.row_action(cfg, "drop") end,
-            page_prev = function() M.page_step(cfg, -1) end,
-            page_next = function() M.page_step(cfg, 1) end,
-        })
-    end)
+            tab_prev = function() M.tab_step(RB.pad_cfg, -1) end,
+            tab_next = function() M.tab_step(RB.pad_cfg, 1) end,
+            remove   = function() M.row_action(RB.pad_cfg, "drop") end,
+            page_prev = function() M.page_step(RB.pad_cfg, -1) end,
+            page_next = function() M.page_step(RB.pad_cfg, 1) end,
+        }
+    end
+    pcall(function() RB.pad.drive(RB.pad_actions) end)
 end
 
 function M.hover_tick()

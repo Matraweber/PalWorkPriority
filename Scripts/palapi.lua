@@ -508,6 +508,20 @@ end
 -- can hand back a live-looking wrapper for a property read. A wrapper that
 -- answers GetFullName with a GameMode-ish string is real; one that cannot is
 -- not treated as proof of anything, and the caller falls back to the walk.
+-- Evidence from elsewhere in the mod that this machine IS the authority.
+--
+-- Injected rather than required: the natural witness lives in demand.lua
+-- (its hook is on a _ServerInternal function, which by definition only runs
+-- on the authority), and palapi must not require demand - main.lua owns the
+-- wiring. The hint may answer true or abstain with nil; it is never allowed
+-- to answer false, for the same reason nil never means no anywhere else in
+-- this file.
+local authority_hint = nil
+
+function M.set_authority_hint(fn)
+    authority_hint = fn
+end
+
 local function authority_via_world()
     local answer = nil
     pcall(function()
@@ -516,14 +530,39 @@ local function authority_via_world()
         if world == nil then return end
 
         local gm = world.AuthorityGameMode
-        if gm == nil then return end
-
-        local name
-        pcall(function() name = gm:GetFullName() end)
-        if type(name) == "string" and name ~= "" then
-            if name:find("GameMode", 1, true) ~= nil then
-                answer = true
+        if gm ~= nil then
+            local name
+            pcall(function() name = gm:GetFullName() end)
+            if type(name) == "string" and name ~= "" then
+                -- lower(): the live object is "BP_PalGamemode_C", lowercase m,
+                -- and a case-sensitive find made this whole route a silent
+                -- no-op that the walk quietly covered for. The probe caught it.
+                if name:lower():find("gamemode", 1, true) ~= nil then
+                    answer = true
+                    return
+                end
             end
+        end
+
+        -- The property is not reflected on this build, but the FUNCTION is:
+        -- PalUtility.GetPalGameMode has a verified signature in the class
+        -- dump, and the cdo-call pattern is the same one GetItemName has
+        -- used for two thousand item names. Same one-way contract as the
+        -- property: a real object that names itself GameMode-ish is a yes,
+        -- everything else stays nil and falls through to the walk - a null
+        -- return on a client and a marshalling refusal look identical from
+        -- here, and only one of them means no.
+        local util = M.cdo("/Script/Pal.Default__PalUtility")
+        if util == nil then return end
+
+        local gm2
+        pcall(function() gm2 = util:GetPalGameMode(world) end)
+        if gm2 == nil then return end
+
+        local name2
+        pcall(function() name2 = gm2:GetFullName() end)
+        if type(name2) == "string" and name2:lower():find("gamemode", 1, true) then
+            answer = true
         end
     end)
     return answer
@@ -536,6 +575,19 @@ end
 -- is its price: the pointer chain answers where it can, and the full
 -- FindFirstOf walk remains the fallback for anything the chain cannot see.
 function M.latch_authority()
+    -- Free evidence first: a demand pulse newer than this spawn can only
+    -- have been produced by this machine running the authority's scheduler.
+    -- The hint abstains with nil; only an explicit true is believed.
+    if authority_hint ~= nil then
+        local yes
+        pcall(function() yes = authority_hint() end)
+        if yes == true then
+            log.count("api: authority via pulse")
+            auth = true
+            return auth
+        end
+    end
+
     local via = authority_via_world()
     if via == true then
         log.count("api: authority via world chain")
@@ -560,6 +612,19 @@ end
 -- as a string, so nothing is kept but text.
 function M.world_key()
     local key
+
+    -- The engine names its own world in one pointer chain - and this runs on
+    -- EVERY spawn, deaths included, where the FindFirstOf below was a full
+    -- array walk (37ms on a grown session) to learn a string the engine
+    -- already holds. The walk stays as the fallback: on a headless server
+    -- there is no GameViewport and the chain read throws into its pcall.
+    pcall(function()
+        local ue = require("UEHelpers")
+        local world = ue.GetEngine().GameViewport.World
+        if world ~= nil then key = world:GetFullName() end
+    end)
+    if type(key) == "string" and key ~= "" then return key end
+
     pcall(function()
         local pc = FindFirstOf("PlayerController")
         if pc == nil then return end

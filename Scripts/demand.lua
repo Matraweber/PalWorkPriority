@@ -41,6 +41,13 @@ M.pulses = 0                -- total ever seen
 -- announced itself once at world load and never again" from "it re-announces
 -- constantly", which decides whether standing work can be seen at all.
 M.pulses_by_value = {}
+-- When the hook last fired, os.clock(). A pulse is authority-only by
+-- construction (_ServerInternal), so "a pulse arrived after this spawn" is a
+-- free definite yes for latch_authority - main.lua wires it in through
+-- api.set_authority_hint, fenced by the spawn timestamp so a hosted
+-- session's pulses can never vouch for a joined one. The pulse COUNTERS are
+-- deliberately not used as evidence: they are cumulative and never reset.
+M.last_pulse_at = nil
 -- Whether the hook is in place. This, NOT the pulse count, is what says
 -- demand can be trusted: a base whose pals are all asleep produces no pulses
 -- at all, and treating that as a broken hook would fall back to counting
@@ -85,6 +92,9 @@ function M.install()
                 -- hook is busiest.
                 local _b = log.count("hook: demand")
                 local _t0 = log.perf and os.clock() or nil
+
+                -- Every fire counts as evidence, repeat pulses included.
+                M.last_pulse_at = os.clock()
 
                 pcall(function()
                     local w = Work:get()

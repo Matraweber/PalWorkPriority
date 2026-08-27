@@ -96,6 +96,23 @@ end
 store.load(DIR .. "priorities.txt")
 caps.load(DIR .. "caps.txt")
 
+-- When this process last spawned into a world, and the authority evidence
+-- built on it. A demand pulse can only be minted by the machine running the
+-- scheduler, so "a pulse arrived after the most recent spawn" proves this
+-- machine is the authority without a single engine call. The fence is
+-- stamped on EVERY spawn (ClientRestart below), never only on world changes:
+-- joining a server always spawns, so pulses minted while hosting can never
+-- vouch for the joined session - which is the exact stale-true scenario the
+-- per-pass latch probe exists to kill.
+local spawn_at = nil
+
+api.set_authority_hint(function()
+    if spawn_at == nil then return nil end
+    local at = demandidx.last_pulse_at
+    if at ~= nil and at > spawn_at then return true end
+    return nil
+end)
+
 -- ---------------------------------------------------------------------------
 -- Config
 -- ---------------------------------------------------------------------------
@@ -681,6 +698,10 @@ COMMANDS.help = function()
             "(perf on for ms)")
     log.say("  " .. p .. " stand     write the Monitoring Stand's widget " ..
             "tree to StandTree.txt")
+    log.say("  " .. p .. " funcs     write a class's callable functions to " ..
+            "Functions.txt")
+    log.say("  " .. p .. " probe     targeted reads for the elimination " ..
+            "routes")
     log.say("  " .. p .. " adopt     make limits from before guild rules " ..
             "this guild's")
     log.say("  " .. p .. " restore   give every pal its work back, unfence")
@@ -1202,6 +1223,104 @@ COMMANDS.stand = function()
         else
             log.say("stand dump failed: " .. tostring(err))
         end
+    end)
+end
+
+-- Every callable on a class, with typed parameters, to Functions.txt.
+-- '!pwp funcs PalUtility' resolves /Script/Pal.PalUtility; a name with a
+-- slash is taken as a full path. Exists so a call into the game's own
+-- functions can be written against this build's real signatures instead of
+-- folklore - the parameter list is the contract, and a guessed NameProperty
+-- taking a bare string is the one mistake that kills the process outright.
+COMMANDS.funcs = function(args)
+    local want = (args or ""):match("^%s*(%S+)")
+    if not want then
+        log.say("usage: " .. cfg.chat_prefix .. " funcs <ClassName>")
+        return
+    end
+
+    run_now(function()
+        local path = DIR .. "Functions.txt"
+        local ok, err = discover.functions(want, path)
+        if ok then
+            log.say("functions written to " .. path)
+        else
+            log.say("funcs: " .. tostring(err))
+        end
+    end)
+end
+
+-- Targeted reads for the 0.4.1 elimination routes, one screenful.
+--
+-- The alternative was full class dumps, and a full dump of PalUtility's
+-- function parameters killed the process once already. Everything here is a
+-- single property read or a verified-signature call under pcall, printing
+-- what answered and what did not; nothing is stored, nothing is walked.
+COMMANDS.probe = function()
+    run_now(function()
+        log.say("probe: elimination-route reads")
+
+        local pc = api.player_controller()
+        if not api.valid(pc) then
+            log.say("  no player controller, nothing to probe")
+            return
+        end
+
+        local role
+        pcall(function() role = api.as_int(pc.Role) end)
+        log.say("  pc.Role = " .. tostring(role) ..
+            "  (authority expects 3, owning client 2)")
+
+        local kids, n
+        pcall(function() kids = pc.Children end)
+        pcall(function() n = #kids end)
+        local tx_hit = "none found"
+        if type(n) == "number" and n > 0 then
+            pcall(function()
+                for i = 1, n do
+                    local fn
+                    pcall(function() fn = kids[i]:GetFullName() end)
+                    if type(fn) == "string"
+                        and fn:find("PalNetworkTransmitter", 1, true) then
+                        tx_hit = fn
+                        break
+                    end
+                end
+            end)
+        end
+        log.say("  pc.Children = " .. tostring(n) ..
+            " entries, transmitter: " .. tx_hit)
+
+        local world
+        pcall(function() world = pc:GetWorld() end)
+        local util = api.cdo("/Script/Pal.Default__PalUtility")
+
+        local gm, gmname
+        pcall(function() gm = util:GetPalGameMode(world) end)
+        pcall(function() gmname = gm:GetFullName() end)
+        log.say("  GetPalGameMode -> " .. tostring(gmname))
+
+        local mgr, mgrname
+        pcall(function() mgr = util:GetBaseCampManager(world) end)
+        pcall(function() mgrname = mgr:GetFullName() end)
+        log.say("  GetBaseCampManager -> " .. tostring(mgrname))
+
+        if api.valid(mgr) then
+            log.say("  manager properties:")
+            pcall(function()
+                mgr:GetClass():ForEachProperty(function(pr)
+                    local pn
+                    pcall(function() pn = pr:GetFullName() end)
+                    if type(pn) == "string" then
+                        log.say("    " .. pn)
+                    end
+                end)
+            end)
+        end
+
+        local nd
+        pcall(function() nd = world.NetDriver end)
+        log.say("  World.NetDriver = " .. tostring(nd))
     end)
 end
 
@@ -2262,6 +2381,10 @@ local world_key = nil
 local said_client_warning = false
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
+  -- The authority-evidence fence, before anything that can fail: pulses
+  -- older than this instant stop counting the moment a new pawn exists.
+  spawn_at = os.clock()
+
   -- Every line below runs under one pcall.
   --
   -- Nine calls ran bare here. If any of them threw - and panel.reset reaches

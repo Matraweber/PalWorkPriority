@@ -1048,6 +1048,25 @@ local function run_camp(cfg, camp, stats)
 end
 
 function M.run_pass(cfg)
+    local stats = M.blank_stats()
+    M.pass_id = M.pass_id + 1
+
+    -- Camps first, component second, and the order is the fix.
+    --
+    -- Every lookup here is a full object-array walk, and the component needs
+    -- TWO of them. They used to run in the other order, which meant a player
+    -- in the open field with no camp streamed in paid every walk this pass
+    -- owns and then aborted on the empty camp list - the most expensive
+    -- possible way to do nothing, six times a minute. Camps are one walk, so
+    -- they go first, and an empty list ends the pass before the component is
+    -- ever asked for.
+    trace.at("pass: base_camps sweep")
+    local camps = api.base_camps()
+    trace.done()
+    if #camps == 0 then
+        log.debug("no base camps loaded")
+        return released(stats)
+    end
     -- Asked fresh, not read from the memo, and asked HERE rather than trusted
     -- from the caller.
     --
@@ -1083,25 +1102,15 @@ function M.run_pass(cfg)
         return blank
     end
 
-    local stats = M.blank_stats()
-    M.pass_id = M.pass_id + 1
+    -- The latch sits BELOW the camps abort now: with no camp streamed in
+    -- there is nothing any answer could protect, so a pass in the open field
+    -- ends after one walk instead of probing authority first. Nothing
+    -- between the top of this function and here reaches a pal - base_camps
+    -- is FindAllOf plus valid(), which a client survives - so the crash
+    -- guard the latch provides has lost no ground, it just runs one step
+    -- later. And with the pulse hint wired, the probe itself is free on any
+    -- authority that has scheduled work since it spawned.
 
-    -- Camps first, component second, and the order is the fix.
-    --
-    -- Every lookup here is a full object-array walk, and the component needs
-    -- TWO of them. They used to run in the other order, which meant a player
-    -- in the open field with no camp streamed in paid every walk this pass
-    -- owns and then aborted on the empty camp list - the most expensive
-    -- possible way to do nothing, six times a minute. Camps are one walk, so
-    -- they go first, and an empty list ends the pass before the component is
-    -- ever asked for.
-    trace.at("pass: base_camps sweep")
-    local camps = api.base_camps()
-    trace.done()
-    if #camps == 0 then
-        log.debug("no base camps loaded")
-        return released(stats)
-    end
     -- One lookup for the whole pass. See the note on set_work_enabled.
     --
     -- Owned only, with no fallback, because the fallback cannot carry a

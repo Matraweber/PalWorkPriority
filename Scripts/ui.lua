@@ -725,9 +725,12 @@ local function shown_prio(cfg, pal, work_name, t)
     return store.effective(cfg, pal, work_name, t)
 end
 
-local function handle_cell(cfg, cell)
+local function handle_cell(cfg, cell, known_name)
     if not alive(cell) then return end
-    local cell_name = full_name(cell)
+    -- The caller has already paid GetFullName for its seen-set; computing it
+    -- again here was ~60 redundant engine calls a second with the stand
+    -- open. Recomputed only when a caller has nothing to hand over.
+    local cell_name = known_name or full_name(cell)
     if not cell_name or cell_name:find("Default__", 1, true) then return end
 
     -- The battle-mode variant of the same cell class is not a work cell.
@@ -969,7 +972,7 @@ local function refresh_cells(cfg, menu)
         -- shown_prio, shown_ranks and the injected TextBlocks, so one bad
         -- assumption in any of them blanks the whole grid silently. Said once
         -- per distinct message, because it fires per cell.
-        local ok, err = pcall(function() handle_cell(cfg, cell) end)
+        local ok, err = pcall(function() handle_cell(cfg, cell, name) end)
         if ok then
             painted = painted + 1
         else

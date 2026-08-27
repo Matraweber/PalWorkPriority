@@ -154,45 +154,14 @@ local ZERO_GUID = { A = 0, B = 0, C = 0, D = 0 }
 -- So the owner is checked instead of trusting the order. Resolved per call
 -- and never stored; this runs on a rule change, not in the pass.
 local function owned_component()
-    local pc = api.player_controller()
-    if not api.valid(pc) then return nil, nil end
-
-    local mine = full_name(pc)
-    if not mine then return nil, nil end
-
-    -- The transmitters are read from FindAllOf, not reached through the
-    -- component's outer. Both routes name the same object, but GetOuter hands
-    -- back a plain wrapper without the actor function table, so GetOwner on it
-    -- silently fails inside the pcall and every candidate looks unowned. The
-    -- first version of this did exactly that and reported "none" while the
-    -- probe alongside it printed the very owner it was looking for.
-    local wanted
-    local tx
-    pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
-    for _, t in ipairs(tx or {}) do
-        if api.valid(t) then
-            local owner
-            pcall(function() owner = t:GetOwner() end)
-            if api.valid(owner) and full_name(owner) == mine then
-                wanted = full_name(t)
-                break
-            end
-        end
-    end
-    if not wanted then return nil, nil end
-
-    local all
-    pcall(function() all = FindAllOf("PalNetworkBaseCampComponent") end)
-    for _, comp in ipairs(all or {}) do
-        if api.valid(comp) then
-            local outer
-            pcall(function() outer = comp:GetOuter() end)
-            if api.valid(outer) and full_name(outer) == wanted then
-                return comp, "owner"
-            end
-        end
-    end
-
+    -- palapi's resolver, which carries the name memo: after the first full
+    -- resolution a send costs two StaticFindObjects and a re-proof instead
+    -- of two full array walks (74-90ms on a grown session, per CLICK on a
+    -- client). This function used to be a verbatim un-memoed copy of that
+    -- walk; the copy is gone and the memo counters now cover the send path
+    -- too. The re-proof inside palapi is the same owner check the copy did.
+    local comp = api.owned_network_component()
+    if comp ~= nil then return comp, "owner" end
     return nil, nil
 end
 
