@@ -596,6 +596,84 @@ local function unbuffered(f)
     return f
 end
 
+-- Every callable a class declares, with its typed parameters.
+--
+-- dump_schema above prints function NAMES, which is enough to know a class
+-- has something, and not enough to CALL it: the parameter list is the
+-- contract, and guessing it is how a bare string reaches a NameProperty and
+-- kills the process. A UFunction's parameters are its properties, so the
+-- same ForEachProperty walk that lists a class's fields lists a function's
+-- signature - each line carries the property class (IntProperty,
+-- NameProperty, ObjectProperty...) which is exactly what a caller from Lua
+-- has to match.
+function M.functions(class_name, out_path)
+    local f = io.open(out_path, "w")
+    if not f then return false, "could not open " .. tostring(out_path) end
+
+    f:write("function dump for " .. class_name .. "\n")
+    f:write(os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
+
+    -- A bare name is assumed to live in the Pal module; anything with a
+    -- slash is taken as a full path already.
+    local path = class_name
+    if not path:find("/", 1, true) then
+        path = "/Script/Pal." .. class_name
+    end
+
+    local cur
+    pcall(function() cur = StaticFindObject(path) end)
+    if not api.valid(cur) then
+        f:write("class not found: " .. path .. "\n")
+        f:close()
+        return false, "class not found: " .. path
+    end
+
+    -- The named class only, no supers. The first run walked PalUtility and
+    -- KILLED THE PROCESS partway through: one property's enumeration is an
+    -- access violation on this build, which no pcall catches, and the game
+    -- went down with the walk. Supers multiply exposure for functions nobody
+    -- asked about, so they are out.
+    --
+    -- Defaults must also survive the pcall SUCCEEDING with a nil answer -
+    -- GetFullName returned nil without throwing on the very first attempt,
+    -- and the nil overwrote a safe default. Ask first, default after.
+    local cname
+    pcall(function() cname = cur:GetFullName() end)
+    if type(cname) ~= "string" then cname = "?" end
+    f:write("=== " .. cname .. "\n")
+
+    pcall(function()
+        cur:ForEachFunction(function(fnobj)
+            local n
+            pcall(function() n = fnobj:GetFName():ToString() end)
+            if type(n) ~= "string" then n = "?" end
+
+            -- Name down and FLUSHED before the parameters are touched.
+            --
+            -- The crash that took the process left a file whose buffered
+            -- tail died with it, so the killer could only be narrowed to
+            -- "somewhere near the end of the alphabet". With a flush per
+            -- function, the last line in the file after a crash IS the
+            -- function whose parameters killed it - one restart turns an
+            -- unknown into a name to skip.
+            f:write("  " .. n .. "\n")
+            f:flush()
+
+            pcall(function()
+                fnobj:ForEachProperty(function(pr)
+                    local pn
+                    pcall(function() pn = pr:GetFullName() end)
+                    if type(pn) ~= "string" then pn = "?" end
+                    f:write("      " .. pn .. "\n")
+                end)
+            end)
+        end)
+    end)
+
+    f:close()
+    return true
+end
+
 function M.run(out_path)
     local f, open_err = io.open(out_path, "wb")
     if not f then
