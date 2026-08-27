@@ -393,6 +393,17 @@ function M.install()
     if not ok_up then ok_up = pcall(function()
         RegisterHook("/Script/Pal.PalNetworkBaseCampComponent:Request_Server_int32",
             function(Context, A, B, C)
+                -- Counted above the prefix test on purpose.
+                --
+                -- This hook is on PalNetworkBaseCampComponent, not on
+                -- anything of ours, so it fires for every base camp RPC the
+                -- game makes. How many of those are not ours is the whole
+                -- unknown: the mod's own traffic is already counted below by
+                -- saw_up and got_down, and neither says what the hook costs
+                -- to sit there.
+                local _b = log.count("hook: net up")
+                local _t0 = log.perf and os.clock() or nil
+
                 pcall(function()
                     local command = read_name(B, A)
                     if type(command) ~= "string" then return end
@@ -422,12 +433,17 @@ function M.install()
 
                     if M.on_command then M.on_command(command, value, comp) end
                 end)
+
+                if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
     end) end
 
     if not ok_down then ok_down = pcall(function()
         RegisterHook("/Script/Pal.PalNetworkBaseCampComponent:Notify_RequestClient_int32",
             function(Context, A, B, C)
+                local _b = log.count("hook: net down")
+                local _t0 = log.perf and os.clock() or nil
+
                 pcall(function()
                     local message = read_name(B, A)
                     if type(message) ~= "string" then return end
@@ -475,6 +491,8 @@ function M.install()
 
                     if M.on_state then M.on_state(message) end
                 end)
+
+                if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
     end) end
 

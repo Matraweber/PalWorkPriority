@@ -553,6 +553,7 @@ dropped short presses and looked like an unreliable controller.
 | `!pwp icons` | probe the overlay icons, and report what they resolved to |
 | `!pwp sweep <seconds>` | how long the chest-count cache lives. It does not print the sweep; `!pwp stock` does |
 | `!pwp trace on\|off` | breadcrumb marks to `trace.txt`, for finding what was in flight when a hard crash killed the process. A file write per risky touch, so it is off by default |
+| `!pwp perf [on\|off\|reset]` | how often the per-event hooks fire, and what the log's file writes cost. Counting is always on because frequency is the unknown; `perf on` adds millisecond timing, which costs two clock reads per fire |
 | `!pwp adopt` | take the wildcard rules left by an older version into your own guild |
 | `!pwp names` | what the game calls each item id, and how long resolving all of them took |
 | `!pwp pad probe\|watch` | whether a controller is readable, and what it is reporting |

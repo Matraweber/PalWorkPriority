@@ -677,6 +677,8 @@ COMMANDS.help = function()
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("  " .. p .. " guilds    write Guilds.txt")
     log.say("  " .. p .. " icons     probe the overlay icons")
+    log.say("  " .. p .. " perf      hook counts and file writes " ..
+            "(perf on for ms)")
     log.say("  " .. p .. " adopt     make limits from before guild rules " ..
             "this guild's")
     log.say("  " .. p .. " restore   give every pal its work back, unfence")
@@ -839,6 +841,74 @@ COMMANDS.trace = function(args)
     else
         log.say("trace marks are " .. (trace.on and "on" or "off") ..
             ". Use '" .. cfg.chat_prefix .. " trace on|off'")
+    end
+end
+
+-- Counters for the per-event hooks and the file writes.
+--
+-- Deliberately not in SAFE_FROM_CHAT: it is a diagnostic, and the same
+-- reasoning that keeps trace off a channel a stranger can type into applies.
+--
+-- Counting is always on because an increment is nearly free and FREQUENCY is
+-- the actual unknown - a hook on PalNetworkBaseCampComponent fires for every
+-- base camp RPC in the game, and nothing has ever counted them. Timing costs
+-- two os.clock() calls per fire and is therefore opt in: measuring the hot
+-- path must not be the thing that makes the hot path slow.
+COMMANDS.perf = function(args)
+    local want = (args or ""):match("^%s*(%S*)")
+
+    if want == "on" then
+        log.perf = true
+        log.reset_marks()
+        log.say("perf: timing on, counters reset")
+        return
+    elseif want == "off" then
+        log.perf = false
+        log.say("perf: timing off, counts kept")
+        return
+    elseif want == "reset" then
+        log.reset_marks()
+        log.say("perf: counters reset")
+        return
+    end
+
+    -- Read out before printing anything.
+    --
+    -- The report reaches the log through log.say, which goes through the very
+    -- to_file it reports on, so printing first would inflate the row being
+    -- printed. Snapshot, then talk.
+    local rows = {}
+    for name, b in pairs(log.marks) do
+        rows[#rows + 1] = { name = name, n = b.n, ms = b.ms }
+    end
+
+    local secs = os.time() - log.marks_since
+    if secs <= 0 then secs = 1 end
+
+    table.sort(rows, function(x, y)
+        if x.ms ~= y.ms then return x.ms > y.ms end
+        return x.n > y.n
+    end)
+
+    log.say(string.format("perf: timing %s, %ds since reset",
+        log.perf and "ON" or "off (counts only)", secs))
+
+    if #rows == 0 then
+        log.say("  nothing counted yet")
+        return
+    end
+
+    log.say(string.format("  %-32s %9s %9s %9s %8s",
+        "what", "calls", "per sec", "total ms", "ms/s"))
+
+    for _, r in ipairs(rows) do
+        log.say(string.format("  %-32s %9d %9.1f %9.1f %8.2f",
+            r.name, r.n, r.n / secs, r.ms, r.ms / secs))
+    end
+
+    if not log.perf then
+        log.say("  the ms columns stay zero until '" .. cfg.chat_prefix ..
+            " perf on'.")
     end
 end
 

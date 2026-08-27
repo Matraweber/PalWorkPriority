@@ -93,11 +93,32 @@ function M.down(name)
     local k = key_for(name)
     if k == nil then return nil end
 
+    -- Counted to settle how many times a frame this runs. The audit says
+    -- eleven; DRIVE has five entries and TAPS seven, which is twelve. Neither
+    -- number has ever been read off a running game.
+    --
+    -- player_controller is timed separately because it is the part a memo
+    -- would remove: clock's pc_memo brackets the 100ms beat only, and this
+    -- runs on the separate 16ms loop, so every call re-walks the engine
+    -- chain. Knowing its share is what says whether the memo is worth it.
+    local _b = log.count("pad: down")
+    local _t0 = log.perf and os.clock() or nil
+
     local pc = api.player_controller()
-    if not pc then return nil end
+
+    local _p = log.count("pad: player_controller")
+    if _t0 then _p.ms = _p.ms + (os.clock() - _t0) * 1000 end
+
+    if not pc then
+        if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
+        return nil
+    end
 
     local state
     local ok = pcall(function() state = pc:IsInputKeyDown(k) end)
+
+    if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
+
     if not ok then return nil end
     return state == true
 end
@@ -286,6 +307,9 @@ end
 -- The actions are passed in rather than required, so this module never has to
 -- know what a panel is. Anything missing from the table is simply not bound.
 function M.drive(actions)
+    local _b = log.count("pad: drive")
+    local _t0 = log.perf and os.clock() or nil
+
     local verbs = pressed_verbs()
     if verbs and actions.nav then
         for _, verb in ipairs(verbs) do
@@ -305,6 +329,8 @@ function M.drive(actions)
             if fn then pcall(fn) end
         end
     end
+
+    if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
 end
 
 -- Forget what was held, so a button still down when the panel shuts does not

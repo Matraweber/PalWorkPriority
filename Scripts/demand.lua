@@ -74,6 +74,18 @@ function M.install()
     local ok = pcall(function()
         RegisterHook("/Script/Pal.PalBaseCampWorkerDirector:OnRequiredAssignWork_ServerInternal",
             function(Context, Work)
+                -- Counted at the top, before the validity test and before the
+                -- known-job early out.
+                --
+                -- The game fires this once every few seconds per work still
+                -- wanting a worker, so the rate is a function of how busy the
+                -- base is - which is exactly the shape of "significantly
+                -- worse once I enter the base". M.pulses below counts only
+                -- jobs never seen before, so it goes quiet precisely when the
+                -- hook is busiest.
+                local _b = log.count("hook: demand")
+                local _t0 = log.perf and os.clock() or nil
+
                 pcall(function()
                     local w = Work:get()
                     if not api.valid(w) then return end
@@ -87,6 +99,7 @@ function M.install()
                     local known = jobs[key]
                     if known then
                         known.seen = os.time()
+                        log.count("hook: demand repeat pulse")
                         return
                     end
 
@@ -121,6 +134,8 @@ function M.install()
                         M.pulses_by_value[v] = (M.pulses_by_value[v] or 0) + 1
                     end
                 end)
+
+                if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
     end)
 

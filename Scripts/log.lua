@@ -17,10 +17,57 @@ function M.set_level(name)
     M.threshold = LEVELS[name] or LEVELS.info
 end
 
+-- ---------------------------------------------------------------------------
+-- Counters
+-- ---------------------------------------------------------------------------
+
+-- Off by default, and not reachable from chat: see SAFE_FROM_CHAT in main.
+--
+-- Every "this is expensive" claim about the per-event hooks in this mod has
+-- been an estimate. The thing actually unknown about them is how OFTEN they
+-- fire - a hook on PalNetworkBaseCampComponent sees every base camp RPC in
+-- the game, not only ours - so counting is always on and timing is not. An
+-- increment is nearly free; os.clock() twice per fire is not, and measuring
+-- the hot path must not be what makes the hot path slow.
+M.perf = false
+
+-- name -> { n = calls, ms = accumulated milliseconds }
+M.marks = {}
+
+-- Wall clock, not os.clock: the rates below are per real second, and on this
+-- platform os.clock is processor time. Second granularity is plenty for a
+-- window measured in tens of seconds.
+M.marks_since = os.time()
+
+function M.count(name)
+    local b = M.marks[name]
+    if not b then
+        b = { n = 0, ms = 0 }
+        M.marks[name] = b
+    end
+    b.n = b.n + 1
+    return b
+end
+
+function M.reset_marks()
+    M.marks = {}
+    M.marks_since = os.time()
+end
+
+-- ---------------------------------------------------------------------------
+
 -- One place that appends to the file, so there is one escape to get right
 -- rather than a copy of it per caller.
+--
+-- Counted and timed here because nothing in this mod has ever measured it.
+-- The codebase argues from "a file write per line is expensive" in several
+-- places, including the reason log.debug exists, and that figure has never
+-- been read off a running game.
 local function to_file(line)
     if not M.file_path then return end
+
+    local b = M.count("log: file write")
+    local t0 = M.perf and os.clock() or nil
 
     pcall(function()
         local f = io.open(M.file_path, "a")
@@ -29,6 +76,8 @@ local function to_file(line)
             f:close()
         end
     end)
+
+    if t0 then b.ms = b.ms + (os.clock() - t0) * 1000 end
 end
 
 local function emit(level, msg)
