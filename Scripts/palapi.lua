@@ -72,6 +72,27 @@ local auth = nil
 -- at 27-34ms each per pass is exactly the cost this exists to remove.
 local owned_memo = nil
 
+-- The component's UClass, resolved once per session and kept.
+--
+-- Keeping a wrapper is forbidden for OBJECTS; this is a /Script/ UClass,
+-- which the engine does not collect - the same carve-out cdo() documents
+-- for its cache. One StaticFindObject at first use, then free forever.
+local owned_comp_class = nil
+
+local function comp_class()
+    if owned_comp_class ~= nil and valid(owned_comp_class) then
+        return owned_comp_class
+    end
+    pcall(function()
+        owned_comp_class =
+            StaticFindObject("/Script/Pal.PalNetworkBaseCampComponent")
+    end)
+    if owned_comp_class ~= nil and valid(owned_comp_class) then
+        return owned_comp_class
+    end
+    return nil
+end
+
 local function object_path(full)
     -- GetFullName answers "ClassName /Path/To.Object". StaticFindObject wants
     -- only the path half.
@@ -371,6 +392,49 @@ function M.owned_network_component()
     local mine
     pcall(function() mine = pc:GetFullName() end)
     if type(mine) ~= "string" then return nil end
+
+    -- Fastest path: the controller's own Children.
+    --
+    -- AActor.Children is the actors this actor OWNS, and the probe read it
+    -- live on this build: the player-owned PalNetworkTransmitter sits right
+    -- in it. Ownership is therefore proven by construction - no name
+    -- comparison against a remembered string, no StaticFindObject, just
+    -- pointer reads off an object obtained in this call. The component then
+    -- comes from the transmitter itself via GetComponentByClass. Everything
+    -- is resolved fresh and nothing survives the call, which is the age
+    -- rule satisfied by shape rather than by discipline.
+    --
+    -- Any miss falls through silently to the name memo, and from there to
+    -- the full double walk - three routes, ordered by price, all proving
+    -- the same ownership.
+    do
+        local comp
+        pcall(function()
+            local kids = pc.Children
+            local n = #kids
+            for i = 1, n do
+                local child = kids[i]
+                if valid(child) then
+                    local fn
+                    pcall(function() fn = child:GetFullName() end)
+                    if type(fn) == "string"
+                        and fn:sub(1, 22) == "PalNetworkTransmitter " then
+                        local cls = comp_class()
+                        if cls ~= nil then
+                            local c = child:GetComponentByClass(cls)
+                            if valid(c) then comp = c end
+                        end
+                        break
+                    end
+                end
+            end
+        end)
+
+        if comp ~= nil then
+            log.count("api: owned comp via children")
+            return comp
+        end
+    end
 
     -- Fast path: same player as last time, so try the remembered names.
     if owned_memo ~= nil and owned_memo.pc == mine then

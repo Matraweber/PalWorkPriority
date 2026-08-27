@@ -1305,18 +1305,19 @@ COMMANDS.probe = function()
         pcall(function() mgrname = mgr:GetFullName() end)
         log.say("  GetBaseCampManager -> " .. tostring(mgrname))
 
-        if api.valid(mgr) then
-            log.say("  manager properties:")
-            pcall(function()
-                mgr:GetClass():ForEachProperty(function(pr)
-                    local pn
-                    pcall(function() pn = pr:GetFullName() end)
-                    if type(pn) == "string" then
-                        log.say("    " .. pn)
-                    end
-                end)
-            end)
-        end
+        -- The manager's property walk is GONE, and the reason is carved
+        -- here so nobody rebuilds it. It ran once, listed every property
+        -- through every real superclass, and answered the question for
+        -- good: the manager exposes CONFIG ONLY - per-tribe maps, data
+        -- tables, tick budgets, delegates - and no reflected container of
+        -- live camp models exists. FindAllOf(PalBaseCampModel) is the
+        -- honest camps route, full stop. Then the walk stepped past
+        -- Object into a super that would not even name itself - printed
+        -- as [?] - enumerated its properties, and KILLED THE PROCESS:
+        -- GetSuperStruct hands back a live-looking wrapper where a nil
+        -- belongs, the same TrivialObject hazard the codebase already
+        -- records for property reads. The last log line named the killer,
+        -- which is the one thing the design got right.
 
         local nd
         pcall(function() nd = world.NetDriver end)
@@ -2580,6 +2581,13 @@ for _, path in ipairs({
 }) do
     local ok = pcall(function()
         RegisterHook(path, function() end, function(_, ReturnValue)
+            -- Counted because this was the one recurring hook with no rate
+            -- data at all - "probably per-frame" was the best anyone could
+            -- say. Counting is always on; the fire rate is the answer, and
+            -- the count() bucket lookup is nothing next to the reflected
+            -- read below it.
+            log.count("hook: overlay ui active")
+
             -- The game's own answer, read BEFORE we override it, and kept on
             -- palapi because that module is never swapped. It is the only way
             -- anything else can ask "does the GAME have UI up" without reading
