@@ -1545,6 +1545,25 @@ function M.dump(f)
         if alive(r) and alive(m) and is_showing(m) then
             f:write("   widget tree:\n")
             dump_tree(f, r, 4, { n = 0 })
+
+            -- The fix-D question, answered next to the evidence: does the
+            -- tree route see the cells this menu is drawing? cells_under
+            -- answering nil here, against a non-zero global count and the
+            -- tree printed just above, is the virtualized-ListView verdict
+            -- in one line - the rows live somewhere GetChildAt and the
+            -- menu's own WidgetTree cannot reach.
+            local found = cells_under(m)
+            local global_cells = 0
+            pcall(function()
+                for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
+                    if alive(c) then global_cells = global_cells + 1 end
+                end
+            end)
+            f:write(string.format(
+                "   cells_under: %s | global cell walk: %d\n",
+                found and tostring(#found)
+                    or "nil (no root, none found, or budget refused)",
+                global_cells))
         end
     end
 

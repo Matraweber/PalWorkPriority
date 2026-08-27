@@ -679,6 +679,8 @@ COMMANDS.help = function()
     log.say("  " .. p .. " icons     probe the overlay icons")
     log.say("  " .. p .. " perf      hook counts and file writes " ..
             "(perf on for ms)")
+    log.say("  " .. p .. " stand     write the Monitoring Stand's widget " ..
+            "tree to StandTree.txt")
     log.say("  " .. p .. " adopt     make limits from before guild rules " ..
             "this guild's")
     log.say("  " .. p .. " restore   give every pal its work back, unfence")
@@ -1176,6 +1178,33 @@ COMMANDS.guilds = function()
 end
 
 -- Why the same work suitability toggles repeat every pass.
+-- The Monitoring Stand's widget tree, written to a file. Exists to answer
+-- what the perf counters cannot: WHY cells_under found nothing when the
+-- stand was open ("ui: cells via tree" never moved, only the global-walk
+-- fallback did). The suspect is a virtualized ListView whose row entries
+-- are not children of the menu's own tree; the dump shows the tree as it
+-- actually is, plus cells_under's answer against the global walk's count.
+-- Needs the stand open on screen, and says so itself when it is not.
+COMMANDS.stand = function()
+    run_now(function()
+        local path = DIR .. "StandTree.txt"
+        local f = io.open(path, "w")
+        if not f then
+            log.say("could not open " .. path .. " for writing")
+            return
+        end
+
+        local ok, err = pcall(function() ui.dump(f) end)
+        f:close()
+
+        if ok then
+            log.say("stand tree written to " .. path)
+        else
+            log.say("stand dump failed: " .. tostring(err))
+        end
+    end)
+end
+
 COMMANDS.worksuit = function()
     run_now(function()
         discover.worksuit(DIR .. "WorkSuit.txt")
