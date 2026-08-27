@@ -1086,6 +1086,22 @@ function M.run_pass(cfg)
     local stats = M.blank_stats()
     M.pass_id = M.pass_id + 1
 
+    -- Camps first, component second, and the order is the fix.
+    --
+    -- Every lookup here is a full object-array walk, and the component needs
+    -- TWO of them. They used to run in the other order, which meant a player
+    -- in the open field with no camp streamed in paid every walk this pass
+    -- owns and then aborted on the empty camp list - the most expensive
+    -- possible way to do nothing, six times a minute. Camps are one walk, so
+    -- they go first, and an empty list ends the pass before the component is
+    -- ever asked for.
+    trace.at("pass: base_camps sweep")
+    local camps = api.base_camps()
+    trace.done()
+    if #camps == 0 then
+        log.debug("no base camps loaded")
+        return released(stats)
+    end
     -- One lookup for the whole pass. See the note on set_work_enabled.
     --
     -- Owned only, with no fallback, because the fallback cannot carry a
@@ -1141,12 +1157,50 @@ function M.run_pass(cfg)
         return released(stats)
     end
 
-    trace.at("pass: base_camps sweep")
-    local camps = api.base_camps()
-    trace.done()
-    if #camps == 0 then
-        log.debug("no base camps loaded")
-        return released(stats)
+
+    -- Camp-scoped storage: one bucketed sweep for every loaded camp, here,
+    -- rather than one full sweep per camp inside run_camp.
+    --
+    -- Under the shipped storage_scope = "camp" each camp keys its own cache
+    -- entry, every entry is stamped on the same pass, and they expire
+    -- together - so a sweep pass paid the identical FindAllOf walk once per
+    -- camp, back to back. walk_containers reads the camp id off every
+    -- container anyway; bucketing on it makes the extra camps free. run_camp's
+    -- own cache check is untouched and simply finds fresh entries, and a camp
+    -- this sweep saw no containers for gets an explicit empty entry so it
+    -- cannot fall through to a walk of its own.
+    if cfg.storage_scope ~= "global" and needs_totals(cfg)
+        and M.stock_ttl > 0 and #camps > 1 then
+        local stale = false
+        for _, c in ipairs(camps) do
+            local k = api.guid_key(api.camp_id(c))
+            local held = k and stock[k]
+            if k and not (held and (os.clock() - held.at) < M.stock_ttl) then
+                stale = true
+                break
+            end
+        end
+
+        if stale then
+            trace.at("pass: bucketed chest sweep")
+            local by_camp, chest_counts = api.chest_totals_by_camp({
+                include = cfg.counted_containers,
+                exclude = cfg.uncounted_containers,
+            })
+            trace.done()
+
+            local now = os.clock()
+            for _, c in ipairs(camps) do
+                local k = api.guid_key(api.camp_id(c))
+                if k then
+                    stock[k] = {
+                        totals = by_camp[k] or {},
+                        chests = (chest_counts and chest_counts[k]) or 0,
+                        at = now,
+                    }
+                end
+            end
+        end
     end
 
     -- The upgrade from unowned rules to guild owned ones is OFFERED here and

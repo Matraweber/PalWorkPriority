@@ -59,6 +59,26 @@ local unwrap, valid = M.unwrap, M.valid
 -- first use is a silent global write, not a shared variable.
 local auth = nil
 
+-- The owned base camp component, remembered by NAME between resolutions.
+--
+-- Strings only, never wrappers: a full name cannot dangle, which is what the
+-- never-store rule is actually about. The fast path re-resolves both objects
+-- through StaticFindObject (~11ms each on this build) and then re-proves the
+-- whole ownership chain - transmitter still owned by this pc, component still
+-- inside that transmitter - before believing anything. Instance names are NOT
+-- unique across destroy/recreate (the Monitoring Stand taught that), so a
+-- name that resolves is a candidate, not an answer; the re-proof is the
+-- answer. Any doubt drops the memo and pays the two full walks again, which
+-- at 27-34ms each per pass is exactly the cost this exists to remove.
+local owned_memo = nil
+
+local function object_path(full)
+    -- GetFullName answers "ClassName /Path/To.Object". StaticFindObject wants
+    -- only the path half.
+    if type(full) ~= "string" then return nil end
+    return full:match("^%S+%s+(.+)$")
+end
+
 -- Whether one of the game's own full-screen menus is up.
 --
 -- Declared HERE, in the module that owns the table, because main.lua writes it
@@ -167,6 +187,7 @@ local cdo_cache = {}
 function M.reset()
     -- The authority answer belongs to the world, so it goes with it.
     auth = nil
+    owned_memo = nil
     M.game_ui_active = false
 
     cdo_cache = {}
@@ -351,6 +372,43 @@ function M.owned_network_component()
     pcall(function() mine = pc:GetFullName() end)
     if type(mine) ~= "string" then return nil end
 
+    -- Fast path: same player as last time, so try the remembered names.
+    if owned_memo ~= nil and owned_memo.pc == mine then
+        local comp
+        pcall(function()
+            local tx = StaticFindObject(owned_memo.tx_path)
+            if not valid(tx) then return end
+
+            local owner
+            pcall(function() owner = tx:GetOwner() end)
+            if not valid(owner) then return end
+            local oname
+            pcall(function() oname = owner:GetFullName() end)
+            if oname ~= mine then return end
+
+            local c = StaticFindObject(owned_memo.comp_path)
+            if not valid(c) then return end
+
+            local outer, xname
+            pcall(function() outer = c:GetOuter() end)
+            if not valid(outer) then return end
+            pcall(function() xname = outer:GetFullName() end)
+            if xname ~= owned_memo.tx_full then return end
+
+            comp = c
+        end)
+
+        if comp ~= nil then
+            log.count("api: owned comp via memo")
+            return comp
+        end
+
+        -- The remembered pair no longer proves out - reconnect coin flip,
+        -- teardown, or name reuse. Forget it and resolve from scratch.
+        owned_memo = nil
+    end
+    log.count("api: owned comp full walk")
+
     local wanted
     local tx
     pcall(function() tx = FindAllOf("PalNetworkTransmitter") end)
@@ -377,7 +435,22 @@ function M.owned_network_component()
             pcall(function() outer = comp:GetOuter() end)
             if valid(outer) then
                 pcall(function() oname = outer:GetFullName() end)
-                if oname == wanted then return comp end
+                if oname == wanted then
+                    -- Remember the pair by name for the next pass. Only with
+                    -- both paths extractable; a memo that cannot re-resolve
+                    -- is worse than none.
+                    local cfull
+                    pcall(function() cfull = comp:GetFullName() end)
+                    local tp, cp = object_path(wanted), object_path(cfull)
+                    if tp and cp then
+                        owned_memo = {
+                            pc = mine,
+                            tx_full = wanted, tx_path = tp,
+                            comp_full = cfull, comp_path = cp,
+                        }
+                    end
+                    return comp
+                end
             end
         end
     end
@@ -409,9 +482,68 @@ function M.has_authority()
     return valid(gm)
 end
 
+-- The walk-free probe: the world names its own authority.
+--
+-- UWorld.AuthorityGameMode is set on the machine running the game mode and
+-- null everywhere else, and the chain down to it is the same pointer walk
+-- via_engine() already uses for the player controller - fresh on every call,
+-- nothing kept. It answers only when it actually reached a world:
+--
+--   true   the property held an object that names itself something with
+--          "GameMode" in it
+--   nil    everything else - no world through this route, a nil read, or a
+--          wrapper that would not name itself. All of it means "this route
+--          cannot say", never "no".
+--
+-- The chain is NOT allowed to answer false, and the first deployment is why.
+-- It treated "the world was reached and the property read nil" as a definite
+-- no - and on this build the property reads nil ON THE AUTHORITY TOO, because
+-- AuthorityGameMode is not in the reflection data UE4SS sees. A singleplayer
+-- host latched "client", has_authority went false, and every pass stopped:
+-- the mod sat fully idle in the one mode most people run it in. "Property
+-- missing" and "property null" are the same nil up here, and only one of
+-- them means no - so nil means fall back to the walk, which knows.
+--
+-- The name check exists because of the recorded TrivialObject hazard: UE4SS
+-- can hand back a live-looking wrapper for a property read. A wrapper that
+-- answers GetFullName with a GameMode-ish string is real; one that cannot is
+-- not treated as proof of anything, and the caller falls back to the walk.
+local function authority_via_world()
+    local answer = nil
+    pcall(function()
+        local ue = require("UEHelpers")
+        local world = ue.GetEngine().GameViewport.World
+        if world == nil then return end
+
+        local gm = world.AuthorityGameMode
+        if gm == nil then return end
+
+        local name
+        pcall(function() name = gm:GetFullName() end)
+        if type(name) == "string" and name ~= "" then
+            if name:find("GameMode", 1, true) ~= nil then
+                answer = true
+            end
+        end
+    end)
+    return answer
+end
+
 -- Probe once and remember. Always probes, never reads the memo, so a second
--- call can correct a first one taken before the world was fully up.
+-- call can correct a first one taken before the world was fully up - and
+-- so a stale "yes" carried from hosting into joining (world_key may not
+-- differ) survives at most one interval. The probe stays fresh; what changed
+-- is its price: the pointer chain answers where it can, and the full
+-- FindFirstOf walk remains the fallback for anything the chain cannot see.
 function M.latch_authority()
+    local via = authority_via_world()
+    if via == true then
+        log.count("api: authority via world chain")
+        auth = true
+        return auth
+    end
+
+    log.count("api: authority via walk")
     local gm
     pcall(function() gm = FindFirstOf("PalGameMode") end)
     auth = valid(gm)
@@ -1143,8 +1275,19 @@ end
 -- else. Otherwise every container is counted except the names in
 -- opts.exclude. One scan of the base class covers both, since every chest and
 -- station derives from it.
-local function walk_chests(opts, accept)
-    local totals, chests = {}, 0
+-- One walk, many buckets.
+--
+-- keyfor(m) is asked once per item-holding container and answers the bucket
+-- its contents belong in, or nil to skip it. The camp-scoped sweep used to
+-- run this walk once PER CAMP with a boolean filter, which under the shipped
+-- camp scope meant two full FindAllOf sweeps back to back on every pass whose
+-- cache had expired - identical walks, different filter. Bucketing by the
+-- camp id read the sweep was already paying for makes the second walk free.
+--
+-- The slot-reading loop is preserved exactly as it was, crash comments and
+-- all; only where the numbers land has changed.
+local function walk_containers(opts, keyfor)
+    local buckets, counts = {}, {}
     opts = opts or {}
 
     local include = nil
@@ -1181,7 +1324,8 @@ local function walk_chests(opts, accept)
                 pcall(function() module = m:GetItemContainerModule() end)
                 if not valid(module) then return end
 
-                if not accept(m) then return end
+                local bucket = keyfor(m)
+                if bucket == nil then return end
 
                 -- Class name last. Reading one means building a string per
                 -- object, so it is done only for things that hold items.
@@ -1198,7 +1342,12 @@ local function walk_chests(opts, accept)
                     return
                 end
 
-                chests = chests + 1
+                local totals = buckets[bucket]
+                if totals == nil then
+                    totals = {}
+                    buckets[bucket] = totals
+                end
+                counts[bucket] = (counts[bucket] or 0) + 1
 
                 -- The count is taken again on every turn of the loop, and
                 -- the slot is asked whether it is still there before anything
@@ -1241,7 +1390,16 @@ local function walk_chests(opts, accept)
         end
     end)
 
-    return totals, chests
+    return buckets, counts
+end
+
+-- The single-bucket shape every existing caller was written against.
+local function walk_chests(opts, accept)
+    local buckets, counts = walk_containers(opts, function(m)
+        if accept(m) then return "only" end
+        return nil
+    end)
+    return buckets.only or {}, counts.only or 0
 end
 
 -- Only the chests belonging to one camp.
@@ -1256,6 +1414,20 @@ function M.camp_item_totals(camp_key, opts)
         local cid
         pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
         return cid == camp_key
+    end)
+end
+
+-- Every camp's chests in ONE walk, keyed by camp id.
+--
+-- Returns (totals_by_camp, chests_by_camp), both keyed by guid_key strings.
+-- A container whose camp id will not read is skipped, same as the per-camp
+-- filter always did: crediting an unowned chest to some base would silently
+-- inflate its totals and suspend work that should still be running.
+function M.chest_totals_by_camp(opts)
+    return walk_containers(opts, function(m)
+        local cid
+        pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
+        return cid
     end)
 end
 

@@ -213,8 +213,17 @@ local function try_hook_bind()
     if now - last_hook_try < 5 then return end
     last_hook_try = now
 
+    -- Timed unconditionally, unlike the per-event hooks elsewhere: this runs
+    -- at most once every five seconds, so two os.clock() calls are free, and
+    -- it is the only repeating call in the mod with no price on it at all.
+    -- It keeps retrying for the whole session on a player who never opens the
+    -- stand, and on a headless server where the class never loads at all.
+    local _t0 = os.clock()
     pcall(function() LoadAsset(ROW_BP_PATH) end)
+    local _load = log.count("ui: try_hook_bind LoadAsset")
+    _load.ms = _load.ms + (os.clock() - _t0) * 1000
 
+    local _t1 = os.clock()
     local ok, err = pcall(function()
         RegisterHook(ROW_BIND_FN, function(Context, SlotParam)
             -- The message is kept, once per distinct error.
@@ -335,6 +344,9 @@ local function try_hook_bind()
             end
         end)
     end)
+
+    local _reg = log.count("ui: try_hook_bind RegisterHook")
+    _reg.ms = _reg.ms + (os.clock() - _t1) * 1000
 
     if ok then
         bind_hooked = true
@@ -809,7 +821,109 @@ end
 -- The sweep is once a second, not once a frame, which is the rate the caller
 -- was built around: main.lua's comment on the grid says it stays on its
 -- second precisely because refreshing means a FindAllOf over every cell.
-local function live_cells()
+-- The cells of ONE menu, found by walking its own widget tree.
+--
+-- FindAllOf(CELL_CLASS) is a full object-array walk - 27-34ms on a grown
+-- session - and it answers with cells from EVERY menu instance, including the
+-- hidden stale one the file already documents, which live_cells then has to
+-- take on faith. Walking the found menu's tree costs a few hundred property
+-- reads (under a millisecond), and cannot see another instance's widgets at
+-- all, so the non-unique-instance-name hazard never arises.
+--
+-- Both descent routes are needed, same as dump_tree above: a panel's children
+-- sit behind GetChildAt, but a nested UserWidget keeps its children in its
+-- own WidgetTree - and the stand's rows are nested user widgets, so the cells
+-- live two trees down. Everything is resolved inside this call and nothing is
+-- kept, which is the same age rule live_cells always had.
+local function cells_under(menu)
+    local root
+    pcall(function()
+        local t = menu.WidgetTree
+        if t ~= nil then root = t.RootWidget end
+    end)
+    if not alive(root) then return nil end
+
+    local out = {}
+    local seen = {}
+    local stack, top = { root }, 1
+    local visited = 0
+    local want = M.CELL_CLASS .. " "
+
+    while top > 0 do
+        -- A walk that runs out of budget is REFUSED, not returned.
+        --
+        -- refresh_cells' prune reasons from "the sweep enumerated every cell
+        -- that exists", and a truncated list breaks that quietly: cells past
+        -- the horizon never paint, their kept TextBlocks are pruned as
+        -- stale, and the next enumeration order that reaches them injects a
+        -- second TextBlock over the live first - the double-injection bug
+        -- this file already documents. nil sends the caller to the global
+        -- walk, which is slower and complete.
+        if visited >= 1200 then return nil end
+
+        local w = stack[top]
+        stack[top] = nil
+        top = top - 1
+        visited = visited + 1
+
+        local fn = full_name(w)
+        if fn and not seen[fn] then
+            seen[fn] = true
+
+            if fn:sub(1, #want) == want then
+                -- A cell is a leaf of this search. Its own subtree holds a
+                -- checkbox and some art, never another cell, and descending
+                -- into every match multiplies the node count by the size of
+                -- a cell's innards - which is what pushed a full stand past
+                -- the budget in the first place.
+                out[#out + 1] = w
+            else
+                pcall(function()
+                    local t = w.WidgetTree
+                    if t ~= nil then
+                        local r = t.RootWidget
+                        if alive(r) then
+                            top = top + 1
+                            stack[top] = r
+                        end
+                    end
+                end)
+
+                local count = 0
+                pcall(function() count = w:GetChildrenCount() end)
+                if type(count) == "number" then
+                    for i = 0, count - 1 do
+                        pcall(function()
+                            local child = w:GetChildAt(i)
+                            if alive(child) then
+                                top = top + 1
+                                stack[top] = child
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    if #out == 0 then return nil end
+    return out
+end
+
+local function live_cells(menu)
+    -- The tree route, whenever the caller has a live menu in hand. nil from
+    -- cells_under means "could not walk" or "found none", and either way the
+    -- global sweep below still answers, so a build whose tree will not walk
+    -- keeps exactly the old behaviour at the old price.
+    if menu ~= nil then
+        local found = cells_under(menu)
+        if found then
+            log.count("ui: cells via tree")
+            return found
+        end
+    end
+
+    log.count("ui: cells via global walk")
     local out = {}
     pcall(function()
         for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
@@ -823,8 +937,8 @@ end
 
 -- Returns how many cells it actually painted, so the caller can tell a draw
 -- that happened from one that did not.
-local function refresh_cells(cfg)
-    local cells = live_cells()
+local function refresh_cells(cfg, menu)
+    local cells = live_cells(menu)
     if #cells == 0 then return 0 end
 
     local seen = {}
@@ -1132,7 +1246,7 @@ function M.refresh(cfg)
     -- code did not implement it. refresh_cells returned nothing, and every
     -- per-cell paint inside it is a discarded pcall, so all 62 could fail and
     -- the epoch still committed. The gate then returned early for ever after.
-    local painted = refresh_cells(cfg)
+    local painted = refresh_cells(cfg, menu)
 
     if painted == 0 then
         if not said_painted_none then
@@ -1160,11 +1274,11 @@ M.wants_pass = false
 
 -- Exactly one cell can be hovered. IsHovered still answers with the checkbox
 -- hidden, since Hidden removes the checkbox from hit testing, not the cell.
-local function hovered_cell()
+local function hovered_cell(menu)
     -- Resolved here rather than read from a kept array. This runs from the
     -- mouse keybind, which can fire arbitrarily long after the last refresh,
     -- so a kept array is at its most stale exactly when this reads it.
-    for _, cell in ipairs(live_cells()) do
+    for _, cell in ipairs(live_cells(menu)) do
         local hit = false
         pcall(function() hit = cell:IsHovered() end)
         if hit == true then return cell end
@@ -1245,12 +1359,13 @@ local function bump(cfg, dir)
     -- It costs one more object walk on a click that was already paying one.
     -- Clicks are rare and user-initiated; the alternative is a stale
     -- dereference on the one path that can still reach it.
-    if not live_menu() then
+    local menu = live_menu()
+    if not menu then
         menu_likely_open = false
         return
     end
 
-    local cell = hovered_cell()
+    local cell = hovered_cell(menu)
     if not cell then return end
 
     local pal, t, work_name, cname = cell_target(cell)
