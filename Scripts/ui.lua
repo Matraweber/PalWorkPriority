@@ -859,7 +859,21 @@ local function cells_under(menu)
         -- second TextBlock over the live first - the double-injection bug
         -- this file already documents. nil sends the caller to the global
         -- walk, which is slower and complete.
-        if visited >= 1200 then return nil end
+        --
+        -- 4000, not 1200. A StandTree.txt dump measured the real menu at
+        -- MORE than 1200 nodes - dump_tree's own 1200 cap cut the file at
+        -- exactly that count with the tree still going - so the first
+        -- budget refused every single walk and the tree route never ran at
+        -- all: "ui: cells via tree" stayed at zero while the fallback paid
+        -- the full walk every second the stand was open. A 9-row stand
+        -- visits roughly 1300-2000 nodes with cell subtrees skipped; 4000
+        -- leaves room for a taller list while still bounding a cycle to a
+        -- few milliseconds of property reads, far under the walk this
+        -- route exists to avoid.
+        if visited >= 4000 then
+            log.count("ui: cells walk refused, over budget")
+            return nil
+        end
 
         local w = stack[top]
         stack[top] = nil
