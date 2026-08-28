@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.4.1
+
+**The mod used to scan the game's entire object list up to four times every
+ten seconds. Now it does that once.** That scan is what a hitch on a roughly
+ten second rhythm was, and it got worse the longer a session ran, because the
+list grows as the game loads things and the scan reads all of it. Measured on
+a session several hours old: 36 to 45 milliseconds per scan, three or four of
+them per pass, one pass every ten seconds.
+
+Nothing about what the mod does has changed. It answers the same questions,
+it just stopped looking them up the expensive way.
+
+### Faster
+
+- **Whether this machine runs the world** is answered from evidence the mod
+  already has. The game only asks for base workers on the machine running the
+  bases, so a request arriving after this session began is proof, and proof
+  that costs nothing. The old scan is still there for the moments nothing has
+  been asked yet, which is how a dedicated server answers.
+- **The component every change is sent through** is now reached through the
+  player controller that owns it, rather than by searching for it. Same
+  object, same ownership check, no search. This one also ran on every click
+  in the Monitoring Stand grid, so clicks on a server got cheaper too.
+- **A pass with no base camp loaded** stops after the first scan instead of
+  paying for all of them and then finding nothing to do.
+- **The Monitoring Stand grid** finds its cells by walking the menu it is
+  drawing into, instead of searching the whole game for them. Halves what an
+  open stand costs, and it cannot pick up a stale hidden copy of the menu the
+  way the search could.
+- **The production limits panel** stops re-sending values that have not
+  changed, and only recolours text when the colour is actually different.
+
+### Dedicated servers
+
+- **A server no longer searches for a gamepad.** Checking whether the panel
+  hotkey was held made the server look for a local player it does not have,
+  and that search reads the whole object list to answer "no". Once a second,
+  for the life of the server, for a controller nobody is holding.
+
+### Diagnostics
+
+- **`!pwp perf`** reports how often the mod's hooks fire and what they cost.
+  Counting is always on because how OFTEN something happens was the thing
+  nobody knew; `!pwp perf on` adds millisecond timing, which costs a little
+  to collect and is therefore off by default.
+- **`!pwp stand`** writes the Monitoring Stand's widget tree to a file, for
+  working out why a grid did not draw.
+
+### Notes
+
+- Three reports on the Workshop describe stutter on a **one second** rhythm.
+  The ten second one above is real, measured, and fixed. The one second one I
+  could not reproduce or find in the code, and the per-second work the mod
+  does measures at a fraction of a millisecond. If you still see it after
+  this update, please say so, and say whether disabling other mods changes
+  it.
+- The multiplayer client path is unchanged in intent but has not been tested
+  live since these changes. The server side has.
+- `panel.lua` is two top level locals short of Lua's ceiling of 200.
+- The item picker's pager is still drawn across rows 7 and 8 when "show all
+  craftable items" is on and there is more than one page.
+
 ## 0.4.0
 
 **Update your server too.** This release moves the work onto the server, and a

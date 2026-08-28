@@ -59,6 +59,13 @@ local unwrap, valid = M.unwrap, M.valid
 -- first use is a silent global write, not a shared variable.
 local auth = nil
 
+-- Walk-fallback rationing for player_controller; the reasoning is at the
+-- usage site. Declared up here because M.reset clears it.
+local pc_walk_misses = 0
+local pc_walk_next = 0
+local PC_WALK_PATIENCE = 5
+local PC_WALK_GAP = 10.0
+
 -- The owned base camp component, remembered by NAME between resolutions.
 --
 -- Strings only, never wrappers: a full name cannot dangle, which is what the
@@ -209,6 +216,12 @@ function M.reset()
     -- The authority answer belongs to the world, so it goes with it.
     auth = nil
     owned_memo = nil
+
+    -- A new world is a new chance for a controller to exist, so the walk
+    -- starts trusted again rather than serving out a backoff earned by the
+    -- last one.
+    pc_walk_misses = 0
+    pc_walk_next = 0
     M.game_ui_active = false
 
     cdo_cache = {}
@@ -299,6 +312,23 @@ end
 -- nothing; `!pwp panel routes` reports the count instead.
 M.pc_fallbacks = 0
 
+-- The walk fallback backs off; the chain never does.
+--
+-- Measured on the headless test server: 7.3ms per player_controller() call,
+-- 6.4ms/s forever, because the closed panel polls the pad chord once a
+-- second and on that machine the chain has no GameViewport to read, so
+-- every poll fell through to FindFirstOf("PalPlayerController") - the
+-- pathological walk, hunting one instance of a class that has ZERO on a
+-- server, which means no early exit and a full array read to answer "no".
+-- For a gamepad nobody is holding, on a machine with no screen.
+--
+-- Only the WALK is rationed, and only after it has actually failed several
+-- times running. The chain is still attempted on every single call, which
+-- is the property the comment above insists on: the instant a controller
+-- exists the fast path returns it, with no waiting out of any backoff. A
+-- machine that legitimately has a controller reaches the walk only in the
+-- moments before the world is up, where both routes fail anyway.
+
 local function via_engine()
     local pc
     pcall(function()
@@ -307,6 +337,27 @@ local function via_engine()
             .OwningGameInstance.LocalPlayers[1].PlayerController
     end)
     return pc
+end
+
+-- Is there a screen on this machine?
+--
+-- The honest test, and NOT the one tried first: a dedicated server has
+-- player controllers - one per connected player - so asking "is there a
+-- controller" says yes on a populated server and lets client-only code run
+-- on a machine with no renderer. That mistake killed the test server twice
+-- on 28 August, both times through '!pwp panel routes', which names what
+-- each lookup returned and faults on the wrappers a headless machine hands
+-- back. GameViewport is the thing that actually differs: every client has
+-- one, no headless server does. Read fresh, nothing kept, and a failure to
+-- read at all counts as "no screen" - the safe direction here, since the
+-- worst case is refusing a diagnostic rather than ending the process.
+function M.has_viewport()
+    local yes = false
+    pcall(function()
+        local ue = require("UEHelpers")
+        yes = ue.GetEngine().GameViewport ~= nil
+    end)
+    return yes
 end
 
 function M.player_controller()
@@ -322,7 +373,21 @@ function M.player_controller()
     -- is precisely when they happen.
     if not valid(pc) then
         M.pc_fallbacks = M.pc_fallbacks + 1
-        pcall(function() pc = FindFirstOf("PalPlayerController") end)
+
+        local now = os.clock()
+        if pc_walk_misses < PC_WALK_PATIENCE or now >= pc_walk_next then
+            log.count("api: pc walk")
+            pcall(function() pc = FindFirstOf("PalPlayerController") end)
+
+            if valid(pc) then
+                pc_walk_misses = 0
+            else
+                pc_walk_misses = pc_walk_misses + 1
+                pc_walk_next = now + PC_WALK_GAP
+            end
+        else
+            log.count("api: pc walk skipped")
+        end
     end
 
     if valid(pc) then

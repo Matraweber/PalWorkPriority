@@ -4730,6 +4730,25 @@ function M.command(cfg, args)
     local verb, rest = tostring(args or ""):match("^%s*(%S*)%s*(.-)%s*$")
     rest = (rest ~= "" and rest) or nil
 
+    -- Every verb below belongs to a panel, and a panel belongs to a screen.
+    --
+    -- Run on a headless server these are not merely useless, one of them is
+    -- fatal: "routes" benchmarks each way of finding a player controller and
+    -- then names what came back, and on a machine that has none the lookups
+    -- answer with live-looking wrappers whose GetFName is an access
+    -- violation - no Lua error, no pcall catching it, the server process
+    -- simply ends. That is how the test server died on 28 August, killed by
+    -- its own diagnostic rather than by anything it was diagnosing.
+    --
+    -- The local player controller is the honest test for "is there a screen
+    -- here": present on every client, absent on every headless server. It is
+    -- also cheap now - the chain answers in nothing, and where it cannot the
+    -- walk is rationed.
+    if not api.has_viewport() then
+        return "no viewport on this machine, so there is no panel to " ..
+            "command. These verbs are client only."
+    end
+
     if verb == "click" then
         local kind, arg = tostring(rest or ""):match("^(%S*)%s*(.-)$")
         return M.click_named(cfg, kind, (arg ~= "" and arg) or nil, -1)
@@ -5200,11 +5219,23 @@ function M.command(cfg, args)
                 got = r
             end
             local ms = (os.clock() - t) * 1000 / 5
-            local nm = "nil"
-            if got ~= nil then
-                pcall(function() nm = got:GetFName():ToString() end)
-            end
-            log.say(string.format("  %-34s %6.2fms  %s", name, ms, nm))
+            -- Whether something came back, never WHAT came back.
+            --
+            -- This line used to call GetFName on the result, and that is
+            -- what killed the test server twice on 28 August: a lookup on a
+            -- machine without a screen answers with a live-looking wrapper,
+            -- and naming it is an access violation - not a Lua error, so the
+            -- pcall around it catches nothing and the process simply ends.
+            -- The timing is the whole point of this verb; the name was a
+            -- nicety, and it cost two crashes. A nil check is safe on any
+            -- machine because it touches nothing.
+            --
+            -- The viewport guard at the top of M.command should stop this
+            -- verb ever running on a server at all. This is the second
+            -- layer, and it is the one that does not depend on correctly
+            -- guessing what kind of machine this is.
+            log.say(string.format("  %-34s %6.2fms  %s", name, ms,
+                got ~= nil and "answered" or "nil"))
         end
 
         timed("FindFirstOf PalPlayerController", function()
