@@ -21,7 +21,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   least 3 Pals survives two AHK restarts in a row. The stand, the settings file
   and the first pass after load all agree, and the Pals act on them without any
   edit after the restart.
-- [ ] **Upgrade from 0.4.1 keeps every row.**
+- [ ] **Upgrade from 0.4.1 keeps every row.** Manual route PASS 2026-10-11 ([evidence](upgrade-041-2026-10-11.md)); offline 0.4.1-writer test in place. Open: the Workshop route (needs an upload by the user, ideally an unlisted test item).
   **Done when:** a real 0.4.1 install with priorities and limits is upgraded
   through both the Workshop and manual routes, and a file diff shows every
   saved row intact. (X rows that 0.4.1 already lost cannot be recovered; the
