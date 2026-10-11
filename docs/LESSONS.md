@@ -108,3 +108,8 @@ discovers a new one, with the date and a link to the evidence.
 - Steam Workshop and a manual install fight: Palworld rewrites `mods.txt`
   and copies its own Scripts on launch. Check for a Workshop subscription
   before debugging "my edits do nothing".
+
+- **Never pipe a deploy or install script into `Select-Object -First N`.**
+  It stops the upstream script once it has N objects, so `deploy.ps1` died
+  silently after its compile step and replaced nothing (2026-10-11). Check the
+  installed hash after every deploy; that is what caught it.

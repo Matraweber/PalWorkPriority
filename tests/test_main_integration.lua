@@ -675,6 +675,22 @@ test("one stand push shares discovery across guilds but not across pushes",funct
     push({})
 end)
 
+test("setprio edits through store.set from remote and is refused from chat",function()
+    local s=boot(true); s.timers.role.fn()
+    assert(s.store.decided and not s.store.is_client,'host role not decided')
+    local ui=package.loaded.ui; ui.wants_pass=false
+    assert(s.commands.setprio('PAL-A 2 3')==true,'remote setprio refused')
+    assert(s.store.get('PAL-A',2)==3 and ui.wants_pass==true,'edit did not land or flag the pass')
+    assert(s.fs.files[ROOT..'priorities.txt']:find('PAL-A|2|3',1,true),'host edit not saved at once')
+    assert(s.commands.setprio('PAL-A 2 X')==true and s.store.get('PAL-A',2)==false)
+    assert(s.fs.files[ROOT..'priorities.txt']:find('PAL-A|2|X',1,true),'X not written')
+    assert(s.commands.setprio('PAL-A 2 9')==false and s.store.get('PAL-A',2)==false,'invalid value applied')
+    assert(s.commands.setprio('only two')==false)
+    local handle=upvalue(package.loaded.remote.command,'handle_command')
+    assert(handle('!pwp setprio PAL-A 2 1',true,true)==true)
+    assert(s.store.get('PAL-A',2)==false,'chat line from the host ran a remote-only command')
+end)
+
 test("command results are derived from completed scheduler stats",function()
     local s=boot(true); s.timers.role.fn()
     assert(s.commands.run("verified 1 normal")==true)

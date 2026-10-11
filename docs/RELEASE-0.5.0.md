@@ -14,7 +14,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 
 ## G1. Settings survive (the most reported problem)
 
-- [ ] **Restart keeps priorities and applies them.** Singleplayer, saved values: PASS twice on 2026-10-11 ([evidence](restart-persistence-2026-10-11.md)). Open: an in-game edit before the restart, and the server. Reports: Two Bob Games
+- [ ] **Restart keeps priorities and applies them.** Singleplayer: saved values PASS twice, and edit then save then restart PASS, on 2026-10-11 ([evidence](restart-persistence-2026-10-11.md)). Open: the server. Reports: Two Bob Games
   (Steam, Sep 23: "Transport X returns to 1 after restart, ignored until edited
   again"), johndujo (Nexus bug: "Priority list not saving").
   **Done when:** in singleplayer AND on the server, a mix of 1-5 and X on at

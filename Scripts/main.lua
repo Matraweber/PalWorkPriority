@@ -1503,6 +1503,29 @@ end
 -- Prints what the base is actually holding, by internal item id. Those ids
 -- are what work_caps keys on, and guessing their spelling is the easiest way
 -- to write a ceiling that silently never triggers.
+-- One priority edit through the same call a stand cell makes (ui.direct ends in
+-- store.set and flags the post-edit pass), so restart and sync tests can run
+-- without driving the mouse. Remote channel only: REMOTE_ONLY refuses it from
+-- every chat line, including the host's own.
+--   setprio <palkey> <work value> <1-5|X>
+COMMANDS.setprio = function(args)
+    local key, work, token = (args or ""):match("^%s*(%S+)%s+(%d+)%s+(%S+)%s*$")
+    work = math.tointeger(tonumber(work))
+    local prio
+    if token == "X" or token == "x" then prio = false else prio = math.tointeger(tonumber(token)) end
+    if not key or not work or prio == nil then
+        log.say("use: setprio <palkey> <work value> <1-5|X>")
+        return false
+    end
+    if not store.decided then log.say("setprio: role not decided yet, nothing changed"); return false end
+    local saved, why = store.set(key, work, prio)
+    if saved then ui.wants_pass = true end
+    log.say(string.format("setprio %s|%d|%s -> %s (state %s%s)", key, work,
+        prio == false and "X" or tostring(prio), saved and "accepted" or "refused",
+        tostring(store.state), type(why) == "string" and (", " .. why) or ""))
+    return saved and true or false
+end
+
 COMMANDS.stock = function()
     run_now(function()
         local camps = api.base_camps()
@@ -1794,6 +1817,8 @@ end
 local SAFE_FROM_CHAT = {
     help = true, status = true, net = true,
 }
+-- Test hooks that only remote.txt or the server console may run.
+local REMOTE_ONLY = { setprio = true }
 
 -- Whether a chat line can be trusted to have come from this machine's player.
 --
@@ -1887,6 +1912,11 @@ local function handle_command(text, from_chat, from_me)
                 "anything that changes something is refused. The server " ..
                 "console and remote.txt always work.")
         end
+        return true
+    end
+
+    if fn and from_chat and REMOTE_ONLY[key] then
+        log.warn("refused '" .. key .. "' from chat: it is a test command for remote.txt only")
         return true
     end
 

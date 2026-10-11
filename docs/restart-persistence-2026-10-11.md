@@ -107,3 +107,25 @@ reported unverified assignments; they cleared by the next tick.
 **Still open in G1:** an in-game edit then save then restart (this run reused
 saved rows, it did not exercise the save path), the same check on the server,
 the 0.4.1 upgrade route, and rapid edits.
+
+## Save path: edit, restart, readback (2026-10-11 20:37-20:42)
+
+Computer use was declined for the game, so the edit was made with a new
+developer command, `setprio <palkey> <work> <1-5|X>`, that makes the same call
+a stand cell ends in (`store.set`, then flagging the post-edit pass). It only
+runs from remote.txt or the console; any chat line, the host's included, is
+refused. A regression test covers both paths, and a negative control (chat
+refusal removed) made it fail as intended. The click-to-cell mapping above
+`store.set` is not exercised here; Codex accepted it natively on 2026-09-24.
+
+| Step | Result |
+|---|---|
+| `setprio` Grizzbolt Handiwork 3 -> X | accepted, state `saved` immediately (host flushes per edit) |
+| file | `...679D42C8...|5|X` written |
+| off-list after restore | `[Handcraft Transport]` (was `[Transport]`) |
+| full restart (`--stand`, 20:39:30) | file still `|5|X`; off-list after restore `[Handcraft Transport]`; 0 WARN/ERROR |
+| restore original 3 | all 41 rows identical to the pre-test backup; only the header's save generation moved 184 -> 186 |
+
+**Verdict: the singleplayer save path passes** (edit, immediate durable save,
+restart, value in force). Remaining G1 items: the server run, the 0.4.1 upgrade
+route and rapid edits.
