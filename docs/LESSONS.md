@@ -87,6 +87,15 @@ discovers a new one, with the date and a link to the evidence.
 - **Re-proposing a measured-and-rejected idea wastes a session.** Check
   [DECISIONS.md](DECISIONS.md) for the rejected list first.
 
+## Lua traps
+
+- **`cond and false or x` never yields false.** The `and false` falls through
+  to `or x`. This exact line in 0.4.1's store.lua dropped every X priority on
+  save ([restart-persistence-2026-10-11.md](restart-persistence-2026-10-11.md)).
+  Use an explicit `if`, or make sure the middle value is truthy.
+- **`math.tointeger(non-number)` returns nil** silently in Lua 5.4, which makes
+  a bad value quietly vanish instead of failing loudly.
+
 ## Tooling traps
 
 - `luacheck.py` only balances blocks. Lua can still reject what it passes.
