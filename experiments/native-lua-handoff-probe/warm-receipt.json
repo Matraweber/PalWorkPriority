@@ -1,0 +1,24 @@
+{
+  "adapter": "warm.lua",
+  "warm_sha256": "d87c24ba882ce3e22f4684a5b26fe237284cf41cfa8c02a04465e186c15ad87e",
+  "test_sha256": "19f2b27137cd7dcfaa5a070cb61c3b175f07df338c7a2c95aa91dab7c66d2125",
+  "offline_tests_passed": [
+    "test_native_handoff_warm.lua",
+    "test_native_handoff_driver.lua"
+  ],
+  "first_delay_ms": 90000,
+  "trial_count": 3,
+  "gap_after_pass_ms": 10000,
+  "arm_file": "warm-run.txt",
+  "arm_contract": "PWP_HANDOFF_WARM <nonce>",
+  "log_file": "warm.log",
+  "original_build_receipt_sha256": "23de32f100fd9b4095c2462f375c28f83202b3c8809f07266b1af9092230a800",
+  "proven_source_hashes": {
+    "entry.cpp": "9782bcbcdfd9a1498a2db9d60ac1841464f722564d2b5526da6339d879cc79af",
+    "driver.lua": "f5da0192aeb97a2f3d3c225fdbb58ee93272f22b7d592e768bfc6fb31fd4f1e3",
+    "main.lua": "afecb31c7068b041b2c627d227369f10a9db640aeac1397b8ee1da3f3170b45a"
+  },
+  "unchanged_v2_dll_sha256": "925535706468f2146ebe1d2ad6c9b7df40302c800d980cf06ba4ab978a89e2ac",
+  "deployed": false,
+  "runtime_validated": false
+}
