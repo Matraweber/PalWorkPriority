@@ -14,6 +14,14 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   on 0.4.1's known P1 bugs. Scope and exit conditions are in
   [RELEASE-0.5.0.md](RELEASE-0.5.0.md). Item-specific production limits move
   to 0.6. *Rejected:* holding every gate in release-gates for 0.5.0.
+- **2026-10-11 - Performance is best effort, not a fixed target.** The
+  user's call: optimise as far as practical rather than promise a number.
+  "Stutter-free" is impossible as a gate because the game itself hitches
+  about twice a minute without the mod. To keep the gate from running
+  forever, it closes when the remaining costs are each fixed or justified and
+  two rounds in a row gain less than 1 slow frame per minute
+  ([RELEASE-0.5.0.md](RELEASE-0.5.0.md) G5). *Rejected:* a hard limit of
+  2 extra slow frames per minute (proposed, not chosen).
 - **2026-10-11 - Async saving does not block 0.5.0.** It stays off by default
   (as it already is) unless its gates in RELEASE-0.5.0.md pass first. The
   synchronous writer with checked saves and backups is the shipping path.

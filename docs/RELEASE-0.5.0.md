@@ -82,12 +82,17 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## G5. Performance target
 
-- [ ] **Target (proposed 2026-10-11, needs the user's OK):** in matched captures
-  (same save, scene, settings; 3 windows each; profiling off), the mod adds at
-  most **2 slow frames (over 33 ms) per minute** over the mod-absent baseline,
-  with the UI closed and with the stand open. Today it adds about 8.
-  **Done when:** both scenes meet the target, or the user accepts a measured
-  number in writing here.
+- [ ] **Best effort, no fixed number (user's decision 2026-10-11).** Optimise
+  as far as is practical and report the measured result honestly in the
+  changelog. Starting point: the mod adds about 8 slow frames (over 33 ms) per
+  minute over the mod-absent baseline (10-11 vs 2); scheduler pass about
+  20 ms, stand refresh about 11 ms.
+  Every measurement uses matched captures (same save, scene and settings;
+  3 windows each; profiling off; UI closed and stand open).
+  **Done when:** every recurring mod cost above 5 ms per call has either been
+  reduced or recorded in DECISIONS.md with its measured price and why it stays,
+  and the last two optimisation rounds each gained less than 1 slow frame per
+  minute. The final mod-present vs mod-absent numbers go in the changelog.
 
 ## G6. Multiplayer minimum (one machine, own server)
 
