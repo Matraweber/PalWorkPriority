@@ -26,7 +26,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   through both the Workshop and manual routes, and a file diff shows every
   saved row intact. (X rows that 0.4.1 already lost cannot be recovered; the
   changelog says so.)
-- [ ] **Rapid edits save once, not per click.**
+- [x] **Rapid edits save once, not per click.** PASS 2026-10-11 on the server: 20 edits, one save, one pass, final value survived a restart ([evidence](restart-persistence-2026-10-11.md)). Timing belongs to G5.
   **Done when:** 20 rapid edits on the server produce no edit callback above
   the G5 budget, and the final values survive a restart.
 

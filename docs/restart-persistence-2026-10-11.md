@@ -162,3 +162,24 @@ focus" at its last step even when the stand did open (the user's windows were
 in front; game is windowed). Treat its report as advisory and check the screen.
 
 **G1 still open:** 0.4.1 upgrade route, rapid edits.
+
+## Rapid edits on the dedicated server (2026-10-11 21:59-22:03)
+
+Twenty edits to one cell (Pal 050BF1CE..., Transporting) were sent from the
+client in a single remote write, so they ran back to back in one tick:
+`2 3 4 5 X 1 2 3 4 5 X 1 2 3 4 5 X 1 2 4`. The client accepted all 20 in order.
+
+| Check | Result |
+|---|---|
+| server log | ONE line, 21:59:37 "priority Transport set to 4 by a player" |
+| server file | `|12|4`, generation 97 -> 98 (one save), one priority-change pass |
+| server restart (panel, 22:00) | reloaded 22:00:17; file still `|12|4`, checksum dcb05d51 unchanged |
+| client after rejoin | stand shows 4 in Flambelle's Transporting cell (screenshot `stand-after-rapid-edits.jpg`) |
+| restore 1 | server checksum back to 7e4eefdc, rows identical to the pre-test copy |
+
+**Verdict: PASS.** The client's per-cell pending edit merged the burst into one
+request carrying the last value, so the server saved once and ran one pass for
+twenty clicks. Limits of this run: the burst arrived within one tick; clicks
+spread over seconds may produce a few requests rather than one, each still a
+single save. Server-side callback time was not measured (server profiling off);
+G5 covers timing.
