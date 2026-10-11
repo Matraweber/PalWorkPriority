@@ -39,11 +39,35 @@ def connect(tls):
     return ftp
 
 
-def names(ftp, path):
+def names(ftp, path, strict=False):
+    """Entry names in a remote directory. NLST first, then MLSD, then LIST,
+    because some hosts refuse NLST. A missing directory is an empty set; with
+    strict=True a host that refuses every listing raises instead of looking empty."""
+    errors = []
     try:
-        return {n.rsplit("/", 1)[-1] for n in ftp.nlst(path)}
-    except ftplib.error_perm:
-        return set()
+        found = {n.rstrip("/").rsplit("/", 1)[-1] for n in ftp.nlst(path)}
+        if found:
+            return found
+    except ftplib.error_perm as e:
+        errors.append(f"NLST {e}")
+    try:
+        found = {n for n, facts in ftp.mlsd(path) if n not in (".", "..")}
+        if found:
+            return found
+    except (ftplib.error_perm, AttributeError) as e:
+        errors.append(f"MLSD {e}")
+    try:
+        lines = []
+        ftp.retrlines("LIST " + path, lines.append)
+        found = {ln.split(None, 8)[-1] for ln in lines if len(ln.split(None, 8)) == 9}
+        found -= {".", ".."}
+        if found:
+            return found
+    except ftplib.error_perm as e:
+        errors.append(f"LIST {e}")
+    if strict and len(errors) == 3:
+        raise ftplib.error_perm("; ".join(errors))
+    return set()
 
 
 def lua_files(zip_path):

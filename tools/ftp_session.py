@@ -81,7 +81,7 @@ def handle(session, rid, op, args):
     say = lines.append
     ok = True
     if op == "ls" and len(args) == 1:
-        say("\n".join(sorted(session.call(lambda f: deploy.names(f, args[0])))))
+        say("\n".join(sorted(session.call(lambda f: deploy.names(f, args[0], strict=True)))) or "(empty)")
     elif op == "tail" and len(args) == 2 and args[1].isdigit():
         data, size = session.call(lambda f: tail(f, args[0], min(int(args[1]), GET_LIMIT)))
         (OUT / f"{rid}.bin").write_bytes(data)
