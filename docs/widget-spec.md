@@ -1,3 +1,22 @@
+# Current widget contract — September 23, 2026
+
+The historical design notes below describe an obsolete 12-widget shell. They are retained as history, **not build instructions**. The current generator and `Scripts/overlay.lua` require 21 named widgets:
+
+- Root (CanvasPanel), Backdrop (Border), Body (VerticalBox).
+- TabsRow, TitleRow, SubRow, NoticeRow, SearchRow, CaptionRow, HeadRow: SizeBox containers holding same-prefix CanvasPanels (Tabs, Title, Sub, Notice, Search, Caption, Head).
+- RuleList and ItemList: ScrollBoxes with automatic sizing.
+- FootRow (SizeBox) holding Foot (CanvasPanel).
+
+The row heights are 34, 34, 26, 22, 40, 24, 28, and 76 respectively. Backdrop defaults to centre anchors/alignment, a 1086 × 700 placeholder, RGBA (0.03, 0.05, 0.08, 0.92); Body padding is 18. Lua supplies the final preferred position, size and controls. Search is a container, not the editable control itself. All 21 widgets are exposed as generated-class properties; `GetWidgetFromName` is not the runtime lookup contract.
+
+The action-router candidate uses the shipped PalUserWidget parent, PWP_InputContract=3, PWP_CancelRequested=false and bIsFocusable=true. Blueprint registers the consuming RadialMenuCancel action with an engine-bound callback; no delegate is passed by value through Lua. The callback only sets the request. Lua verifies registration was attempted and the widget is active, acknowledges/cancels through the current callback's widget, and deactivates before detachment. Contract 3 adds the engine-owned PWP_AmountEditor reference and PWP_EditorEscapeHeld boolean for focused-editor Escape preview/release handling. Normal edit cancellation returns focus only when that editor owns it; teardown never requests refocus. The native Pal widget's GameMouseCaptureMode is set and verified as NoCapture before activation. See [editor Escape evidence](editor-escape-2026-09-23.md). Generic Slate-only handling (the rejected contract 1) did not isolate ordinary panel Escape; contract 3 retains CommonUI for that path. Physical held-key/controller acceptance remains separate.
+
+Back up editor assets and installed packages before rebuilding. Verify all 21 names/types, graph connections, compilation, defaults and compiled-event tests, followed by a fresh-process `-VerifyInputOnly` readback. Package only the intended widget plus the existing verified ModActor; exclude experimental assets. The editor module is a build tool, not a runtime dependency. Native acceptance (editing, closing, vanilla focus and text input after a restart) is recorded in `native-escape-2026-09-16.md` and remains required after a successful cook.
+
+---
+
+# Historical prototype notes (superseded)
+
 # The widget, exactly
 
 What to build in the editor. Names are load-bearing: Lua finds every one of

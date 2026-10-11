@@ -1,0 +1,46 @@
+{
+  "schema": 2,
+  "path": "LogicMods/PalWorkPriority.pak",
+  "sha256": "4eddf38bcf859ec27df2424aa9bda2ea9ded735e56ab7178b5c97d0b10bf4a9d",
+  "bytes": 12040,
+  "source": "Combined WorkRules and StandInput package; test-results/stand-keyboard-package-20260924.json. Matches installed client asset on 2026-10-11.",
+  "native_acceptance": "Stand keyboard and reopen accepted 2026-09-24; full current release candidate acceptance remains pending.",
+  "widgets": {
+    "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C": {
+      "field": "PWP_InputContract",
+      "version": 3
+    },
+    "/Game/Mods/PalWorkPriority/UI/WBP_StandInput.WBP_StandInput_C": {
+      "field": "PWP_Contract",
+      "version": 2
+    }
+  },
+  "contract_reference": "docs/widget-spec.md",
+  "provenance_reference": "docs/stand-keyboard-2026-09-24.md",
+  "members": [
+    {
+      "path": "ModActor.uasset",
+      "sha256": "44ca112ec9dd2f068de68ddfe41b5edfff4ef4add08cb754c8475a46a4d98645"
+    },
+    {
+      "path": "ModActor.uexp",
+      "sha256": "85b943d1841b01e37499903b4d68ff9f58f7dae357995b74d403c02c1ac123fe"
+    },
+    {
+      "path": "UI/WBP_WorkRules.uasset",
+      "sha256": "07c972c2b80abbbd172715346cc7eaa589186a92faf2a9aef43e8182cf495650"
+    },
+    {
+      "path": "UI/WBP_WorkRules.uexp",
+      "sha256": "17c8841c00bf63352a2517911513235b59ba845e84667d77a8d936e8555f7ccd"
+    },
+    {
+      "path": "UI/WBP_StandInput.uasset",
+      "sha256": "7286d0e67b82a873120f54fc01815e392283c2d05c6076d980ba4c46cb5e822f"
+    },
+    {
+      "path": "UI/WBP_StandInput.uexp",
+      "sha256": "84711e9afc5ad7d16e3e868d302bf5e3a883698404eae025dcddcbd2b387911e"
+    }
+  ]
+}
