@@ -32,8 +32,17 @@
 
 local log = require("log")
 local api = require("palapi")
+local wire = require("protocol")
+local settings_gate = require('settings_gate')
 
 local M = {}
+
+-- Fixed, opt-in phase labels; no native wrappers or timing state survive the
+-- synchronous call. Inclusive child measurements must not be added to parents.
+local function push_phase(label, fn, ...)
+    if log.perf then return log.around(label, fn, ...) end
+    return fn(...)
+end
 
 -- How many work types the wire format carries.
 --
@@ -62,6 +71,14 @@ M.clients = {}
 
 -- Set by main.lua. Called on the authority with (command, value, component).
 M.on_command = nil
+-- Main supplies state-bound durability and deferred completion adapters.
+M.publication_guard = nil
+M.pending_owner = nil
+M.pending_status = nil
+M.publish_pending = nil
+-- Main supplies authenticated interest and a plain-data snapshot builder.
+M.on_storage_interest = nil
+M.on_storage_request = nil
 -- Set by main.lua. Called on a client with (message).
 M.on_state = nil
 
@@ -167,12 +184,14 @@ end
 
 -- Client to server. Returns false when there is no component to send through,
 -- which happens before the world has settled and is not an error.
-function M.to_server(command, value)
+function M.to_server(command, value, current)
+    if current and not current() then return false end
     -- The owned one when this is a client, because an unowned component is
     -- not a slower path here, it is a silent no-op. The old answer stays as
     -- the fallback so the authority - where ownership is not a question -
     -- behaves exactly as before.
     local comp, route = owned_component()
+    if current and not current() then return false end
 
     -- No fallback on a client.
     --
@@ -191,13 +210,19 @@ function M.to_server(command, value)
     --
     -- Kept under authority, where ownership genuinely is not in question.
     if not api.valid(comp) and api.has_authority() then
+        if current and not current() then return false end
         comp, route = api.network_component(), "findfirst"
     end
+    if current and not current() then return false end
     if not api.valid(comp) then return false end
+    if current and not current() then return false end
     M.stats.owner_route = route
 
     local ok, err = pcall(function()
-        comp:Request_Server_int32(ZERO_GUID, FName(command), value or 0)
+        local name = FName(command)
+        if current and not current() then return false end
+        comp:Request_Server_int32(ZERO_GUID, name, value or 0)
+        return true
     end)
 
     if not ok then
@@ -205,6 +230,7 @@ function M.to_server(command, value)
         return false
     end
 
+    if err == false or (current and not current()) then return false end
     M.stats.sent_up = M.stats.sent_up + 1
     return true
 end
@@ -215,8 +241,10 @@ end
 -- engine object is safe to touch. FindAllOf is not free, but it runs once per
 -- message to one client rather than once per frame, and the alternative is a
 -- stored wrapper - which is not a cheaper option, it is a crash.
-local function live_client(name)
+local function live_client(name, current)
+    if current and not current() then return nil end
     local all = FindAllOf("PalNetworkBaseCampComponent")
+    if current and not current() then return nil end
     if not all then return nil end
     for _, comp in ipairs(all) do
         -- Validated before it is asked its name. FindAllOf hands back
@@ -224,7 +252,13 @@ local function live_client(name)
         -- GetFullName on one of those is a member call on freed memory - the
         -- pcall inside full_name cannot catch that, it never could. Every
         -- other FindAllOf loop in this codebase checks first.
-        if api.valid(comp) and full_name(comp) == name then return comp end
+        local valid = api.valid(comp)
+        if current and not current() then return nil end
+        if valid then
+            local found = full_name(comp)
+            if current and not current() then return nil end
+            if found == name then return comp end
+        end
     end
     return nil
 end
@@ -233,18 +267,30 @@ end
 --
 -- Takes either a name (the stored case, re-resolved here) or a component the
 -- caller obtained in this same call, which is what the hook handlers pass.
-function M.to_client(comp, message)
-    if type(comp) == "string" then comp = live_client(comp) end
+function M.to_client(comp, message, current, authorize)
+    if current and not current() then return false end
+    if type(comp) == "string" then comp = live_client(comp, current) end
+    if current and not current() then return false end
     if not api.valid(comp) then return false end
+    if current and not current() then return false end
 
     local ok, err = pcall(function()
-        comp:Notify_RequestClient_int32(ZERO_GUID, FName(message), 1)
+        local name = FName(message)
+        if current and not current() then return false end
+        -- Conversion can dispatch native callbacks. Prove storage ownership
+        -- after it, immediately before sending, using this callback's census.
+        if authorize and not authorize() then return false end
+        if current and not current() then return false end
+        comp:Notify_RequestClient_int32(ZERO_GUID, name, 1)
+        return true
     end)
 
     if not ok then
         M.stats.last_error = tostring(err)
         return false
     end
+    if err == false then return false end
+    if current and not current() then return false end
 
     M.stats.sent_down = M.stats.sent_down + 1
     return true
@@ -280,11 +326,16 @@ end
 -- the walk happens: once for a single inbound message, once for a whole push
 -- to every client. It used to be walked inside the per-client answer, which is
 -- the shape this split exists to break.
-local function transmitters()
+local function transmitters(current)
     local out = {}
-    for _, t in ipairs(FindAllOf("PalNetworkTransmitter") or {}) do
-        if api.valid(t) then
+    local found = FindAllOf("PalNetworkTransmitter") or {}
+    if current and not current() then return out end
+    for _, t in ipairs(found) do
+        local valid = api.valid(t)
+        if current and not current() then return out end
+        if valid then
             local n = full_name(t)
+            if current and not current() then return out end
             if n then out[n] = t end
         end
     end
@@ -296,31 +347,41 @@ end
 -- The lookup is a membership test as much as a shortcut: the component's outer
 -- is only accepted as a transmitter because a class-filtered walk found it
 -- under that name, rather than because GetOuter said so.
-local function guild_via(comp, tx_by_name)
+local function guild_via(comp, tx_by_name, current)
     local outer
     pcall(function() outer = comp:GetOuter() end)
+    if current and not current() then return nil end
     if not api.valid(outer) then return nil end
+    if current and not current() then return nil end
 
     local want = full_name(outer)
+    if current and not current() then return nil end
     if not want then return nil end
 
     local t = tx_by_name[want]
     if not api.valid(t) then return nil end
+    if current and not current() then return nil end
 
     local owner
     pcall(function() owner = t:GetOwner() end)
+    if current and not current() then return nil end
     if not api.valid(owner) then return nil end
+    if current and not current() then return nil end
     return api.guild_of(owner)
 end
 
 -- One message, one sender: the walk is worth it here and happens once.
-function M.guild_of_sender(comp)
+function M.guild_of_sender(comp, current)
     if not api.valid(comp) then return nil end
-    return guild_via(comp, transmitters())
+    if current and not current() then return nil end
+    local tx = transmitters(current)
+    if current and not current() then return nil end
+    return guild_via(comp, tx, current)
 end
 
-function M.who(comp)
+function M.who(comp, current)
     if not api.valid(comp) then return nil end
+    if current and not current() then return nil end
     return full_name(comp)
 end
 
@@ -337,19 +398,6 @@ local function resolve(context)
     local comp
     pcall(function() comp = context:get() end)
     if not api.valid(comp) then return nil end
-    return comp
-end
-
-local function remember(context)
-    local comp = resolve(context)
-    if comp == nil then return nil end
-
-    local name = full_name(comp)
-    if name then
-        M.clients[name] = { at = os.clock() }
-    end
-    -- Returned for the caller to use NOW, inside this hook callback. It is
-    -- deliberately not what gets stored.
     return comp
 end
 
@@ -373,7 +421,7 @@ function M.install()
                 local _b = log.count("hook: net up")
                 local _t0 = log.perf and os.clock() or nil
 
-                pcall(function()
+                local hook_ok, hook_error = pcall(function()
                     local command = read_name(B, A)
                     if type(command) ~= "string" then return end
                     if command:sub(1, #PREFIX) ~= PREFIX then return end
@@ -398,10 +446,9 @@ function M.install()
                         return
                     end
 
-                    local comp = remember(Context)
-
-                    if M.on_command then M.on_command(command, value, comp) end
+                    M.receive_command(resolve(Context), command, value)
                 end)
+                if not hook_ok then log.warn("network up hook failed: " .. tostring(hook_error)) end
 
                 if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
@@ -413,7 +460,7 @@ function M.install()
                 local _b = log.count("hook: net down")
                 local _t0 = log.perf and os.clock() or nil
 
-                pcall(function()
+                local hook_ok, hook_error = pcall(function()
                     local message = read_name(B, A)
                     if type(message) ~= "string" then return end
                     if message:sub(1, #PREFIX) ~= PREFIX then return end
@@ -448,18 +495,9 @@ function M.install()
                     -- the next set. One line, for something that expensive.
                     if api.has_authority() then return end
 
-                    -- Stand data first, and it never reaches on_state.
-                    --
-                    -- on_state is main.lua's rule applier, which accumulates
-                    -- into a batch and swaps it in on Done. Feeding pal lines
-                    -- through it would have that batch grow entries it cannot
-                    -- read and then write them over caps.txt. Two protocols
-                    -- sharing one channel need to part company at the top of
-                    -- the handler, not inside the consumer.
-                    if M.on_pal_message(message) then return end
-
-                    if M.on_state then M.on_state(message) end
+                    M.receive_state(message)
                 end)
+                if not hook_ok then log.warn("network down hook failed: " .. tostring(hook_error)) end
 
                 if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
@@ -486,490 +524,1267 @@ function M.install()
     return M.installed
 end
 
-function M.reset()
-    M.clients = {}
-
-    -- The stand cache goes with the world it describes.
-    --
-    -- This cleared only M.clients, so pal data from a previous session
-    -- survived a world switch. The client grid's gate asks "is net.pals
-    -- non-empty", which stale data satisfies - so the gate stopped meaning
-    -- "the server has told me about THIS world" and started meaning "a server
-    -- once told me about some world". A half-received batch left in
-    -- pal_incoming would linger the same way.
-    M.pals = {}
-    M.pals_gen = M.pals_gen + 1
-    M.clear_pal_incoming()
+-- Only a negotiated peer may reach main's existing authorized command handler.
+-- Nonces isolate sessions; they are not a substitute for RPC ownership checks.
+local send_up = M.to_server
+local receiver, sequence, nonce_serial = nil, 0, 0
+local requests, cells, offers = {}, {}, {}
+-- Storage has its own receiver, uncertainty, request IDs and paced queue.
+-- No native wrappers survive a request callback or transport beat.
+-- Bounds: at most four S packets per 100ms callback (or one lock packet),
+-- one fresh recipient/census shared only within that callback; eight queued peers, twelve
+-- seconds to start, <9 seconds to finish a started batch, twenty-second client
+-- request deadline. Unchanged selections refresh >=10 seconds after completion;
+-- selection changes and server admission are limited to one request per second.
+-- The wire currently permits 32 data chunks + B/E (34 packets). These are
+-- traffic bounds, not a claim about native callback cost or frame-time safety.
+local stock = {}
+M.storage_stats = {requests=0, builds=0, packets=0, transmitter_walks=0,
+    component_fallbacks=0, queue_peak=0}
+local challenge_serial = 0
+-- One synchronous handler's authenticated plain data; never engine wrappers.
+local command_context = nil
+local deferred, deferred_jobs, deferred_order, deferred_busy=nil,{},{},false
+local deferred_bindings={}
+function M.enable_deferred(enabled)
+    if enabled~=true and enabled~=false then return false end
+    if enabled and (next(M.clients or {})~=nil or deferred_busy or api.has_authority()~=true) then return false end
+    if deferred then deferred:close() end
+    deferred,deferred_jobs,deferred_order,deferred_bindings=nil,{},{},{}
+    if enabled then deferred=require('settings_pending_edits').new{enabled=true} end
+    return true
 end
+local hello_at, hello_tries = nil, 0
+local ACK_TIMEOUT, COALESCE = 8, 0.10
+local durable_ack = { P = 0, R = 0 }
+M.SCHEMA = wire.SCHEMA
+M.pals, M.pals_gen, M.pending_gen = {}, 0, 0
+-- At most one request watermark for each persistence file, never per snapshot.
+M.save_failures = {}
+M.status, M.status_reason = "connecting", "awaiting_session"
+M.on_snapshot, M.on_status, M.on_edit, M.on_session = nil, nil, nil, nil
 
--- ---------------------------------------------------------------------------
--- The rule protocol
--- ---------------------------------------------------------------------------
---
--- Everything rides in the FName, pipe separated, because that is the only
--- payload channel these two RPCs have.
---
---   up    PWP_Hello                          announce, ask for everything
---         PWP_Set|<work>|<item>|<amount>     set a rule
---         PWP_Clear|<work>|<item>            remove one
---
---   down  PWP_Reset                          forget everything, a batch follows
---         PWP_Rule|<work>|<item>|<amount>    one rule
---         PWP_Done                           end of batch
---
--- The batch is bracketed rather than counted. A count would have to be right,
--- and a client that missed one message would wait for a total that never
--- arrives; brackets just mean the list ends when it ends.
+local function now() return os.clock() end
 
-local function split(text)
-    local out = {}
-    for part in tostring(text):gmatch("([^|]+)") do out[#out + 1] = part end
-    return out
+local unavailable_reason
+local recovery_retry_at,recovery_retries=nil,0
+-- Schema 3 already has a reason field. Only known codes may cross the wire;
+-- handler errors and old peers' unknown reasons collapse to generic rejection.
+local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,
+    rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true}
+local function rejection_reason(reason)
+    return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'
 end
-
--- Called on the authority to push every rule to one client, or to all of
--- them when comp is nil.
--- Per-pal ranks and priorities, server to client.
---
--- The stand grid needs two things for every cell: whether the pal CAN do that
--- work, and what priority it is set to. On a client the first is unobtainable
--- - GetWorkSuitabilityRank on a replicated pal is an access violation, not a
--- Lua error, so no pcall saves the process - and the second lives in a file
--- only the server reads. That is why the grid has always been authority-only.
---
--- Both are cheap to send. One line per pal carries fourteen ranks and
--- fourteen priorities as one character each, so a fourteen pal base is
--- fourteen short lines rather than four hundred values.
---
---   PWP_Pal|<key>|<ranks>|<prios>
---
--- ranks are '0'-'5' by work index, prios are '1'-'5', 'X' for never, '-' for
--- unset. Position IS the work type, which is why both strings are fixed
--- length and why a missing entry is a character rather than an omission.
-M.pals = {}
-
--- Bumped whenever a batch lands, so a client can tell "nothing has changed"
--- from "I have not looked yet" without comparing tables.
-M.pals_gen = 0
-
-local function encode_ranks(ranks, n)
-    local out = {}
-    for t = 1, n do
-        local r = ranks and ranks[t] or 0
-
-        -- Clamped UP, not down to zero.
-        --
-        -- This mapped anything above 5 to '0', and '0' decodes as "cannot do
-        -- this work" - so the cell was handed back to vanilla. Ranks DO exceed
-        -- 5: suitability_rank prefers GetWorkSuitabilityRankWithCharacterRank,
-        -- which folds in condenser rank, so an upgraded pal reads higher than
-        -- its base. The effect was that a condensed pal lost exactly the work
-        -- types it was best at, and only on a client, because only a client
-        -- goes through this encoding.
-        --
-        -- Nine rather than five, because only "is it above zero" decides
-        -- capability and a single character is what keeps the line short. The
-        -- colour scale still tops out at 5; a rank is not a priority.
-        if type(r) ~= "number" or r < 0 then r = 0 end
-        if r > 9 then r = 9 end
-
-        out[t] = tostring(math.floor(r))
+local function set_status(status, reason, force)
+    if unavailable_reason then status,reason='unavailable',unavailable_reason end
+    if status == "ready" and (M.save_failures.P or M.save_failures.R) then
+        status, reason = "applied_unsaved", "save_failed"
     end
-    return table.concat(out)
-end
-
-local function encode_prios(prios, n)
-    local out = {}
-    for t = 1, n do
-        local p = prios and prios[t]
-        if p == false then out[t] = "X"
-        elseif type(p) == "number" and p >= 1 and p <= 5 then
-            out[t] = tostring(math.floor(p))
-        else out[t] = "-" end
+    local changed = M.status ~= status or M.status_reason ~= reason
+    M.status, M.status_reason = status, reason
+    if status=='ready' then recovery_retry_at,recovery_retries=nil,0 end
+    if (changed or force) and M.on_status then
+        local ok, err = pcall(M.on_status, status, reason)
+        if not ok then log.warn("network status callback failed: " .. tostring(err)) end
     end
-    return table.concat(out)
 end
 
-local function decode_ranks(text, n)
-    local out = {}
-    for t = 1, n do
-        local c = text:sub(t, t)
-        local v = tonumber(c)
-        if v and v > 0 then out[t] = v end
+local function can_edit()
+    return not unavailable_reason and receiver and wire.ready(receiver)
+        and (M.status == "ready" or M.status == "rejected" or M.status == "applied_unsaved")
+end
+
+local function notify_edit(entry, status, reason)
+    entry.status = status
+    M.pending_gen = M.pending_gen + 1
+    if M.on_edit then
+        local ok, err = pcall(M.on_edit, entry.key, entry.work, status, reason, entry.id)
+        if not ok then log.warn("network edit callback failed: " .. tostring(err)) end
     end
-    return out
+    -- Main also uses on_edit for the limits status. Pending retries, acks
+    -- awaiting snapshots and older accepted edits prove no durable recovery.
+    -- Reassert the connection/file status after every edit callback while a
+    -- save error remains; settle clears it only after a later durable commit.
+    if M.save_failures.P or M.save_failures.R then
+        set_status(M.status, M.status_reason, true)
+    end
 end
 
-local function decode_prios(text, n)
-    local out = {}
-    for t = 1, n do
-        local c = text:sub(t, t)
-        if c == "X" then out[t] = false
-        elseif c ~= "-" and c ~= "" then
-            local v = tonumber(c)
-            if v then out[t] = v end
+function M.begin_session(epoch)
+    -- Enablement belongs to this explicitly reviewed session, never a reconnect
+    -- into another local world/role. Late replies lose their original ledger.
+    if deferred then deferred:close() end
+    deferred,deferred_jobs,deferred_order,deferred_bindings=nil,{},{},{}
+    unavailable_reason=nil
+    recovery_retry_at,recovery_retries=nil,0
+    command_context = nil
+    stock = { open=false, serial=0, jobs={}, order={} }
+    nonce_serial = nonce_serial + 1
+    M.epoch = epoch
+    M.local_nonce = string.format("%x-%x-%x", os.time(), math.floor(now() * 1000000), nonce_serial)
+    M.server_nonce, M.guild, M.server_guild = nil, nil, nil
+    M.clients, M.pals, M.rules = {}, {}, {}
+    M.pals_gen, M.pending_gen = M.pals_gen + 1, M.pending_gen + 1
+    receiver, requests, cells, offers, sequence = nil, {}, {}, {}, 0
+    hello_at, hello_tries = nil, 0
+    M.revisions = { P = 0, R = 0 }
+    M.save_failures, durable_ack = {}, { P = 0, R = 0 }
+    set_status("connecting", "awaiting_handshake")
+    -- Also fires when a Welcome reveals a restarted server without a local
+    -- ClientRestart. Main can immediately clear its separate remote caps view.
+    if M.on_session then
+        local ok, err = pcall(M.on_session, epoch)
+        if not ok then log.warn("network session callback failed: " .. tostring(err)) end
+    end
+    return M.local_nonce
+end
+
+-- main owns the epoch and may call reset after begin_session in its reset list.
+function M.reset() return M.begin_session(M.epoch) end
+
+function M.hello()
+    if api.has_authority() ~= false or M.status == "incompatible" then return false end
+    local t = now()
+    if hello_at and t - hello_at < 2 then return false end
+    hello_at, hello_tries = t, math.min(6, hello_tries + 1)
+    -- 0.4.1 recognizes Hello and replies in its old format. Seeing that reply
+    -- explicitly reports incompatibility; it never enters our snapshot parser.
+    local sent = send_up(table.concat({ PREFIX .. "Hello", M.SCHEMA, M.WORKS,
+        M.local_nonce }, "|"), 0)
+    if not sent then set_status("connecting", "transport_unavailable") end
+    return sent
+end
+
+function M.to_server(command, value)
+    if command == PREFIX .. "Hello" then return M.hello() end
+    if command == PREFIX .. "Echo" then return send_up(command, value) end
+    return false -- edits must carry request IDs and negotiated session fields
+end
+
+local function peer_for(comp, guild)
+    local name = M.who(comp)
+    local peer = name and M.clients[name]
+    if not peer or peer.server ~= M.local_nonce or peer.guild ~= guild then return nil end
+    return peer
+end
+
+-- Schema 3 lock control message. Only confirmed peers receive it; it grants
+-- nothing. A client latches it until begin_session creates a fresh nonce.
+local function peer_current(peer)
+        local epoch,server,client,guild=M.epoch,M.local_nonce,peer.client,peer.guild
+        local name
+        for k,p in pairs(M.clients)do if rawequal(p,peer)then name=k;break end end
+        return function()
+            return api.has_authority()==true and M.epoch==epoch and M.local_nonce==server
+                and name~=nil and rawequal(M.clients[name],peer) and peer.server==server
+                and peer.client==client and peer.guild==guild
         end
+end
+local function unavailable(comp,peer,current)
+    current=current or peer_current(peer)
+    if not current() then return true end -- invalidated: stop this operation
+    if not settings_gate.blocked() then return false end
+    local reason=settings_gate.status()=='restart_required'
+        and 'settings_restart_required' or 'settings_recovering'
+    M.to_client(comp,wire.envelope('L',peer.server,peer.client,peer.guild)..'|'..reason,current)
+    if not current() then return true end
+    return true
+end
+local function snapshot_guard(comp,peer,current)
+    return function()
+        if not current() then return false end
+        return not unavailable(comp,peer,current) and current()
     end
-    return out
 end
 
--- rows_for(guild) returns { { key, ranks, prios }, ... } for that guild, and
--- is called by the caller's own code because only it can ask a pal for a rank.
---
--- A FUNCTION rather than a list, so each recipient gets their own guild's
--- pals. The first version took one flat list and sent it to everybody, which
--- handed every player the pal keys and priority table of every other guild on
--- the server - and it is those keys the write path then accepted. push_rules
--- has been per guild since it was written; this is the same rule on the same
--- channel.
--- only_key sends just that pal's row, as a bare Pal line with no Reset or
--- Done around it.
---
--- One changed cell used to re-push the entire table: PalReset, fourteen Pal
--- lines and PalDone, so sixteen RPCs to report one number. Measured on a
--- client, a single RPC costs about seventeen milliseconds of game thread, so
--- the round trip for one click was pushing four hundred, and it was visible as
--- a hitch on every click. Sending the one row that moved makes that one RPC.
---
--- The receiving end needed nothing new: a Pal line with no batch open already
--- merges straight into M.pals.
-function M.push_pals(rows_for, comp, only_key)
-    if type(rows_for) ~= "function" then return false end
+local function clear_stock_view(keep_metadata)
+    stock.view, stock.pending = nil, nil
+    if not keep_metadata then stock.metadata = nil end
+    if stock.receiver then wire.invalidate(stock.receiver, 'S') end
+end
 
-    local n = M.WORKS
+function M.set_storage_open(open)
+    open = open == true
+    if stock.open == open then return end
+    stock.open, stock.interest, stock.due = open, nil, nil
+    clear_stock_view()
+end
 
-    -- One batch per guild, built on demand and reused, as push_rules does.
-    local built = {}
-    local function batch_for(guild)
-        local cache_key = guild or "<none>"
-        if built[cache_key] then return built[cache_key] end
-
-        -- A recipient whose guild will not resolve is sent nothing.
-        --
-        -- Belt and braces: stand_rows refuses a nil guild too, so rows_for
-        -- already answers empty. This is here because push_pals takes rows_for
-        -- as an argument and cannot see what it does, and the cost of that
-        -- assumption being wrong is one client receiving every guild's roster.
-        --
-        -- A full push still brackets with Reset and Done, so the client ends
-        -- up holding an empty table rather than a stale one.
-        if type(guild) ~= "string" or guild == "" then
-            local empty = only_key and {}
-                or { PREFIX .. "PalReset", PREFIX .. "PalDone" }
-            built[cache_key] = empty
-            return empty
-        end
-
-        local batch = {}
-        if not only_key then batch[1] = PREFIX .. "PalReset" end
-
-        for _, row in ipairs(rows_for(guild) or {}) do
-            if type(row.key) == "string" and row.key ~= ""
-                and (only_key == nil or row.key == only_key) then
-                batch[#batch + 1] = string.format("%sPal|%s|%s|%s", PREFIX,
-                    row.key, encode_ranks(row.ranks, n),
-                    encode_prios(row.prios, n))
-            end
-        end
-
-        -- An empty batch is the ordinary answer for a guild that does not own
-        -- the pal that moved, not a failure.
-        if not only_key then batch[#batch + 1] = PREFIX .. "PalDone" end
-
-        built[cache_key] = batch
-        return batch
-    end
-
-    if comp then
-        for _, msg in ipairs(batch_for(M.guild_of_sender(comp))) do
-            if not M.to_client(comp, msg) then return false end
-        end
+function M.request_stock(guild, selected)
+    if not stock.open or not wire.token(guild) or (selected ~= nil and not wire.token(selected))
+        or guild ~= M.guild or unavailable_reason then return false end
+    local old = stock.interest
+    if old and old.guild == guild and old.selected == selected then return true end
+    -- The UI adopts a server-selected default after the first complete reply.
+    -- That is not a new selection and must not discard its just-received data.
+    local view = stock.view or stock.metadata
+    if old and old.guild == guild and view and
+        (view.storage.scope == 'guild' or (old.selected == nil and view.storage.camp == selected)) then
+        old.selected = selected
         return true
     end
-
-    if next(M.clients) == nil then return false end
-
-    -- Names resolved to components by one walk, and guilds by one more.
-    --
-    -- M.clients holds a NAME and a timestamp, never a component: an IsValid on
-    -- a wrapper kept from an earlier frame is the stored-wrapper dereference
-    -- this codebase is arranged around. Reading those entries as components is
-    -- what made every push report sent=false while claiming fourteen pals.
-    local live_by_name, resolved = {}, 0
-    for _, c in ipairs(FindAllOf("PalNetworkBaseCampComponent") or {}) do
-        if api.valid(c) then
-            local nm = full_name(c)
-            if nm then
-                live_by_name[nm] = c
-                resolved = resolved + 1
-            end
-        end
-    end
-
-    if resolved == 0 then
-        log.debug("stand push: no components resolved, nothing sent")
-        return false
-    end
-
-    local tx_by_name = transmitters()
-    local sent = 0
-
-    for name in pairs(M.clients) do
-        local live = live_by_name[name]
-        if live ~= nil then
-            local ok = true
-            for _, msg in ipairs(batch_for(guild_via(live, tx_by_name))) do
-                if not M.to_client(live, msg) then
-                    ok = false
-                    break
-                end
-            end
-            -- A client that took only part of a batch is left holding an
-            -- unfinished one, so it is not counted as reached.
-            if ok then sent = sent + 1 end
-        end
-    end
-
-    return sent > 0
-end
-
--- Applied on the client. Kept whole rather than merged, so a pal that leaves
--- the base stops being answered for instead of lingering at its last known
--- ranks.
-local pal_incoming = nil
-
--- Reachable from M.reset, which is declared above this upvalue.
-function M.clear_pal_incoming()
-    pal_incoming = nil
-end
-
-function M.on_pal_message(message)
-    if message == PREFIX .. "PalReset" then
-        pal_incoming = {}
-        return true
-    end
-
-    if message == PREFIX .. "PalDone" then
-        if pal_incoming then
-            M.pals = pal_incoming
-            M.pals_gen = M.pals_gen + 1
-            pal_incoming = nil
-
-            -- Counted by walking, not by #. M.pals is keyed by pal key, so the
-            -- length operator answers 0 however many are in it - which it did,
-            -- reporting "0 pal(s)" while fourteen were on screen. A log line
-            -- that contradicts the thing it is describing is worse than none.
-            local n = 0
-            for _ in pairs(M.pals) do n = n + 1 end
-            log.debug("stand data: " .. n .. " pal(s) from the server")
-        end
-        return true
-    end
-
-    local key, ranks, prios =
-        message:match("^" .. PREFIX .. "Pal|([^|]+)|([^|]*)|([^|]*)$")
-    if key == nil then return false end
-
-    local into = pal_incoming or M.pals
-    into[key] = { ranks = decode_ranks(ranks, M.WORKS), prios = decode_prios(prios, M.WORKS) }
-
-    -- A line outside a batch is a single-row update, and it is finished the
-    -- moment it lands: there is no PalDone coming to commit it. So the
-    -- generation moves here, or the grid holds the old number until something
-    -- unrelated pushes a full table.
-    --
-    -- Inside a batch this must NOT move, or the grid repaints once per row and
-    -- draws a half-applied table fourteen times over.
-    if into == M.pals then
-        M.pals_gen = M.pals_gen + 1
-    end
-
+    stock.interest = {guild=guild, selected=selected}
+    clear_stock_view()
+    stock.due = math.max(now() + COALESCE, (stock.last_sent or -1) + 1)
     return true
 end
 
-function M.push_rules(caps, cfg, comp)
-    -- One batch per guild, built on demand and reused.
-    --
-    -- Each client is sent only its own guild's ceilings, so a player never
-    -- sees - or has their bases stopped by - a rule another guild set. Two
-    -- clients in the same guild get identical lines, so the batch is cached
-    -- by guild rather than rebuilt per recipient.
-    --
-    -- A nil guild is a real case, not an error: a player in no guild, or one
-    -- the server cannot resolve yet. They get the unscoped rules only, which
-    -- is what caps.all answers for nil, and never another guild's.
-    local built = {}
-    local function batch_for(guild)
-        local key = guild or "<none>"
-        if built[key] then return built[key] end
+function M.storage_view(guild, selected)
+    local out = {verified=false, guild=guild, epoch=M.epoch, choices={},
+        label='Storage unavailable', totals={}}
+    local event, interest = stock.view or stock.metadata, stock.interest
+    if not stock.open or unavailable_reason or not event or not interest or guild ~= M.guild
+        or guild ~= interest.guild or event.guild ~= guild or event.epoch ~= M.epoch
+        or event.session ~= M.server_nonce or event.client_session ~= M.local_nonce then return out end
+    local view = event.storage
+    if view.scope == 'camp' and view.camp ~= nil and selected ~= nil and view.camp ~= selected then return out end
+    out.scope, out.camp, out.expires_at = view.scope, view.camp, event.expires_at
+    for i, camp in ipairs(view.choices) do
+        out.choices[i] = camp
+        if camp == view.camp then out.index = i end
+    end
+    out.label = view.scope == 'guild' and 'All loaded bases in your guild'
+        or (out.index and ('Base '..out.index..'/'..#out.choices..' ('..view.camp:sub(1,8)..')')
+            or 'Storage unavailable')
+    -- Count freshness does not revoke confirmed selector metadata. Otherwise
+    -- every TTL gap removes the header action needed to choose another camp.
+    out.verified = view.verified == true and now() < event.expires_at
+    if out.verified then
+        -- Published totals are immutable by contract. The picker keys its
+        -- sorted/search cache by this identity, so never copy on a UI read.
+        out.totals = view.totals
+    end
+    return out
+end
 
-        local batch = { PREFIX .. "Reset" }
-        for work, items in pairs(caps.all(cfg, guild)) do
-            for item, amount in pairs(items) do
-                batch[#batch + 1] =
-                    string.format("%sRule|%s|%s|%d", PREFIX, work, item, amount)
+local function receive_stock(comp, p)
+    if #p ~= 7 or not wire.token(p[6], 10) or not p[6]:match('^[1-9]%d*$')
+        or not wire.integer(p[6], 1, 2147483647)
+        or (p[7] ~= '-' and not wire.token(p[7])) then return false end
+    local state, epoch, server = stock, M.epoch, M.local_nonce
+    local function active() return stock == state and M.epoch == epoch and M.local_nonce == server
+        and api.has_authority() == true end
+    if not active() then return false end
+    local name = M.who(comp, active)
+    if not active() then return false end
+    local peer = name and M.clients[name]
+    if not peer then return false end
+    local current_peer = peer_current(peer)
+    local attempt
+    local function current()
+        return active() and current_peer() and (not attempt or peer.stock_attempt==attempt)
+    end
+    if not current() or p[3] ~= peer.server or p[4] ~= peer.client or p[5] ~= peer.guild then return false end
+    local id, t = tonumber(p[6]), now()
+    if id <= (peer.stock_high or 0) or (peer.stock_at and t-peer.stock_at < 1) then return false end
+    local count = 0
+    for _ in pairs(state.jobs) do count = count + 1 end
+    if not state.jobs[name] and count >= 8 then return false end
+    -- Debit before the transmitter census, including failed ownership probes.
+    -- A nested request supersedes this invocation even before a job exists.
+    attempt = {}
+    peer.stock_attempt, peer.stock_at = attempt, t
+    local guild = push_phase('network storage: request guild',M.guild_of_sender,comp,current)
+    if not current() or guild ~= peer.guild then return false end
+    -- Native ownership resolution may have admitted other peers reentrantly.
+    -- Recount immediately before insertion, with no native/callback boundary.
+    count = 0
+    for _ in pairs(state.jobs) do count = count + 1 end
+    local added = state.jobs[name] == nil
+    if added and count >= 8 then return false end
+    peer.stock_high = id
+    local job = {name=name, peer=peer, request=p[6], selected=p[7] ~= '-' and p[7] or nil,
+        queued=t, epoch=epoch, server=server, client=peer.client, guild=guild}
+    if not state.jobs[name] or state.active == state.jobs[name] then state.order[#state.order+1] = name end
+    state.jobs[name] = job
+    M.storage_stats.requests = M.storage_stats.requests + 1
+    M.storage_stats.queue_peak = math.max(M.storage_stats.queue_peak, count + (added and 1 or 0))
+    -- Publish the job before the callback so nested requests supersede it.
+    if not settings_gate.blocked() then
+        local ok, accepted = pcall(function()
+            return M.on_storage_interest and M.on_storage_interest(guild)
+        end)
+        if not current() or state.jobs[name] ~= job then return false end
+        if not ok or accepted ~= true then
+            state.jobs[name] = nil
+            for i=#state.order,1,-1 do
+                if state.order[i]==name then table.remove(state.order,i) end
+            end
+            return false
+        end
+    end
+    return true
+end
+
+local function stock_recipient(job, current)
+    -- Reuse a single synchronous transmitter census for component resolution
+    -- AND ownership proof. No wrappers or lookup table escape this callback.
+    M.storage_stats.transmitter_walks = M.storage_stats.transmitter_walks + 1
+    local tx = push_phase('network storage: transmitters', transmitters, current)
+    if not current() then return nil end
+    local cls, comp
+    pcall(function() cls=api.cdo('/Script/Pal.PalNetworkBaseCampComponent') end)
+    if not current() then return nil end
+    if cls then
+        for _, transmitter in pairs(tx) do
+            if not current() then return nil end
+            local candidate
+            pcall(function() candidate=transmitter:GetComponentByClass(cls) end)
+            if not current() then return nil end
+            local valid=api.valid(candidate)
+            if not current() then return nil end
+            if valid and M.who(candidate,current)==job.name then comp=candidate; break end
+            if not current() then return nil end
+        end
+    end
+    if not current() then return nil end
+    if not comp then
+        M.storage_stats.component_fallbacks = M.storage_stats.component_fallbacks + 1
+        comp=push_phase('network storage: component fallback',live_client,job.name,current)
+    end
+    if not current() or not comp then return nil end
+    local guild=push_phase('network storage: sender guild',guild_via,comp,tx,current)
+    if not current() or guild~=job.guild then return nil end
+    return comp, tx
+end
+
+local function pump_stock()
+    local state, t = stock, now()
+    -- One global active response avoids interleaving many ten-second batches.
+    if not state.active then
+        while #state.order > 0 do
+            local name = table.remove(state.order, 1)
+            local job = state.jobs[name]
+            if job and t-job.queued < 12 then state.active = job; break end
+            state.jobs[name] = nil
+        end
+    end
+    local job = state.active
+    if not job then return end
+    local peer = job.peer
+    local current_peer = peer_current(peer)
+    local function current()
+        return stock == state and state.active == job and state.jobs[job.name] == job
+            and M.epoch == job.epoch and M.local_nonce == job.server
+            and peer.client == job.client and peer.guild == job.guild and current_peer()
+    end
+    local function discard()
+        if state.active == job then state.active = nil end
+        if state.jobs[job.name] == job then state.jobs[job.name] = nil end
+    end
+    if not current() or (job.started and t-job.started >= wire.TIMEOUT-1) then discard(); return end
+    local comp, tx = stock_recipient(job, current)
+    if not current() or not comp then discard(); return end
+    -- This guard may send one lock packet. Never send S in that same beat.
+    local guarded = snapshot_guard(comp, peer, current)
+    if not guarded() then discard(); return end
+    if not job.batch then
+        M.storage_stats.builds = M.storage_stats.builds + 1
+        local ok, view = pcall(function()
+            return M.on_storage_request and push_phase('network storage: build',
+                M.on_storage_request,job.guild,job.selected,t)
+        end)
+        if not current() then discard(); return end
+        peer.stock_revision = (peer.stock_revision or 0) + 1
+        local batch = ok and view and push_phase('network storage: encode',wire.storage_snapshot,job.server,job.client,job.guild,
+            peer.stock_revision,job.request,view)
+        if not batch then
+            -- Preserve bounded selector metadata if possible, never partial totals.
+            local unavailable_view = {scope=type(view)=='table' and view.scope or 'camp',
+                camp=type(view)=='table' and view.camp or job.selected,
+                choices=type(view)=='table' and view.choices or {}, verified=false,
+                totals={},age_ms=0,remaining_ms=0}
+            batch = wire.storage_snapshot(job.server,job.client,job.guild,
+                peer.stock_revision,job.request,unavailable_view)
+            if not batch then
+                unavailable_view.choices = {}
+                batch = wire.storage_snapshot(job.server,job.client,job.guild,
+                    peer.stock_revision,job.request,unavailable_view)
             end
         end
-        batch[#batch + 1] = PREFIX .. "Done"
-
-        built[key] = batch
-        return batch
+        if not current() or not batch then discard(); return end
+        job.batch, job.cursor, job.started = batch, 1, t
     end
+    if not guarded() then discard(); return end
+    -- No guard passed to to_client may itself send a packet during this send.
+    local function send_current()
+        return current() and not settings_gate.blocked() and now()-job.started < wire.TIMEOUT-1
+    end
+    local function authorize()
+        local guild = push_phase('network storage: sender guild',guild_via,comp,tx,send_current)
+        return send_current() and guild == job.guild
+    end
+    for packet = 1, 4 do
+        if not send_current() or now()-job.started >= wire.TIMEOUT-1 then discard(); return end
+        if not push_phase('network storage: send',M.to_client,comp,job.batch[job.cursor],send_current,authorize)
+            or not send_current() then discard(); return end
+        M.storage_stats.packets = M.storage_stats.packets + 1
+        job.cursor = job.cursor + 1
+        if job.cursor > #job.batch then discard(); return end
+    end
+end
 
-    -- One named target: a component the caller obtained inside the hook
-    -- callback that is still on the stack. Used as given and never stored.
-    if comp then
-        for _, msg in ipairs(batch_for(M.guild_of_sender(comp))) do
-            if not M.to_client(comp, msg) then return false end
+function M.storage_tick()
+    if api.has_authority() == true then
+        local state = stock
+        if state.pumping then return end
+        state.pumping = true
+        local ok, err = pcall(pump_stock)
+        state.pumping = false
+        if not ok then error(err) end
+        return
+    end
+    if api.has_authority() ~= false or not stock.open or unavailable_reason then return end
+    local t, interest = now(), stock.interest
+    if stock.receiver then
+        if wire.expire(stock.receiver,t) then clear_stock_view(true); stock.due=t+10 end
+    end
+    if stock.pending then
+        if t-stock.pending.started < 20 then return end
+        clear_stock_view(true); stock.due=t+10
+    end
+    if not interest or not receiver or interest.guild ~= receiver.guild
+        or (stock.due and t < stock.due) then return end
+    stock.serial = stock.serial + 1
+    if stock.serial > 2147483647 then return end
+    local id = tostring(stock.serial)
+    stock.receiver = stock.receiver or wire.receiver(receiver.server,receiver.client,receiver.guild)
+    if not wire.expect_storage(stock.receiver,id,nil,interest.selected,t) then return end
+    stock.pending = {id=id,started=t,interest=interest}
+    stock.due, stock.last_sent = t+10, t
+    local state, pending, target = stock, stock.pending, receiver
+    local function current()
+        return stock==state and stock.open and stock.pending==pending and stock.interest==interest
+            and receiver==target and not unavailable_reason and api.has_authority()==false
+    end
+    local sent = send_up(wire.envelope('T',receiver.server,receiver.client,receiver.guild)
+        ..'|'..id..'|'..(interest.selected or '-'),0,current)
+    if stock ~= state or stock.pending ~= pending then return end
+    if not sent then clear_stock_view(true); stock.due=t+10 end
+end
+
+local function receive_stock_state(message)
+    local state, pending = stock, stock.pending
+    if not state.open or not pending or not state.receiver then return false end
+    local event, err = wire.receive(state.receiver,message,now())
+    if err then return false end -- S uncertainty never changes P/R readiness.
+    if not event then return true end
+    if stock ~= state or state.pending ~= pending or state.interest ~= pending.interest
+        or event.stream ~= 'S' or event.request ~= pending.id then return false end
+    local view = event.storage
+    if not view or (view.verified and view.scope=='camp' and pending.interest.selected ~= nil
+        and view.camp ~= pending.interest.selected) then return false end
+    if not wire.commit(state.receiver,event,now()) then return false end
+    local totals = {}
+    for item, amount in pairs(view.totals) do totals[item] = amount end
+    view.totals = totals -- one owned publication per atomic commit
+    event.epoch = M.epoch
+    -- Retain only plain selector metadata across count expiry/timeouts, never
+    -- a reference to the expired totals. Lifecycle/selection clears both.
+    state.metadata = {epoch=event.epoch, guild=event.guild, session=event.session,
+        client_session=event.client_session, storage={scope=view.scope,camp=view.camp,choices=view.choices}}
+    state.view, state.pending, state.due = event, nil, now()+10
+    return true
+end
+
+local function send_ack(comp, peer, id, accepted, reason, revisions, extra)
+    -- Freeze before any authority/settings/native guard can reenter. A retry
+    -- must replay the original publication boundary, not borrow later state.
+    revisions = revisions or peer.revisions
+    local priority_revision, rules_revision = revisions.P, revisions.R
+    local current=snapshot_guard(comp,peer,peer_current(peer))
+    if extra then
+        local base=current
+        current=function()return base() and extra()end
+    end
+    if not current() then return false end
+    local outcome = accepted == "applied_unsaved" and "2" or (accepted and "1" or "0")
+    return M.to_client(comp, wire.envelope("A", peer.server, peer.client, peer.guild)
+        .. "|" .. id .. "|" .. outcome .. "|" .. reason
+        .. "|" .. priority_revision .. "|" .. rules_revision,current)
+end
+
+-- The token is internal to receive_command, not supplied by the wire. Invalid
+-- tokens abstain rather than doing a fresh lookup for a superseded request.
+function M.command_guild(token, comp, epoch)
+    local c = command_context
+    if not c or not rawequal(c.token, token) then return nil end
+    local name = M.who(comp)
+    -- The native name read may itself dispatch a nested callback.
+    if command_context ~= c or c.epoch ~= epoch or M.epoch ~= c.epoch
+        or M.local_nonce ~= c.server or not rawequal(M.clients[c.name], c.peer)
+        or c.peer.guild ~= c.guild or c.peer.client ~= c.client
+        or c.peer.server ~= c.server or name ~= c.name then return nil end
+    return c.guild
+end
+
+function M.receive_command(comp, command, value)
+    -- A reentrant invocation invalidates the outer lookup, even if rejected.
+    command_context = nil
+    if not api.has_authority() or not api.valid(comp) then return false end
+    local p = wire.parts(command)
+    if not p then return false end
+    local name = M.who(comp)
+    if not name then return false end
+    if p[1] == PREFIX .. "Hello" then
+        if #p ~= 4 or tonumber(p[2]) ~= M.SCHEMA or tonumber(p[3]) ~= M.WORKS
+            or not wire.token(p[4], 64) then
+            M.to_client(comp, PREFIX .. "Incompatible|" .. M.SCHEMA .. "|" .. M.WORKS)
+            return false
+        end
+        local guild = M.guild_of_sender(comp)
+        if not wire.token(guild) then return false end -- unresolved is not empty
+        local offer_count = 0
+        for who, offer in pairs(offers) do
+            if now() - offer.at >= wire.TIMEOUT then offers[who] = nil
+            else offer_count = offer_count + 1 end
+        end
+        if offers[name] and now() - offers[name].at < 1 then return false end
+        if not offers[name] and offer_count >= 128 then return false end
+        local peer = M.clients[name]
+        if not peer or peer.client ~= p[4] or peer.guild ~= guild then
+            local count = 0
+            for _ in pairs(M.clients) do count = count + 1 end
+            if not peer and count >= 128 then return false end
+            peer = { server = M.local_nonce, client = p[4], guild = guild,
+                at = now(), acks = {}, order = {}, high = 0, revisions = { P = 0, R = 0 },
+                next_revision = { P = 0, R = 0 } }
+        end
+        challenge_serial = challenge_serial + 1
+        local challenge = tostring(challenge_serial)
+        offers[name] = { peer = peer, challenge = challenge, at = now() }
+        -- Do not replace a live peer on Hello alone: an old queued Hello can
+        -- still arrive after reconnect. Only the matching fresh challenge can
+        -- confirm this offer; its recipient must still have that client nonce.
+        if not M.to_client(comp, table.concat({ PREFIX .. "Welcome", M.SCHEMA,
+            M.WORKS, peer.client, peer.server, peer.guild, challenge }, "|")) then return false end
+        return true
+    end
+    if p[1] == "PWP_V2" and p[2] == "C" then
+        local offer = offers[name]
+        if #p ~= 6 or not offer or now() - offer.at >= wire.TIMEOUT then return false end
+        local peer = offer.peer
+        if p[3] ~= peer.server or p[4] ~= peer.client or p[5] ~= peer.guild
+            or p[6] ~= offer.challenge or M.guild_of_sender(comp) ~= peer.guild then return false end
+        offers[name], M.clients[name] = nil, peer
+        if unavailable(comp,peer) then return false end
+        if M.on_command then
+            local ok, err = pcall(M.on_command, PREFIX .. "Hello", value, comp)
+            if not ok then log.warn("network hello handler failed: " .. tostring(err)) end
         end
         return true
     end
-
-    -- Nobody to tell. Checked before the two walks below rather than after,
-    -- so a single player session pays nothing at all for being wired up to
-    -- announce every rule it changes.
-    if next(M.clients) == nil then return false end
-
-    -- Everyone we have heard from, resolved once for the whole loop and
-    -- then both asked its guild and sent to. Dropping a key during pairs is
-    -- defined behaviour in Lua; adding one is not, and nothing here adds.
-    --
-    -- Note what M.clients stores: a name and a timestamp, never a component.
-    -- An earlier M.broadcast lived here and said why - an IsValid on a
-    -- component wrapper kept from an earlier frame is the same stored-wrapper
-    -- dereference demand.lua was purged of, and on a busy server clients
-    -- churn exactly like work objects. That function has been deleted (it was
-    -- dead, and stale enough to hand M.to_client a name where it wants a
-    -- component), but the rule it was written for is why the map below is
-    -- built fresh on every push and never kept: every object in it came out of
-    -- a walk inside this call, and api.valid is asked before a name is ever
-    -- read off one. What the table holds between pushes is still only strings.
-
-    -- Two walks for the whole push, not two per recipient.
-    --
-    -- live_client and guild_of_sender each read the entire object array, and
-    -- both used to be called once per client: 2N full walks per rule change,
-    -- at 10-19ms each on this build, synchronously on the game thread, every
-    -- time somebody clicks a tile. Four clients was most of a tenth of a
-    -- second of frozen game to deliver twenty short strings.
-    --
-    -- send_batch's comment made this exact argument once already, about
-    -- sweeping per MESSAGE rather than per client. This is the same argument
-    -- one level further out, and it is why that function is now gone: its job
-    -- is done properly by resolving everything up front.
-    local live_by_name, resolved = {}, 0
-    for _, comp in ipairs(FindAllOf("PalNetworkBaseCampComponent") or {}) do
-        if api.valid(comp) then
-            local n = full_name(comp)
-            if n then
-                live_by_name[n] = comp
-                resolved = resolved + 1
-            end
+    if p[1] == 'PWP_V2' and p[2] == 'T' then return receive_stock(comp,p) end
+    if p[1] ~= "PWP_V2" or p[2] ~= "Q" then
+        -- Old mutations never reach main, even if the component once negotiated.
+        if command:sub(1, #PREFIX) == PREFIX then
+            M.to_client(comp, PREFIX .. "Incompatible|" .. M.SCHEMA .. "|" .. M.WORKS)
         end
-    end
-
-    -- Nothing resolved while the register is not empty is a failed lookup, not
-    -- proof that every player left at once. Dropping the whole register on it
-    -- would be unrecoverable: nothing re-adds a client except a message from
-    -- that client, so a single bad walk would silently cut off everybody until
-    -- they each happened to edit something.
-    if resolved == 0 and next(M.clients) ~= nil then
-        log.debug("no base camp components resolved, so nothing was pushed " ..
-            "and no client was dropped")
         return false
     end
-
-    local tx_by_name = transmitters()
-
-    -- Presence decides who stays, not the clock.
-    --
-    -- This used to drop any client that had not SENT anything for two
-    -- minutes, checked before it asked whether the player was still there. A
-    -- client only ever sends when it edits a rule, so a player who joined,
-    -- received their rules and then simply played was deleted at the first
-    -- push after their second minute - and nothing re-adds a client except a
-    -- message from that client, so they quietly stopped receiving rules for
-    -- the rest of the session.
-    --
-    -- The timestamp was never the right question. A player who leaves takes
-    -- their component with them, so it stops resolving and the branch below
-    -- drops them on the same push; a player who is still here resolves,
-    -- whatever the clock says. CLIENT_TTL is gone rather than widened, because
-    -- a longer wrong answer is still a wrong answer.
-    local now = os.clock()
-    local sent = 0
-    -- A miss is a strike, not an eviction.
-    --
-    -- Both branches below used to drop the client outright, and nothing
-    -- re-adds one except an inbound message - so a player who joined, got
-    -- their rules and then simply PLAYED was never pushed to again, and their
-    -- panel and grid froze for the rest of the session. That is the failure
-    -- the old CLIENT_TTL was removed to prevent, coming back through the error
-    -- path. A component can be briefly absent from a walk for ordinary reasons:
-    -- a respawn, level streaming, a partial FindAllOf.
-    local STRIKES = 3
-
-    for name, entry in pairs(M.clients) do
-        local live = live_by_name[name]
-        if live == nil then
-            entry.misses = (entry.misses or 0) + 1
-            if entry.misses >= STRIKES then
-                log.debug("dropping " .. name ..
-                    " from the push list after " .. STRIKES .. " misses")
-                M.clients[name] = nil
+    local guild = M.guild_of_sender(comp)
+    local peer = peer_for(comp, guild)
+    if not peer or p[3] ~= peer.server or p[4] ~= peer.client or p[5] ~= peer.guild then return false end
+    if unavailable(comp,peer) then return false end
+    local id = wire.integer(p[6], 1, 2147483647)
+    if not id then return false end
+    -- Reserve through result publication, including error logging/authority
+    -- checks that may reenter. Unknown in-flight IDs have no result to reply.
+    -- Completed cached IDs can still replay their original result.
+    if peer.inflight and not peer.acks[id] then return false end
+    local edit = {}
+    for i = 7, #p do edit[#edit + 1] = p[i] end
+    local legacy = wire.edit(edit)
+    if not legacy then send_ack(comp, peer, id, false, "invalid_edit"); return false end
+    local old = peer.acks[id]
+    if old then
+        if old.command ~= legacy then send_ack(comp, peer, id, false, "request_id_reused"); return false end
+        if old.unknown then return false end
+        send_ack(comp, peer, id, old.accepted, old.reason, old.revisions)
+        return old.accepted
+    end
+    -- A native callback can synchronously deliver another request while main
+    -- is applying this peer's edit. Reserve before mutation; do not reject the
+    -- still-running ID as stale or admit an overlapping mutation. No result is
+    -- known yet. Cached completed results above remain replayable.
+    if peer.inflight then return false end
+    if id <= peer.high then send_ack(comp, peer, id, false, "stale_request"); return false end
+    peer.high = id
+    local context = { token = {}, epoch = M.epoch, server = M.local_nonce,
+        client = peer.client, guild = guild, name = name, peer = peer }
+    peer.inflight = context
+    command_context = context
+    -- Main retains sender/guild/rate/capability validation. Only explicit true
+    -- acknowledges acceptance; a sent RPC or a non-throwing nil never does.
+    local reservation,ledger,stream=nil,deferred,edit[1]=="Prio" and "P" or "R"
+    local ok, accepted, reason, receipt = pcall(function()
+        if ledger then
+            -- Prune plain metadata on admission too: timers can be delayed.
+            -- reserve() expires ledger entries internally, so its discarded
+            -- expiry list must not leave an unbounded transport-side queue.
+            local t=now()
+            for ticket,job in pairs(deferred_jobs)do
+                if t>=job.entry.deadline or M.clients[job.name]~=job.peer then
+                    ledger:unknown(ticket,t);deferred_jobs[ticket]=nil
+                end
             end
+            local order={}
+            for _,ticket in ipairs(deferred_order)do if deferred_jobs[ticket] then order[#order+1]=ticket end end
+            deferred_order=order
+            for who,bound in pairs(deferred_bindings)do
+                if M.clients[who]~=bound.peer then ledger:invalidate(bound.binding);deferred_bindings[who]=nil end
+            end
+            local count=0;for _ in pairs(deferred_jobs)do count=count+1 end
+            if count>=128 then return false,'busy' end
+            if type(M.pending_owner)~='function' then return false,'unavailable' end
+            local owner=M.pending_owner(stream,guild)
+            if owner~=false then
+                if type(owner)~='table' or getmetatable(owner) or owner.epoch~=context.epoch then return false,'unavailable' end
+                local binding=ledger:bind{name=name,server=context.server,client=context.client,
+                    guild=owner.guild,epoch=context.epoch}
+                if not binding then return false,'unavailable' end
+                deferred_bindings[name]={peer=peer,binding=binding}
+                reservation=ledger:reserve(binding,id,stream=='P' and 'priorities' or 'limits',legacy,now())
+                if not reservation or reservation.status~='reserved' then reservation=nil;return false,'busy' end
+            end
+        end
+        -- Owner lookup may reenter. Authenticate the invocation again before
+        -- permitting its first mutation, without retaining a native wrapper.
+        if api.has_authority()~=true or command_context~=context or M.epoch~=context.epoch
+            or M.local_nonce~=context.server or M.clients[name]~=peer
+            or peer.server~=context.server or peer.client~=context.client or peer.guild~=context.guild
+            or (reservation and deferred~=ledger) then return false,'session_changed' end
+        if M.on_command then return M.on_command(legacy, value, comp, context.token) end
+        return false
+    end)
+    -- Bind the handler result before the following authority probe can dispatch
+    -- a newer publication in a nested callback.
+    local revisions = { P = peer.revisions.P, R = peer.revisions.R }
+    if command_context == context then command_context = nil end
+    if not ok then
+        -- Error values may have throwing __tostring; the diagnostic sink may
+        -- also fail. Neither may strand this peer's mutation reservation.
+        pcall(function() log.warn("network edit handler failed: " .. tostring(accepted)) end)
+    end
+    -- Main re-proves authority before any Pal access. If that probe discovers
+    -- a transition, this callback is no longer a server reply context either.
+    local authority_ok, authority = pcall(api.has_authority)
+    -- An unavailable proof is an unknown result, never a definite rejection.
+    -- Cache only against the unchanged plain peer/session identity below.
+    if not authority_ok then ok = false end
+    if (authority_ok and authority ~= true) or M.epoch ~= context.epoch
+        or M.local_nonce ~= context.server or M.clients[name] ~= peer
+        or peer.server ~= context.server or peer.client ~= context.client
+        or peer.guild ~= context.guild then
+        if reservation then ledger:unknown(reservation.ticket,now()) end
+        if peer.inflight == context then peer.inflight = nil end
+        return false
+    end
+    if reservation and ledger~=deferred then ok=false end
+    -- Pending memory acceptance is not a final outcome. Without the explicit
+    -- deferred trial, keep the conservative unknown/timeout fallback. With it,
+    -- only the reserved, matching receipt can enter the bounded completion queue.
+    local pending = ok and accepted == false and reason == "pending"
+    if pending then
+        reason = "pending"
+    elseif ok and accepted == "applied_unsaved" then
+        reason = "save_failed"
+    else
+        accepted = ok and accepted == true
+        reason = accepted and "applied" or (ok and rejection_reason(reason) or "handler_error")
+    end
+    peer.acks[id] = { command = legacy, accepted = accepted, reason = reason,
+        revisions = revisions, unknown = not ok or pending }
+    local record=peer.acks[id]
+    if reservation then
+        if pending and ledger==deferred then
+            local entry=ledger:accepted(reservation.ticket,receipt,now())
+            if entry then
+                deferred_jobs[entry.ticket]={entry=entry,record=record,peer=peer,name=name,
+                    stream=stream,epoch=context.epoch,server=context.server,client=context.client,guild=context.guild}
+                deferred_order[#deferred_order+1]=entry.ticket
+            else ledger:unknown(reservation.ticket,now()) end
+        elseif ok and accepted==false then ledger:reject(reservation.ticket,now())
         else
-            local ok = true
-            for _, msg in ipairs(batch_for(guild_via(live, tx_by_name))) do
-                if not M.to_client(live, msg) then
-                    ok = false
-                    break
-                end
-            end
-            if ok then
-                -- Kept for "pwp net", which reports how long since each client
-                -- was last reached. Nothing decides anything on it now.
-                entry.at = now
-                entry.misses = nil
-                sent = sent + 1
-            else
-                entry.misses = (entry.misses or 0) + 1
-                if entry.misses >= STRIKES then
-                    log.debug("dropping " .. name ..
-                        " from the push list after " .. STRIKES ..
-                        " failed pushes")
-                    M.clients[name] = nil
-                end
+            ledger:unknown(reservation.ticket,now());record.unknown=true
+        end
+    end
+    if peer.inflight == context then peer.inflight = nil end
+    peer.order[#peer.order + 1] = id
+    if #peer.order > 128 then peer.acks[table.remove(peer.order, 1)] = nil end
+    -- An exception may follow a write. No negative ACK can prove it did not
+    -- apply; retain a bounded tombstone and let timeout/resync show actual state.
+    if not ok or pending or record.unknown then return false end
+    send_ack(comp, peer, id, accepted, reason, revisions)
+    return accepted
+end
+
+local push_serial = 0
+local function each_peer(comp, callback)
+    push_serial = push_serial + 1
+    local serial = push_serial
+    local epoch, server = M.epoch, M.local_nonce
+    local function active()
+        local authority = api.has_authority()
+        return authority == true and push_serial == serial and M.epoch == epoch
+            and M.local_nonce == server
+    end
+    -- Plain peer records are captured before native discovery can reenter.
+    -- A replaced peer must not inherit the old invocation's snapshot.
+    local function recipient(name, peer)
+        local client, guild, peer_server = peer.client, peer.guild, peer.server
+        return function()
+            return active() and rawequal(M.clients[name], peer)
+                and peer.client == client and peer.guild == guild
+                and peer.server == peer_server and peer_server == server
+        end
+    end
+    local recipients, by_name = {}, {}
+    for name, peer in pairs(M.clients) do
+        local target = {name=name, peer=peer, current=recipient(name, peer)}
+        recipients[#recipients+1], by_name[name] = target, target
+    end
+    if comp then
+        local name = M.who(comp, active)
+        local target = name and by_name[name]
+        if not target or not target.current() then return false end
+        local peer, current = target.peer, target.current
+        local guild = push_phase("network push: direct guild", M.guild_of_sender, comp, current)
+        return current() and guild == peer.guild and callback(comp, peer, guild, current) or false
+    end
+    if #recipients == 0 then return false end
+    local live = {}
+    local tx, sent = push_phase("network push: transmitters", transmitters, active), false
+    if not active() then return false end
+    -- Resolve from freshly enumerated actors, not their untyped outer wrappers.
+    -- The /Script/ class may be cached by palapi; instances never escape here.
+    local cls
+    pcall(function() cls = api.cdo("/Script/Pal.PalNetworkBaseCampComponent") end)
+    if not active() then return false end
+    if cls then
+        for _, transmitter in pairs(tx) do
+            if not active() then return false end
+            local c
+            pcall(function() c = transmitter:GetComponentByClass(cls) end)
+            if not active() then return false end
+            local valid = api.valid(c)
+            if not active() then return false end
+            if valid then
+                local name = M.who(c, active)
+                if not active() then return false end
+                local target = name and by_name[name]
+                if target and target.current() then live[name] = c end
             end
         end
     end
-    return sent > 0
-end
-
--- Called on a client to ask the server for a rule change. Returns false when
--- there is nothing to send through, which is normal before a world settles.
-function M.request(kind, work, item, amount)
-    if kind == "clear" then
-        return M.to_server(string.format("%sClear|%s|%s", PREFIX, work, item), 0)
+    -- GetComponentByClass can miss the exact negotiated component. Preserve
+    -- completeness with one lazy fallback; do not charge peer misses first.
+    local missing = false
+    for _, target in ipairs(recipients) do
+        if target.current() and not live[target.name] then missing = true end
     end
-    return M.to_server(
-        string.format("%sSet|%s|%s|%d", PREFIX, work, item, amount or 0), 0)
+    if not active() then return false end
+    if missing then
+        local components = push_phase("network push: component scan", FindAllOf, "PalNetworkBaseCampComponent") or {}
+        if not active() then return false end
+        for _, c in ipairs(components) do
+            local valid = api.valid(c)
+            if not active() then return false end
+            if valid then
+                local name = M.who(c, active)
+                if not active() then return false end
+                if name and by_name[name] then live[name] = c end
+            end
+        end
+    end
+    for _, target in ipairs(recipients) do
+        if not active() then return false end
+        local name, peer, current = target.name, target.peer, target.current
+        local c = live[name]
+        if c and current() then
+            local guild = push_phase("network push: peer guild", guild_via, c, tx, current)
+            if not active() then return false end
+            if current() and guild == peer.guild then
+                if callback(c, peer, guild, current) and current() then
+                    sent = true; peer.at = now(); peer.misses = 0
+                end
+            elseif current() and guild ~= nil then
+                -- Guild membership changed: force a new Welcome before sending.
+                M.clients[name] = nil
+            end
+        elseif current() then
+            peer.misses = (peer.misses or 0) + 1
+            if peer.misses >= 3 then M.clients[name] = nil end
+        end
+    end
+    return active() and sent
 end
 
--- A priority edit, client to server.
---
--- prio is 1-5, false for never, or nil to drop the pal back to config policy.
--- Encoded as one character for the same reason the push is: the value is
--- small and fixed, and a character cannot be mistaken for a count.
-function M.request_prio(key, value, prio)
-    local c
-    if prio == false then c = "X"
-    elseif type(prio) == "number" then c = tostring(math.floor(prio))
-    else c = "-" end
-
-    return M.to_server(
-        string.format("%sPrio|%s|%d|%s", PREFIX, key, value, c), 0)
+local function push_snapshot(comp, peer, stream, mode, rows, current)
+    if not current() then return false end
+    M.revisions[stream] = M.revisions[stream] + 1
+    peer.next_revision[stream] = peer.next_revision[stream] + 1
+    local revision = peer.next_revision[stream]
+    local batch = push_phase("network push: encode snapshot", wire.snapshot,
+        peer.server, peer.client, peer.guild, stream, revision, mode, rows)
+    if not batch then
+        log.warn("network snapshot refused: invalid or oversized " .. stream .. " data")
+        return false
+    end
+    for _, msg in ipairs(batch) do
+        if not current() then return false end
+        if not push_phase("network push: send message", M.to_client, comp, msg, current) then return false end
+        if not current() then return false end
+    end
+    peer.revisions[stream] = revision
+    return true
 end
+
+-- Optional composition-root policy; standalone transport fixtures have no
+-- persistence owner. Capture once BEFORE building rows, then check after every
+-- callback/send boundary. A denied/throwing provider never means empty data.
+local function publication_guard(stream,cfg)
+    if M.publication_guard==nil then return function()return true end end
+    local provider=M.publication_guard
+    local ok,guard=pcall(provider,stream,cfg)
+    if not ok or type(guard)~='function' then return nil end
+    return function()
+        if M.publication_guard~=provider then return false end
+        local yes,current=pcall(guard)
+        return yes and current==true and M.publication_guard==provider
+    end
+end
+
+local function guard_publication(peer,current,publication)
+    local epoch,server,client,guild=M.epoch,M.local_nonce,peer.client,peer.guild
+    local name
+    for key,value in pairs(M.clients)do if rawequal(value,peer)then name=key;break end end
+    return function()
+        if not current() or not publication() then return false end
+        -- Publication can reenter; finish with plain identity checks, not
+        -- another native callback that could open a new unchecked boundary.
+        return name~=nil and M.epoch==epoch and M.local_nonce==server
+            and rawequal(M.clients[name],peer) and peer.server==server
+            and peer.client==client and peer.guild==guild
+    end
+end
+
+function M.push_pals(rows_for, comp, only_key, extra)
+    if not api.has_authority() or type(rows_for) ~= "function" then return false end
+    local publication=publication_guard("P")
+    if not publication then return false end
+    if extra then
+        local base=publication
+        publication=function()return base() and extra()end
+    end
+    local built = {}
+    return each_peer(comp, function(c, peer, guild, current)
+        local peer_guard=snapshot_guard(c,peer,current)
+        current=guard_publication(peer,peer_guard,publication)
+        if not current() then return false end
+        local rows = built[guild]
+        if not rows then
+            rows = {}
+            local source, reason = push_phase("network push: roster", rows_for, guild)
+            if not current() then return false end
+            if type(source) ~= "table" then
+                log.warn("stand data unavailable for " .. guild .. ": " ..
+                    tostring(reason or "roster builder did not return a table"))
+                return false
+            end
+            for _, row in ipairs(source) do
+                if type(row) ~= "table" then
+                    log.warn("stand data unavailable for " .. guild .. ": invalid roster row")
+                    return false
+                end
+                if only_key == nil or row.key == only_key then
+                    local ranks, prios = {}, {}
+                    if not wire.pal_key(row.key) then return false end
+                    for i = 1, M.WORKS do
+                        local r = row.ranks and row.ranks[i] or 0
+                        r = wire.integer(r, 0, 999)
+                        local p
+                        if row.prios then p = row.prios[i] end
+                        local encoded = wire.priority(p)
+                        if not r or not encoded then return false end
+                        ranks[i], prios[i] = tostring(math.min(r, 9)), encoded
+                    end
+                    rows[#rows + 1] = row.key .. "|" .. table.concat(ranks) .. "|" .. table.concat(prios)
+                end
+            end
+            built[guild] = rows
+        end
+        if only_key and #rows == 0 then return false end
+        -- A delta must never be the first state a newly joined peer receives.
+        if only_key and peer.revisions.P == 0 then return false end
+        return push_snapshot(c, peer, "P", only_key and "D" or "F", rows, current)
+    end)
+end
+
+function M.push_rules(caps, cfg, comp, extra)
+    if not api.has_authority() then return false end
+    local publication=publication_guard("R",cfg)
+    if not publication then return false end
+    if extra then
+        local base=publication
+        publication=function()return base() and extra()end
+    end
+    local built = {}
+    return each_peer(comp, function(c, peer, guild, current)
+        local peer_guard=snapshot_guard(c,peer,current)
+        current=guard_publication(peer,peer_guard,publication)
+        if not current() then return false end
+        local rows = built[guild]
+        if not rows then
+            rows = {}
+            for work, items in pairs(caps.all(cfg, guild)) do
+                for item, amount in pairs(items) do
+                    rows[#rows + 1] = work .. "|" .. item .. "|" .. tostring(amount)
+                end
+            end
+            table.sort(rows)
+            built[guild] = rows
+        end
+        return push_snapshot(c, peer, "R", "F", rows, current)
+    end)
+end
+
+-- One queued receipt per invocation, with no retained UObject or guard closure.
+-- Default-off; ordinary maintenance publishes module durability first. Empty
+-- queues do no discovery/polling. Timeout never replays/cancels accepted bytes.
+function M.complete_pending()
+    if not deferred or deferred_busy or #deferred_order==0 then return false end
+    local ledger=deferred
+    deferred_busy=true
+    local job,ticket,completed
+    local ok,result=pcall(function()
+        local expired=ledger:expire(now())
+        if not expired then return false end
+        for _,entry in ipairs(expired)do deferred_jobs[entry.ticket]=nil end
+        repeat
+            ticket=table.remove(deferred_order,1)
+            job=ticket and deferred_jobs[ticket]
+        until job or not ticket
+        if not job then return false end
+        local function live()
+            return deferred==ledger and deferred_jobs[ticket]==job
+                and M.epoch==job.epoch and M.local_nonce==job.server
+                and M.clients[job.name]==job.peer and job.peer.server==job.server
+                and job.peer.client==job.client and job.peer.guild==job.guild
+                and job.peer.acks[job.entry.id]==job.record and now()<job.entry.deadline
+        end
+        if not live() or api.has_authority()~=true or not live() then return false end
+        -- Reacquire and prove recipient in THIS callback; a stored name alone
+        -- is never an ownership proof and no component is put into the queue.
+        local comp=live_client(job.name,live)
+        if not comp or not live() then return true end -- retry bounded by deadline
+        local publication
+        local function current()
+            if not live() or api.has_authority()~=true or not live() then return false end
+            if M.guild_of_sender(comp,live)~=job.guild or not live() then return false end
+            if publication and not publication() then return false end
+            return live() -- pure fence after every callback above
+        end
+        if not current() then return false end
+        -- Avoid a second native receipt query while normal maintenance still
+        -- reports pending. This precheck is not the final snapshot proof.
+        local ready=publication_guard(job.stream)
+        if not ready or not ready() then return true end
+        if not current() or type(M.pending_status)~='function' then return false end
+        local receipt={};for k,v in pairs(job.entry.receipt)do receipt[k]=v end
+        local status,guard=M.pending_status(job.stream,receipt)
+        if not current() then return false end
+        if type(status)~='table' or getmetatable(status) then return false end
+        if status.state=='saving' or status.state=='pending' then return true end
+        if status.state~='saved' or type(status.body)~='string' or math.type(status.revision)~='integer'
+            or status.revision<job.entry.receipt.revision
+            or status.request_revision~=job.entry.receipt.revision or type(guard)~='function' then return false end
+        publication=guard
+        if not current() or type(M.publish_pending)~='function' then return false end
+        local before=job.peer.revisions[job.stream]
+        local sent=M.publish_pending(job.stream,comp,current)
+        local revisions={P=job.peer.revisions.P,R=job.peer.revisions.R}
+        if not current() then return false end
+        if sent~=true then return true end
+        local revision=revisions[job.stream]
+        if math.type(revision)~='integer' or revision<=before then return false end
+        local done=ledger:complete(ticket,{receipt=job.entry.receipt,
+            covered_revision=status.revision,snapshot_revision=revision},now())
+        if not done or not current() then return false end
+        -- Freeze a durable result ONLY after full guarded snapshot delivery.
+        job.record.accepted,job.record.reason,job.record.unknown=true,'applied',false
+        job.record.revisions=revisions;completed=true
+        send_ack(comp,job.peer,job.entry.id,true,'applied',revisions,current)
+        return false
+    end)
+    if job and deferred_jobs[ticket]==job then
+        if ok and result==true and deferred==ledger then
+            deferred_order[#deferred_order+1]=ticket
+        else
+            if not completed then ledger:unknown(ticket,now()) end
+            deferred_jobs[ticket]=nil
+        end
+    end
+    deferred_busy=false
+    return completed==true
+end
+
+local function finish_entry(entry, status, reason)
+    if entry.id then requests[entry.id] = nil end
+    if entry.cell then cells[entry.cell] = nil end
+    notify_edit(entry, status, reason)
+end
+
+local function settle(entry)
+    if not entry.accepted then return end
+    local stream = entry.cell and "P" or "R"
+    local needed = entry.revision or 0
+    if needed <= (entry.base_revision or 0) or not receiver
+        or receiver.resync[stream] or receiver.revisions[stream] < needed then return end
+    -- A later durable write of this file covers earlier accepted dirty edits.
+    -- An unrelated file, a stale ack, or a snapshot by itself proves no save.
+    if entry.unsaved and entry.id <= durable_ack[stream] then entry.unsaved = false end
+    if not entry.unsaved then
+        durable_ack[stream] = math.max(durable_ack[stream], entry.id)
+        if M.save_failures[stream] and M.save_failures[stream] <= durable_ack[stream] then
+            M.save_failures[stream] = nil
+        end
+        if wire.ready(receiver) then set_status("ready") end
+    end
+    if entry.cell and entry.desired ~= entry.sent_value then
+        requests[entry.id] = nil
+        entry.id, entry.accepted, entry.unsaved, entry.due = nil, nil, nil, now() + COALESCE
+        notify_edit(entry, "pending")
+    else
+        finish_entry(entry, entry.unsaved and "applied_unsaved" or "accepted",
+            entry.unsaved and "save_failed" or nil)
+    end
+end
+
+function M.receive_state(message)
+    if api.has_authority() ~= false then return false end
+    local p = wire.parts(message)
+    if not p then return false end
+    if p[1] == PREFIX .. "Welcome" then
+        if #p ~= 7 or p[4] ~= M.local_nonce then return false end
+        if tonumber(p[2]) ~= M.SCHEMA or tonumber(p[3]) ~= M.WORKS then
+            set_status("incompatible", "schema_or_work_width"); return false
+        end
+        if not wire.token(p[5], 64) or not wire.token(p[6])
+            or not wire.integer(p[7], 1, 2147483647) then return false end
+        if receiver and (receiver.server ~= p[5] or receiver.guild ~= p[6]) then
+            -- A server restart or guild change needs a fresh local nonce. Old
+            -- requests and delayed snapshots can no longer belong to that join.
+            local epoch = M.epoch
+            M.begin_session(epoch)
+            set_status("connecting", "server_session_changed")
+            M.hello()
+            return false
+        end
+        if not receiver then receiver = wire.receiver(p[5], M.local_nonce, p[6]) end
+        M.server_nonce, M.guild, M.server_guild = p[5], p[6], p[6]
+        hello_tries = 0
+        if not wire.ready(receiver) then set_status("connecting", "awaiting_snapshots") end
+        return send_up(wire.envelope("C", p[5], M.local_nonce, p[6]) .. "|" .. p[7], 0)
+    end
+    if p[1] == PREFIX .. "Incompatible" or p[1] == PREFIX .. "Reset"
+        or p[1] == PREFIX .. "PalReset" or p[1] == PREFIX .. "Pal"
+        or p[1] == PREFIX .. "Rule" or p[1] == PREFIX .. "Done" or p[1] == PREFIX .. "PalDone" then
+        if not receiver then set_status("incompatible", "server_requires_matching_mod") end
+        return false
+    end
+    if not receiver or p[1] ~= "PWP_V2" or p[3] ~= receiver.server
+        or p[4] ~= receiver.client or p[5] ~= receiver.guild then return false end
+    if p[2]=='L' then
+        if #p~=6 or (p[6]~='settings_restart_required' and p[6]~='settings_recovering') then return false end
+        if unavailable_reason=='settings_restart_required' then return true end
+        unavailable_reason=p[6]
+        if unavailable_reason=='settings_recovering' and not recovery_retry_at then
+            recovery_retry_at=now()+math.min(30,5*2^recovery_retries)
+        elseif unavailable_reason=='settings_restart_required' then recovery_retry_at=nil end
+        wire.invalidate(receiver,'P');wire.invalidate(receiver,'R')
+        clear_stock_view()
+        requests,cells={},{}
+        M.pals,M.rules={},{}
+        M.pals_gen,M.pending_gen=M.pals_gen+1,M.pending_gen+1
+        set_status('unavailable',unavailable_reason,true)
+        return true
+    end
+    if unavailable_reason then return false end
+    -- Malformed/unknown S kinds must also stay out of the P/R error path.
+    if p[6] == 'S' then
+        return receive_stock_state(message)
+    end
+    if p[2] == "A" then
+        if #p ~= 10 or (p[7] ~= "0" and p[7] ~= "1" and p[7] ~= "2") then return false end
+        local id = wire.integer(p[6], 1, 2147483647)
+        local pr, rr = wire.integer(p[9], 0, 2147483647), wire.integer(p[10], 0, 2147483647)
+        local entry = id and requests[id]
+        if not entry or not pr or not rr then return false end
+        if p[7] == "0" then
+            local reason=rejection_reason(p[8])
+            finish_entry(entry, "rejected", reason)
+            -- Rejection changes no confirmed data. Retain snapshot readiness,
+            -- or existing uncertainty; it cannot repair a missing snapshot.
+            -- Force the callback after on_edit; ready preserves save failures.
+            if wire.ready(receiver) then set_status("ready",reason,true)
+            else set_status(M.status,M.status_reason,true) end
+        else
+            local stream = entry.cell and "P" or "R"
+            entry.accepted, entry.revision = true, entry.cell and pr or rr
+            entry.unsaved = p[7] == "2" and id > durable_ack[stream]
+            if entry.unsaved then
+                M.save_failures[stream] = math.max(M.save_failures[stream] or 0, id)
+                if wire.ready(receiver) then set_status("ready") end
+            end
+            notify_edit(entry, entry.unsaved and "applied_unsaved" or "acknowledged",
+                entry.unsaved and "save_failed" or "awaiting_snapshot")
+            settle(entry)
+        end
+        return true
+    end
+    local target = receiver
+    local event, err = wire.receive(target, message, now())
+    if err then
+        if err ~= "stale_revision" and err ~= "wrong_session" then set_status("connecting", err) end
+        return false
+    end
+    if not event then return true end
+    local metadata = { server_session = event.session, session = M.epoch, epoch = M.epoch,
+        client_session = event.client_session, stream = event.stream, mode = event.mode,
+        revision = event.revision, guild = event.guild }
+    if event.stream == "P" then
+        if not wire.commit(target, event) then return false end
+        local into = event.mode == "F" and {} or M.pals
+        for _, row in ipairs(event.rows) do into[row.key] = { ranks = row.ranks, prios = row.prios } end
+        M.pals, M.pals_gen = into, M.pals_gen + 1
+    else
+        local ok, result = pcall(function()
+            if M.on_snapshot then return M.on_snapshot(event.rows, metadata) end
+            if not M.on_state then return false end
+            M.on_state(PREFIX .. "Reset", metadata)
+            for _, row in ipairs(event.rows) do
+                M.on_state(PREFIX .. "Rule|" .. row.work .. "|" .. row.item .. "|" .. row.amount, metadata)
+            end
+            return M.on_state(PREFIX .. "Done", metadata)
+        end)
+        if receiver ~= target or M.epoch ~= metadata.epoch or unavailable_reason then return false end
+        if not ok or result ~= true or not wire.commit(target, event) then
+            wire.invalidate(target, "R")
+            set_status("connecting", "snapshot_apply_failed")
+            return false
+        end
+        M.rules = event.rows
+    end
+    if wire.ready(receiver) then set_status("ready") end
+    for _, entry in pairs(requests) do settle(entry) end
+    return true
+end
+
+-- Kept for callers from an older hot-loaded UI. This no longer accepts bare rows.
+function M.on_pal_message(message) return M.receive_state(message) end
+function M.clear_pal_incoming()
+    if receiver then
+        wire.invalidate(receiver, "P")
+        set_status("connecting", "snapshot_invalidated")
+    end
+end
+
+function M.pending_priority(key, work)
+    local entry = cells[tostring(key) .. "|" .. tostring(work)]
+    if not entry then return nil, false end
+    return wire.decode_priority(entry.desired), true, entry.status
+end
+
+function M.request_prio(key, work, prio)
+    local encoded = wire.priority(prio)
+    if not wire.pal_key(key) or not wire.integer(work, 1, M.WORKS) or not encoded then return false end
+    if not can_edit() then return false end
+    local cell = key .. "|" .. work
+    local entry = cells[cell]
+    if not entry then
+        local count = 0
+        for _ in pairs(cells) do count = count + 1 end
+        if count >= 128 then return false end
+        entry = { cell = cell, key = key, work = work }
+        cells[cell] = entry
+    end
+    entry.desired, entry.due, entry.expires = encoded, now() + COALESCE, now() + ACK_TIMEOUT
+    notify_edit(entry, "pending")
+    return true -- queued locally, explicitly not an acknowledgement
+end
+
+function M.request(kind, work, item, amount)
+    local parts = kind == "clear" and { "Clear", work, item } or { "Set", work, item, tostring(amount) }
+    if (kind ~= "clear" and kind ~= "set") or not wire.edit(parts)
+        or not can_edit() then return false end
+    local count = 0
+    for _ in pairs(requests) do count = count + 1 end
+    if count >= 128 then return false end
+    sequence = sequence + 1
+    if sequence > 2147483647 then return false end
+    local entry = { id = sequence, command = table.concat(parts, "|"), sent_at = now(), work = work,
+        base_revision = receiver.revisions.R }
+    requests[sequence] = entry
+    local sent = send_up(wire.envelope("Q", receiver.server, receiver.client, receiver.guild)
+        .. "|" .. sequence .. "|" .. entry.command, 0)
+    if not sent then finish_entry(entry, "rejected", "transport_unavailable"); return false end
+    notify_edit(entry, "pending")
+    return true
+end
+
+function M.poll()
+    if api.has_authority() ~= false then return end
+    local t = now()
+    if unavailable_reason then
+        if unavailable_reason=='settings_recovering' and recovery_retry_at and t>=recovery_retry_at then
+            local retries=math.min(3,recovery_retries+1)
+            local epoch=M.epoch
+            M.begin_session(epoch) -- discard partial state; old packets have the old nonce
+            recovery_retries=retries
+            M.hello() -- only matching negotiation plus both snapshots can make ready
+        end
+        return -- terminal locks never initiate a retry
+    end
+    if receiver and wire.expire(receiver, t) then set_status("connecting", "snapshot_timeout") end
+    for _, entry in pairs(requests) do
+        if t - entry.sent_at >= ACK_TIMEOUT then
+            -- An absent ack says nothing about whether the server applied the
+            -- edit. Discard optimism and request confirmed state again.
+            -- Keep the affected stream unready until a full refresh; a healthy
+            -- snapshot of the other file cannot resolve this edit's outcome.
+            if receiver then wire.invalidate(receiver, entry.cell and "P" or "R") end
+            finish_entry(entry, "timed_out", entry.accepted and "snapshot_timeout" or "ack_timeout")
+            set_status("connecting", entry.accepted and "snapshot_timeout" or "ack_timeout")
+        end
+    end
+    for _, entry in pairs(cells) do
+        if not entry.id and t >= entry.expires then finish_entry(entry, "timed_out", "queue_timeout") end
+    end
+    local retry_delay = math.min(30, 5 * 2 ^ math.max(0, hello_tries - 1))
+    if M.status == "connecting" and (not hello_at or t - hello_at >= retry_delay) then
+        if hello_tries >= 4 then set_status("connecting", "handshake_timeout") end
+        M.hello() -- bounded backoff; late server availability remains recoverable
+    end
+    if not can_edit() then return end
+    for _, entry in pairs(cells) do
+        if not entry.id and t >= entry.due then
+            sequence = sequence + 1
+            if sequence > 2147483647 then finish_entry(entry, "rejected", "request_ids_exhausted"); return end
+            entry.id, entry.sent_value, entry.sent_at = sequence, entry.desired, t
+            entry.base_revision = receiver.revisions.P
+            requests[sequence] = entry
+            local msg = wire.envelope("Q", receiver.server, receiver.client, receiver.guild)
+                .. "|" .. sequence .. "|Prio|" .. entry.key .. "|" .. entry.work .. "|" .. entry.desired
+            if not send_up(msg, 0) then
+                finish_entry(entry, "rejected", "transport_unavailable")
+                set_status("rejected", "transport_unavailable")
+            end
+        end
+    end
+end
+
+M.begin_session(0)
 
 -- ---------------------------------------------------------------------------
 -- Phase 0 self test
@@ -987,7 +1802,12 @@ function M.selftest()
         return false
     end
 
-    local where = api.has_authority() and "authority" or "client"
+    local authority = api.has_authority()
+    if authority == nil then
+        log.say("transport: authority is unknown; echo test deferred")
+        return false
+    end
+    local where = authority and "authority" or "client"
     M.stats.echo_sent = M.stats.echo_sent + 1
 
     if not M.to_server(PREFIX .. "Echo", M.stats.echo_sent) then
@@ -1001,10 +1821,46 @@ function M.selftest()
     return true
 end
 
+-- On-demand plain-data diagnostics only: no requests, refreshes or engine reads.
+function M.report_storage()
+    local t, s, interest, event = now(), M.storage_stats, stock.interest, stock.view
+    local guild = interest and interest.guild or M.guild
+    local selected = interest and interest.selected
+    local view = M.storage_view(guild, selected)
+    local count, stone = 'unknown', 'unknown'
+    if view.verified then
+        count = 0
+        for _ in pairs(view.totals) do count = count + 1 end
+        stone = tostring(view.totals.Stone or 0) -- complete verified scope only
+    end
+    local age, expiry, remaining = 'unknown', 'unknown', 'unknown'
+    if event and event.epoch == M.epoch and event.storage.verified then
+        -- A diagnostic may describe an expired cached sample, but its totals
+        -- above remain unknown once storage_view stops verifying that sample.
+        age = tostring(event.storage.age_ms + math.max(0, math.ceil((t-event.received_at)*1000)))
+        expiry = string.format('%.3f',event.expires_at)
+        remaining = tostring(math.floor((event.expires_at-t)*1000))
+    end
+    log.say(string.format('  storage counters (module lifetime): accepted_requests=%d builds=%d packets_sent=%d transmitter_censuses=%d component_fallback_censuses=%d queue_peak=%d',
+        s.requests,s.builds,s.packets,s.transmitter_walks,s.component_fallbacks,s.queue_peak))
+    log.say(string.format('  storage client: open=%s epoch=%s guild=%s requested_camp=%s request_ids_issued=%d pending=%s',
+        tostring(stock.open),tostring(M.epoch),guild or 'unavailable',selected or 'auto',stock.serial,
+        stock.pending and stock.pending.id or 'none'))
+    log.say(string.format('  storage view: scope=%s camp=%s choices=%d verified=%s item_count=%s Stone=%s',
+        view.scope or 'unavailable',view.camp or 'none',#view.choices,tostring(view.verified),tostring(count),stone))
+    log.say(string.format('  storage cached sample: age_ms=%s expires_at=%s remaining_ms=%s (local clock now=%.3f)',
+        age,expiry,remaining,t))
+end
+
 function M.report()
     log.say("transport:")
+    log.say("  sync: " .. M.status .. (M.status_reason and " (" .. M.status_reason .. ")" or ""))
+    log.say("  protocol schema: " .. M.SCHEMA .. ", work columns: " .. M.WORKS)
+    log.say("  server guild: " .. (M.server_guild or "unavailable"))
     log.say("  hooks installed: " .. tostring(M.installed))
-    log.say("  role: " .. (api.has_authority() and "authority" or "client"))
+    local authority = api.has_authority()
+    local role = authority == nil and "unknown" or (authority and "authority" or "client")
+    log.say("  role: " .. role)
     log.say(string.format("  sent up %d, received up %d, seen leaving %d",
         M.stats.sent_up, M.stats.got_up, M.stats.saw_up))
     log.say("  last send went through: " ..
@@ -1013,6 +1869,7 @@ function M.report()
         M.stats.sent_down, M.stats.got_down))
     log.say(string.format("  echo sent %d, returned %d",
         M.stats.echo_sent, M.stats.echo_returned))
+    M.report_storage()
 
     local known = 0
     for _ in pairs(M.clients) do known = known + 1 end
@@ -1077,17 +1934,11 @@ function M.report()
     end
 
     if M.stats.echo_sent > 0 and M.stats.echo_returned == 0 then
-        if M.stats.saw_up == 0 then
-            log.say("  the echo never even left: the call was made on a " ..
-                "component the engine did not run it on.")
-        else
-            log.say("  the echo left this machine and did not come back, so " ..
-                "it is the wire or the reply, not the call.")
-        end
+        log.say("  no echo acknowledgement yet; outgoing hook counts do not prove delivery.")
     end
 end
 
 M.PREFIX = PREFIX
-M.split = split
+M.split = wire.parts
 
 return M

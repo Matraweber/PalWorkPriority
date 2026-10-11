@@ -28,7 +28,7 @@
 local M = {}
 
 -- Bumped by hand when this file changes, so a report says which copy ran.
-M.VERSION = 15
+M.VERSION = 16
 
 local api = require("palapi")
 local log = require("log")
@@ -89,38 +89,32 @@ end
 --
 -- pc comes from the current call and is not kept: a controller wrapper stored
 -- across a beat is the use-after-free this mod has been bitten by before.
-function M.down(name)
+local function input_controller()
+    if not api.has_viewport() then return nil end
+    local _p = log.count("pad: player_controller")
+    local _t0 = log.perf and os.clock() or nil
+    local pc = api.local_player_controller()
+    if _t0 then _p.ms = _p.ms + (os.clock() - _t0) * 1000 end
+    return pc
+end
+
+local function down_on(pc, name)
+    if not pc then return nil end
     local k = key_for(name)
     if k == nil then return nil end
-
-    -- Counted to settle how many times a frame this runs. The audit says
-    -- eleven; DRIVE has five entries and TAPS seven, which is twelve. Neither
-    -- number has ever been read off a running game.
-    --
-    -- player_controller is timed separately because it is the part a memo
-    -- would remove: clock's pc_memo brackets the 100ms beat only, and this
-    -- runs on the separate 16ms loop, so every call re-walks the engine
-    -- chain. Knowing its share is what says whether the memo is worth it.
+    -- This row now covers the button read only; controller resolution is one
+    -- separate sample per drive. Complete drive includes both plus callbacks.
     local _b = log.count("pad: down")
     local _t0 = log.perf and os.clock() or nil
-
-    local pc = api.player_controller()
-
-    local _p = log.count("pad: player_controller")
-    if _t0 then _p.ms = _p.ms + (os.clock() - _t0) * 1000 end
-
-    if not pc then
-        if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
-        return nil
-    end
-
     local state
     local ok = pcall(function() state = pc:IsInputKeyDown(k) end)
-
     if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
+    if not ok or type(state) ~= "boolean" then return nil end
+    return state
+end
 
-    if not ok then return nil end
-    return state == true
+function M.down(name)
+    return down_on(input_controller(), name)
 end
 
 -- Is anything at all readable, and is a pad connected?
@@ -186,7 +180,7 @@ function M.probe()
     -- drift, so any non-zero here means the game is seeing a device, and all
     -- of them being exactly 0.0 alongside dead buttons is what a disconnected
     -- or sleeping controller looks like.
-    local pc = api.player_controller()
+    local pc = api.local_player_controller()
     if pc then
         for _, axis in ipairs({
             "Gamepad_LeftX", "Gamepad_LeftY",
@@ -268,13 +262,36 @@ local function ticks(ms)
 end
 
 local held = {}
+local cancel_release = nil
 
-local function pressed_verbs()
+local function track_cancel_release(states)
+    for name, down in pairs(states) do
+        if down == true then cancel_release[name] = true
+        elseif down == false then cancel_release[name] = nil end
+    end
+    -- Only buttons seen down need proof of release. An unreadable unrelated
+    -- button must not block a controller that does not support that key.
+    -- An unreadable previously held key still cannot count as released.
+    if next(cancel_release) == nil then cancel_release, held = nil, {} end
+end
+
+-- Read all buttons before dispatching actions: an action can close the panel
+-- or change worlds. Only plain button states survive this function, never a
+-- controller wrapper in module state or across callbacks.
+local function read_buttons()
+    local pc = input_controller()
+    local states = {}
+    for _, entry in ipairs(DRIVE) do states[entry[1]] = down_on(pc, entry[1]) end
+    for _, entry in ipairs(TAPS) do states[entry[1]] = down_on(pc, entry[1]) end
+    return states
+end
+
+local function pressed_verbs(states)
     local out, n = nil, 0
 
     for _, entry in ipairs(DRIVE) do
         local name, verb = entry[1], entry[2]
-        local down = M.down(name) == true
+        local down = states[name] == true
         local h = held[name]
 
         if not down then
@@ -310,23 +327,39 @@ function M.drive(actions)
     local _b = log.count("pad: drive")
     local _t0 = log.perf and os.clock() or nil
 
-    local verbs = pressed_verbs()
-    if verbs and actions.nav then
-        for _, verb in ipairs(verbs) do
-            pcall(actions.nav, verb)
+    local sampled_held = held
+    local states = read_buttons()
+    if cancel_release then
+        -- Cancel may only dismiss an editor. Do not let a still-held Confirm
+        -- act on the rule underneath it, or repeat Cancel into closing it.
+        track_cancel_release(states)
+    elseif states.Gamepad_FaceButton_Right == true and actions.close then
+        cancel_release, held = {}, {}
+        track_cancel_release(states)
+        pcall(actions.close)
+    else
+        local verbs = pressed_verbs(states)
+        if verbs and actions.nav then
+            for _, verb in ipairs(verbs) do
+                if held ~= sampled_held then break end
+                pcall(actions.nav, verb)
+            end
         end
-    end
 
-    for _, entry in ipairs(TAPS) do
-        local name, action = entry[1], entry[2]
-        local down = M.down(name) == true
+        for _, entry in ipairs(TAPS) do
+            -- forget() replaces this plain state table on close/context change.
+            -- Remaining buttons from the old sample must not act on the new UI.
+            if held ~= sampled_held then break end
+            local name, action = entry[1], entry[2]
+            local down = states[name] == true
 
-        if not down then
-            held[name] = nil
-        elseif not held[name] then
-            held[name] = 1
-            local fn = actions[action]
-            if fn then pcall(fn) end
+            if not down then
+                held[name] = nil
+            elseif not held[name] then
+                held[name] = 1
+                local fn = actions[action]
+                if fn then pcall(fn) end
+            end
         end
     end
 
@@ -337,6 +370,8 @@ end
 -- fire the instant it reopens.
 function M.forget()
     held = {}
+    -- Keep a Cancel release barrier through close/reset. The next readable
+    -- neutral sample clears it; changing UI is not a physical key release.
 end
 
 -- Opening the panel from a pad.
@@ -356,12 +391,17 @@ M.OPEN_CHORD = { "Gamepad_RightShoulder", "Gamepad_Special_Left" }
 local chord_was = false
 
 -- True on the beat the chord closes, not while it is held.
-function M.open_asked()
+local function chord_down()
+    local pc = input_controller()
     local all = true
     for _, name in ipairs(M.OPEN_CHORD) do
-        if M.down(name) ~= true then all = false break end
+        if down_on(pc, name) ~= true then all = false break end
     end
+    return all
+end
 
+function M.open_asked()
+    local all = chord_down()
     local fired = all and not chord_was
     chord_was = all
 
@@ -411,7 +451,7 @@ function M.watch(on)
         -- silence without one is just a dead loop.
         beats = beats + 1
         if beats % 100 == 0 then
-            local pc = api.player_controller()
+            local pc = api.local_player_controller()
             -- Counted in BEATS, not in the interval this entry ASKED for.
             -- clock's floor is BEAT_MS, so a request below it runs at the
             -- floor, and reporting beats * SAMPLE_MS understated elapsed time

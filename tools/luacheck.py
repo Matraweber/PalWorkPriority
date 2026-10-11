@@ -412,12 +412,29 @@ def cross_module(src, clean, path, exports):
         r"[\"'](\w[\w.]*)[\"'][ 	]*\)")
 
     aliases = {}
-    for name, mod in alias_re.findall(src):
+    clean_lines = clean.splitlines(keepends=True)
+    for match in alias_re.finditer(src):
+        name, mod = match.groups()
         if exports.get(mod) is None:
             continue
-        if re.search(r"(?m)^[ 	]*local[ 	]+" + re.escape(name) +
-                     r"[ 	]*=[ 	]*require\(", clean):
-            aliases[name] = mod
+        # strip() preserves line numbers, not character offsets. Confirm the
+        # exact declaration line; comments cannot borrow a different alias.
+        line = src.count('\n', 0, match.start())
+        remaining = ''.join(clean_lines[line:])
+        declaration = re.match(r"[ 	]*local[ 	]+" + re.escape(name) +
+                               r'[ 	]*=[ 	]*require\([ 	]*""[ 	]*\)', remaining)
+        if not declaration:
+            continue
+        tail = remaining[declaration.end():].lstrip()
+        if tail[:1] in ('.', ':', '[', '('):
+            # A factory's return value is not the module. Check its first
+            # member, but do not infer the returned object's fields.
+            member = re.match(r'[.:]\s*(\w+)', tail)
+            if member and member.group(1) not in exports[mod]:
+                problems.append("%s: require(%s).%s names no exported member"
+                                % (path, mod, member.group(1)))
+            continue
+        aliases[name] = mod
 
     own = module_table(clean)
     seen = set()

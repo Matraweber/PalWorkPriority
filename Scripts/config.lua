@@ -1,8 +1,8 @@
--- Pal Work Priority, user configuration.
+-- Pal Work Priority, shipped configuration defaults.
 --
--- Edit this file and either restart the game or run the !pwp reload chat
--- command. Nothing here is written back automatically, so your settings
--- survive a mod update only if you keep a copy of this file.
+-- Edit config.lua in the mod root, beside priorities.txt, then restart or
+-- use !pwp reload. Existing Scripts/config.lua is backed up and migrated on
+-- first load. Release packages name these defaults default_config.lua.
 
 return {
     -- Master switch. false leaves the game completely untouched.
@@ -23,8 +23,8 @@ return {
     -- work that existed only between two samples. The reference reconciles
     -- every few seconds for exactly this reason.
     --
-    -- A pass only sends toggles that differ from the game's own state, so a
-    -- steady base costs almost nothing per pass.
+    -- Passes send changed permissions only. Native lookup cost still needs
+    -- measurement; unchanged toggles do not establish low frame-time cost.
     interval_seconds = 10,
 
     -- "debug" | "info" | "warn" | "error"
@@ -33,8 +33,9 @@ return {
     -- Run a pass automatically when a world finishes loading.
     run_on_world_load = true,
 
-    -- Priority per work type: 1 is filled first, 5 last. false means never
-    -- assign a pal to this work type at all.
+    -- Legacy-install defaults: 1 is highest, 5 lowest, false is X. A verified
+    -- fresh installation captures vanilla checked=1/unchecked=X per Pal first.
+    -- Existing saved per-Pal values take precedence over this table.
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.
@@ -69,7 +70,9 @@ return {
     -- that is what you actually want.
     assignment_mode = "spread",
 
-    -- Never put more than this many pals on one work type in a single pass.
+    -- Maximum automatic eligibility per type. Verified manual assignments
+    -- and unreadable existing assignments can cause a reported conflict;
+    -- permission counts alone do not prove actual worker occupancy.
     -- Set to false for no limit. Combines with either mode: spread with a
     -- cap of 3 means one each, then seconds, then thirds, and no more.
     max_pals_per_work_type = 3,
@@ -113,55 +116,26 @@ return {
     --                          "PalMapObjectGuildChestModel" },
     counted_containers = nil,
 
-    -- Which storage a ceiling is measured against.
-    --
-    --   "camp"   only chests belonging to the base being worked out
-    --   "global" every chest the game currently has loaded, whoever owns it
-    --
-    -- Camp, because a per-base ceiling is what a per-base ceiling means. Use
-    -- global only if you run a mod that pools storage across bases, so the
-    -- ceiling is judged on the shared pile rather than on one base's share.
-    --
-    -- This was briefly set to global to stop the panel contradicting itself -
-    -- Wood read 15,207 against a 15,000 limit and nothing stopped, because
-    -- neither base held 15,000 on its own. That was the wrong end to fix. The
-    -- decision was right and the DISPLAY was wrong: it added the bases up
-    -- while the ceiling was checked against each. See stock_totals.
-    --
-    -- Global still cannot see a base that is not loaded. Palworld only keeps
-    -- a camp's chests in memory while you are near it, so there is nothing
-    -- to read for the bases you are away from, whatever this is set to.
+    -- Which verified storage a legacy group ceiling is measured against.
+    -- "camp": selected base. "global": all loaded bases of the same guild.
+    -- Unknown ownership/quantities remain unavailable. Other guilds are never
+    -- included. Shared guild storage needs native identity/deduplication proof.
+    -- Whether a distant camp remains loaded depends on the running game;
+    -- a player's distance is not proof that its stock is absent.
     storage_scope = "camp",
 
-    -- Resource ceilings. When a base already holds enough of something, the
-    -- work that produces it is suspended for that pass and its pals fall
-    -- through to the next priority instead of standing idle.
+    -- LEGACY GROUP LIMITS. These stop an entire work suitability only after
+    -- EVERY listed item reaches its threshold. A stone-only Mining group can
+    -- stop ore too; multiple items can overshoot their individual thresholds.
+    -- This is intentionally preserved for existing configurations, not an
+    -- item-specific producer control. New UI item limits remain unsupported
+    -- until a verified native producer adapter exists.
     --
-    -- You do not have to edit this. "!pwp limit Lumbering Wood 5000" in chat
-    -- does the same thing without a restart and remembers it in caps.txt,
-    -- and "!pwp limit" on its own lists what is set against what the base
-    -- currently holds. Anything set that way wins over what is written here.
-    --
-    -- Keyed by work type, then by the item's internal StaticId. Run
-    -- "!pwp stock" in game to print the ids and counts actually present in
-    -- your base rather than guessing at spellings.
-    --
-    -- Every container on the base counts, chests and production stations
-    -- alike, and so does the feed box - see uncounted_containers above for
-    -- why that changed and how to put the old behaviour back. Your own
-    -- inventory is not storage. "!pwp stock" prints both what counts and what
-    -- does not, so a ceiling that has not triggered can be told from a pile
-    -- sitting somewhere that was never going to count.
-    --
-    -- A work type with several items listed is suspended only when every
-    -- one of them is at or above its ceiling, so mining keeps running while
-    -- either stone or ore is still short.
-    --
-    -- work_caps = {
-    --     Deforest = { Wood = 5000 },
-    --     Mining   = { Stone = 3000, Ore = 2000 },
-    --     Seeding  = { WheatSeeds = 500 },
-    -- },
+    -- Per-guild edits override these inherited groups. Clearing an inherited
+    -- group item stores an OFF mask for that guild without changing others.
+    -- Use the item's StaticId, as reported by !pwp stock. Command output is
+    -- written to priority.log, not echoed into the game chat.
+    -- work_caps = { Mining = { Stone = 3000, Ore = 2000 } },
     work_caps = {},
 
     -- Per-pal overrides, keyed by nickname first and species name second.

@@ -110,6 +110,7 @@ local pin_count = 0
 -- game carries on running code from before the edit while every file on disk
 -- says otherwise. Three changes in a row appeared to do nothing that way.
 local RB = {
+    picker = require("picker_presentation"),
     hosts = {},            -- row index -> { box = SizeBox, canvas = CanvasPanel }
     slot = nil,            -- the row canvas being drawn into right now
     base = 0,              -- that row's absolute Y on the panel's canvas
@@ -164,6 +165,18 @@ local RB = {
     -- every column half a row too far right.
     TOPLEFT = { Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } },
 }
+
+RB.logic = require("panel_runtime")
+RB.session = require("session")
+RB.status = require("panel_status")
+RB.runtime = RB.logic.new()
+RB.runtime.session = RB.session
+RB.icon_prototype = require("icon_prototype")
+RB.lazy_icons = RB.icon_prototype.new(RB.runtime)
+RB.runtime.on_error = function(why) log.warn("panel action failed: " .. tostring(why)) end
+RB.parent, RB.edit_layout, RB.font = {}, {}, {}
+blocks, stripes, images, tile_face, pinned = RB.runtime:cache(), RB.runtime:cache(),
+    RB.runtime:cache(), RB.runtime:cache(), RB.runtime:cache()
 
 -- Where the tiles sit inside "order", so up and down can cross a row of them
 -- instead of stepping to the neighbour.
@@ -691,106 +704,81 @@ end
 -- Attaching to the game's UI
 -- ---------------------------------------------------------------------------
 
--- The panel draws into the overlay, a widget the mod constructs and owns.
---
--- It used to live in the Monitoring Stand's menu, and before that in the HUD.
--- Both belong to the game, which is the root of everything that went wrong:
--- the HUD rebuilt itself and freed our widgets mid-frame, twice, and the stand
--- menu turned out to be hidden rather than destroyed, so closing it orphaned
--- our rows and reopening drew a second set over them.
---
--- Nothing in Palworld holds a reference to the overlay, so nothing can free it
--- or hide it behind our back. It also means the panel is no longer tied to a
--- Monitoring Stand, which was a real loss when it was hosted there.
--- Validated once per frame, not once per widget.
---
--- Every drawing helper began by calling this, and this costs six engine calls:
--- three inside overlay.host and three of its own. A picker frame builds about
--- thirty five widgets, so a single refresh spent over two hundred round trips
--- re-asking whether the same canvas was still there, and measured at 110ms on
--- a loop that runs ten times a second. That is what "the ADD tab is super
--- laggy" actually was.
---
--- The answer cannot change midway through a frame: nothing between the first
--- widget and the last destroys the canvas they are all going onto. So it is
--- asked once and remembered for the frame, and refresh bumps the counter.
+-- Reacquire the root once per draw/action and rebuild a fresh tree snapshot.
+-- Widget caches contain names, resolved only in that snapshot. A timestamp or
+-- matching instance name cannot validate a wrapper from an earlier callback.
 local frame_id = 0
 local root_checked = -1
 
+function RB.clear_widgets()
+    pending_drop = nil
+    RB.reveal_rule = nil
+    -- An unreadable/replaced tree cannot leave a focused edit visible after
+    -- its Lua ownership is discarded. Close the shell using a fresh lookup;
+    -- never touch the old amount_box wrapper on this failure path.
+    if editing or RB.edit_cleanup then
+        RB.edit_cleanup = nil
+        if overlay.set_amount_editor then overlay.set_amount_editor(nil) end
+        editing, edit_focus = nil, false
+        M.open = false
+        RB.session.invalidate_ui()
+        overlay.hide()
+        RB.runtime.phase = "closed"
+    end
+    RB.cancel_requested, RB.cancel_ack = false, nil
+    root, root_tree, backdrop = nil, nil, nil
+    RB.runtime.objects, RB.runtime.refs = {}, {}
+    blocks, stripes, images, tile_face, pinned = RB.runtime:cache(), RB.runtime:cache(),
+        RB.runtime:cache(), RB.runtime:cache(), RB.runtime:cache()
+    drawn, placed, RB.vis, RB.parent, RB.font = {}, {}, {}, {}, {}
+    RB.hosts, RB.slot, RB.base, RB.pads, RB.on = {}, nil, 0, {}, {}
+    RB.filled, RB.pending, RB.edit_layout = {}, false, {}
+    RB.validated, root_checked = -1, -1
+    pin_count = 0
+    search_box, amount_box, editing, edit_focus = nil, nil, nil, false
+    styled_boxes, picker_key, picker_hit = {}, nil, nil
+    was_hit, was_sel, hover_key, hits = {}, nil, nil, {}
+end
+
 local function ensure_root()
     if root_checked == frame_id and root ~= nil then return root end
-
-    local host, host_tree = overlay.host()
-
-    if not alive(host) or not alive(host_tree) then
-        root, root_tree, backdrop = nil, nil, nil
-        blocks, drawn, stripes, placed = {}, {}, {}, {}
-        images, tile_face = {}, {}
-    RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
-    -- The fill map goes with the widgets it describes. Left behind, every
-    -- tile in a rebuilt tree would look already drawn, so nothing would be
-    -- rationed and nothing written - an empty picker that thinks it is full.
-    -- A flag describing an engine object shares that object's lifetime.
-    RB.filled = {}
-    RB.validated = -1
-        pinned, pin_count = {}, 0
-        search_box, amount_box, editing = nil, nil, nil
-        styled_boxes = {}
-        picker_key, picker_hit = nil, nil
+    local host, host_tree, host_widget = overlay.host()
+    if not alive(host) or not alive(host_tree) then RB.clear_widgets() return nil end
+    if RB.overlay_generation ~= overlay.generation then
+        RB.edit_cleanup = nil
+        RB.runtime:invalidate()
+        RB.clear_widgets()
+        RB.overlay_generation = overlay.generation
+        if not M.open then return nil end
+    end
+    -- Only names survive across callbacks. Rebind widgets from this call's
+    -- current tree before asking them anything, including IsValid/IsHovered.
+    if not RB.runtime:snapshot(host) then
+        -- Preserve name-only row identities through a transient incomplete
+        -- read. No wrapper from the previous callback remains usable.
+        root, root_tree, backdrop, search_box, amount_box = nil, nil, nil, nil, nil
         root_checked = -1
+        if editing or RB.edit_cleanup then RB.clear_widgets() end
+        warn_once("treebudget", "panel tree could not be read completely; drawing deferred")
         return nil
     end
-
-    if root == host and alive(root_tree) then
-        root_checked = frame_id
-        return root
-    end
-
-    -- A different canvas than last time means the overlay was rebuilt, and
-    -- everything we made belonged to the old one and went with it. References
-    -- are dropped rather than unparented: asking a freed widget anything is
-    -- the crash, not the check for it.
     root, root_tree = host, host_tree
-    backdrop = nil
-    blocks, drawn, stripes, placed = {}, {}, {}, {}
-    -- Every table that holds a widget, not just the four that were listed.
-    --
-    -- images, tile_face and amount_box survived both resets and kept handles
-    -- into the tree that was just discarded, and tile_face is guaranteed to:
-    -- tile() writes tile_face[key] = stripes[key], so it is a second
-    -- reference to a table this line clears. Those handles are then asked
-    -- IsHovered() by the mouse keybind and alive() by blank_unused, which is
-    -- the stored-wrapper dereference that this whole codebase is built to
-    -- avoid - and the comment three lines up says so in as many words.
-    images, tile_face = {}, {}
-    RB.hosts, RB.slot, RB.base, RB.pads = {}, nil, 0, {}
-    -- The fill map goes with the widgets it describes. Left behind, every
-    -- tile in a rebuilt tree would look already drawn, so nothing would be
-    -- rationed and nothing written - an empty picker that thinks it is full.
-    -- A flag describing an engine object shares that object's lifetime.
-    RB.filled = {}
-    RB.validated = -1
-    -- pinned holds booleans, not widgets, but the widgets those booleans
-    -- describe just went with the old tree - a flag that describes an engine
-    -- object shares its lifetime, so it clears where the widget tables clear.
-    pinned, pin_count = {}, 0
-    search_box, amount_box, editing = nil, nil, nil
-    -- Cleared with the boxes it describes. style_box only ever styles a given
-    -- field once, keyed here, so leaving this set after the boxes are dropped
-    -- meant the rebuilt EditableTextBox kept UMG's pale default - light text
-    -- on a pale field, which is the unreadable-filter bug this panel already
-    -- spent a round fixing.
-    styled_boxes = {}
-    -- The picker list was built from an item table that went with the old
-    -- world. Nothing else invalidates it: a world switch resets search_text
-    -- and show_all to the values already in the key, so it would match.
-    picker_key, picker_hit = nil, nil
+    backdrop = RB.runtime.objects[RB.runtime.refs.backdrop]
+    search_box = RB.runtime.objects[RB.runtime.refs.search]
+    amount_box = RB.runtime.objects[RB.runtime.refs.amount]
+    if RB.edit_cleanup then
+        RB.finish_edit_cleanup()
+        if not M.open then return nil end
+    end
+    if host_widget and overlay.take_cancel then
+        local pending, acknowledged = overlay.take_cancel(host_widget)
+        if pending then RB.cancel_requested, RB.cancel_ack = true, acknowledged ~= false
+        elseif RB.cancel_requested and acknowledged == true then RB.cancel_ack = true end
+    end
     root_checked = frame_id
     return root
 end
 
--- A dark slab behind the text. Without one the panel is white words floating
--- over grass, which is exactly what the first version looked like.
 local function ensure_backdrop(rows)
     if not ensure_root() then return end
 
@@ -831,6 +819,8 @@ local function ensure_backdrop(rows)
         -- anyway, so this does not depend on which route is in force.
         pcall(function() backdrop:SetVisibility(0) end)
     end
+
+    RB.runtime.refs.backdrop = RB.runtime:remember(backdrop)
 
     -- Both, because the brush colour alone did not do it. A Border with an
     -- alpha of 0.985 still showed grass through itself, so the widget's own
@@ -942,8 +932,9 @@ function RB.use_row(name)
     local parts = overlay.parts
     if not parts or not alive(parts[name]) then return false end
 
+    if not RB.logic.write(RB.vis, "chrome:" .. name, 0,
+        function() return parts[name .. "Row"]:SetVisibility(0) end) then return false end
     RB.on[name] = true
-    pcall(function() parts[name .. "Row"]:SetVisibility(0) end)
 
     RB.slot = parts[name]
 
@@ -974,7 +965,8 @@ function RB.tidy_rows()
 
     for _, row in ipairs(RB.rows) do
         if not RB.on[row[1]] and alive(parts[row[1] .. "Row"]) then
-            pcall(function() parts[row[1] .. "Row"]:SetVisibility(1) end)
+            RB.logic.write(RB.vis, "chrome:" .. row[1], 1,
+                function() return parts[row[1] .. "Row"]:SetVisibility(1) end)
         end
     end
     -- Kept for "pwp panel rows", which runs a frame after the draw it is
@@ -982,7 +974,7 @@ function RB.tidy_rows()
     RB.on_last, RB.on = RB.on, {}
 end
 
-local function row_host(i, which, height)
+local function row_host(i, which, height, reserve)
     local parts = overlay.parts
     if not parts or not alive(parts[which]) then return nil end
     if not alive(root_tree) then return nil end
@@ -991,11 +983,13 @@ local function row_host(i, which, height)
     -- row 0 would be the same box in two different parents.
     i = which .. ":" .. i
 
-    local have = RB.hosts[i]
+    local saved = RB.hosts[i]
+    local have = saved and { box = RB.runtime.objects[saved.box], canvas = RB.runtime.objects[saved.canvas] }
     if have and alive(have.box) and alive(have.canvas) then
-        if RB.vis["h:" .. i] ~= 0 then
-            pcall(function() have.box:SetVisibility(0) end)
-            RB.vis["h:" .. i] = 0
+        if not reserve and RB.vis["h:" .. i] ~= 0 then
+            if not RB.logic.write(RB.vis, "h:" .. i, 0, function() return have.box:SetVisibility(0) end) then
+                return nil
+            end
         end
         return have.canvas
     end
@@ -1010,14 +1004,33 @@ local function row_host(i, which, height)
     pcall(function() inner = StaticConstructObject(canvas_cls, root_tree) end)
     if not alive(inner) then return nil end
 
-    pcall(function() box:SetHeightOverride(height or LINE) end)
-    pcall(function() box:AddChild(inner) end)
-
-    local ok = pcall(function() parts[which]:AddChild(box) end)
+    -- Collapse reservations before attachment: an unused host must never
+    -- contribute empty space, including when a native setter refuses a write.
+    local ok = pcall(function()
+        if box:SetHeightOverride(height or LINE) == false then error("row height refused") end
+        if reserve and box:SetVisibility(1) == false then error("row collapse refused") end
+        if not box:AddChild(inner) then error("row canvas attachment refused") end
+        if not parts[which]:AddChild(box) then error("row attachment refused") end
+    end)
     if not ok then return nil end
 
-    RB.hosts[i] = { box = box, canvas = inner }
+    RB.hosts[i] = { box = RB.runtime:remember(box), canvas = RB.runtime:remember(inner) }
+    RB.vis["h:" .. i] = reserve and 1 or nil
     return inner
+end
+
+-- ScrollBox children retain append order. Reserve only the bounded empty
+-- containers, in order, before tiles/rules can create their fixed pager host.
+-- Later fills and longer pages reuse these positions without reparenting.
+function RB.reserve_rows(which, first, last, height)
+    if not (overlay.parts and alive(overlay.parts[which])) then return true end
+    for i = first, last do
+        if not row_host(i, which, height, true) then
+            RB.pending = true
+            return false
+        end
+    end
+    return true
 end
 
 -- Rows the list no longer has. Collapsed rather than removed: taking a child
@@ -1045,12 +1058,12 @@ local function hide_rows_from(n, which)
     end
 
     local prefix = which .. ":"
-    for i, h in pairs(RB.hosts) do
+    for i, saved in pairs(RB.hosts) do
+        local h = { box = RB.runtime.objects[saved.box] }
         local mine = tostring(i):match("^" .. prefix .. "(%d+)$")
         if mine and tonumber(mine) >= n and h and alive(h.box) then
             if RB.vis["h:" .. i] ~= 1 then
-                pcall(function() h.box:SetVisibility(1) end)
-                RB.vis["h:" .. i] = 1
+                RB.logic.write(RB.vis, "h:" .. i, 1, function() return h.box:SetVisibility(1) end)
             end
         end
     end
@@ -1078,6 +1091,7 @@ local function slab(key, px, py, w, h, colour, hittable, current)
 
         pcall(function() border = StaticConstructObject(cls, root_tree) end)
         if not alive(border) then return end
+        RB.parent["s:" .. key], RB.vis["s:" .. key], placed["s:" .. key], drawn["s:" .. key], RB.font["s:" .. key] = nil, nil, nil, nil, nil
 
         local slot
         local ok = pcall(function() slot = into:AddChildToCanvas(border) end)
@@ -1095,6 +1109,11 @@ local function slab(key, px, py, w, h, colour, hittable, current)
         stripes[key] = border
     end
 
+    local layout_slot, moved = RB.logic.place(RB.parent, "s:" .. key, border, into,
+        RB.slot and RB.TOPLEFT or CENTRE, false, 8995)
+    if not layout_slot then return end
+    if moved then placed["s:" .. key] = nil end
+
     -- Re-applied when the ROLE changes, not on every call: a recycled
     -- border may have been made for a different role last frame, and the
     -- shadow token is what says whether this one was. The unconditional
@@ -1102,8 +1121,7 @@ local function slab(key, px, py, w, h, colour, hittable, current)
     -- all but a handful writing the value already there.
     local vw = hittable and 0 or 3
     if RB.vis["s:" .. key] ~= vw then
-        pcall(function() border:SetVisibility(vw) end)
-        RB.vis["s:" .. key] = vw
+        RB.logic.write(RB.vis, "s:" .. key, vw, function() return border:SetVisibility(vw) end)
     end
 
     -- X and Y are the canvas's centring offsets. A row canvas spans the list
@@ -1112,14 +1130,15 @@ local function slab(key, px, py, w, h, colour, hittable, current)
     local ox = RB.slot and 0 or X
     local oy = RB.slot and -base or Y
 
-    local at = px .. ":" .. py .. ":" .. w .. ":" .. h .. ":" .. tostring(RB.slot ~= nil)
+    local at = px .. ":" .. py .. ":" .. w .. ":" .. h .. ":" .. tostring(RB.slot ~= nil) .. ":" .. tostring(RB.base)
     if placed["s:" .. key] ~= at then
         local slot
         pcall(function() slot = border.Slot end)
         if alive(slot) then
-            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
-            pcall(function() slot:SetSize({ X = w, Y = h }) end)
-            placed["s:" .. key] = at
+            RB.logic.write(placed, "s:" .. key, at, function()
+                if slot:SetPosition({ X = ox + px, Y = oy + py }) == false then return false end
+                return slot:SetSize({ X = w, Y = h })
+            end)
         end
     end
 
@@ -1137,7 +1156,7 @@ local function slab(key, px, py, w, h, colour, hittable, current)
     -- and repainted on every frame.
     local token = want .. tostring(colour) .. tostring(current)
     if drawn["s:" .. key] ~= token then
-        pcall(function()
+        RB.logic.write(drawn, "s:" .. key, token, function()
             -- State first, base colour second. It read `colour or hot or sel
             -- or ROW_BG`, and Lua stops at the first non-nil: any caller that
             -- passed a colour got that colour forever. The three action rows
@@ -1145,12 +1164,11 @@ local function slab(key, px, py, w, h, colour, hittable, current)
             -- job", "< Back" - so the panel's three most pressable controls
             -- were the only ones that could never light up under the mouse or
             -- the keyboard.
-            border:SetBrushColor((want == "hot" and ROW_HOVER)
+            return border:SetBrushColor((want == "hot" and ROW_HOVER)
                 or (want == "sel" and ROW_SEL)
                 or colour
                 or ROW_BG)
         end)
-        drawn["s:" .. key] = token
     end
 end
 
@@ -1226,6 +1244,7 @@ local function set_size(tb, points)
         log.say(string.format("text sizing: asked %s, was %s, now %s",
             tostring(points), tostring(before), tostring(after)))
     end
+    return after == points
 end
 
 -- passthrough makes the text ignore the pointer, which a tile's label has to
@@ -1254,6 +1273,7 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
         pcall(function() tb = StaticConstructObject(cls, root_tree) end)
         if not alive(tb) then return end
+        RB.parent[key], RB.vis[key], placed[key], drawn[key], RB.font[key] = nil, nil, nil, nil, nil
 
         local slot
         local ok = pcall(function() slot = into:AddChildToCanvas(tb) end)
@@ -1283,19 +1303,26 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
         drawn[key] = nil
     end
 
+    if points then
+        RB.logic.write(RB.font, key, points, function() return set_size(tb, points) end)
+    end
+    local layout_slot, moved = RB.logic.place(RB.parent, key, tb, into,
+        RB.slot and RB.TOPLEFT or CENTRE, true, 9000)
+    if not layout_slot then return end
+    if moved then placed[key] = nil end
+
     -- Position every frame, not only at construction: a row moves when the
     -- screen above it changes length.
     -- Ten times a second, so a move that changes nothing is worth skipping.
     local ox = RB.slot and 0 or X
     local oy = RB.slot and -base or Y
 
-    local at = px .. ":" .. py .. ":" .. tostring(RB.slot ~= nil)
+    local at = px .. ":" .. py .. ":" .. tostring(RB.slot ~= nil) .. ":" .. tostring(RB.base)
     if placed[key] ~= at then
         local slot
         pcall(function() slot = tb.Slot end)
         if alive(slot) then
-            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
-            placed[key] = at
+            RB.logic.write(placed, key, at, function() return slot:SetPosition({ X = ox + px, Y = oy + py }) end)
         end
     end
 
@@ -1331,29 +1358,17 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
 
     local token = text .. "|" .. shown
     if drawn[key] ~= token then
-        -- One token, two writes, and only the writes that changed. The
-        -- colour is a struct-marshalled call and most text changes - counts
-        -- ticking, names scrolling in - keep their colour, so re-sending it
-        -- with every SetText was pure engine traffic. The token stays whole
-        -- (splitting it into two cached keys would double the invalidation
-        -- surface, the bug class the audits keep finding), so blank_unused's
-        -- prune still clears everything with one delete.
-        local prev = drawn[key]
-        local prev_shown = prev and prev:match("|([^|]*)$")
         local ft = make_ftext(text)
         if ft then
-            pcall(function() tb:SetText(ft) end)
-            if prev_shown ~= shown then
-                pcall(function()
-                    tb:SetColorAndOpacity({
-                        SpecifiedColor = COLOUR[shown],
-                        ColorUseRule = 0,
-                    })
-                end)
-            end
-            drawn[key] = token
+            RB.logic.write(drawn, key, token, function()
+                if tb:SetText(ft) == false then return false end
+                return tb:SetColorAndOpacity({ SpecifiedColor = COLOUR[shown], ColorUseRule = 0 })
+            end)
         end
     end
+    RB.logic.write(RB.vis, "t:" .. key, passthrough and 3 or 0,
+        function() return tb:SetVisibility(passthrough and 3 or 0) end)
+
 end
 
 -- Text on one of the list's rows.
@@ -1513,25 +1528,15 @@ end
 -- The run where icons actually appeared was the one that matched sizes; the
 -- log said so plainly and I read it as evidence for the opposite call.
 local function apply_texture(img, texture, size)
-    -- bMatchSize true, then the size corrected.
-    --
-    -- Matching is what makes the brush draw at all, per the note in
-    -- overlay.lua: a brush with no size reports success and paints nothing.
-    -- But matching sets the brush to the texture's own dimensions, and the
-    -- art in this pak is not one size, so roughly half the picker's icons
-    -- spilled past their tiles onto the panel and read as a rendering fault.
-    --
-    -- The slot decides the box; the brush is then told to agree with it. The
-    -- style struct write is the same shape that worked for the text fields,
-    -- read out and assigned rather than built.
-    pcall(function() img:SetBrushFromTexture(texture, true) end)
-
-    if size then
-        pcall(function()
+    local ok, result = pcall(function()
+        if img:SetBrushFromTexture(texture, true) == false then return false end
+        if size then
             local brush = img.Brush
-            if brush then brush.ImageSize = { X = size, Y = size } end
-        end)
-    end
+            if not brush then return false end
+            brush.ImageSize = { X = size, Y = size }
+        end
+    end)
+    return ok and result ~= false
 end
 
 -- Keep an icon resident by giving the engine a reason to.
@@ -1602,7 +1607,9 @@ end
 -- The map's textures are live only inside the sweep's own frame, which is
 -- when this runs - icons calls it before returning.
 local function pin_from_sweep(found)
-    if not (alive(root) and alive(root_tree)) then return end
+    if not M.open then return end
+    root_checked = -1
+    if not ensure_root() then return end
 
     -- Twenty four, not eight. Eight took ten sweeps to cover the seventy odd
     -- item icons a browse loads, and each of those sweeps is the 25ms this is
@@ -1620,27 +1627,27 @@ local function pin_from_sweep(found)
     end
 end
 
--- Run from here rather than from a keybind. UE4SS never sees a key press
--- while the panel holds the input mode, which is exactly when these questions
--- matter, so the diagnostics fire themselves the first time a tile is drawn.
-local probed = false
-
 local function picture(key, px, py, size, item_id, token)
     local _p = RB.prof["pic"]
     if _p == nil then _p = { n = 0, ms = 0 } RB.prof["pic"] = _p end
     _p.n = _p.n + 1
-    if not probed then
-        probed = true
-        -- Only the lookup. The image probe reported that UMG.Image has no
-        -- brush functions at all, which is plainly false given one of them
-        -- works, so it is not worth reading and not worth running.
-        -- The load test is answered and stays out of the way. It issued
-        -- loads of its own, which is the exact thing now being rationed.
-        pcall(function() icons.probe() end)
-    end
-
     local host = ensure_root()
     if not host then return end
+
+    if RB.icon_prototype.enabled then
+        local ok, drawn_lazy = pcall(function()
+            return RB.lazy_icons:draw(key, RB.slot or host,
+                RB.slot and RB.TOPLEFT or CENTRE,
+                (RB.slot and 0 or X) + px, (RB.slot and -RB.base or Y) + py, size, item_id)
+        end)
+        if ok and drawn_lazy then return end
+        if not RB.lazy_error then
+            RB.lazy_error = true
+            log.warn("prototype icon unavailable at " .. tostring(RB.lazy_icons.stage)
+                .. ": " .. tostring(drawn_lazy) .. "; using existing loader")
+        end
+        RB.icon_prototype.enabled = false -- one failed experiment must not cause a retry storm
+    end
 
     used["i:" .. key] = true
 
@@ -1655,6 +1662,7 @@ local function picture(key, px, py, size, item_id, token)
 
         pcall(function() img = StaticConstructObject(cls, root_tree) end)
         if not alive(img) then return end
+        RB.parent["i:" .. key], RB.vis["i:" .. key], placed["i:" .. key], drawn["i:" .. key], RB.font["i:" .. key] = nil, nil, nil, nil, nil
 
         local slot
         local ok = pcall(function() slot = into:AddChildToCanvas(img) end)
@@ -1667,41 +1675,46 @@ local function picture(key, px, py, size, item_id, token)
         images[key] = img
     end
 
-    local at = px .. ":" .. py .. ":" .. size .. ":" .. tostring(RB.slot ~= nil)
+    -- A reused tile must not show the previous item's brush while this token
+    -- waits for a retry or budget. Opacity preserves its visible hit surface.
+    -- Cache only successful writes, so pending draws do not rewrite opacity
+    -- and a refused setter is retried before any lookup or draw commitment.
+    if drawn["i:" .. key] ~= token then
+        if not RB.logic.write(RB.vis, "i:" .. key, 0,
+            function() return img:SetOpacity(0.0) end) then return end
+        -- Returning to an earlier page while pending must still restore its
+        -- picture; the old token is no longer proof of a visible image.
+        drawn["i:" .. key] = nil
+    end
+
+    local layout_slot, moved = RB.logic.place(RB.parent, "i:" .. key, img, into,
+        RB.slot and RB.TOPLEFT or CENTRE, false, 8998)
+    if not layout_slot then return end
+    if moved then placed["i:" .. key] = nil end
+
+    local at = px .. ":" .. py .. ":" .. size .. ":" .. tostring(RB.slot ~= nil) .. ":" .. tostring(RB.base)
     if placed["i:" .. key] ~= at then
         local slot
         pcall(function() slot = img.Slot end)
         if alive(slot) then
             local ox = RB.slot and 0 or X
             local oy = RB.slot and -RB.base or Y
-            pcall(function() slot:SetPosition({ X = ox + px, Y = oy + py }) end)
-            pcall(function() slot:SetSize({ X = size, Y = size }) end)
-            placed["i:" .. key] = at
+            RB.logic.write(placed, "i:" .. key, at, function()
+                if slot:SetPosition({ X = ox + px, Y = oy + py }) == false then return false end
+                return slot:SetSize({ X = size, Y = size })
+            end)
         end
     end
 
-    -- A budget, because resolving an icon is expensive and eighteen of them
-    -- land on one frame.
-    --
-    -- Measured rather than guessed: StaticFindObject averages 12ms on this
-    -- build, and every icon drawn goes through one. A page turn changes all
-    -- eighteen tokens at once, so the frame that draws a new page spent about
-    -- 430ms inside the lookup - the entire remaining lag, and the reason the
-    -- earlier readings blamed loading, which turns out to average 0.3ms.
-    --
-    -- The texture cannot be kept between frames, so the call cannot be
-    -- avoided; it can only be spread. Rows past the budget keep whatever they
-    -- were showing and are picked up on the next refresh a tenth of a second
-    -- later, so a page fills over two or three frames instead of stalling one.
+    -- Resolve a bounded number of icons per draw. Pending tiles retain their
+    -- hit surface, with the previous brush transparent until replacement.
     local hold = icon_retry[key]
     if hold and os.clock() < hold and drawn["i:" .. key] ~= token then
         return
     end
 
     if drawn["i:" .. key] ~= token and icon_budget <= 0 then
-        -- Left for the next frame. Nothing is drawn wrong meanwhile: the
-        -- image keeps its old contents and its token stays stale, which is
-        -- exactly the condition that brings us back here.
+        -- The old brush is already transparent; retry on a later draw.
         return
     end
 
@@ -1739,25 +1752,27 @@ local function picture(key, px, py, size, item_id, token)
         RB.t_get = (RB.t_get or 0) + (os.clock() - _tg)
         if texture then
             local _ta = os.clock()
-            apply_texture(img, texture, size)
+            local applied = apply_texture(img, texture, size)
             RB.t_apply = (RB.t_apply or 0) + (os.clock() - _ta)
             -- Keyed by icon name, the same key the sweep uses, so a pin made
             -- here and a pin made from a sweep are the same pin.
             if icon_name then pin(texture, icon_name) end
-            pcall(function() img:SetOpacity(1.0) end)
             -- Marked drawn only now. A failed resolve leaves the token stale
             -- so the next refresh tries again, which is what makes an icon
             -- appear by itself once it has loaded - the job the "+"/"-" in
             -- the old token was doing, without its cost.
-            drawn["i:" .. key] = token
+            if applied then
+                RB.logic.write(drawn, "i:" .. key, token, function()
+                    return RB.logic.write(RB.vis, "i:" .. key, 1,
+                        function() return img:SetOpacity(1.0) end)
+                end)
+            end
         else
             -- Not before a full second has passed. Without this an item with
             -- no icon retries every frame and eats the whole budget, starving
             -- the rows whose icons are really there.
             icon_retry[key] = os.clock() + ICON_RETRY_S
-            -- Kept, not hidden. A hidden widget reports no hover, and the
-            -- tile still has to be clickable when its picture is missing.
-            pcall(function() img:SetOpacity(0.0) end)
+            -- Already transparent. Keep visibility and the hit surface intact.
         end
     end
 end
@@ -1846,14 +1861,34 @@ end
 -- The two paths that already checked, remove and move, each had this exact
 -- bug and each was fixed on its own. This is the same fix in one place, so
 -- the next call site inherits it rather than repeating the mistake.
+function RB.change_limit(clear,work,item,amount,guild)
+    local epoch,ui_epoch,generation,edit=caps.session,RB.runtime.epoch,overlay.generation,editing
+    local written,why,receipt
+    if clear then written,why,receipt=caps.clear(work,item,guild)
+    else written,why,receipt=caps.set(work,item,amount,guild)end
+    -- Native submission can reenter UI/session lifecycle. Never finish a newer
+    -- editor or announce the old action in a replacement view.
+    local function current()
+        local current_guild=mine() -- may reenter; compare identities AFTER this call
+        return epoch==caps.session and ui_epoch==RB.runtime.epoch and generation==overlay.generation
+            and edit==editing and guild==current_guild
+    end
+    if not current() then return false,false,true end
+    local accepted,pending=RB.status.submission(caps,written,why,receipt,guild,work,item,amount,epoch)
+    if not current() then return false,false,true end
+    if accepted and not pending and not caps.is_client then M.wants_pass=true end
+    return accepted,pending,false
+end
 local function set_and_say(work, item, amount, said)
-    if caps.set(work, item, amount, mine()) then
-        announce(said)
+    local accepted,pending,stale=RB.change_limit(false,work,item,amount,mine())
+    if stale then return false end
+    if accepted then
+        announce(pending and "Saving change..." or caps.is_client and "Change requested; awaiting server confirmation." or said)
         return true
     end
 
-    announce(string.format(
-        "asked the server to set %s %s to %d, it has not confirmed",
+    announce(select(3, RB.status.save(caps)) or string.format(
+        "%s %s limit %d is not confirmed yet",
         workdefs.label(work), tostring(item), amount))
     return false
 end
@@ -1915,7 +1950,8 @@ end
 -- storage. The rail carries two things that never collide - the cursor, and
 -- whether this item already has a rule - because the cursor is somewhere else
 -- whenever you are reading the rail for the other reason.
-local function list_row(key, at, item, have, top, limited)
+local function list_row(key, at, item, have, top, capability)
+    local limited = capability.state == "existing"
     local col = at % LIST_COLS
     local row = math.floor(at / LIST_COLS)
 
@@ -1962,16 +1998,7 @@ local function list_row(key, at, item, have, top, limited)
         item, item)
     RB.t_pic = (RB.t_pic or 0) + (os.clock() - _tp)
 
-    -- "Already limited" said in a second channel, not only in green.
-    --
-    -- The green name measured 1.14:1 in luminance against a plain white one -
-    -- no lightness difference at all - and under deuteranopia the two
-    -- simulate to a pair of near-identical off-whites. It is the state that
-    -- stops a player creating a rule they already have, and roughly one man
-    -- in twelve could not see it. A word carries the same fact at any colour
-    -- vision, and the count column is empty for these rows more often than
-    -- not.
-
+    -- The badge records a configured rule, never proof of stopped production.
     -- The name takes whatever the count is not using.
     --
     -- A fixed budget cut every name to sixteen characters, which on the full
@@ -1982,41 +2009,23 @@ local function list_row(key, at, item, have, top, limited)
     local count = have > 0 and group_digits(have) or nil
     local room = LIST_COUNT_R - LIST_NAME_X
 
-    -- The badge sits BESIDE the count now, on one baseline, not above it.
-    --
-    -- Stacked, it pushed the count down nine pixels to make room, so the three
-    -- rows carrying the most state were the three whose numbers did not line
-    -- up with the column - a step in the one column whose entire job is being
-    -- comparable at a glance, at exactly the rows a player is looking hardest
-    -- at.
-    --
-    -- It also reads as a word: "LIMITED", not "LIMIT SET". Above a number,
-    -- "LIMIT SET 20,761" parses as a label and its value, which says the limit
-    -- is 20,761 when that figure is what the base is HOLDING - the opposite of
-    -- what the row means. An adjective cannot be read as a label for the
-    -- number next to it.
-    local badge = limited and "LIMITED" or nil
     local count_w = count and (text_w(count, 14, DIGIT_W) + 10) or 0
-
     if count then room = room - count_w end
-    if badge then room = room - text_w(badge, 11, CAPS_W) - 10 end
 
-    if badge then
-        -- 11pt against the count's 14pt, so a shared top edge is not a shared
-        -- baseline. Two pixels of the difference puts them on one.
-        text_at("set:" .. key,
-            px + right_x(LIST_COUNT_R - count_w, badge, 11, CAPS_W),
-            py + 10, badge, "atlimit", 11, true)
-    end
-
-    -- Green while a rule already exists, so the rail and the name agree.
-    text_at("n:" .. key, px + LIST_NAME_X, py + 7,
+    -- Reuse the badge widget for a capability line inside the same 36px row.
+    -- Every item stays in the same grid/navigation slot, including unavailable
+    -- items. Labels have no variable work names; the full scope is in the
+    -- selection notice. Count and name share the upper line, leaving the
+    -- lower capability line clear even when a storage count is very wide.
+    text_at("set:" .. key, px + LIST_NAME_X, py + 21,
+        capability.label, limited and "atlimit" or "dim", 10, true)
+    text_at("n:" .. key, px + LIST_NAME_X, py + 1,
         fit_name(pretty_name(item), fits(item, room, 15)),
         limited and "atlimit" or "item", 15, true)
 
     if count then
         text_at("q:" .. key, px + right_x(LIST_COUNT_R, count, 14, DIGIT_W),
-            py + 8, count, "limit", 14, true)
+            py + 1, count, "limit", 14, true)
     end
 end
 
@@ -2027,59 +2036,22 @@ end
 -- version cleared only keys matching one prefix, which is how an item name
 -- was left stranded across the rules list.
 local function blank_unused()
+    RB.lazy_icons:finish()
     for key, tb in pairs(blocks) do
-        if not used[key] and drawn[key] ~= "" and alive(tb) then
+        if not used[key] then
             local ft = make_ftext("")
-            if ft then
-                pcall(function() tb:SetText(ft) end)
-                drawn[key] = ""
-            end
+            if ft then RB.logic.write(drawn, key, "", function() return tb:SetText(ft) end) end
         end
     end
-
-    -- A stripe with nothing on it is a floating box, so anything not drawn
-    -- this frame goes transparent rather than staying behind.
-    --
-    -- Recorded in the cache, not merely done. The cache exists to skip
-    -- redundant work by remembering what is on screen, so anything that
-    -- changes the screen behind its back makes it lie. Clearing without
-    -- recording is exactly how rows came back invisible: the stripe was
-    -- transparent, the cache still said "off", and the recolour that would
-    -- have fixed it was skipped as redundant. Switching tabs reuses these
-    -- keys, which is why it took a couple of presses to show up.
     for key, border in pairs(stripes) do
-        if not used["s:" .. key] and alive(border)
-            and drawn["s:" .. key] ~= "clear" then
-            pcall(function() border:SetBrushColor(CLEAR) end)
-
-            -- And it stops taking hit tests, which clearing the colour does
-            -- not do. An invisible stripe still answered IsHovered, and two
-            -- screens put a full width bar at the same place in the same
-            -- canvas: "+ Add a rule" on the rules list, "Show every item with
-            -- a job" in the picker. Identical rectangles, identical ZOrder,
-            -- and the one added later wins the hit test. So after a visit to
-            -- ADD, hovering the add bar hovered the picker's ghost, whose key
-            -- is not in hits on that screen, and the click went nowhere.
-            --
-            -- The words kept working because labels sit at 9000 and stripes
-            -- at 8995, which is exactly the "only the text is clickable"
-            -- report, and why nothing was ever wrong with the row itself.
-            --
-            -- Safe because slab re-applies SetVisibility on every draw,
-            -- outside both the construction branch and the placed cache, so a
-            -- stripe blanked here comes back hit testable the moment its own
-            -- screen draws it again.
-            pcall(function() border:SetVisibility(3) end)
-
-            drawn["s:" .. key] = "clear"
+        if not used["s:" .. key] then
+            RB.logic.write(drawn, "s:" .. key, "clear", function() return border:SetBrushColor(CLEAR) end)
+            RB.logic.write(RB.vis, "s:" .. key, 3, function() return border:SetVisibility(3) end)
         end
     end
-
     for key, img in pairs(images) do
-        if not used["i:" .. key] and alive(img)
-            and drawn["i:" .. key] ~= "clear" then
-            pcall(function() img:SetOpacity(0.0) end)
-            drawn["i:" .. key] = "clear"
+        if not used["i:" .. key] then
+            RB.logic.write(drawn, "i:" .. key, "clear", function() return img:SetOpacity(0.0) end)
         end
     end
 end
@@ -2114,7 +2086,6 @@ styled_boxes = {}
 
 local function style_box(box, which)
     if not alive(box) or styled_boxes[which] then return end
-    styled_boxes[which] = true
 
     -- The struct write lands even when SetStyle refuses.
     --
@@ -2186,11 +2157,11 @@ local function style_box(box, which)
     local fore = (which == "ceiling")
         and { R = 0.06, G = 0.08, B = 0.11, A = 1.00 }
         or { R = 0.90, G = 0.93, B = 0.97, A = 1.00 }
-    local ok_fore = pcall(function() box:SetForegroundColor(fore) end)
-
-    log.say("text field " .. which .. ": " ..
-        ((which == "ceiling") and "pale field" or "dark well") ..
-        ", SetForegroundColor " .. (ok_fore and "took" or "refused"))
+    local ok_fore, result = pcall(function() return box:SetForegroundColor(fore) end)
+    styled_boxes[which] = ok_fore and result ~= false or nil
+    if not styled_boxes[which] then
+        warn_once("style:" .. which, "text field " .. which .. " styling refused; will retry")
+    end
 end
 
 local function ensure_search(row)
@@ -2241,8 +2212,9 @@ local function ensure_search(row)
         style_box(search_box, "filter")
     end
 
-    local slot
-    pcall(function() slot = search_box.Slot end)
+    RB.runtime.refs.search = RB.runtime:remember(search_box)
+    local slot = RB.logic.place(RB.parent, "search", search_box, into,
+        RB.slot and RB.TOPLEFT or CENTRE, false, 8996)
     if alive(slot) then
         pcall(function()
             if RB.slot then
@@ -2298,215 +2270,149 @@ end
 
 -- The box that edits a ceiling, drawn over the amount column of its row.
 local function ensure_amount_box()
-    if editing == nil then return nil end
-
+    if not editing then return nil end
     local host = ensure_root()
     if not host then return nil end
-
-    used["amount"] = true
-
-    if not alive(amount_box) then
+    local layout = RB.edit_layout[editing.work .. "|" .. editing.item]
+    if not layout then return nil end
+    local into = layout.parent and RB.runtime.objects[layout.parent] or host
+    if not into then return nil end
+    if not amount_box then
         local cls = api.cdo("/Script/UMG.EditableTextBox")
-        if not cls or not alive(root_tree) then return nil end
-
+        if not cls then return nil end
         pcall(function() amount_box = StaticConstructObject(cls, root_tree) end)
-        if not alive(amount_box) then
-            warn_once("noamount", "no EditableTextBox on this build, " ..
-                "so ceilings step through the ladder instead of being typed")
-            editing = nil
-            return nil
-        end
-
-        local slot
-        local ok = pcall(function() slot = host:AddChildToCanvas(amount_box) end)
-        if not ok or not alive(slot) then
-            amount_box = nil
-            editing = nil
-            return nil
-        end
-
-        pcall(function() slot:SetAnchors(RB.slot and RB.TOPLEFT or CENTRE) end)
-        pcall(function() slot:SetAutoSize(false) end)
-        -- Above the rows it covers.
-        pcall(function() slot:SetZOrder(9020) end)
+        if not alive(amount_box) then return nil end
+        RB.runtime.refs.amount = RB.runtime:remember(amount_box)
     end
-
-    -- Styled here rather than at construction. The first version styled on
-    -- creation only, and the ceiling box is built the first time somebody
-    -- clicks a number, which is after the log line that says what happened,
-    -- so it went out pale while the filter went out dark.
+    local slot = RB.logic.place(RB.parent, "amount", amount_box, into,
+        layout.parent and RB.TOPLEFT or CENTRE, false, 9020)
+    if not slot then return nil end
     style_box(amount_box, "ceiling")
-
-    local slot
-    pcall(function() slot = amount_box.Slot end)
-    if alive(slot) then
-        -- Exactly the well's footprint, from the same constants the well is
-        -- drawn from. It used to be 210 wide at COL_CAP - 6, so a box for a
-        -- four digit number ran 90 pixels past the LIMIT column and sat on
-        -- top of PALS - the row read "8000  Stopped" with the two overlapping
-        -- and neither belonging to the box.
-        -- The band's full height, not four pixels short of it.
-        --
-        -- An EditableTextBox adds its own padding around the text, so a 26
-        -- pixel box holding 17pt digits clipped them across the middle - the
-        -- number showed its top half and nothing else. It matches the well
-        -- exactly, and the well grew with it.
-        pcall(function()
-            slot:SetPosition({
-                X = X + COL_CAP - WELL_INSET,
-                Y = Y + editing.row * LINE - 3,
-            })
-        end)
-        pcall(function() slot:SetSize({ X = WELL_W, Y = ROW_H }) end)
-        -- Right aligned, to sit where the number it replaces sat. The digits
-        -- started hard against the left edge of a box drawn around a column
-        -- whose values are set from their right.
-        pcall(function() amount_box:SetJustification(2) end)
-    end
-    pcall(function() amount_box:SetVisibility(0) end)
-
-    if editing.seed then
-        local seed = editing.seed
+    local ok = pcall(function()
+        slot:SetPosition({ X = (layout.parent and 0 or X) + COL_CAP - WELL_INSET,
+            Y = (layout.parent and -layout.base or Y) + layout.row * LINE - 3 })
+        slot:SetSize({ X = WELL_W, Y = ROW_H })
+        amount_box:SetJustification(2)
+        amount_box:SetVisibility(0)
+    end)
+    if not ok then return nil end
+    if editing.seed ~= nil then
+        local ft = make_ftext(editing.seed)
+        if not ft or not pcall(function() amount_box:SetText(ft) end) then return nil end
         editing.seed = nil
-        pcall(function() amount_box:SetText(make_ftext(seed)) end)
-        pcall(function() amount_box:SetHintText(make_ftext("new ceiling")) end)
     end
-
     if edit_focus then
-        edit_focus = false
-        pcall(function() amount_box:SetKeyboardFocus() end)
+        if overlay.set_amount_editor and not overlay.set_amount_editor(amount_box) then
+            warn_once("editfocus", "amount editor input ownership could not be verified; focus deferred")
+            return nil
+        end
+        if pcall(function() amount_box:SetKeyboardFocus() end) then edit_focus = false end
     end
-
     return amount_box
 end
 
--- Reads what was typed and stores it. Called every refresh while a box is
--- open, the same way the picker's filter is read: polling costs one call and
--- needs no delegate, and delegates taking a Lua function is exactly what this
--- build refuses elsewhere.
-local function poll_amount(cfg)
-    if editing == nil or not alive(amount_box) then return end
-
-    local text
-    pcall(function()
-        local ft = amount_box:GetText()
-        if ft then text = ft:ToString() end
-    end)
-    if type(text) ~= "string" then return end
-
-    -- Committed when the box stops holding the keyboard, which covers both
-    -- pressing enter and clicking away, without binding either.
-    -- Not focused until the engine says so, and the answer is only trusted
-    -- when the call itself succeeded.
-    --
-    -- This defaulted to true, so a build where HasKeyboardFocus is missing or
-    -- throws set had_focus on the very first poll and then returned for ever:
-    -- never committing, never abandoning, the editor pinned open for the
-    -- session with the header still reading "Setting the X ceiling for Y".
-    -- The pcall's own result was discarded, so "the call failed" and "the box
-    -- has focus" were the same answer.
-    local focused = false
-    local asked = pcall(function()
-        focused = (amount_box:HasKeyboardFocus() == true)
-    end)
-
-    if asked and focused then
-        editing.had_focus = true
-        editing.waiting = 0
-        return
+-- Only scalar ownership survives callbacks. Cleanup uses this callback's
+-- snapshot, expires after three attempts, and never resurrects a draft.
+function RB.finish_edit_cleanup()
+    local pending = RB.edit_cleanup
+    if not pending then return true end
+    if pending.busy then return false end
+    if pending.generation ~= overlay.generation or pending.epoch ~= RB.runtime.epoch then
+        RB.edit_cleanup = nil
+        return false
     end
-
-    -- Not focused, and never has been.
-    --
-    -- The box is reused rather than rebuilt, so it still holds the previous
-    -- edit's text, and there are frames between the editor opening and the
-    -- keyboard actually arriving. Committing in that window reads that stale
-    -- text and writes it as the new limit: a Wood ceiling of 8000 came back
-    -- as 7500 one second after the box opened, with nothing typed and nothing
-    -- said. A limit changing on its own is the same failure that once wiped a
-    -- Stone ceiling of 15000, so it is closed rather than narrowed - nothing
-    -- commits until the box has genuinely held the keyboard at least once.
-    --
-    -- Abandoned, not committed, if the keyboard never arrives at all. An edit
-    -- that never took focus cannot contain anything worth saving.
-    if not editing.had_focus or not asked then
-        editing.waiting = (editing.waiting or 0) + 1
-        if editing.waiting > 30 then
-            announce("the ceiling box never took the keyboard, so the " ..
-                workdefs.label(editing.work) .. " limit on " ..
-                editing.item .. " is unchanged")
-            editing = nil
-            pcall(function() amount_box:SetVisibility(1) end)
-        end
-        return
+    pending.attempts = pending.attempts + 1
+    pending.busy = true
+    local unbound, result = pcall(function()
+        return not overlay.set_amount_editor or overlay.set_amount_editor(nil, true)
+    end)
+    -- Unbinding/focus return can reenter lifecycle code. Its old snapshot
+    -- no longer authorizes even an IsValid call after generation changes.
+    if RB.edit_cleanup ~= pending or pending.generation ~= overlay.generation
+        or pending.epoch ~= RB.runtime.epoch or not M.open then
+        if RB.edit_cleanup == pending then RB.edit_cleanup = nil end
+        return false
     end
+    local box = RB.runtime.objects[pending.name]
+    local hidden, value = pcall(function()
+        if box then return box:SetVisibility(1) end
+    end)
+    if RB.edit_cleanup ~= pending or pending.generation ~= overlay.generation
+        or pending.epoch ~= RB.runtime.epoch or not M.open then
+        if RB.edit_cleanup == pending then RB.edit_cleanup = nil end
+        return false
+    end
+    pending.busy = false
+    if unbound and result ~= false and hidden and value ~= false then
+        RB.edit_cleanup = nil
+        return true
+    end
+    if pending.attempts >= 3 then
+        -- Detach through the overlay's fresh resolver; no failed editor
+        -- wrapper is retained or accessed during teardown.
+        M.open = false
+        RB.session.invalidate_ui()
+        RB.edit_cleanup = nil
+        RB.clear_widgets()
+        RB.runtime.phase = "closed"
+        -- Finish all old-generation bookkeeping before native teardown can
+        -- reenter and open a new panel. Nothing old runs after this call.
+        overlay.hide()
+    end
+    return false
+end
 
-    local want = tonumber((text:gsub("[^%d]", "")))
+function M.cancel_edit()
+    local had = editing ~= nil
+    editing, edit_focus = nil, false
+    RB.runtime.phase = M.open and "open" or "closed"
+    if not RB.edit_cleanup then
+        RB.edit_cleanup = {name = RB.runtime.refs.amount, generation = overlay.generation,
+            epoch = RB.runtime.epoch, attempts = 0}
+    end
+    RB.finish_edit_cleanup()
+    return had
+end
+
+function M.confirm_edit(cfg, supplied)
+    if not editing then return false end
+    if editing.guild == nil or editing.guild ~= mine() then
+        editing.error = "Your guild changed; cancel this edit and reopen the limits."
+        return false
+    end
+    -- A live snapshot or another local action may replace/remove this rule
+    -- while its draft is open. Never overwrite that newer visible state.
+    local current = caps.all(cfg, editing.guild)
+    current = current and current[editing.work]
+    current = current and current[editing.item]
+    if current ~= editing.was then
+        editing.error = "This limit changed; cancel and reopen it before editing."
+        return false
+    end
+    local text = supplied
+    if text == nil and amount_box then
+        pcall(function() text = amount_box:GetText():ToString() end)
+    end
+    local want = RB.logic.amount(text)
+    if not want then
+        editing.error = "Enter a whole number from 1 to 9999999; the previous limit is unchanged."
+        return false
+    end
     local job, item, was = editing.work, editing.item, editing.was
-    editing = nil
-    pcall(function() amount_box:SetVisibility(1) end)
-
-    -- Nothing usable typed means leave the rule alone.
-    --
-    -- This commits when the box stops holding the keyboard, which is what
-    -- makes "type it and click away" work, but it also fires on a focus lost
-    -- for any other reason. A real limit of 15000 was overwritten with
-    -- 1505500 and then with 1 inside six seconds that way, which switched
-    -- Mining off entirely and said nothing about it.
-    --
-    -- So an empty or unreadable box now cancels, and zero cancels too rather
-    -- than deleting the rule: deleting is what Remove is for, and Remove asks
-    -- first. An edit should never be able to destroy more than it was aimed
-    -- at.
-    if want == nil or want <= 0 then
-        announce("nothing typed, the " .. workdefs.label(job) .. " limit on " ..
-            item .. " is unchanged")
-        return
+    if want == was then M.cancel_edit() return true end
+    local accepted,pending,stale=RB.change_limit(false,job,item,want,mine())
+    if stale then return false end
+    if not accepted then
+        editing.error = select(3, RB.status.save(caps)) or "The change was not confirmed; check the current value and save status."
+        return false
     end
-
-    -- Unchanged means nobody typed here, whatever took the keyboard away.
-    --
-    -- The box commits when it stops holding the keyboard, which is what makes
-    -- "type it and click away" work, and it fires just as readily when the
-    -- whole game loses focus - alt tabbing with a ceiling open, or another
-    -- window stealing it. That wrote the number already showing: a request to
-    -- the server, a rule change pass and a log line, for a change nobody
-    -- made. Measured on 23 August, the server logged "Deforest set Wood to
-    -- 1200 by a player" for a box that had never been typed in.
-    --
-    -- This does not rescue a half typed number - a box holding "1" of "15000"
-    -- when focus is lost still commits 1, and from here that cannot be told
-    -- from someone who meant 1. It removes the case that costs nothing to
-    -- remove.
-    if want == was then return end
-
-    local written = caps.set(job, item, want, mine())
-    M.wants_pass = true
-
-    -- Said before the at-or-over-stock notice below, because "the server has
-    -- not confirmed this" outranks "this will stop the job now".
-    if not written then
-        announce(string.format(
-            "asked the server to set %s %s to %d, it has not confirmed",
-            workdefs.label(job), tostring(item), want))
-        return
-    end
-
-    -- Says so when the new limit is already passed, because that stops the
-    -- job the moment it is set and the panel should not let that happen
-    -- quietly.
-    local have = (stock_totals(cfg) or {})[item] or 0
-    if want < have then
-        announce(string.format(
-            "%s %s limit set to %d, which is below the %d in storage, so %s stops now",
-            workdefs.label(job), item, want, have, workdefs.label(job)))
-    else
-        log.say(string.format("%s %s limit set to %d",
-            workdefs.label(job), item, want))
-    end
+    M.cancel_edit()
+    announce(pending and "Saving change..." or string.format("%s %s limit requested: %d", workdefs.label(job), item, want))
+    return true
 end
 
 local function begin_edit(rule, row)
+    if RB.edit_cleanup or not M.open then return false end
     -- The starting value travels with the request rather than being written
     -- here. On the first edit of a session the box does not exist yet, so the
     -- SetText that used to sit here went nowhere and the field opened empty
@@ -2515,18 +2421,17 @@ local function begin_edit(rule, row)
     editing = {
         work = rule.work,
         item = rule.item,
+        guild = mine(),
         row = row,
-        -- Grouped, like the cell it opens on top of. The column reads
-        -- 15,000 and the box used to open on 15000, so the number appeared to
-        -- change the instant it was clicked. The commit strips everything
-        -- that is not a digit, so the commas cost nothing to carry.
-        seed = rule.amount and group_digits(rule.amount) or "",
+        -- Editable values use plain digits; displayed quantities may be grouped.
+        seed = rule.amount and tostring(rule.amount) or "",
         -- Kept as a number and never cleared, unlike seed, which the first
         -- draw consumes. The commit compares against it to tell a real edit
         -- from a box that merely lost the keyboard.
         was = rule.amount,
     }
     edit_focus = true
+    RB.runtime.phase = "editing"
 end
 
 local function hide_search()
@@ -2552,57 +2457,14 @@ end
 -- costs nothing, and being up to ten seconds stale is invisible for a stock
 -- count that moves by a handful at a time.
 --
--- The scan below is a fallback for the first seconds after a world loads,
--- before any pass has published, and it is throttled hard.
-local scanned_once = nil
-local scanned_at = 0
-
--- Assigns the forward-declared local above; do not add "local" here.
+-- Display only evidence published for this guild and the selected base.
+-- Missing data stays unavailable; opening a menu must never launch a raw,
+-- cross-guild storage scan to manufacture an apparently known total.
 function stock_totals(cfg)
-    if next(scheduler.last_totals or {}) ~= nil then
-        return scheduler.last_totals
-    end
-
-    local now = os.clock()
-    if scanned_once and (now - scanned_at) < 15.0 then
-        return scanned_once
-    end
-
-    local opts = {
-        include = cfg.counted_containers,
-        exclude = cfg.uncounted_containers,
-    }
-
-    local totals
-    if cfg.storage_scope == "global" then
-        totals = (api.all_chest_totals(opts))
-    else
-        totals = {}
-        for _, camp in ipairs(api.base_camps()) do
-            local camp_id = api.camp_id(camp)
-            if camp_id then
-                local part = api.camp_item_totals(api.guid_key(camp_id), opts)
-                for id, n in pairs(part or {}) do
-                    -- The fullest base, not the sum of them.
-                    --
-                    -- Under camp scope the ceiling is checked against ONE
-                    -- base at a time, so the sum is a number no decision is
-                    -- ever made against. It read 15,207 beside a 15,000 limit
-                    -- with nothing stopping, because neither base held 15,000
-                    -- on its own - the panel appearing to break its own rule
-                    -- while behaving correctly.
-                    --
-                    -- The largest single holding is the one that trips a
-                    -- ceiling, so it is the honest thing to put next to it:
-                    -- when it passes the limit, something really does stop.
-                    if n > (totals[id] or 0) then totals[id] = n end
-                end
-            end
-        end
-    end
-
-    scanned_once, scanned_at = totals, now
-    return totals
+    RB.stock = RB.status.stock(cfg, scheduler, mine(), RB.stock_camp, caps.is_client, package.loaded.net)
+    if RB.stock.scope == 'guild' then RB.stock_camp = nil
+    else RB.stock_camp = RB.stock.camp or RB.stock_camp end
+    return RB.stock.totals
 end
 
 -- ---------------------------------------------------------------------------
@@ -2667,7 +2529,7 @@ local function draw_tabs(active)
 
     local tabs = {
         { key = "tab_rules", label = "RULES", mode = "list" },
-        { key = "tab_new",   label = "ADD",   mode = "item" },
+        { key = "tab_new",   label = "ITEMS", mode = "item" },
     }
 
     local x = PAD
@@ -2742,11 +2604,19 @@ local function draw_tabs(active)
     -- Row 0 in each, because the row is already where the line goes.
     RB.use_row("Title")
     line("title", 0, PAD, "Production Limits", "title", 22, TITLE_DROP)
+    RB.save_state, RB.save_label, RB.save_error = RB.status.save(caps)
+    line("save_state", 0, W - 460, RB.save_label,
+        (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "applied_unsaved")
+            and "over" or "dim", 12, TITLE_DROP + 8)
 
     RB.use_row("Sub")
-    line("why", 0, PAD,
-        "Your Pals stop a job once base storage reaches the limit you set.",
-        "dim", 14, RB.SUB_DROP)
+    if RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp" then
+        hit("stock_scope", { kind = "stock_scope" })
+    end
+    line("stock_scope", 0, PAD, "Storage: " .. (RB.stock and RB.stock.label or "unavailable")
+        .. ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and " - change base" or "")
+        .. ". Legacy groups affect a whole work type.",
+        (RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and "action" or "dim", 14, RB.SUB_DROP)
 
     RB.done_row()
 
@@ -2802,6 +2672,25 @@ end
 
 local function draw_list(cfg, totals)
     local all_rules = rule_list(cfg)
+    if pending_drop then
+        local current
+        for _, rule in ipairs(all_rules) do
+            if rule.work == pending_drop.work and rule.item == pending_drop.item then
+                current = rule.amount
+                break
+            end
+        end
+        if pending_drop.guild ~= mine() or pending_drop.amount ~= current then pending_drop = nil end
+    end
+    if RB.reveal_rule and RB.reveal_rule.guild ~= mine() then RB.reveal_rule = nil end
+    if RB.reveal_rule then
+        for index, rule in ipairs(all_rules) do
+            if rule.work == RB.reveal_rule.work and rule.item == RB.reveal_rule.item then
+                RB.rule_page = math.floor((index - 1) / RB.RULES_PER_PAGE)
+                break
+            end
+        end
+    end
 
     -- Clamped rather than trusted. Removing the last rule on the last page
     -- would otherwise leave the view on a page that no longer exists, showing
@@ -2818,35 +2707,52 @@ local function draw_list(cfg, totals)
         rules[#rules + 1] = all_rules[i]
     end
 
+    -- A current page owns its editor placements. A removed/off-page rule must
+    -- not keep its amount box over the unrelated rule reusing that row host.
+    RB.edit_layout = {}
+    if editing then
+        local visible = false
+        if editing.guild == mine() then
+            for _, rule in ipairs(rules) do
+                if rule.work == editing.work and rule.item == editing.item then
+                    visible = true
+                    break
+                end
+            end
+        end
+        if not visible then
+            RB.cancel_edit_now()
+            announce("Edit cancelled: the rule moved off this page or is no longer available.")
+        end
+    end
+
     draw_tabs("list")
     local row = 3
 
-    -- The instruction line doubles as the editor's label. A text field that
-    -- appears over a number with no caption leaves you guessing which of the
-    -- two numbers it replaces, and "click a job to change it" is not the
-    -- sentence you need while typing.
-    --
-    -- It borrows the subtitle's row rather than reserving one of its own. A
-    -- dedicated row meant a whole empty LINE above the table on every normal
-    -- visit - 34 pixels of dead air carrying a sentence that only appears
-    -- while a number is being typed - and collapsing it instead would have
-    -- shifted the table out from under the row you had just clicked. The
-    -- general explanation is the one thing you do not need while typing, so
-    -- it steps aside.
+    -- Keep one help row allocated. Editing, errors and transient notices
+    -- replace its contents without moving the limits or Remove controls.
+    RB.use_row("Notice")
     if editing ~= nil then
-        RB.use_row("Notice")
         line("why", 0, PAD,
-            "Setting the " .. workdefs.label(editing.work) .. " ceiling for " ..
-            editing.item .. "  |  Type a number, then click anywhere to save",
-            "action", 14)
-        RB.done_row()
+            fit_name(editing.error or ("Set " .. pretty_name(editing.item)
+                .. ": whole number; confirm saves, Esc cancels"), 68), "action", 14)
+        hit("edit_save", { kind = "edit_save" })
+        hit("edit_cancel", { kind = "edit_cancel" })
+        line("edit_save", 0, W - 215, "Confirm", "action", 14)
+        line("edit_cancel", 0, W - 115, "Cancel", "action", 14)
+    elseif RB.save_error then
+        line("why", 0, PAD, fit_name(RB.save_error, 104),
+            (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "incompatible"
+                or RB.save_state == "applied_unsaved")
+                and "over" or "dim", 14)
     elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
         -- Below the editing caption on purpose: while a number is being typed
         -- the instruction for typing it is the more useful of the two.
-        RB.use_row("Notice")
         line("why", 0, PAD, notice, "action", 14)
-        RB.done_row()
+    else
+        line("why", 0, PAD, "Choose a limit to edit; Remove asks for confirmation.", "dim", 14)
     end
+    RB.done_row()
 
     -- Names both numbers. Without this the pair reads as progress towards a
     -- goal, which is the opposite of what it means.
@@ -2887,22 +2793,19 @@ local function draw_list(cfg, totals)
         line("h_cap",  0,
             right_x(COL_CAP - WELL_INSET + WELL_W, "LIMIT", 12, CAPS_W),
             "LIMIT", "faint", 12, RB.HEAD_DROP)
-        -- PALS, not STATUS. The column sits 780 pixels right of the job it
-        -- describes with three number columns in between, so "STATUS" had
-        -- three things it could plausibly be the status OF - the job, the
-        -- item, or the rule - and readers picked the rule. Naming the subject
-        -- in the heading makes "Stopped" mean the pals stopped.
-        -- STATUS, not PALS. The column holds Working, Waiting and Stopped,
-        -- which is the state of the job, and a heading reading PALS over
-        -- those invites reading them as a count of pals. Wider than PALS but
-        -- narrower than the values already under it, so the layout is unmoved.
-        line("h_st",   0, COL_DONE, "STATUS",     "faint", 12, RB.HEAD_DROP)
+        -- Evidence describes the limit decision, not a Pal's actual activity.
+        line("h_st", 0, COL_DONE, "LIMIT STATE", "faint", 12, RB.HEAD_DROP)
         RB.done_row()
         row = row + 1
     end
 
     if #rules == 0 then
-        line("empty", row, PAD, "No rules yet. Every job runs unlimited", "dim")
+        local known = RB.save_state == "saved" or RB.save_state == "missing"
+            or RB.save_state == "ready" or RB.save_state == "applied" or RB.save_state == "accepted"
+        local in_row=RB.use_row("Head")
+        line("empty", in_row and 0 or row, PAD, known and "No production limits configured."
+            or "Limits unavailable; check the status above.", "dim")
+        RB.done_row()
         row = row + 2
     else
         -- The picker's boxes go away while the rules are showing, or
@@ -2911,6 +2814,7 @@ local function draw_list(cfg, totals)
         hide_rows_from(0, "ItemList")
         align_list_to(row, "RuleList")
 
+        if not RB.reserve_rows("RuleList", 1, RB.RULES_PER_PAGE, LINE) then return row + 2 end
         for i, rule in ipairs(rules) do
             -- Everything this iteration draws goes into row i's own box when
             -- the blueprint is hosting. row_host answers nil on the canvas
@@ -2919,8 +2823,10 @@ local function draw_list(cfg, totals)
             RB.slot = row_host(i, "RuleList")
             RB.base = RB.slot and (row * LINE - RB.ROW_LIFT) or 0
 
+            RB.edit_layout[rule.work .. "|" .. rule.item] = {
+                parent = RB.slot and RB.logic.name(RB.slot), base = RB.base, row = row }
             local have = totals[rule.item] or 0
-            local met = have >= rule.amount
+            local met = RB.stock and RB.stock.verified and have >= rule.amount
             local key = "rule" .. i
 
             -- One answer for the whole row, used by both the fill and the
@@ -2948,9 +2854,19 @@ local function draw_list(cfg, totals)
             -- time this shape has bitten; it costs one line to refuse it.
             local works = workdefs.works_for_item
                 and workdefs.works_for_item(rule.item) or {}
-            local choosable = #works > 1
-            line(key, row, PAD + MARK_W, workdefs.label(rule.work),
-                choosable and "action" or "item", ROW_PT)
+            local choosable = false -- no validated atomic legacy-group migration
+            local legacy = caps.rule_kind and caps.rule_kind(rule.work, rule.item, mine()) == "legacy"
+            if legacy then
+                -- Two lines inside the existing 34px host, including the
+                -- one-pixel shadow. Use row-local tops, not line() centering.
+                text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 1,
+                    workdefs.label(rule.work), "item", 13)
+                text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 20,
+                    "Legacy group", "dim", 9, true)
+            else
+                line(key, row, PAD + MARK_W, workdefs.label(rule.work),
+                    choosable and "action" or "item", ROW_PT)
+            end
             -- The same words the picker used to offer it. This column showed
             -- the raw id, so an item chosen from a list reading "Baked
             -- Berries" turned into "Baked_Berries" the moment it became a
@@ -2982,7 +2898,7 @@ local function draw_list(cfg, totals)
             -- under. The one fact a reader opens this panel for - am I over
             -- or under - was left entirely to mental arithmetic between two
             -- identically coloured numbers 170 pixels apart.
-            local have_text = short_amount(have)
+            local have_text = RB.stock and RB.stock.verified and short_amount(have) or "?"
             line("amt" .. i, row, right_x(COL2_R, have_text, ROW_PT, DIGIT_W),
                 have_text, met and "over" or "limit", ROW_PT)
 
@@ -3008,118 +2924,25 @@ local function draw_list(cfg, totals)
             line("cap" .. i, row, right_x(COL_CAP_R, cap_text, ROW_PT, DIGIT_W),
                 cap_text, "title", ROW_PT)
 
-            -- AT LIMIT, not PAUSED, and not amber.
-            --
-            -- PAUSED reads as "this rule is switched off" when it means "this
-            -- rule fired". The most likely misreading was the exact opposite
-            -- of the truth. Amber made it worse: it is the caution colour
-            -- everywhere else in games, so two working rules looked like two
-            -- warnings.
-            -- Says what is actually true, with the number.
-            --
-            -- Both rows read AT LIMIT while storage stood 557 and 1500 above
-            -- the limit, and still climbing. To anybody reading it cold that
-            -- is not a status, it is evidence the mod does not work. A
-            -- ceiling stops new work; it cannot un-chop wood already in a
-            -- chest, so being over is normal and the panel has to say so.
-            -- Kept short on purpose. "OVER BY 1518" ran into Remove, and the
-            -- panel cannot simply widen: at 1050 its right edge already sits
-            -- a few pixels from the game's own Base Info panel, so growing it
-            -- trades one collision for a worse one.
-            -- What the job is doing, in a word.
-            --
-            -- OVER 651 restated arithmetic already sitting two columns to its
-            -- left, and AT LIMIT described the storage rather than the job
-            -- while claiming a precision it did not have. The JOB column is
-            -- right there, so this column reads as a sentence about it:
-            -- Lumbering ... Stopped.
-            -- What the PALS are doing, which is why the column is headed PALS.
-            --
-            -- This said "Paused", and a paused rule is a rule that is switched
-            -- off, so the most likely reading was the exact inverse of the
-            -- truth: it means the rule fired and is enforcing right now. The
-            -- word is about the pals, the heading says so, and neither reading
-            -- is available any more.
-            --
-            -- The state itself comes from the scheduler rather than from
-            -- `have >= rule.amount`. A work type stops only when every item
-            -- limited for it is at its ceiling, so a row can be over its own
-            -- limit while its job carries on for something else - that is
-            -- "Waiting", and it is the only way to find out that a Stone
-            -- limit is doing nothing because Ore is still short.
-            -- Guarded because panel.lua hot-reloads and scheduler.lua does
-            -- not: between dropping in a new panel and restarting the game,
-            -- the running scheduler is still the old one and does not export
-            -- this yet. Falling back to the per-item answer is wrong in the
-            -- multi-item case, but it is the answer this row gave before, and
-            -- a wrong word beats a nil call that takes the whole refresh out.
-            -- What the pass decided, not what this screen can re-derive.
-            --
-            -- Asking cap_state here means asking it against `totals`, which
-            -- under the default camp scope is the SUM across every camp while
-            -- the pass decides per camp against each camp's own storage. Two
-            -- bases with 3000 wood each under a 5000 limit rendered Stopped
-            -- while both kept working. The pass now publishes its verdict and
-            -- this reads it.
-            --
-            -- Still guarded, and now for two reasons: panel.lua hot-reloads
-            -- and scheduler.lua does not, so a freshly dropped panel may be
-            -- talking to a scheduler that exports neither; and last_capped is
-            -- empty until a pass has run at all.
-            local capped, partly = nil, nil
-            local seen = scheduler.last_capped and scheduler.last_capped[rule.work]
-            -- From THIS pass, or not at all.
-            --
-            -- scheduler.lua keys these by pass precisely so a camp that stops
-            -- being loaded drops out rather than leaving a stale verdict
-            -- behind - and the only reader ignored the key. Walk away from a
-            -- base whose ceiling was met and run_pass stops considering it, so
-            -- nothing ever overwrites the entry and the row says Stopped for
-            -- the rest of the session. Falling through to cap_state answers
-            -- from storage as it is now.
-            if seen and seen.pass ~= scheduler.pass_id then seen = nil end
-            if seen and seen.camps and seen.camps > 0 then
-                capped = seen.capped >= seen.camps
-                partly = seen.capped > 0 and seen.capped < seen.camps
-                            and seen.capped or nil
-            elseif scheduler.cap_state then
-                capped = scheduler.cap_state(cfg, rule.work, totals, mine())
-            else
-                capped = met
-            end
-
+            -- A scoped scheduler cap decision is policy evidence. It does
+            -- not establish actual assignment, production, or permission RPC
+            -- success, so labels never say Working, Waiting, or Stopped.
+            local capped, partly = RB.status.verdict(scheduler, rule.work, RB.stock)
             local status, tone
             if cfg.enabled == false then
-                -- Both of these mean no rule on this screen is doing
-                -- anything, and both used to render as "Working", which is a
-                -- flat untruth the panel had no other way to correct.
-                --
-                -- "Rule off" rather than "Off", because "Off" and "Stopped"
-                -- are the same word in plain English and nothing would have
-                -- told a reader that one means "hit its limit" and the other
-                -- means "not switched on". "Testing" rather than "Dry run",
-                -- which is a developer's phrase no player is going to read as
-                -- "would stop, but nothing is being sent".
                 status, tone = "Rule off", "dim"
             elseif cfg.dry_run then
                 status, tone = "Testing", "dim"
+            elseif capped == nil then
+                status, tone = "Unavailable", "dim"
             elseif capped then
-                status, tone = "Stopped", "over"
+                status, tone = "Group cap met", "over"
             elseif partly then
-                -- Honest about a split rather than picking a side. Under camp
-                -- scope a limit can be met at one base and not another, and
-                -- both "Stopped" and "Working" would be wrong at one of them.
-                --
-                -- This was shortened to plain "Stopped" for a while because
-                -- the count ran under the Remove button. That was the column
-                -- being too narrow, not the sentence being too long: the
-                -- panel is 60 pixels wider now and STATUS has 192 rather than
-                -- 132, which holds "Stopped at 12" with room to spare.
-                status, tone = "Stopped at " .. partly, "over"
+                status, tone = "Met at " .. partly .. " bases", "over"
             elseif met then
-                status, tone = "Waiting", "unmet"
+                status, tone = "Other limits unmet", "unmet"
             else
-                status, tone = "Working", "working"
+                status, tone = "Group cap unmet", "working"
             end
             line("done" .. i, row, COL_DONE, status, tone, ROW_PT)
 
@@ -3246,17 +3069,10 @@ local function draw_list(cfg, totals)
 
             RB.slot, RB.base = nil, 0
             row = row + 1
-        else
-            line("rprev", row, PAD + 16, "", "dim", ROW_PT)
-            line("rnext", row, PAD + 228, "", "dim", ROW_PT)
-            line("rpageno", row, PAD + 440, "", "dim", 13)
         end
     end
 
-    -- The one action on this screen that creates something, so it is the one
-    -- that gets the filled treatment. "+ Add a rule", "Show every item with a
-    -- job" and "< Back" were the same bar in the same tone with the same cyan
-    -- label: a create, a filter and a navigation, visually indistinguishable.
+    -- Browsing does not promise that every displayed item supports creation.
     hit("new", { kind = "new" })
     if RB.use_row("Foot") then RB.base = -RB.ROW_LIFT end
     stripe("new", 0, PAD, ROW_W, PRIMARY_BG, true)
@@ -3266,8 +3082,8 @@ local function draw_list(cfg, totals)
     -- "+   " and "<   " are three different widths and the labels came out
     -- ten and thirty pixels apart.
     line("mk_new", 0, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
-    line("g_new", 0, PAD + MARK_W, "+", "primary", ROW_PT)
-    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Add a rule", "primary")
+    line("g_new", 0, PAD + MARK_W, ">", "primary", ROW_PT)
+    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Browse items", "primary")
     RB.done_row()
 
     -- One row of breathing space, not two. The panel is sized from what it
@@ -3366,8 +3182,18 @@ local function drop_numbered_variants(list)
     return out
 end
 
+-- Search excludes these IDs before building any localized-name keys. Keep
+-- this predicate scalar: name and icon availability are checked at selection.
+local function picker_eligible(id)
+    return not looks_internal(id)
+        and not tostring(id):match("[2-9]$")
+        and workdefs.work_for_item(id) ~= nil
+end
+
 local function producible(id)
     if looks_internal(id) then return false end
+    -- Reject scalar non-job IDs before paying for a localized engine name.
+    if workdefs.work_for_item(id) == nil then return false end
 
     -- The game must have a name for it.
     --
@@ -3397,7 +3223,7 @@ local function producible(id)
     -- An id the icon loader has exhausted every route for is not an item the
     -- game itself believes in. See icons.gave_up.
     if icons.gave_up and icons.gave_up(id) then return false end
-    return workdefs.work_for_item(id) ~= nil
+    return true
 end
 
 local function only_producible(list)
@@ -3409,21 +3235,21 @@ local function only_producible(list)
 end
 
 -- What the picker is showing, before paging.
-local function build_picker_source(totals)
+local function build_picker_source(totals, catalogue)
     -- Searching casts wider than the base holds, but still only over things
-    -- the base could make. Asked for more rows than before, because the
-    -- filter takes most of them away again.
+    -- the base could make. Apply the cap after eligibility so discarded
+    -- matches cannot crowd eligible results out of the picker.
     if search_text ~= "" then
         -- Searching casts wider than the shelf, but it does not flip the
         -- toggle. Reporting `true` here made the button relabel itself to
         -- "Show only what I have" the moment anything was typed, so the user
         -- appeared to have changed a mode they never touched, and the results
         -- filled with items they own none of.
-        return only_producible(items.search(search_text, 400)), show_all
+        return items.search_picker(search_text, 400, producible), show_all
     end
 
     if show_all then
-        return only_producible(items.load()), true
+        return only_producible(catalogue), true
     end
 
     -- What the base holds, minus what it cannot make. Sorted by quantity, so
@@ -3479,6 +3305,18 @@ local function id_count(totals)
 end
 
 local function picker_source(totals)
+    -- Search ranks only scalar-eligible IDs. Prepare it in bounded slices;
+    -- never cache a partial or unavailable result.
+    -- Show-all only needs IDs, so it need not localize every non-job item.
+    local catalogue, status
+    if search_text ~= "" then
+        catalogue, status = items.prepare_picker(picker_eligible, 128, 2)
+    elseif show_all then
+        catalogue, status = items.catalogue_ids()
+    end
+    if status and status ~= "ready" then
+        return {}, show_all, status
+    end
     -- The fourth term is how many ids the icon loader has written off. It
     -- only ever grows, and when it does the filtered list is stale.
     local gave_up = icons.gave_up_n or 0
@@ -3489,12 +3327,15 @@ local function picker_source(totals)
         and picker_key[2] == show_all
         and picker_key[3] == ids_now
         and picker_key[4] == gave_up
+        and picker_key[5] == catalogue
     then
         return picker_hit[1], picker_hit[2]
     end
 
-    local list, everything = build_picker_source(totals)
-    picker_key = { search_text, show_all, ids_now, gave_up }
+    local list, everything = build_picker_source(totals, catalogue)
+    -- A reset may rebuild the index under an unchanged query/count. Its
+    -- scalar table identity prevents reusing matches from the old catalogue.
+    picker_key = { search_text, show_all, ids_now, gave_up, catalogue }
     picker_hit = { list, everything }
     return list, everything
 end
@@ -3503,7 +3344,8 @@ local function draw_item_picker(cfg, totals)
     RB.pf = { t = os.clock() }
     icons.new_frame()
 
-    local source, everything = picker_source(totals)
+    local source, everything, catalogue_state = picker_source(totals)
+    if catalogue_state == "pending" then RB.pending = true end
     local pages = math.max(1, math.ceil(#source / LIST_PER_PAGE))
     if page >= pages then page = pages - 1 end
     if page < 0 then page = 0 end
@@ -3546,7 +3388,7 @@ local function draw_item_picker(cfg, totals)
     RB.use_row("Search")
     text_at("hint", ROW_INSET + 13,
         (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
-        search_text == "" and "Search for an item to limit" or "",
+        search_text == "" and "Search items" or "",
         "hint_on_field", ROW_PT, true)
     RB.done_row()
 
@@ -3564,29 +3406,30 @@ local function draw_item_picker(cfg, totals)
             or (everything and "Every item with a job"
                 or "What your storage holds"),
         #source, #source == 1 and "item" or "items")
+    if catalogue_state == "pending" then
+        caption = "Preparing item search..."
+    elseif catalogue_state == "unavailable" then
+        caption = "Item catalogue unavailable"
+    elseif search_text == "" and not everything and not (RB.stock and RB.stock.verified) then
+        caption = "Storage unavailable - choose Show all to browse items"
+    end
     if pages > 1 then
         caption = caption .. string.format(", page %d of %d", page + 1, pages)
     end
     -- Always, not only on an empty field. This sentence used to disappear
     -- the moment anything was typed, which is precisely when somebody is
     -- about to click a tile for the first time.
-    caption = caption .. "   |   Click an item to limit it"
+    caption = caption .. "   |   Availability shown below each item"
 
-    -- The picker can say things too.
-    --
-    -- RB.use_row("Notice") existed only inside draw_list, so every announce()
-    -- made while this screen is up went into a buffer this screen never drew.
-    -- That included the one fired on ENTERING the picker, and every refusal -
-    -- so "a refused click says so on screen", added as the fix for C5, worked
-    -- everywhere except the screen C5 was about.
-    --
-    -- Same shape as the rules list: borrow a row while there is something to
-    -- say, and take no space when there is not.
+    -- Reserve the same help row on every draw. Showing or expiring a refusal
+    -- must never move another item under the pointer for the next click.
+    RB.use_row("Notice")
     if notice and (os.clock() - notice_at) < NOTICE_FOR then
-        RB.use_row("Notice")
         line("why", 0, PAD, notice, "action", 14)
-        RB.done_row()
+    else
+        line("why", 0, PAD, "Choose an item to review its limit options.", "dim", 14)
     end
+    RB.done_row()
 
     RB.use_row("Caption")
     line("sub", 0, PAD, caption, "dim", 13)
@@ -3619,13 +3462,17 @@ local function draw_item_picker(cfg, totals)
 
     grid_from, grid_count = #order + 1, 0
 
-    -- Which items already have a rule, so the grid can say so.
-    local has_rule = {}
-    for _, r in ipairs(rule_list(cfg)) do has_rule[r.item] = true end
+    -- One guild/rule read per draw. Capability is cheap plain Lua and is
+    -- refreshed even when the source items and widgets are unchanged.
+    local guild = mine()
+    local existing_rules = caps.all(cfg, guild)
 
     hide_rows_from(0, "RuleList")
     align_list_to(top / LINE, "ItemList", LINE)
 
+    if not RB.reserve_rows("ItemList", 0, LIST_ROWS - 1, LIST_PITCH) then
+        return 6 + math.ceil((LIST_ROWS * LIST_PITCH) / LINE) + 4
+    end
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -3661,7 +3508,9 @@ local function draw_item_picker(cfg, totals)
             RB.filled[key] = id
         end
 
-        list_row(key, i - from, id, totals[id] or 0, top, has_rule[id])
+        local work = workdefs.work_for_item(id) or workdefs.DEFAULT_WORK
+        local capability = RB.picker.describe(caps, existing_rules, work, id, guild)
+        list_row(key, i - from, id, totals[id] or 0, top, capability)
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
     end
@@ -3702,6 +3551,8 @@ local function draw_item_picker(cfg, totals)
     -- the last page" look like a caption rather than a spent control. Now
     -- they are shaped like the other buttons on this screen: a bar you can
     -- press anywhere, tinted when it does something and flat when it does not.
+    RB.slot = row_host(LIST_ROWS, "ItemList")
+    RB.base = RB.slot and (row * LINE - RB.ROW_LIFT) or 0
     local PAGE_W = 200
     local can_prev = page > 0
     local can_next = page < pages - 1
@@ -3755,6 +3606,7 @@ local function draw_item_picker(cfg, totals)
     -- collided with nothing. That is not a reason: the grid moved into the
     -- flow above them and the search field had to follow, and a widget left
     -- behind does not stay put, it ends up somewhere wrong.
+    RB.done_row()
     local footed = RB.use_row("Foot")
     -- Down by the same lift the list rows get, and for the same reason: the
     -- shared anchor puts a row's content three pixels above its own top edge,
@@ -3957,7 +3809,11 @@ function M.pad_tick()
     if RB.pad_actions == nil then
         RB.pad_actions = {
             nav      = function(verb) M.nav(RB.pad_cfg, verb) end,
-            close    = function() M.toggle() end,
+            close    = function()
+                -- The native binding consumes B/Escape before Lua closes.
+                -- Polling B here would deactivate it before routing finishes.
+                if overlay.native_cancel ~= true then M.escape() end
+            end,
             tab_prev = function() M.tab_step(RB.pad_cfg, -1) end,
             tab_next = function() M.tab_step(RB.pad_cfg, 1) end,
             remove   = function() M.row_action(RB.pad_cfg, "drop") end,
@@ -3970,50 +3826,20 @@ end
 
 function M.hover_tick()
     if not M.open then return false end
-
-    -- Before the validity window below, deliberately. Reading a controller
-    -- touches no widget, so it has no reason to be refused on the frames when
-    -- the widget tree is not proven fresh - and those are exactly the frames
-    -- after a redraw, when a player is most likely to be pressing something.
     pcall(M.pad_tick)
-
-    -- Only inside the window a draw has just validated. 150ms is one body
-    -- beat plus slack: past that the tree has not been proven this side of a
-    -- world change, and the widgets below are wrappers from an earlier frame.
-    -- Refusing costs one missed highlight update; not refusing costs the
-    -- process, which is what it cost.
-    if (os.clock() - (RB.validated or -1)) > 0.15 then return false end
-
-    local before = hover_key
-    hover_key = nil
-    for key in pairs(was_hit or {}) do
-        if over_key(key) then
-            hover_key = key
-            break
-        end
-    end
-    if hover_key == before then return false end
-
-    RB.retint(before)
-    RB.retint(hover_key)
-    return true
+    -- Native hover reads run with the 100ms draw's fresh tree snapshot. A
+    -- recent timestamp never makes an older widget wrapper safe to touch.
+    return false
 end
 
--- Carries a page that ran out of slice on to the next frame.
---
--- Rides main.lua's 16ms game thread loop, the one hover already uses, rather
--- than the 100ms clock beat. That is the point of it: eighteen tiles at eight
--- milliseconds a beat would take most of two seconds to appear, while at
--- frame rate the same fill is done in about a third of a second and no single
--- frame pays more than half its budget.
---
--- It calls the ordinary refresh rather than reaching into the draw directly,
--- so hits, order and the used map are rebuilt by the code that already gets
--- that right. Setup is free now, stock is on its own timer and the draw
--- rations itself, so a refresh with nothing new to show is under 5ms: the
--- extra frequency buys the fill and costs nothing once the fill is over.
+-- Continue incomplete pages on the existing game-thread loop. The tile slice
+-- is a soft budget; complete callback costs must be measured in the game.
 function M.fill_tick()
     if not (M.open and RB.pending and RB.cfg) then return false end
+    -- Only continuation work yields. A normal maintenance refresh must still
+    -- rediscover the current tree/data even immediately after a fill. This
+    -- timestamp is a scheduling deadline, never evidence of widget lifetime.
+    if RB.refreshing or (RB.fill_after and os.clock() < RB.fill_after) then return false end
     M.refresh(RB.cfg)
     return true
 end
@@ -4030,43 +3856,26 @@ function M.refresh(cfg)
     -- is config's own table, plain Lua this mod owns, not an engine object -
     -- holding it across frames costs nothing and risks nothing.
     RB.cfg = cfg or RB.cfg
+    if api.has_viewport and api.has_viewport() ~= true then
+        if M.open then M.close() end
+        return
+    end
 
-    -- The root is validated FIRST, before anything touches a stored widget.
-    --
-    -- ensure_root is the only thing that drops amount_box when the overlay is
-    -- rebuilt, and the editing block below used to run ahead of it - including
-    -- on the once-a-second tick while the panel is CLOSED, where ensure_root
-    -- was never reached at all. So an overlay rebuilt without a world switch
-    -- left a freed box, and alive() on it is the crash rather than a check
-    -- against it, once a second, for the rest of the session.
-    --
-    -- It is frame-cached, so asking here costs nothing that was not going to
-    -- be paid anyway.
+    -- An asynchronous host failure already relinquished input. Cancel local
+    -- edits and invalidate queued actions now, before another action can save.
+    if M.open and overlay.open == false then RB.close_now() return end
+
+    -- Fresh native root/tree before any cached child is resolved.
     local tsetup = os.clock()
-
-    -- Nothing to validate when the panel is shut and nothing is being typed.
-    --
-    -- ensure_root ends in overlay.host(), whose first act is owner_name() - a
-    -- FindFirstOf for PalPlayerController plus a GetFullName. Measured on this
-    -- build at 9ms, because FindFirstOf can only early-exit on a class that is
-    -- common and there is exactly one player controller in an array of tens of
-    -- thousands. At ten refreshes a second that is 90ms of every second spent
-    -- checking whether a widget nobody is looking at is still valid.
-    --
-    -- It cannot simply be cached: overlay.lua sets OWNER_TTL to zero on
-    -- purpose, and says why - a stale name matches, the drop is skipped, and
-    -- alive() is then called on a widget outered to a freed controller, which
-    -- is the crash rather than the check for it.
-    --
-    -- But the reason this runs while shut is to drop a freed amount_box, and
-    -- there is no amount_box unless a ceiling is being typed. With the panel
-    -- closed and editing nil there is nothing here to protect.
     local rooted
     if M.open or editing ~= nil then
         rooted = ensure_root()
         if rooted then RB.validated = os.clock() end
     end
     perf_setup = os.clock() - tsetup
+    if M.open and overlay.open == false then RB.close_now() return end
+
+    if rooted and RB.finish_cancel() then return end
 
     -- Closing the game's own menu hands the cursor back to the world without
     -- caring that this panel is still open. Guarded like every other call into
@@ -4189,12 +3998,8 @@ function M.refresh(cfg)
         end
     end
 
-    -- The typed-ceiling box, when one is open: placed, then read.
-    if rooted and editing ~= nil then
-        ensure_amount_box()
-        poll_amount(cfg)
-    end
-
+    -- Place the amount editor only after the current rule list validates its
+    -- owner and supplies this frame's layout below.
     if not M.open then return end
     if not rooted then return end
 
@@ -4263,6 +4068,18 @@ function M.refresh(cfg)
         want_first_row = false
         sel = tab_hits + 1
     end
+    if RB.reveal_rule and mode == "list" then
+        for index, key in ipairs(order) do
+            local target = hits[key]
+            if target and target.kind == "rule" and target.rule
+                and target.rule.work == RB.reveal_rule.work
+                and target.rule.item == RB.reveal_rule.item then
+                sel = index
+                break
+            end
+        end
+        RB.reveal_rule = nil
+    end
     if sel > #order then sel = #order end
     if sel < 1 then sel = 1 end
 
@@ -4305,6 +4122,7 @@ function M.refresh(cfg)
 
     ensure_backdrop(rows)
     local tb = os.clock()
+    if editing then ensure_amount_box() end
     blank_unused()
     perf_blank = os.clock() - tb
 
@@ -4336,42 +4154,26 @@ function M.refresh(cfg)
     end
 end
 
-local function blank_everything()
-    -- Same rule as refresh: nothing here touches a stored widget until the
-    -- root has been validated this frame. M.toggle reaches this directly.
-    if not ensure_root() then
-        blocks, stripes, images, backdrop = {}, {}, {}, nil
-        return
+-- Every public refresh path (including fill_tick and immediate open) owns one
+-- icon lookup scope. An exception before the draw's normal cleanup must not
+-- leave collectable texture wrappers alive in icons' module state.
+do
+    local refresh = M.refresh
+    function M.refresh(...)
+        -- Opening from a closed-panel refresh may draw immediately inside
+        -- that call. Preserve it; only fill_tick rejects active-call overlap.
+        local was_refreshing = RB.refreshing
+        RB.refreshing = true
+        icons.new_frame()
+        local result = table.pack(pcall(refresh, ...))
+        icons.new_frame()
+        RB.refreshing = was_refreshing
+        -- Space continuations from completion, including slow/failed draws;
+        -- full maintenance refreshes are deliberately never skipped here.
+        RB.fill_after = os.clock() + 0.016
+        if not result[1] then error(result[2], 0) end
+        return table.unpack(result, 2, result.n)
     end
-
-    for key, tb in pairs(blocks) do
-        if alive(tb) then
-            local ft = make_ftext("")
-            if ft then
-                pcall(function() tb:SetText(ft) end)
-                drawn[key] = ""
-            end
-        end
-    end
-    if alive(backdrop) then
-        pcall(function() backdrop:SetBrushColor(CLEAR) end)
-    end
-    for key, border in pairs(stripes) do
-        if alive(border) then
-            pcall(function() border:SetBrushColor(CLEAR) end)
-            -- Hit tests too. See blank_unused.
-            pcall(function() border:SetVisibility(3) end)
-            drawn["s:" .. key] = "clear"
-        end
-    end
-    for key, img in pairs(images) do
-        if alive(img) then
-            pcall(function() img:SetOpacity(0.0) end)
-            drawn["i:" .. key] = "clear"
-        end
-    end
-    hide_search()
-    hits, hover_key = {}, nil
 end
 
 -- Switch screens without clicking, for driving the panel from outside while
@@ -4382,6 +4184,8 @@ function M.set_screen(name)
     -- and the two paths disagreeing is how the marker ended up on RULES while
     -- ADD was the screen being shown.
     if name ~= "item" and name ~= "list" then return false end
+    pending_drop = nil
+    RB.reveal_rule = nil
     -- sel lands on the first row of the new screen, not on 1.
     --
     -- It used to set sel = tab_hits + 1 and then, two lines later,
@@ -4391,6 +4195,7 @@ function M.set_screen(name)
     -- a tab with the mouse goes through M.apply and gets this right; every
     -- screen change driven through the command channel did not, which is why
     -- the panel looked like it had no keyboard cursor at all.
+    if editing then M.cancel_edit() end
     mode, page = name, 0
     want_first_row = true
     -- Same rule through the command channel as through a click: the picker
@@ -4399,54 +4204,64 @@ function M.set_screen(name)
     return true
 end
 
+function M.close()
+    if not M.open and RB.runtime.phase == "closed"
+        and overlay.open ~= true and overlay.phase ~= "close_failed" then return false end
+    -- Cancel Lua edit state before hiding, detaching, or querying a widget.
+    editing, edit_focus, M.open = nil, false, false
+    RB.session.invalidate_ui()
+    RB.runtime.phase = "closing"
+    RB.runtime:invalidate()
+    overlay.hide()
+    RB.clear_widgets()
+    RB.runtime.phase = "closed"
+    overlay.height = 340
+    mode, page, show_all = "list", 0, false
+    pcall(function() scheduler.want_totals = false end)
+    return true
+end
+
+function M.escape()
+    if editing then return M.cancel_edit() end
+    return M.close()
+end
+
+-- Refresh already runs on the game thread. Handle a native Cancel there,
+-- before deferring other work; queuing it behind an earlier Confirm loses
+-- the user's cancellation. Invalidate old input without dropping this tree.
+RB.finish_cancel = function()
+    if not RB.cancel_requested then return false end
+    if RB.cancel_ack == false then return true end
+    RB.cancel_requested, RB.cancel_ack = false, nil
+    RB.session.invalidate_ui()
+    RB.runtime.epoch, RB.runtime.pending = RB.runtime.epoch + 1, 0
+    local was = RB.runtime.in_action
+    RB.runtime.in_action = true
+    local ok, why = pcall(M.escape)
+    RB.runtime.in_action = was
+    if not ok then error(why, 0) end
+    return true
+end
+
 function M.toggle()
-    M.open = not M.open
-
-    if not M.open then
-        blank_everything()
-        overlay.hide()
-
-        -- The height goes back with the screen it belonged to.
-        --
-        -- mode is reset here and overlay.height was not, so after one visit to
-        -- the picker every later open began at the picker's height - a
-        -- 1146x700 slab for a rules list that needs 340, which then collapsed
-        -- 360 pixels once the first draw landed.
-        -- Set to the rules list's own height rather than cleared: fit_width
-        -- reads "M.height or 700", so nil is the slab height this is trying
-        -- to avoid. The next draw corrects it either way.
-        pcall(function() overlay.height = 340 end)
-
-        mode, page, show_all = "list", 0, false
-        pcall(function() scheduler.want_totals = false end)
-
-        -- An open ceiling edit is dropped, not left pending.
-        --
-        -- refresh() runs poll_amount BEFORE it checks M.open, and main.lua
-        -- calls refresh once a second whether the panel is open or not - so
-        -- closing the panel mid-edit lost the box's focus and committed a
-        -- second later, with the panel already gone. That is the same silent
-        -- ceiling change had_focus was added to stop, arriving through the
-        -- one door it did not cover.
-        editing = nil
-        pcall(function() if alive(amount_box) then amount_box:SetVisibility(1) end end)
-        return
-    end
+    if M.open then return M.close() end
+    M.open, RB.runtime.phase = true, "opening"
 
     trace.at("panel: opening")
-    if not overlay.show() then
-        trace.done()
-        M.open = false
-        log.say("could not put the overlay on screen, see priority.log")
-        return
-    end
+    local shown, result = pcall(overlay.show)
     trace.done()
+    if not shown or result ~= true then
+        M.close()
+        log.say("could not put the overlay on screen, see priority.log")
+        return false
+    end
+    RB.runtime.phase = "open"
 
     -- Chest counts are held for half a minute so the pass is not sweeping
     -- every base object every ten seconds. Opening this window is the one
     -- moment the numbers are being read by somebody, so they get measured
     -- now instead of being served up to thirty seconds stale.
-    pcall(function() scheduler.forget_stock() end)
+    pcall(function() scheduler.forget_stock(true) end)
 
     -- The pass measures storage for us while this is open, so the panel never
     -- has to sweep containers itself. Without it, a base with no rules set
@@ -4474,22 +4289,56 @@ function M.toggle()
     log.say("Production Limits open, Alt+F1 or Esc to close")
 end
 
+-- Only for a caller already on the game thread (remote.drain). An explicit
+-- desired state must be evaluated when executed, never translated into a
+-- queued toggle using the state observed before execution.
+function M.set_open_now(wanted, screen)
+    if wanted ~= nil and type(wanted) ~= "boolean" then return false end
+    if screen ~= nil and screen ~= "item" and screen ~= "list" then return false end
+    if wanted == nil and screen == nil then return false end
+    local screen_set
+    if wanted ~= nil then
+        -- Even a matching-state request supersedes older queued UI input.
+        -- Keep this callback's tree, but discard callbacks from its old intent.
+        RB.session.invalidate_ui()
+        RB.runtime.epoch, RB.runtime.pending = RB.runtime.epoch + 1, 0
+    end
+    local was_action = RB.runtime.in_action
+    RB.runtime.in_action = true
+    local ok, why = pcall(function()
+        if wanted == false then
+            M.close() -- Retry incomplete native cleanup even if Lua already closed.
+        elseif wanted == true and not M.open then
+            M.toggle()
+        end
+        if screen then
+            root_checked = -1
+            if M.open and (not ensure_root() or RB.finish_cancel()) then return end
+            screen_set = M.set_screen(screen)
+        end
+    end)
+    RB.runtime.in_action = was_action
+    if not ok then error(why, 0) end
+    if screen ~= nil and screen_set ~= true then return false end
+    if wanted == nil then return true end
+    if wanted then return M.open == true and overlay.open == true end
+    return M.open == false and overlay.open ~= true and overlay.phase ~= "close_failed"
+end
+
 function M.reset()
-    M.open = false
+    editing, edit_focus, M.open = nil, false, false
+    RB.session.invalidate_ui()
+    local closed, why = pcall(overlay.hide)
+    if not closed then log.warn("panel reset could not close its overlay: " .. tostring(why)) end
+    RB.runtime:invalidate()
+    RB.runtime.phase = "closed"
+    RB.clear_widgets()
     pcall(function() scheduler.want_totals = false end)
-    scanned_once, scanned_at = nil, 0
-    root, root_tree, backdrop = nil, nil, nil
-    blocks, drawn, hits, used = {}, {}, {}, {}
-    stripes, placed, search_box, search_text, want_focus = {}, {}, nil, "", false
-    amount_box, editing, edit_focus = nil, nil, false
-    tile_face = {}
-    styled_boxes = {}
-    images, grid_from, grid_count = {}, 0, 0
-    icons.reset()
-    was_hit, was_sel, hover_key = {}, nil, nil
+    RB.stock, RB.stock_camp = nil, nil
+    search_text, want_focus, grid_from, grid_count = "", false, 0, 0
     mode, page, show_all = "list", 0, false
-    ftext_mode = nil
-    warned = {}
+    ftext_mode, warned = nil, {}
+    icons.reset()
 end
 
 -- ---------------------------------------------------------------------------
@@ -4553,6 +4402,8 @@ local function is_chrome(i)
 end
 
 function M.move(delta)
+    pending_drop = nil
+    RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
 
     local i, guard = sel, 0
@@ -4573,6 +4424,8 @@ end
 -- right act on and what a player is nearly always here to change. Falls back
 -- to the row's first entry otherwise.
 function M.move_row(delta)
+    pending_drop = nil
+    RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
 
     local from = rows[sel]
@@ -4701,6 +4554,7 @@ end
 -- Enter and backspace stand in for left and right click on the selected row.
 function M.activate(cfg, dir)
     if not M.open then return false end
+    if editing then return M.confirm_edit(cfg) end
 
     local what = hits[order[sel] or ""]
     if what == nil then return false end
@@ -4727,6 +4581,8 @@ end
 --   pwp panel type <number>       type into an open ceiling box and commit
 --   pwp panel state               what is on screen right now
 function M.command(cfg, args)
+    root_checked = -1
+    if M.open and not ensure_root() then return "the current panel tree is unavailable" end
     local verb, rest = tostring(args or ""):match("^%s*(%S*)%s*(.-)%s*$")
     rest = (rest ~= "" and rest) or nil
 
@@ -4747,6 +4603,20 @@ function M.command(cfg, args)
     if not api.has_viewport() then
         return "no viewport on this machine, so there is no panel to " ..
             "command. These verbs are client only."
+    end
+
+    if verb == "standlife" then
+        -- Stateless explicit probe only: no hooks, timers or native references.
+        local dir=require('reload').scripts_dir
+        if not dir then return 'diagnostic scripts path unavailable' end
+        return assert(loadfile(dir..'stand_lifecycle_probe.lua'))().read()
+    end
+
+    if verb == "lazyicons" then
+        if rest ~= "on" and rest ~= "off" then return "usage: panel lazyicons on|off" end
+        RB.icon_prototype.enabled = rest == "on"
+        RB.lazy_error = nil
+        return "experimental Blueprint icons " .. rest
     end
 
     if verb == "click" then
@@ -5173,6 +5043,7 @@ function M.command(cfg, args)
 
     -- Per row state, for the chrome collapse that follows repeated reloads.
     if verb == "rows" then
+        if not M.open then return "open the panel first" end
         local parts = overlay.parts
         if not parts then return "no parts at all" end
 
@@ -5204,6 +5075,42 @@ function M.command(cfg, args)
             log.say(string.format("  %-8s slot %-5s row %-5s", name,
                 tostring(alive(parts[name])),
                 tostring(alive(parts[name .. "Row"]))))
+        end
+        -- Inspect current physical child order, not the saved logical order.
+        -- M.command reacquired this tree above. Each child wrapper lives only
+        -- in this iteration; host lookup below compares saved scalar names.
+        local list = parts.ItemList
+        local counted, total = pcall(function() return list:GetChildrenCount() end)
+        if not counted or type(total) ~= "number" or not math.tointeger(total) or total < 0 then
+            log.say("  ItemList current children: unavailable")
+        else
+            log.say(string.format("  ItemList current children: %d (showing %d)", total, math.min(total, 32)))
+            local function scalar(read)
+                local ok, value = pcall(read)
+                local kind = type(value)
+                if not ok or (kind ~= "string" and kind ~= "number" and kind ~= "boolean") then
+                    return "unavailable"
+                end
+                return tostring(value)
+            end
+            for index = 0, math.min(total, 32) - 1 do
+                local got, child = pcall(function() return list:GetChildAt(index) end)
+                if not got or not alive(child) then
+                    log.say(string.format("    [%d] child unavailable", index))
+                else
+                    local name = scalar(function() return child:GetFullName() end)
+                    local host = "untracked"
+                    for key, saved in pairs(RB.hosts) do
+                        if saved.box == name then host = key; break end
+                    end
+                    log.say(string.format("    [%d] %s host=%s visibility=%s height_override=%s enabled=%s children=%s",
+                        index, name:sub(1, 512), host,
+                        scalar(function() return child:GetVisibility() end),
+                        scalar(function() return child.HeightOverride end),
+                        scalar(function() return child.bOverride_HeightOverride end),
+                        scalar(function() return child:GetChildrenCount() end)))
+                end
+            end
         end
         return "row report done"
     end
@@ -5514,20 +5421,8 @@ function M.command(cfg, args)
     end
 
     if verb == "type" then
-        if editing == nil then return "no ceiling box is open" end
-        local n = tonumber(tostring(rest or ""):match("%d+"))
-        if n == nil then return "give a number" end
-        -- Straight down the same road the box takes when focus leaves it.
-        local job, item = editing.work, editing.item
-        editing = nil
-        pcall(function() amount_box:SetVisibility(1) end)
-        if n <= 0 then
-            caps.clear(job, item, mine())
-        else
-            caps.set(job, item, n, mine())
-        end
-        M.wants_pass = true
-        return string.format("%s %s set to %d", workdefs.label(job), item, n)
+        if not editing then return "no ceiling box is open" end
+        return M.confirm_edit(cfg, rest) and "limit submitted" or "invalid or unconfirmed limit"
     end
 
     -- Reads only, and only off a widget that already exists and is parented.
@@ -5590,9 +5485,10 @@ function M.command(cfg, args)
                     (h.mode and (":" .. h.mode) or "")
             end
         end
-        return string.format("screen=%s open=%s rows=%d sel=%d editing=%s | %s",
+        return string.format("screen=%s open=%s rows=%d sel=%d editing=%s native_escape=%s | %s",
             tostring(mode), tostring(M.open), #order, sel,
             editing and (editing.item or "yes") or "no",
+            tostring(overlay.native_cancel == true),
             table.concat(kinds, ", "))
     end
 
@@ -5655,16 +5551,9 @@ end
 function M.handle_click(cfg, dir)
     if not M.open then return false end
 
-    -- The same window hover_tick refuses outside, and for the same reason.
-    --
-    -- hovered() reaches tile_face and blocks, which are widget wrappers from
-    -- an earlier frame. A world or level transition destroys everything
-    -- outered to the player controller, and ensure_root is what notices - so
-    -- a click landing between the transition and the next refresh calls
-    -- IsValid on a freed widget, which is the crash rather than an error. The
-    -- polling path was given this guard; the click path, which is
-    -- asynchronous to the draw, was not.
-    if (os.clock() - (RB.validated or -1)) > 0.15 then return false end
+    -- bind_actions has just reacquired the current tree on the game thread
+    -- and rejected a changed epoch. Draw age is irrelevant: a 150ms gate here
+    -- dropped valid clicks between maintenance beats despite that fresh proof.
 
     local what = hovered()
 
@@ -5700,6 +5589,11 @@ end
 
 -- What a row does, whichever way it was reached.
 function M.apply(cfg, what, dir, from_mouse)
+    if what.kind ~= "drop" then pending_drop = nil end
+    RB.reveal_rule = nil -- A newer explicit action supersedes a pending reveal.
+    if what.kind == "edit_save" then return M.confirm_edit(cfg) end
+    if what.kind == "edit_cancel" then return M.cancel_edit() end
+    if editing and what.kind ~= "close" then M.cancel_edit() end
     if what.kind == "close" then
         M.toggle()
         return true
@@ -5733,6 +5627,14 @@ function M.apply(cfg, what, dir, from_mouse)
         return true
     end
 
+    if what.kind == "stock_scope" then
+        stock_totals(cfg)
+        if not RB.stock or #RB.stock.choices < 2 then return false end
+        RB.stock_camp = RB.stock.choices[(RB.stock.index or 1) % #RB.stock.choices + 1]
+        page = 0
+        return true
+    end
+
     if what.kind == "toggle_all" then
         show_all = not show_all
         page = 0
@@ -5759,15 +5661,18 @@ function M.apply(cfg, what, dir, from_mouse)
         -- click, no confirmation, and the only visible state on the row was
         -- "you have already done this". Now it takes you to the rule instead,
         -- which is where changing it belongs.
-        local existing = (caps.all(cfg, mine())[work] or {})[what.item]
-        if existing ~= nil then
+        local guild = mine()
+        local capability = RB.picker.describe(caps, caps.all(cfg, guild), work, what.item, guild)
+        if capability.state == "existing" then
             announce(string.format(
-                "%s already stops at %d %s - the RULES tab is where to change it",
-                workdefs.label(work), existing, what.item))
+                "%s. Limit %d; edit in RULES.", capability.detail, capability.amount))
             mode = "list"
+            RB.reveal_rule = { work = work, item = what.item, guild = guild }
             want_first_row = true
             return true
         end
+
+        if capability.state ~= "create" then announce(capability.detail) return false end
 
         -- Seeded above what the base already holds, not at the bottom rung.
         --
@@ -5787,109 +5692,44 @@ function M.apply(cfg, what, dir, from_mouse)
             seed = LADDER[#LADDER]
         end
 
-        set_and_say(work, what.item, seed, string.format(
-            "rule added: %s stops at %d %s (%d in storage)",
-            workdefs.label(work), seed, what.item, have))
-        M.wants_pass = true
+        if not set_and_say(work, what.item, seed, string.format(
+            "%s: %s limit %d requested", capability.detail, what.item, seed)) then
+            return false
+        end
         mode = "list"
         want_first_row = true
         return true
     end
 
-    -- Correcting a guess. Walks the work types in order rather than opening
-    -- another screen for it.
+    -- A clear followed by a set can lose the source rule when the new
+    -- producer is unsupported, persistence fails, or a network edit is
+    -- rejected. Keep the source until a validated atomic migration exists.
     if what.kind == "job" then
-        local rule = what.rule
-
-        -- Only among the jobs that could actually produce this item. The
-        -- cycle used to run the whole ORDER list, so two clicks on a Stone
-        -- rule landed it on Oil Extraction and the ceiling stopped firing,
-        -- with nothing on screen to say the pairing was nonsense.
-        local works = what.works
-            or (workdefs.works_for_item and workdefs.works_for_item(rule.item))
-            or {}
-        if #works < 2 then
-            log.say(rule.item .. " is only made by " ..
-                workdefs.label(rule.work) .. ", so there is nothing to switch to")
-            return false
-        end
-
-        local at = 1
-        for i, name in ipairs(works) do
-            if name == rule.work then at = i break end
-        end
-
-        at = at + ((dir < 0) and 1 or -1)
-        if at > #works then at = 1 end
-        if at < 1 then at = #works end
-
-        local moved = works[at]
-
-        -- Moving a rule to another job is a clear and then a set, and either
-        -- half can refuse. Both answers used to be discarded and the move
-        -- announced regardless, which produced two different lies.
-        --
-        -- A rule from before guild scoping is drawn as an ordinary row,
-        -- because merged_for layers the wildcard in - but clear refuses it,
-        -- since it belongs to every guild that has not set its own. The set
-        -- then succeeded, and the item ended up capped under BOTH jobs while
-        -- the panel said it had moved.
-        --
-        -- On a client the two halves are two separate requests against a
-        -- budget of ten per ten seconds. At nine, the clear lands and the set
-        -- is dropped: the ceiling is gone entirely and the panel still says it
-        -- moved.
-        --
-        -- The drop branch below already learned this - "This used to discard
-        -- it and say 'rule removed' either way" - and this branch was missed.
-        if not caps.clear(rule.work, rule.item, mine()) then
-            announce(string.format(
-                "could not move the limit on %s: it is not your guild's " ..
-                "rule, it applies to every guild that has not set its own",
-                rule.item))
-            return true
-        end
-
-        if not caps.set(moved, rule.item, rule.amount, mine()) then
-            -- The clear already happened, so the rule is gone rather than
-            -- moved. Said plainly, with the number, because re-adding it by
-            -- hand is the only way back and the player needs to know both
-            -- halves of what to type.
-            announce(string.format(
-                "the %s limit on %s was removed but could not be set on %s: " ..
-                "add it again with a ceiling of %d",
-                workdefs.label(rule.work), rule.item,
-                workdefs.label(moved), rule.amount))
-            M.wants_pass = true
-            return true
-        end
-
-        if caps.submit then
-            announce("asked the server to move the limit on " ..
-                pretty_name(rule.item) ..
-                " to " .. workdefs.label(moved))
-        else
-            -- pretty_name, as the picker and the rules row already use.
-            -- Picking "Mushroom Quiche" and being told "Mushroom_Quiche" is
-            -- the mod dropping back into its own internal vocabulary at the
-            -- one moment the player is looking for confirmation.
-            announce(pretty_name(rule.item) .. " is now made by " ..
-                workdefs.label(moved))
-        end
-        M.wants_pass = true
-        return true
+        announce("Changing work types is unavailable; the existing legacy group is kept.")
+        return false
     end
 
     if what.kind == "drop" then
         local rule = what.rule
+        local guild = mine()
+        local current = guild and caps.all(cfg, guild)
+        current = current and current[rule.work]
+        current = current and current[rule.item]
+        if guild == nil or current == nil or current ~= rule.amount then
+            pending_drop = nil
+            announce("This limit changed or is unavailable; review it before removing.")
+            return false
+        end
 
         -- First click asks, second click inside four seconds does it.
         if pending_drop == nil
             or pending_drop.work ~= rule.work
             or pending_drop.item ~= rule.item
+            or pending_drop.guild ~= guild
+            or pending_drop.amount ~= current
             or (os.clock() - pending_at) > 4.0
         then
-            pending_drop = { work = rule.work, item = rule.item }
+            pending_drop = { work = rule.work, item = rule.item, guild = guild, amount = current }
             pending_at = os.clock()
             announce("Click Remove again to delete the " ..
                 workdefs.label(rule.work) .. " limit on " .. rule.item)
@@ -5906,13 +5746,11 @@ function M.apply(cfg, what, dir, from_mouse)
         -- the panel reported success anyway, then redrew the rule still
         -- sitting there. Measured on 23 August: the client said removed, the
         -- server logged nothing, and caps.txt was unchanged.
-        if not caps.clear(what.rule.work, what.rule.item, mine()) then
-            announce(string.format(
-                "could not remove the %s limit on %s: it is not your " ..
-                "guild's rule, it applies to every guild that has not set " ..
-                "its own",
-                workdefs.label(what.rule.work), what.rule.item))
-            return true
+        local accepted,pending,stale=RB.change_limit(true,what.rule.work,what.rule.item,nil,guild)
+        if stale then return false end
+        if not accepted then
+            announce(select(3, RB.status.save(caps)) or "Removal was not confirmed; check the current rule.")
+            return false
         end
 
         -- On a client, caps.clear answers whether the request was SENT, not
@@ -5921,7 +5759,9 @@ function M.apply(cfg, what, dir, from_mouse)
         -- same false claim in a new place, so the wording matches what is
         -- actually known, and the server pushes its rules back either way so
         -- the panel redraws the truth a moment later.
-        if caps.submit then
+        if pending then
+            announce("Saving removal...")
+        elseif caps.submit then
             announce("asked the server to remove the " ..
                 workdefs.label(what.rule.work) .. " limit on " ..
                 what.rule.item)
@@ -5929,7 +5769,6 @@ function M.apply(cfg, what, dir, from_mouse)
             announce("rule removed: " .. workdefs.label(what.rule.work) ..
                 " " .. what.rule.item)
         end
-        M.wants_pass = true
         return true
     end
 
@@ -5941,7 +5780,7 @@ function M.apply(cfg, what, dir, from_mouse)
         -- land on a number that is not on it.
         if from_mouse and dir < 0 then
             begin_edit(rule, what.row or 3)
-            log.say("type a ceiling, then click away to set it")
+            log.say("type a whole-number ceiling; confirm submits it, Escape cancels")
             return true
         end
 
@@ -5962,7 +5801,8 @@ function M.apply(cfg, what, dir, from_mouse)
                 workdefs.label(rule.work), rule.item,
                 dir < 0 and "highest" or "lowest"))
         else
-            local stepped = caps.set(rule.work, rule.item, next_amount, mine())
+            local stepped,pending,stale=RB.change_limit(false,rule.work,rule.item,next_amount,mine())
+            if stale then return false end
             -- Announced, like every other way a rule can change.
             --
             -- Typing a ceiling says so, removing one says so, and stepping
@@ -5975,20 +5815,49 @@ function M.apply(cfg, what, dir, from_mouse)
             -- The answer decides the wording. A client whose step the host
             -- refuses used to be told the limit had moved.
             if stepped then
-                announce(string.format("%s %s limit stepped to %d",
+                announce(pending and "Saving change..." or string.format("%s %s limit requested: %d",
                     workdefs.label(rule.work), rule.item, next_amount))
             else
-                announce(string.format(
+                announce(select(3, RB.status.save(caps)) or string.format(
                     "asked the server to step %s %s to %d, "
                     .. "it has not confirmed",
                     workdefs.label(rule.work), rule.item, next_amount))
             end
         end
-        M.wants_pass = true
         return true
     end
 
     return false
 end
+
+-- Key callbacks may arrive outside the game-thread refresh. Queued actions
+-- carry the widget/session epoch and are discarded after close/reset/rebuild.
+function RB.bind_actions()
+for _, name in ipairs({ "toggle", "close", "escape", "cancel_edit", "confirm_edit",
+    "set_screen", "move", "move_row", "row_action", "page_step", "tab_step",
+    "nav", "activate", "handle_click", "apply", "click_named" }) do
+    local action = M[name]
+    if name == "close" then RB.close_now = action end
+    if name == "cancel_edit" then RB.cancel_edit_now = action end
+    M[name] = function(...)
+        if RB.runtime.in_action then return action(...) end
+        local args = table.pack(...)
+        if name == "handle_click" and not M.open then return false end
+        return RB.runtime:dispatch(function()
+            local before = RB.runtime.epoch
+            root_checked = -1
+            if M.open and name ~= "close" and name ~= "toggle" then
+                if not ensure_root() or before ~= RB.runtime.epoch then return false end
+                -- Native Escape may precede a queued Confirm or mouse edit.
+                -- Cancel wins before any action can commit the abandoned text.
+                if RB.finish_cancel() then return false end
+            end
+            return action(table.unpack(args, 1, args.n))
+        end)
+    end
+end
+
+end
+RB.bind_actions()
 
 return M

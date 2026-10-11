@@ -10,13 +10,13 @@
 --   1. count DEMAND per work type from the game's own pulses
 --   2. walk priority levels 1..MAX, fencing each pal to the first level with
 --      demand to spare
---   3. a pal already working a type keeps it, bounded by HOLD_SECONDS
---   4. a pal fenced nowhere is left unfenced rather than idled
---   5. diff against the game's permissions and send only the differences
+--   3. retain verified assignments, count every permission against staffing
+--   4. reconcile idle camps as well as active camps
+--   5. withdraw obsolete permissions before enabling replacements
 --
 -- Restoring is stateless: permissions are always "capable AND not X AND
 -- (fenced-in OR unfenced)", so switching off restores "capable AND not X".
--- The cost is that a work type unchecked by hand in vanilla comes back on.
+-- A fresh install captures the vanilla choices before its first write.
 
 local log = require("log")
 local caps = require("caps")
@@ -25,25 +25,39 @@ local workdefs = require("workdefs")
 local store = require("store")
 local demandidx = require("demand")
 local trace = require("trace")
+local allocator = require("scheduler_plan")
+local permissions = require("scheduler_permissions")
+local storage_scope = require("scheduler_storage")
+local stock_prefetch = require("storage_prefetch")
 
 local M = {}
+
+-- Aggregate scopes only. around finishes its token even when a native adapter
+-- throws; ordinary unprofiled passes avoid the extra protected call.
+local function measured(label, fn, ...)
+    if log.perf and log.around then return log.around(label, fn, ...) end
+    return fn(...)
+end
 
 -- One pass never issues an unbounded number of RPCs. Steady state sends
 -- almost nothing because only differences go out; this bounds the first pass
 -- over a large base, and whatever is skipped is picked up next tick.
 local MAX_TOGGLES_PER_PASS = 40
 
--- How long a pal may be held on work that no longer announces itself.
---
--- The hold stops a fence being released mid-job. It must not outlast the job:
--- a workbench keeps its work object forever and a finished crafter still
--- reports Handiwork, so an unbounded hold pins it at the bench with nothing
--- to do. Real demand resets the clock.
-local HOLD_SECONDS = 90
-
--- pal key -> { value, since }. Which work each pal is being held on and when
--- that hold began.
+-- Only assignment identities and timestamps survive a pass; no wrappers.
 local hold_since = {}
+local permission_history = {}
+
+-- Integration points for the authority/session layer. prepare_pal must return
+-- true only after the pal's fresh-install baseline is safely established.
+-- assignment_reader(pal, camp) must return plain evidence:
+-- { id=stable job id, value=suitability, state="occupied"|"ready"|
+--   "completed"|"unknown", manual=true|false|nil }.
+-- Do not infer occupied/manual state from a suitability or a station name.
+M.prepare_pal = nil
+-- Native reader validated against the independent assignment census on RAM.
+-- It resolves fresh actors within this pass and returns only plain evidence.
+M.assignment_reader = require("assignments").read
 
 -- Whether the "nothing owns a component" warn has already been said.
 local said_no_component = false
@@ -55,6 +69,10 @@ local said_no_component = false
 -- does and it was doing it every three seconds on the game thread. The pass
 -- already has the answer; it was throwing it away.
 M.last_totals = {}
+M.last_totals_by_guild = {}
+M.last_storage = {}
+M.last_totals_by_camp = {}
+M.last_storage_by_camp = {}
 
 -- work name -> { pass = n, camps = n, capped = n }, as the pass decided it.
 --
@@ -64,6 +82,7 @@ M.last_totals = {}
 M.last_capped = {}
 M.pass_id = 0
 local pass_totals = nil
+local totals_guild, totals_ambiguous = nil, false
 
 -- The fence itself is recomputed from demand every pass and remembers
 -- nothing. The hold timers are the one exception, and a config reload or
@@ -91,10 +110,21 @@ local pass_totals = nil
 -- turn a half hour wait into as many sweeps as can be asked for.
 M.stock_ttl = 30
 local stock = {}
+local guild_stock, guild_stock_key, guild_stock_at = {}, nil, nil
+local guild_stock_failures = 0
+local stock_interest = {}
+local remote_stock_interest = {}
 
-function M.forget()
+function M.forget(keep_permissions)
+    stock_prefetch.reset()
+    stock_interest = {}
+    remote_stock_interest = {}
+    api.last_storage_scan = nil
     hold_since = {}
+    if not keep_permissions then permission_history = {} end
     stock = {}
+    guild_stock, guild_stock_key, guild_stock_at = {}, nil, nil
+    guild_stock_failures = 0
 
     -- The published figures go too. This is the world-switch reset, and the
     -- panel prefers last_totals over a fresh scan whenever it is non-empty -
@@ -103,14 +133,36 @@ function M.forget()
     -- new one happened to overwrite each entry. A flag that describes a world
     -- has to share that world's lifetime.
     M.last_totals = {}
+    M.last_totals_by_guild = {}
+    M.last_storage = {}
+    M.last_totals_by_camp = {}
+    M.last_storage_by_camp = {}
     M.last_capped = {}
-    M.pass_id = 0
+    if not keep_permissions then M.pass_id = 0 end
+end
+
+-- Settings changes do not cancel an RPC already in transit. Main uses this
+-- for mode/cap/live/reload/limit; only a session boundary uses forget().
+function M.forget_policy()
+    M.forget(true)
 end
 
 -- Called when the rules window opens, so what it shows is measured now
 -- rather than up to half a minute old.
-function M.forget_stock()
+function M.forget_stock(panel_open)
+    if panel_open==true and M.prefetch_enabled then
+        -- Invalidate quantities as before, but let the established scalar
+        -- scope request its fresh scan on a separate clock beat. A pass that
+        -- arrives first retains the existing synchronous fallback.
+        stock_prefetch.request_refresh()
+    else
+        stock_prefetch.reset()
+        stock_interest = {}
+    end
+    api.last_storage_scan = nil
     stock = {}
+    guild_stock, guild_stock_key, guild_stock_at = {}, nil, nil
+    guild_stock_failures = 0
 end
 
 -- ---------------------------------------------------------------------------
@@ -184,73 +236,23 @@ local function build_demand(cfg, works, totals, stats, guild)
         elseif cap_reached(cfg, name, totals, guild) then
             stats.capped = stats.capped + 1
         else
-            -- A work with no assignable slot left is already covered and
-            -- needs nobody. Unreadable counts as needing someone, since
-            -- overstating demand only wastes a pal while understating it
-            -- leaves work undone.
-            local free_slot = true
-            pcall(function() free_slot = w:IsExistAssignableSlot() end)
+            -- A readable vacant slot is fallback demand evidence. Neither a
+            -- failed read nor a full slot proves ready/occupied/completed.
+            local free_slot
+            local ok = pcall(function() free_slot = w:IsExistAssignableSlot() end)
 
-            if free_slot ~= false then
+            if ok and free_slot == true then
                 demand[value] = (demand[value] or 0) + 1
                 stats.needed = stats.needed + 1
-            else
+            elseif ok and free_slot == false then
                 stats.covered = stats.covered + 1
+            else
+                stats.unknown_work = stats.unknown_work + 1
             end
         end
     end
 
     return demand
-end
-
--- Work objects of each type that exist, announcing or not. NOT demand: a cold
--- campfire has one. It answers only "is there any of this left?", which is
--- enough to keep a pal working but not to pull one in.
-local function count_work_objects(camp, wanted)
-    local out = {}
-
-    -- Nothing to answer, so nothing to walk.
-    --
-    -- This used to type every work object in the camp - roughly 700 on this
-    -- save, 1400 across two camps, every pass. api.camp_works resolves the
-    -- work progress manager and then makes one GetWork call per object, and
-    -- api.work_suitability then reads a property off each and falls through to
-    -- three more engine reads and a 29 pattern substring scan whenever
-    -- OverrideWorkType is absent.
-    --
-    -- All of that produced a table with at most thirteen entries, of which
-    -- exactly one is ever read: keeps() asks objects[value] on the line after
-    -- "if pal.current ~= value then return false end", so the only values that
-    -- can be looked up are the work types some pal is CURRENTLY doing, and the
-    -- only question asked of them is whether the count is zero. The counts
-    -- themselves were thrown away.
-    --
-    -- So the caller passes the set it will ask about and this stops as soon as
-    -- each has been seen once. With no pal holding a job the answer is empty
-    -- and the sweep does not happen at all.
-    if wanted == nil then return out end
-
-    local left = 0
-    for _ in pairs(wanted) do left = left + 1 end
-    if left == 0 then return out end
-
-    for _, w in ipairs(api.camp_works(camp)) do
-        local value = api.work_suitability(w)
-        if value then
-            local seen = out[value]
-            out[value] = (seen or 0) + 1
-
-            -- Counts past the first are no longer accurate for a wanted
-            -- value, and cannot be: this returns the moment every one of them
-            -- has been seen. Nothing reads them as counts - if that ever
-            -- changes, this early exit has to go with it.
-            if seen == nil and wanted[value] then
-                left = left - 1
-                if left == 0 then break end
-            end
-        end
-    end
-    return out
 end
 
 -- ---------------------------------------------------------------------------
@@ -272,8 +274,46 @@ end
 -- satisfied rule stopped the mod fencing anyone onto that work but never
 -- withdrew the permission, so any pal that ended up unfenced had it switched
 -- straight back on. That is a rule reading "done" while pals keep mining.
+-- Public/manual passes enforce main's save and role boundary independently.
+-- A failed capture leaves an in-memory row; a later edit can change `error`
+-- back to `saving` without making that row durable.
+local function settings_ready(stats, flush)
+    if require('settings_gate').blocked() then
+        stats.blocked=true;stats.blocked_reason=require('settings_gate').status()=='restart_required'
+            and 'settings locked; restart the game' or 'settings recovery is in progress'
+        return false
+    end
+    for _, source in ipairs({store, caps}) do
+        local label = source == store and "priorities" or "limits"
+        local ok = source.decided == true and source.is_client ~= true
+            and (source.state == "saved" or source.state == "saving" or source.state == "missing")
+        if ok and flush and source.state == "saving" then
+            ok = type(source.flush) == "function" and source.flush(nil, true) == true
+                and source.state == "saved"
+        end
+        if not ok then
+            stats.blocked = true
+            stats.blocked_reason = label .. " are not durable or authority-owned; permission updates blocked"
+            return false
+        end
+    end
+    -- A durability callback may have changed role while saving.
+    if require('settings_gate').blocked() or store.decided ~= true or caps.decided ~= true or store.is_client == true
+        or caps.is_client == true or store.state == "error" or caps.state == "error" then
+        stats.blocked = true
+        stats.blocked_reason = "settings changed during save; permission updates blocked"
+        return false
+    end
+    return true
+end
+
 local function base_allowed(cfg, pal, capped)
+    if store.decided ~= true or store.is_client == true
+        or store.state == "error" or store.state == "unavailable"
+        or not store.durable_key(pal.key) then return nil, nil end
     local capable, allowed = {}, {}
+    pal.ranks, pal.priorities = {}, {}
+    pal.permission_read_reuse_blocked = false
 
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
@@ -296,206 +336,107 @@ local function base_allowed(cfg, pal, capped)
         -- change here. Until something produces that demand,
         -- config.work_priority.Anyone is inert and this is the honest
         -- behaviour rather than a busy imitation of it.
-        if api.suitability_rank(pal.param, value) >= 1 then
-            capable[value] = true
-
-            -- X bars a pal outright, and a met ceiling bars the work for
-            -- everyone. A work type with no opinion set stays permitted:
-            -- having no opinion is not the same as forbidding it.
-            if store.effective(cfg, pal, name, value) ~= false
-                and not capped[value] then
-                allowed[value] = true
+        local rank = 0
+        if name ~= workdefs.ANYONE then
+            rank = api.suitability_rank(pal.param, value)
+            if type(rank) ~= "number" or rank ~= rank or rank < 0 or rank == math.huge then
+                return nil, nil
             end
         end
+        if rank >= 1 then
+            capable[value] = true
+            pal.ranks[value] = rank
+        end
+    end
+
+    -- Capture the actual vanilla choices before any fence has changed them.
+    -- Only main's fresh-install decision enables this path. Upgrades must not
+    -- reinterpret previously mod-written off flags as original player intent.
+    local off = api.work_off_set(pal.param)
+    if type(off) ~= "table" then return nil, nil end
+    pal.observed_on = {}
+    for value in pairs(capable) do
+        if not off[value] then pal.observed_on[value] = true end
+    end
+    if store.baseline and store.data[pal.key] == nil then
+        if type(off) ~= "table" or not store.capture_baseline(pal.key, capable, off) then
+            return nil, nil
+        end
+    end
+    if pal.hold_key then
+        local history = permission_history[pal.hold_key]
+        if not history then
+            history = permissions.new()
+            permission_history[pal.hold_key] = history
+        end
+        pal.permission_history = history
+        -- Even pending writes acknowledged by this pass require fresh final
+        -- readback. This flag belongs only to the current roster record.
+        if next(history.pending) ~= nil then pal.permission_read_reuse_blocked = true end
+        for value, on in pairs(permissions.observe(history, off, capable)) do
+            -- A bit difference proves a permission changed, not who requested
+            -- it. Vanilla cell events can race our own priority clicks; adopting
+            -- that difference rewrote 3/4/5 as X or 1 between rapid clicks.
+            -- Preserve durable policy until an authenticated priority edit or
+            -- verified native-input adapter supplies the user's actual intent.
+            -- Acknowledging this observation only updates plain history; it
+            -- neither saves a priority nor fabricates a mod-write receipt.
+            permissions.accept(history, value, on)
+            pal.external_edits = (pal.external_edits or 0) + 1
+        end
+    end
+    for value in pairs(capable) do
+        local p = store.effective(cfg, pal, workdefs.name(value), value)
+        if store.baseline and p == nil then return nil, nil end
+        pal.priorities[value] = p
+        if p ~= false and not capped[value] then allowed[value] = true end
+    end
+    if pal.current then
+        pal.current_permitted = type(off) == "table" and not off[pal.current]
     end
 
     return capable, allowed
 end
 
--- Returns pal key -> set of work values that pal may do this pass.
-local function plan_fences(cfg, pals, demand, objects, stats, capped)
-    local plan, fenced = {}, {}
-    local taken = {}            -- work value -> pals fenced onto it
-    local cap = tonumber(cfg.max_pals_per_work_type)
-    local spread = (cfg.assignment_mode ~= "fill")
-
-    local function wanted(value)
-        return (demand[value] or 0) > 0
-    end
-
-    -- What a type can still absorb: three pending haul jobs never need a
-    -- fourth hauler. In spread mode lap tightens it so every type gets one pal
-    -- before any gets a second.
-    --
-    -- This decides only whether a pal is PULLED here, never what goes in the
-    -- fence. Doing both cost a pal one of its two priority-1 types.
-    local function room(value, lap)
-        local limit = demand[value] or 0
-        if cap and cap < limit then limit = cap end
-        if spread and lap < limit then limit = lap end
-        return (taken[value] or 0) < limit
-    end
-
+-- Returns pal key -> set of work values allowed this pass. The helper is
+-- pure Lua so rankings, seat accounting and idle reconciliation are tested
+-- independently of reflection and network delivery.
+local function plan_fences(cfg, pals, demand, stats, capped)
+    local ready = {}
     for _, pal in ipairs(pals) do
         pal.capable, pal.base = base_allowed(cfg, pal, capped or {})
-        -- pal.current is already set: run_camp reads it off the roster before
-        -- the work sweep, which needs the answer to know what to look for.
-
-        -- Sorted, because pairs() order is not stable in Lua and this list
-        -- decides ties. A pal equally suited to two work types at the same
-        -- priority was picking whichever the hash happened to yield first,
-        -- so it flipped between them every pass and spent its toggles going
-        -- back and forth instead of working.
-        pal.order = {}
-        for value in pairs(pal.base) do pal.order[#pal.order + 1] = value end
-        table.sort(pal.order)
-    end
-
-    -- The asymmetry that holds this together. To PULL a pal to a work type
-    -- takes a real pulse, so nobody is sent to a cold station. To KEEP a pal
-    -- where it is takes only that work of that type still exists.
-    --
-    -- Without it the fence is released the instant a job is ASSIGNED: an
-    -- assigned job stops asking for anyone, so it looks finished the moment
-    -- it truly starts.
-    local now = os.time()
-
-    local function keeps(pal, value)
-        if pal.current ~= value then return false end
-        if (objects[value] or 0) == 0 then return false end
-
-        local h = hold_since[pal.key]
-
-        -- A hold that has not been seen for a while is a NEW hold, not an old
-        -- one still running.
-        --
-        -- This only checked whether the work type matched, and hold_since is
-        -- only touched while the pal is doing that work - so a pal that mined,
-        -- spent ten minutes elsewhere, then came back to mining arrived with a
-        -- matching entry whose clock had started ten minutes ago. It was
-        -- released on the first pass of a job it had only just started, which
-        -- is the precise thing the hold exists to prevent.
-        local gap = h and (now - (h.last or h.since)) or 0
-        if h == nil or h.value ~= value
-            or gap > (2 * (cfg.interval_seconds or 30)) then
-            hold_since[pal.key] = { value = value, since = now, last = now }
-            return true
+        if pal.capable then
+            ready[#ready + 1] = pal
+            stats.vanilla_edits = stats.vanilla_edits + (pal.external_edits or 0)
+        else
+            stats.baseline_unavailable = stats.baseline_unavailable + 1
         end
-        h.last = now
-
-        -- Genuine demand means the hold is not what is keeping the pal here,
-        -- so the clock restarts and a busy pal never ages out.
-        if (demand[value] or 0) > 0 then
-            h.since = now
-            return true
-        end
-
-        return (now - h.since) < HOLD_SECONDS
     end
-
-    local laps = spread and math.max(cap or #pals, 1) or 1
-    for lap = 1, laps do
-        for level = 1, store.MAX do
-            for _, pal in ipairs(pals) do
-                if not fenced[pal.key] then
-                    local fence = {}
-                    local best, best_rank = nil, -1
-
-                    local consumes = false
-
-                    for _, value in ipairs(pal.order) do
-                        local name = workdefs.name(value)
-                        local held = keeps(pal, value)
-
-                        if store.effective(cfg, pal, name, value) == level
-                            and (wanted(value) or held) then
-
-                            local rank = api.suitability_rank(pal.param, value)
-                            if rank >= cfg.min_suitability_rank then
-                                -- Everything at this level that is wanted goes
-                                -- in the fence, so the pal can move between
-                                -- equally-wanted jobs without a re-plan.
-                                fence[value] = true
-
-                                -- A type with room pulls the pal here. So does
-                                -- the job it is already doing, but that one
-                                -- claims no allocation, since the pal is
-                                -- staying put rather than being handed out.
-                                -- Strictly greater, so the first of equal
-                                -- ranks wins and the sorted order decides it.
-                                -- A job already in progress beats a tie
-                                -- outright, so a pal is never shuffled off
-                                -- work it is doing for an equal alternative.
-                                local better = rank > best_rank
-                                    or (held and rank == best_rank)
-
-                                if (room(value, lap) or held) and better then
-                                    best, best_rank = value, rank
-                                    consumes = not held
-                                end
-                            end
-                        end
-                    end
-
-                    if best then
-                        -- Fenced to the whole level, not only the one type it
-                        -- is best at: a pal should be free to move between
-                        -- equally-wanted jobs without waiting on a re-plan.
-                        --
-                        -- And to everything MORE important than this level.
-                        --
-                        -- The fence was built with "== level", and apply_pal
-                        -- switches off every capable type the plan omits - so
-                        -- a pal fenced at level 2 had its level 1 work
-                        -- UNTICKED. It could not answer a level 1 job when one
-                        -- appeared, so it was never the pal that satisfied the
-                        -- pulse, so that work's demand stayed at zero, so it
-                        -- stayed fenced at level 2. The loop sustained itself,
-                        -- and picking the pal up did not break it because the
-                        -- next pass rebuilt the same fence.
-                        --
-                        -- Reported by a player as "I set Handiwork to 1 and
-                        -- Refining to 2, yet my Incinerams still prefer
-                        -- Refining", which was written off as a ranking
-                        -- surprise. The mod was not failing to prefer level 1,
-                        -- it was revoking it.
-                        --
-                        -- Demand decides where a pal is PULLED. Priority
-                        -- decides what it is PERMITTED to do. Those are
-                        -- different questions and only the first one needs a
-                        -- live pulse. PalPriority draws the same line -
-                        -- "types above the bar stay enabled" - and does not
-                        -- have this bug.
-                        --
-                        -- Built from pal.base, which base_allowed has already
-                        -- stripped of X'd and CAPPED types, so a ceiling that
-                        -- has been met still bars the work.
-                        for value in pairs(pal.base) do
-                            local p = store.effective(cfg, pal,
-                                workdefs.name(value), value)
-                            if type(p) == "number" and p <= level then
-                                fence[value] = true
-                            end
-                        end
-
-                        plan[pal.key] = fence
-                        fenced[pal.key] = true
-                        if consumes then taken[best] = (taken[best] or 0) + 1 end
-                        stats.fenced = stats.fenced + 1
-                        if not consumes then stats.held = stats.held + 1 end
-                    end
+    local plan, report = allocator.plan(cfg, ready, demand, hold_since)
+    for _, pal in ipairs(ready) do
+        if pal.reconcile_only then
+            -- Unverified storage must neither enable capped production nor
+            -- revoke other jobs. Keep the observed choices, with explicit X
+            -- still reconciled. No automatic admission uses missing totals.
+            local off = api.work_off_set(pal.param)
+            if type(off) == "table" then
+                local safe = {}
+                for value in pairs(pal.base) do
+                    if not off[value] then safe[value] = true end
                 end
+                plan[pal.key] = safe
+            else
+                pal.capable, pal.base = nil, nil
+                plan[pal.key] = nil
+                stats.baseline_unavailable = stats.baseline_unavailable + 1
             end
         end
     end
-
-    for _, pal in ipairs(pals) do
-        if not fenced[pal.key] then
-            plan[pal.key] = pal.base
-            stats.free = stats.free + 1
-        end
+    if #ready > 0 and ready[1].reconcile_only then
+        report.fenced, report.held, report.staff_limited = 0, 0, 0
+        report.free = 0 -- no automatic allocation decision was made
     end
-
+    for key, value in pairs(report) do stats[key] = (stats[key] or 0) + value end
     return plan
 end
 
@@ -510,6 +451,7 @@ end
 M.adoptable = nil
 
 local pass_comp = nil
+local pass_comp_tried = false
 
 -- Every exit that set pass_comp leaves through here.
 --
@@ -526,8 +468,33 @@ local pass_comp = nil
 -- closes" is already written four hundred lines up this file, about this same
 -- pair of functions, and it applies to exits as much as to entries.
 local function released(stats)
-    pass_comp = nil
+    pass_comp, pass_comp_tried = nil, false
     return stats
+end
+
+-- One lookup at most per synchronous pass, including misses. A missing route
+-- is not an attempted RPC and must never create a pending-write receipt.
+local function ensure_pass_component(stats)
+    if pass_comp ~= nil then return true end
+    if not pass_comp_tried then
+        pass_comp_tried = true
+        local ok, comp = pcall(api.owned_network_component)
+        if ok then pass_comp = comp end
+    end
+    if pass_comp ~= nil then
+        if said_no_component then
+            said_no_component = false
+            log.info("a base camp component is available again, writes resume")
+        end
+        return true
+    end
+    stats.blocked = true
+    stats.blocked_reason = "no base camp component this machine owns; permission writes deferred"
+    if not said_no_component then
+        said_no_component = true
+        log.warn(stats.blocked_reason)
+    end
+    return false
 end
 
 -- The work types this pal is being iterated over, by name, for the diagnostic
@@ -541,117 +508,70 @@ local function capable_names(pal)
     return out
 end
 
-local function apply_pal(cfg, pal, want, stats)
-    local said_off = false
-    -- The game's own record is the only ground truth. Diffing against what we
-    -- believe we set last time would drift the moment anything else touched a
-    -- toggle, including the player.
+local function apply_pal(cfg, pal, want, stats, phase)
+    if not pal.capable then return end
+    if not settings_ready(stats, true) then return end
     local off = api.work_off_set(pal.param)
-    if off == nil then
-        -- Nothing to diff against. Sending the whole set blind would spam the
-        -- channel every pass, so skip and retry next tick.
+    if type(off) ~= "table" then
         stats.unreadable = stats.unreadable + 1
         return
     end
-
-    -- One loop, over everything the pal can physically do.
-    --
-    -- There used to be a second pass below this one that re-enforced X. It was
-    -- redundant and actively harmful: `capable` already contains X'd types
-    -- (base_allowed excludes X from `allowed`, not from `capable`), and
-    -- `want` is built from allowed - so the loop below already switches them
-    -- off. The second pass then read the same pre-toggle `off` snapshot, saw
-    -- them as still on, and sent every one of those RPCs a second time. It
-    -- also had no budget check of its own, and counted no failures.
-    --
-    -- Worse, the budget check here returns, which skipped that second pass
-    -- entirely - so the one rule documented as absolute was the first thing
-    -- dropped exactly when a pass was busiest. With the pass gone, so is the
-    -- hole: X is enforced by the loop below, under the budget, every time.
-    for value in pairs(pal.capable or pal.base or {}) do
-        -- Budgeted per CAMP, not per pass.
-        --
-        -- One counter shared across every camp meant the first base could
-        -- spend the whole allowance and the second was never touched - and
-        -- camps arrive in FindAllOf order, which does not rotate, so the same
-        -- base loses every time. The only sign was a "deferred" count in a
-        -- line nobody reads. Whatever is skipped is still picked up next tick.
-        -- Failures count against the budget too.
-        --
-        -- It counted only successes, so a pass where every send fails - no
-        -- component yet, world not settled, base not streamed - never tripped
-        -- the budget and issued one call per pal per work type instead. With
-        -- the lookup that used to sit inside each of those, twenty pals came
-        -- to well over a second of frozen game thread, repeating every
-        -- interval. A budget that only bounds the working case is not a
-        -- budget.
-        if (stats.camp_toggles or 0) >= MAX_TOGGLES_PER_PASS then
-            stats.deferred = stats.deferred + 1
-            return
-        end
-
-        local should_be_on = want[value] == true
-
-        -- The "never switch off what this pal is doing right now" guard that
-        -- used to sit here is gone, and both of its reasons went with it.
-        --
-        -- It was added for a player report: electric pals stopping mid-job
-        -- because a manned generator stops pulsing, the hold clock expires and
-        -- the type drops out of a single-level fence. Widening the fence above
-        -- fixes that at the cause - Generating is at or above the pal's fenced
-        -- level, so it stays permitted whether or not anything is asking.
-        --
-        -- And the guard was actively wrong. It tested store.effective, which
-        -- knows about priorities and X and nothing about ceilings - but a met
-        -- ceiling is removed from `allowed` in base_allowed, so the ceiling was
-        -- often the ONLY reason want[value] was false. The guard forced it back
-        -- on, the pal kept working, so pal.current stayed that value on the
-        -- next pass and the ceiling never fired for it at all. On a continuous
-        -- station that was permanent: the panel read "Stopped" while the pal
-        -- carried on. It defeated max_pals_per_work_type the same way.
-        --
-        local is_on = not off[value]
-
-        if should_be_on ~= is_on then
+    local order, said_off = {}, false
+    for value in pairs(pal.capable) do order[#order + 1] = value end
+    table.sort(order)
+    for _, value in ipairs(order) do
+        local should_be_on, is_on = want[value] == true, not off[value]
+        if should_be_on ~= is_on and (phase == nil or should_be_on == phase)
+            and not (pal.permission_history and pal.permission_history.pending[value] ~= nil) then
+            -- Failed attempts consume the per-camp budget too. Check after
+            -- diffing, so unchanged permissions do not count as deferred work.
+            if (stats.camp_toggles or 0) >= MAX_TOGGLES_PER_PASS then
+                stats.deferred = stats.deferred + 1
+                return
+            end
             stats.camp_toggles = (stats.camp_toggles or 0) + 1
-
             if cfg.dry_run then
                 stats.would_toggle = stats.would_toggle + 1
-                log.info(string.format("[dry run] %s %s -> %s",
-                    pal.name, workdefs.label(workdefs.name(value)),
-                    should_be_on and "on" or "off"))
-            elseif api.set_work_enabled(pal.id, value, should_be_on, pass_comp) then
-                stats.toggles = stats.toggles + 1
-                -- Named so a repeat can be seen. The pass reports a count,
-                -- and a count cannot tell "twelve pals each corrected once"
-                -- from "the same three pals corrected every eleven seconds
-                -- because the write is not landing where the read looks".
-                log.debug(string.format("toggle %s %s -> %s", pal.name,
-                    workdefs.label(workdefs.name(value)),
-                    should_be_on and "on" or "off"))
-
-                -- The off set this decision was made against, printed once
-                -- per pal per pass. A repeated toggle can mean the write is
-                -- refused, or that the pal cannot do that work at all and so
-                -- never appears in the off list however often it is set - the
-                -- two look identical from a count and are told apart here.
-                if not said_off then
-                    said_off = true
-                    local names = {}
-                    for v in pairs(off) do
-                        names[#names + 1] = tostring(workdefs.name(v) or v)
-                    end
-                    table.sort(names)
-                    log.debug(string.format("   %s off=[%s] capable=[%s]",
-                        pal.name, table.concat(names, " "),
-                        table.concat(capable_names(pal), " ")))
-                end
+                log.info(string.format("[dry run] %s %s -> %s", pal.name,
+                    workdefs.label(workdefs.name(value)), should_be_on and "on" or "off"))
             else
-                stats.failed = stats.failed + 1
+                if not ensure_pass_component(stats) then
+                    stats.deferred = stats.deferred + 1
+                    return
+                end
+                if not settings_ready(stats, false) then return end
+                -- Mark the request as pending, never as confirmed state.
+                -- Even an unsuccessful call leaves its outcome uncertain
+                -- until readback, so it cannot masquerade as a vanilla edit.
+                pal.permission_read_reuse_blocked = true
+                if pal.permission_history then
+                    permissions.sent(pal.permission_history, value, should_be_on)
+                end
+                if api.set_work_enabled(pal.id, value, should_be_on, pass_comp) then
+                    stats.toggles = stats.toggles + 1
+                    log.debug(string.format("toggle %s %s -> %s", pal.name,
+                        workdefs.label(workdefs.name(value)), should_be_on and "on" or "off"))
+                    if not said_off then
+                        said_off = true
+                        local names = {}
+                        for v in pairs(off) do names[#names + 1] = tostring(workdefs.name(v) or v) end
+                        table.sort(names)
+                        log.debug(string.format("   %s off=[%s] capable=[%s]", pal.name,
+                            table.concat(names, " "), table.concat(capable_names(pal), " ")))
+                    end
+                else
+                    stats.failed = stats.failed + 1
+                end
             end
         end
     end
-
+    -- Only the immediately following final confirmation may reuse this scalar
+    -- observation. Any attempted write in either phase, or pending history,
+    -- forces the caller's existing fresh native read instead.
+    if phase == true and not cfg.dry_run and not pal.permission_read_reuse_blocked
+        and not (pal.permission_history and next(pal.permission_history.pending) ~= nil) then
+        return off
+    end
 end
 
 -- One pass's tally. Shared by run_pass and restore so a restore reports the
@@ -667,7 +587,12 @@ function M.blank_stats()
         -- Set only by restore, when it could not act at all. Distinct from
         -- toggles == 0, which means there was nothing that needed changing.
         blocked = false,
-        needed = 0, covered = 0, idle_skipped = 0, held = 0,
+        needed = 0, covered = 0, idle_skipped = 0, idle_reconciled = 0, held = 0,
+        staff_limited = 0, manual_conflicts = 0, manual_limit_conflicts = 0,
+        assignment_unknown = 0, manual_unavailable = 0, unverified_limit_conflicts = 0,
+        unknown_scope = 0, demand_unavailable = 0,
+        awaiting_withdrawal = 0, baseline_unavailable = 0, vanilla_edits = 0, storage_unverified = 0,
+        pending_writes = 0, expired_writes = 0,
         demand_by_name = {},
         lines = {},
     }
@@ -695,9 +620,15 @@ function M.restore(cfg)
     -- fatal on a client rather than merely wrong, and this function is public.
     -- A dangerous primitive that every caller has to remember to guard is
     -- exactly the shape of the bug this gate closes.
-    if not api.has_authority() then return M.blank_stats() end
-
     local stats = M.blank_stats()
+    if not settings_ready(stats, false) then return stats end
+    local authority = api.latch_authority()
+    if authority ~= true then
+        stats.blocked = true
+        stats.blocked_reason = authority == false and "this machine is not the authority"
+            or "authority data is unavailable; permissions were not changed"
+        return released(stats)
+    end
 
     -- Owned only, with no fallback, exactly as run_pass does.
     --
@@ -726,6 +657,11 @@ function M.restore(cfg)
     end
 
     local camps = api.base_camps()
+    if api.camps_available ~= true then
+        stats.blocked = true
+        stats.blocked_reason = "base camp enumeration is unavailable"
+        return released(stats)
+    end
 
     -- One pal at a time, because this is the undo path.
     --
@@ -742,26 +678,67 @@ function M.restore(cfg)
 
     for _, camp in ipairs(camps) do
         local camp_id = api.camp_id(camp)
-        if camp_id ~= nil then
+        local camp_key = camp_id ~= nil and api.guid_key(camp_id) or nil
+        if camp_key ~= nil then
             stats.camp_toggles = 0
-            for _, pal in ipairs(api.camp_pals(camp) or {}) do
+            local pals, pal_err = api.camp_pals(camp)
+            if pal_err or type(pals) ~= "table" then
+                stats.blocked, stats.unreadable = true, stats.unreadable + 1
+                stats.blocked_reason = "camp roster unavailable during restoration: " .. tostring(pal_err or "missing roster")
+                return released(stats)
+            end
+            -- These describe the complete roster inspected, not confirmed
+            -- restorations. Completion also requires all failure/pending
+            -- counters to be clear and actual permission readback.
+            stats.camps = stats.camps + 1
+            stats.pals = stats.pals + #pals
+            for _, pal in ipairs(pals) do
                 -- No plan and no ceilings: base_allowed then returns capable
                 -- minus X, which is precisely the vanilla state this mod
                 -- started from.
                 local ok = pcall(function()
+                    pal.hold_key = camp_key .. "|" .. tostring(pal.key)
                     local capable, base = base_allowed(cfg, pal, {})
                     pal.capable, pal.base = capable, base
-                    apply_pal(cfg, pal, base, stats)
+                    if capable then
+                        apply_pal(cfg, pal, base, stats)
+                        if not cfg.dry_run and pal.permission_history then
+                            local off = api.work_off_set(pal.param)
+                            if type(off) ~= "table" then
+                                stats.unreadable = stats.unreadable + 1
+                            else
+                                permissions.confirm(pal.permission_history, off, base, capable)
+                            end
+                            local pending, expired = permissions.status(pal.permission_history)
+                            stats.pending_writes = stats.pending_writes + pending
+                            stats.expired_writes = stats.expired_writes + expired
+                            stats.deferred = stats.deferred + pending
+                        end
+                    else
+                        stats.baseline_unavailable = stats.baseline_unavailable + 1
+                        stats.unreadable = stats.unreadable + 1
+                        stats.failed = stats.failed + 1
+                    end
                 end)
                 -- Cleared whatever happened: these are scratch fields hung on
                 -- a pal record that outlives this call.
                 pal.capable, pal.base, pal.param = nil, nil, nil
+                pal.hold_key, pal.permission_history, pal.observed_on = nil, nil, nil
                 if not ok then failed = failed + 1 end
             end
+        else
+            stats.blocked, stats.unknown_scope = true, stats.unknown_scope + 1
+            stats.blocked_reason = "restoration needs a readable camp identity"
         end
     end
 
+    if cfg.dry_run and stats.would_toggle > 0 then
+        stats.blocked = true
+        stats.blocked_reason = "dry run did not apply the required restoration requests"
+    end
+
     if failed > 0 then
+        stats.failed = stats.failed + failed
         log.warn(failed .. " pal(s) could not be restored and are still " ..
             "fenced; run it again, or switch their work back on by hand")
     end
@@ -774,79 +751,175 @@ end
 -- One camp, one pass
 -- ---------------------------------------------------------------------------
 
--- Set by the panel while it is open. See needs_totals.
+-- Set by the panel while it is open.
 M.want_totals = false
+M.prefetch_enabled = true
 
--- Reading every chest in a camp is the most expensive thing a pass does, so
--- it only happens when some ceiling could actually use the answer - or when
--- somebody is looking at the numbers.
---
--- The panel shows storage counts whether or not any rule exists, and with no
--- rules this returned false, so last_totals stayed empty and the panel fell
--- back to sweeping every container itself, every fifteen seconds, for as long
--- as it was open. That is the same sweep, at a higher rate, from the thread
--- that is also drawing - which is exactly what the note above stock_totals
--- says was taken out of the panel. The pass does it once and publishes.
-local function needs_totals(cfg)
-    return caps.any(cfg) or M.want_totals
+-- Authenticated UI interest expires without a close packet. It requests work
+-- from the normal pass, never a synchronous container scan in an RPC callback.
+function M.request_stock(guild)
+    if type(guild)~='string' or #guild==0 or #guild>128 then return false end
+    local now, count=os.clock(),0
+    for key, until_at in pairs(remote_stock_interest) do
+        if until_at<=now then remote_stock_interest[key]=nil else count=count+1 end
+    end
+    if not remote_stock_interest[guild] and count>=128 then return false end
+    remote_stock_interest[guild]=now+60
+    return true
 end
 
-local function run_camp(cfg, camp, stats)
-    -- Each camp gets the full allowance. See the note in apply_pal.
-    stats.camp_toggles = 0
+local function wants_stock(guild)
+    return M.want_totals or (remote_stock_interest[guild] or 0)>os.clock()
+end
 
-    trace.at("camp: GetId")
-    local camp_id = api.camp_id(camp)
+-- Developer A/B switch; session memory only, never changes saved rules.
+function M.set_prefetch(enabled)
+    M.prefetch_enabled=enabled==true
+    stock_prefetch.reset()
+end
+
+-- Only this camp's effective numeric ceilings need stock for scheduling.
+-- Use the existing merge so guild OFF masks and inherited rules agree with
+-- cap_state. Unknown ownership cannot rule out another guild's ceilings.
+local function limits_apply(cfg, guild)
+    if not caps.any(cfg) then return false end
+    if guild == nil then return true end
+    local rules = caps.all(cfg, guild)
+    for _, name in ipairs(workdefs.ORDER) do
+        if name ~= workdefs.ANYONE then
+            for _, ceiling in pairs(rules[name] or {}) do
+                if type(ceiling) == "number" then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function verified_storage(evidence)
+    return type(evidence) == "table" and evidence.complete == true
+        and evidence.deduplicated == true and (evidence.unknown_scope or 0) == 0
+end
+
+local function fresh_stock(entry)
+    if not entry then return false end
+    local ttl = storage_scope.retry_ttl(M.stock_ttl, entry.failures)
+    local age = os.clock() - entry.at
+    return ttl > 0 and age >= 0 and age < ttl
+end
+
+local function stock_entry(totals, chests, evidence, previous, at)
+    return { totals = totals, chests = chests, evidence = evidence, at = at,
+        failures = storage_scope.failures(previous and previous.failures, verified_storage(evidence)) }
+end
+
+local function prepare_guild_stock(cfg, camps)
+    local metadata, key_parts = {}, {}
+    stock_interest = {}
+    for _, camp in ipairs(camps) do
+        local id, guild = api.guid_key(api.camp_id(camp)), api.camp_guild(camp)
+        metadata[#metadata + 1] = { id = id, guild = guild }
+        if guild then stock_interest[guild]=true end
+        key_parts[#key_parts + 1] = tostring(id) .. ":" .. tostring(guild)
+    end
+    table.sort(key_parts)
+    local key = table.concat(key_parts, "|") .. "|" .. stock_prefetch.filters(cfg)
+    local now = os.clock()
+    local ttl = storage_scope.retry_ttl(M.stock_ttl, guild_stock_failures)
+    local ready=stock_prefetch.take(cfg,key,M.stock_ttl)
+    if not ready and key == guild_stock_key and guild_stock_at and ttl > 0
+        and now - guild_stock_at >= 0 and now - guild_stock_at < ttl then
+        stock_prefetch.observe(cfg,key,guild_stock_at,guild_stock_failures==0,M.stock_ttl)
+        return
+    end
+    trace.at("pass: guild storage sweep")
+    local by_camp, counts, evidence
+    if ready then
+        by_camp,counts,evidence,now=ready.by,ready.counts,ready.evidence,ready.at
+        if log.count then log.count("storage: prefetched snapshot used") end
+    else
+        by_camp, counts, evidence = api.chest_totals_by_camp({
+            include = cfg.counted_containers, exclude = cfg.uncounted_containers,
+        })
+    end
     trace.done()
-    if camp_id == nil then
-        log.debug("skipping a camp with no readable id")
-        return
+    local unknown
+    guild_stock, unknown = storage_scope.group(metadata, by_camp, counts, evidence)
+    -- No guild entries is not positive evidence of a complete read. Unknown
+    -- ownership must retain retry progression even when there is no bucket.
+    local verified = verified_storage(evidence) and unknown == 0 and next(guild_stock) ~= nil
+    for _, entry in pairs(guild_stock) do
+        if not entry.verified then verified = false end
     end
+    guild_stock_failures = storage_scope.failures(
+        key == guild_stock_key and guild_stock_failures or 0, verified)
+    guild_stock_key, guild_stock_at = key, now
+    stock_prefetch.observe(cfg,key,now,verified,M.stock_ttl)
+end
 
-    -- Resolved once for the camp, because every ceiling check below needs it
-    -- and it costs an engine call. nil when the camp will not say which guild
-    -- owns it, and that is left as nil rather than widened: a camp with no
-    -- readable guild gets config and pre-scoping rules only, never another
-    -- guild's ceilings.
-    local camp_guild = api.camp_guild(camp)
-
-    trace.at("camp: camp_pals")
-    local pals, pal_err = api.camp_pals(camp)
-    trace.done()
-    if pal_err then
-        log.debug("camp pals unavailable: " .. pal_err)
-        return
+-- Cheap eligibility check; the actual scan runs in its own budgeted callback.
+-- Scope is validated again by prepare_guild_stock before a candidate is used.
+function M.stock_refresh_due(cfg)
+    if not M.prefetch_enabled or cfg.enabled==false then return false end
+    if not M.want_totals then
+        local needed=false
+        for guild in pairs(stock_interest) do
+            if wants_stock(guild) or limits_apply(cfg,guild) then needed=true; break end
+        end
+        if not needed then return false end
     end
-    if #pals == 0 then
-        log.debug("camp has no working pals")
-        return
-    end
+    if not settings_ready({},false) then return false end
+    return stock_prefetch.due(cfg,M.stock_ttl)
+end
 
-    local totals = {}
-    if needs_totals(cfg) then
-        local chests
+function M.refresh_stock(cfg)
+    if not M.stock_refresh_due(cfg) then return false end
+    return stock_prefetch.refresh(cfg,M.stock_ttl)
+end
+
+local function publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock)
+    local has_limits = limits_apply(cfg, camp_guild)
+    local totals, limits_available = {}, true
+    if has_limits or wants_stock(camp_guild) then
+        prepare_stock()
+        local chests, evidence
         local opts = {
             include = cfg.counted_containers,
             exclude = cfg.uncounted_containers,
         }
 
         -- collected for the panel, which must not scan this itself
-        local scope_key = (cfg.storage_scope == "global") and "global"
-            or (api.guid_key(camp_id) or "camp")
+        local scope_key = camp_key
         local held = stock[scope_key]
 
-        if held and M.stock_ttl > 0 and (os.clock() - held.at) < M.stock_ttl then
-            totals, chests = held.totals, held.chests
+        if cfg.storage_scope == "global" then
+            local grouped = camp_guild and guild_stock[camp_guild]
+            limits_available = grouped ~= nil and grouped.verified == true
+            totals, chests = grouped and grouped.totals or {}, grouped and grouped.chests or 0
+            if camp_guild then
+                M.last_storage[camp_guild] = { verified = limits_available,
+                    unknown_scope = grouped and grouped.unknown_scope or 1, scope = "guild",
+                    pass = M.pass_id, sampled_at = guild_stock_at, ttl = M.stock_ttl }
+                M.last_totals_by_guild[camp_guild] = totals
+            end
+        elseif fresh_stock(held) then
+            totals, chests, evidence = held.totals, held.chests, held.evidence
+            limits_available = verified_storage(evidence)
         else
             trace.at("camp: chest sweep, scope " .. tostring(cfg.storage_scope))
-            if cfg.storage_scope == "global" then
-                totals, chests = api.all_chest_totals(opts)
-            else
-                totals, chests = api.camp_item_totals(api.guid_key(camp_id), opts)
-            end
+            totals, chests, evidence = api.camp_item_totals(camp_key, opts)
             trace.done()
-            stock[scope_key] = { totals = totals, chests = chests, at = os.clock() }
+            limits_available = verified_storage(evidence)
+            stock[scope_key] = stock_entry(totals, chests, evidence, held, os.clock())
         end
+        -- Even complete counts cannot identify which guild's rules apply
+        -- when camp ownership is unreadable. Never treat that as no rules.
+        if camp_guild == nil and caps.any(cfg) then limits_available = false end
+        if not limits_available then stats.storage_unverified = stats.storage_unverified + 1 end
+        M.last_storage_by_camp[camp_key] = { verified = limits_available, guild = camp_guild,
+            scope = cfg.storage_scope == "global" and "guild" or "camp", pass = M.pass_id,
+            sampled_at = cfg.storage_scope == "global" and guild_stock_at
+                or (stock[scope_key] and stock[scope_key].at), ttl = M.stock_ttl }
+        if cfg.storage_scope ~= "global" then M.last_totals_by_camp[camp_key] = totals end
 
         stats.chests = stats.chests + (chests or 0)
 
@@ -860,6 +933,11 @@ local function run_camp(cfg, camp, stats)
         -- numbers disagreed, and since cap_state now reads the published one,
         -- the status column would call a job stopped that was still running.
         if pass_totals then
+            if not limits_available or not camp_guild or (totals_guild and totals_guild ~= camp_guild) then
+                totals_ambiguous = true
+            else
+                totals_guild = camp_guild
+            end
             if cfg.storage_scope == "global" then
                 for id, n in pairs(totals) do
                     pass_totals[id] = n
@@ -877,6 +955,75 @@ local function run_camp(cfg, camp, stats)
         end
     end
 
+    return totals, limits_available, has_limits
+end
+
+local function run_camp(cfg, camp, stats, prepare_stock)
+    if not settings_ready(stats, false) then return end
+    -- Each camp gets the full allowance. See the note in apply_pal.
+    stats.camp_toggles = 0
+
+    trace.at("camp: GetId")
+    local camp_id = api.camp_id(camp)
+    trace.done()
+    if camp_id == nil then
+        log.debug("skipping a camp with no readable id")
+        return
+    end
+    local camp_key = api.guid_key(camp_id)
+    if camp_key == nil then
+        stats.unknown_scope = stats.unknown_scope + 1
+        return
+    end
+
+    -- Resolved once for the camp, because every ceiling check below needs it
+    -- and it costs an engine call. nil when the camp will not say which guild
+    -- owns it, and that is left as nil rather than widened: a camp with no
+    -- readable guild gets config and pre-scoping rules only, never another
+    -- guild's ceilings.
+    local camp_guild = api.camp_guild(camp)
+
+    trace.at("camp: camp_pals")
+    local pals, pal_err = measured("scheduler: camp roster", api.camp_pals, camp)
+    trace.done()
+    if pal_err or type(pals) ~= "table" then
+        stats.blocked, stats.unreadable = true, stats.unreadable + 1
+        stats.blocked_reason = "camp roster unavailable; its permissions were not changed: " .. tostring(pal_err or "missing roster")
+        log.debug(stats.blocked_reason)
+        return
+    end
+    if #pals == 0 then
+        -- Storage belongs to the base, not its roster. A requested read of an
+        -- empty base still uses verified scope, normal TTL and shared scanning.
+        if wants_stock(camp_guild) then publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock) end
+        log.debug("camp has no working pals")
+        return
+    end
+    local unprepared = false
+    if M.prepare_pal then
+        local ready = {}
+        for _, pal in ipairs(pals) do
+            local ok, prepared = pcall(M.prepare_pal, cfg, pal, camp)
+            -- Preparation can save a baseline and invoke a role-changing
+            -- callback. Check before the next Pal or the deferred storage read.
+            if not settings_ready(stats, false) then return end
+            if ok and prepared == true then
+                ready[#ready + 1] = pal
+            else
+                unprepared = true
+                stats.baseline_unavailable = stats.baseline_unavailable + 1
+            end
+        end
+        pals = ready
+        if #pals == 0 then return end
+    end
+
+    local totals, limits_available, has_limits = publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock)
+
+    -- A panel-only read can remain unknown without blocking this camp's
+    -- policy. The storage publications above retain the actual read proof.
+    if not has_limits then limits_available = true end
+
     -- What the camp actually wants doing, from the game's own pulses.
     --
     -- The fallback must not key off the pulse count: a base whose pals are
@@ -891,8 +1038,11 @@ local function run_camp(cfg, camp, stats)
     -- fallback runs when the hook did not register OR when we are not the
     -- authority that would fire it.
     trace.at("camp: demand index")
-    local camp_key = api.guid_key(camp_id)
-    local demand, live = demandidx.for_camp(camp_key)
+    local demand, live, pulse_evidence = demandidx.for_camp(camp_key)
+    if pulse_evidence then
+        stats.unknown_scope = math.max(stats.unknown_scope, pulse_evidence.unknown_scope or 0)
+        stats.unknown_work = stats.unknown_work + (pulse_evidence.unknown_type or 0)
+    end
     trace.done()
     local counted = live
 
@@ -902,12 +1052,18 @@ local function run_camp(cfg, camp, stats)
         trace.done()
         if work_err then
             log.debug("camp works unavailable: " .. work_err)
-            api.request_work_replication(camp_id, true)
-            return
+            -- This diagnostic RPC needs the same owned route as writes. Do
+            -- not let the legacy API fallback perform a second/global lookup.
+            if ensure_pass_component(stats) then
+                api.request_work_replication(camp_id, true, pass_comp)
+            end
+            demand, counted = {}, 0
+            stats.demand_unavailable = stats.demand_unavailable + 1
+        else
+            demand = build_demand(cfg, all, totals, stats, camp_guild)
+            counted = #all
+            stats.demand_estimated = true
         end
-        demand = build_demand(cfg, all, totals, stats, camp_guild)
-        counted = #all
-        stats.demand_estimated = true
     else
         -- Ceilings and unconfigured types still have to be honoured, and the
         -- pulse index knows nothing about either.
@@ -931,7 +1087,7 @@ local function run_camp(cfg, camp, stats)
     local capped = {}
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
-        if name ~= workdefs.ANYONE
+        if limits_available and name ~= workdefs.ANYONE
             and cap_reached(cfg, name, totals, camp_guild) then
             capped[workdefs.value(name)] = true
         end
@@ -949,10 +1105,11 @@ local function run_camp(cfg, camp, stats)
         if name ~= workdefs.ANYONE then
             local seen = M.last_capped[name]
             if seen == nil or seen.pass ~= M.pass_id then
-                seen = { pass = M.pass_id, camps = 0, capped = 0 }
+                seen = { pass = M.pass_id, camps = 0, capped = 0, unknown = 0 }
                 M.last_capped[name] = seen
             end
             seen.camps = seen.camps + 1
+            if not limits_available then seen.unknown = (seen.unknown or 0) + 1 end
             if capped[workdefs.value(name)] then
                 seen.capped = seen.capped + 1
             end
@@ -971,84 +1128,139 @@ local function run_camp(cfg, camp, stats)
         end
     end
 
-    -- Nothing wanted. That is either a genuinely idle base or a read that
-    -- came back empty for a moment, and the two are indistinguishable from
-    -- here. A live pass was seen reporting 0 works between passes reporting
-    -- 200. Unfencing the whole base on it costs a dozen toggles and another
-    -- dozen to put back, so the existing fences are left exactly as they are.
-    -- An idle base loses nothing by staying fenced; there is no work either
-    -- way.
-    -- Idle means nothing to do AND nothing to withdraw.
-    --
-    -- This returned on empty demand alone, before plan_fences - which is the
-    -- only thing that consumes `capped`. So the moment a ceiling suppressed
-    -- the last type that was pulsing, the camp was declared idle and the
-    -- permission was never taken away: the wood limit was reached and the
-    -- lumberjacks carried on, while the log said the base was idle.
-    --
-    -- That is not a corner case. Pulses only come from work that wants a
-    -- worker, so "the capped type is the only one pulsing" is the ordinary
-    -- shape of a base that has just hit its limit - which is exactly the
-    -- moment the feature is supposed to act.
-    --
-    -- With empty demand plan_fences fences nobody, every pal falls through to
-    -- pal.base, and base_allowed's `not capped[value]` withdraws the capped
-    -- types. A genuinely idle base with no ceilings still costs nothing.
-    if next(demand) == nil and next(capped or {}) == nil then
-        stats.idle_skipped = stats.idle_skipped + 1
-        return
-    end
+    -- Idle is still a reconciliation pass: X edits and withdrawn ceilings
+    -- must change permissions even while every pal sleeps. Missing work data
+    -- is reported separately and never used as occupancy/assignment proof.
+    if next(demand) == nil then stats.idle_reconciled = stats.idle_reconciled + 1 end
 
-    -- Asked here rather than inside plan_fences, because the sweep below needs
-    -- to know which work types it is being asked about before it starts. One
-    -- engine call per pal, fourteen on this save, and plan_fences reads what
-    -- this leaves rather than asking again.
-    local held = {}
     for _, pal in ipairs(pals) do
+        pal.reconcile_only = not limits_available and has_limits
         pal.current = api.current_work_suitability(pal.param)
-        if pal.current then held[pal.current] = true end
+        pal.hold_key = camp_key and not tostring(pal.key):match("^slot%d+$")
+            and (camp_key .. "|" .. tostring(pal.key)) or nil
+        pal.assignment = nil
+        if M.assignment_reader then
+            local ok, a = pcall(measured, "scheduler: assignment read", M.assignment_reader, pal, camp)
+            if ok and type(a) == "table" then
+                -- Copy just the declared Lua fields; never retain an object
+                -- that a reader might include in its callback-local result.
+                local state = a.state
+                if state ~= "ready" and state ~= "occupied" and state ~= "completed" then
+                    state = "unknown"
+                end
+                local manual
+                if type(a.manual) == "boolean" then manual = a.manual end
+                pal.assignment = {
+                    id = type(a.id) == "string" and a.id or nil,
+                    value = type(a.value) == "number" and math.tointeger(a.value) or nil,
+                    state = state,
+                    manual = manual,
+                }
+            end
+        end
     end
-
-    trace.at("camp: count_work_objects")
-    local objects = count_work_objects(camp, held)
-    trace.done()
 
     trace.at("camp: plan_fences")
-    local plan = plan_fences(cfg, pals, demand, objects, stats, capped)
+    local plan = measured("scheduler: plan fences", plan_fences, cfg, pals, demand, stats, capped)
     trace.done()
+    -- Capture/observation can stage settings while planning. No native write
+    -- may use those choices until the staged generation is durable.
+    if not settings_ready(stats, true) then return end
 
-    for _, pal in ipairs(pals) do
-        local want = plan[pal.key] or pal.base or {}
-        trace.at("camp: apply " .. tostring(pal.name or pal.key))
-        apply_pal(cfg, pal, want, stats)
-        trace.done()
-
-        if want ~= pal.base then
-            local names = {}
-            for value in pairs(want) do
-                names[#names + 1] = workdefs.label(workdefs.name(value))
-            end
-            table.sort(names)
-            stats.lines[#stats.lines + 1] = {
-                pal = pal.name,
-                key = pal.key,
-                fence = table.concat(names, ", "),
-            }
+    -- Withdraw obsolete permissions before admitting replacements. A sent
+    -- RPC is not proof that its withdrawal landed: re-read current permissions
+    -- and defer new enables if any withdrawal remains outstanding.
+    local unreadable_at = stats.unreadable
+    measured("scheduler: withdraw permissions", function()
+        for _, pal in ipairs(pals) do
+            apply_pal(cfg, pal, plan[pal.key] or {}, stats, false)
         end
-
-        -- Scratch fields, dropped so nothing survives into the next pass.
-        -- The pal tables come fresh from camp_pals each time, but clearing is
-        -- cheap and keeps that an implementation detail rather than a
-        -- dependency.
-        pal.base = nil
-        pal.capable = nil
-        pal.order = nil
-        pal.current = nil
+    end)
+    local can_enable = not unprepared and stats.unreadable == unreadable_at
+    for _, pal in ipairs(pals) do
+        if pal.capable == nil then can_enable = false end
     end
+    measured("scheduler: verify withdrawals", function()
+        if not cfg.dry_run then
+            for _, pal in ipairs(pals) do
+                if pal.capable then
+                    local off = api.work_off_set(pal.param)
+                    if type(off) ~= "table" then
+                        can_enable = false
+                    else
+                        if pal.permission_history then
+                            permissions.confirm(pal.permission_history, off, plan[pal.key] or {}, pal.capable)
+                            local pending = permissions.status(pal.permission_history)
+                            -- A delayed ENABLE still owns a potential seat. Do
+                            -- not replace it before its delivery is resolved.
+                            if pending > 0 then can_enable = false end
+                        end
+                        for value in pairs(pal.capable) do
+                            if not (plan[pal.key] or {})[value] and not off[value] then
+                                can_enable = false
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if not can_enable then stats.awaiting_withdrawal = stats.awaiting_withdrawal + 1 end
+
+    measured("scheduler: enable and confirm permissions", function()
+        for _, pal in ipairs(pals) do
+            local want = plan[pal.key] or pal.base or {}
+            trace.at("camp: apply " .. tostring(pal.name or pal.key))
+            local observed_off
+            if can_enable then observed_off = apply_pal(cfg, pal, want, stats, true) end
+            if not cfg.dry_run and pal.capable and pal.permission_history then
+                if observed_off == nil then observed_off = api.work_off_set(pal.param) end
+                permissions.confirm(pal.permission_history, observed_off, want, pal.capable)
+                local pending, expired = permissions.status(pal.permission_history)
+                stats.pending_writes = stats.pending_writes + pending
+                stats.expired_writes = stats.expired_writes + expired
+            end
+            trace.done()
+
+            local restricted = false
+            for value in pairs(pal.base or {}) do
+                if not want[value] then restricted = true; break end
+            end
+            if restricted then
+                local names = {}
+                for value in pairs(want) do
+                    names[#names + 1] = workdefs.label(workdefs.name(value))
+                end
+                table.sort(names)
+                stats.lines[#stats.lines + 1] = {
+                    pal = pal.name,
+                    key = pal.key,
+                    fence = table.concat(names, ", "),
+                }
+            end
+
+            -- Scratch fields, dropped so nothing survives into the next pass.
+            -- The pal tables come fresh from camp_pals each time, but clearing is
+            -- cheap and keeps that an implementation detail rather than a
+            -- dependency.
+            pal.base = nil
+            pal.capable = nil
+            pal.order = nil
+            pal.current = nil
+            pal.current_permitted = nil
+            pal.observed_on = nil
+            pal.permission_history, pal.external_edits = nil, nil
+            pal.permission_read_reuse_blocked = nil
+            pal.reconcile_only = nil
+            pal.ranks, pal.priorities, pal.assignment, pal.hold_key = nil, nil, nil, nil
+        end
+    end)
 end
 
-function M.run_pass(cfg)
+local function run_pass_body(cfg)
     local stats = M.blank_stats()
+    if not settings_ready(stats, false) then return stats end
     M.pass_id = M.pass_id + 1
 
     -- Camps first, component second, and the order is the fix.
@@ -1063,6 +1275,11 @@ function M.run_pass(cfg)
     trace.at("pass: base_camps sweep")
     local camps = api.base_camps()
     trace.done()
+    if api.camps_available ~= true then
+        stats.blocked = true
+        stats.blocked_reason = "base camp enumeration is unavailable: " .. tostring(api.camps_error or "unknown")
+        return released(stats)
+    end
     if #camps == 0 then
         log.debug("no base camps loaded")
         return released(stats)
@@ -1088,7 +1305,8 @@ function M.run_pass(cfg)
     -- a stale answer survives at most one interval and cannot reach the calls
     -- below. On a host the lookup exits early; on a client it is one walk to
     -- return false, once per pass.
-    if not api.latch_authority() then
+    local authority = api.latch_authority()
+    if authority ~= true then
         -- Named, like the component abort below.
         --
         -- Without it a client running '!pwp run' fell through to main.lua's
@@ -1097,8 +1315,9 @@ function M.run_pass(cfg)
         -- not loaded. This is also the path the fresh re-probe exists for, so
         -- it is the one worth naming.
         local blank = M.blank_stats()
-        blank.blocked_reason = "this machine is not the authority, so the " ..
-            "server decides assignments"
+        blank.blocked = true
+        blank.blocked_reason = authority == false and "this machine is not the authority, so the server decides assignments"
+            or "authority data is unavailable; permissions were not changed"
         return blank
     end
 
@@ -1111,106 +1330,8 @@ function M.run_pass(cfg)
     -- later. And with the pulse hint wired, the probe itself is free on any
     -- authority that has scheduled work since it spawned.
 
-    -- One lookup for the whole pass. See the note on set_work_enabled.
-    --
-    -- Owned only, with no fallback, because the fallback cannot carry a
-    -- change. Every edit this pass would make is a RequestX_ToServer on the
-    -- base camp component, and one sent through a component this machine does
-    -- not own is dropped before it reaches the wire, silently.
-    --
-    -- On a dedicated server with nobody connected there is no player to own
-    -- one. Measured on 23 August, the pass then re-toggled all fourteen pals
-    -- every eleven seconds and landed none of them - a flat 14 on every tick,
-    -- for as long as the server sat empty. Nothing is lost by standing down:
-    -- the same ticks report "0 work(s) in 0 type(s)", because the game does
-    -- not run base work while no player is on, so there is nothing to
-    -- schedule either.
-    pass_comp = api.owned_network_component()
-    if pass_comp ~= nil and said_no_component then
-        -- Somebody is here now. Say so, so the earlier warn does not sit in
-        -- the log looking like the current state.
-        said_no_component = false
-        log.info("a base camp component is available again, passes resume")
-    end
-
-    if pass_comp == nil then
-        -- Warn, not debug, and recorded so the caller can say the right
-        -- thing.
-        --
-        -- At the shipped log level this was invisible, and stats.camps stays
-        -- zero - so a manual '!pwp run' fell through to main.lua's "no base
-        -- camp loaded, stand inside your base and try again", which is the
-        -- wrong advice for six of the seven ways a pass can abort and sends
-        -- the hunt to camp streaming rather than component ownership.
-        -- blocked_reason, NOT blocked: stats.blocked already exists on this
-        -- table as a boolean, and concatenating it into a message throws.
-        stats.blocked_reason = "no base camp component this machine owns"
-
-        -- Said once per spell, not once per pass.
-        --
-        -- Raising this from debug to warn made an idle dedicated server write
-        -- a line every ten seconds for ever - and log.say/warn open, write and
-        -- close a file per line on the game thread, which log.lua records as
-        -- the thing taken OUT of hot callbacks for issue #1372. It also warned
-        -- about a state the README documents as normal.
-        --
-        -- The reason still reaches stats.blocked_reason every time, so an
-        -- explicit '!pwp run' always names the real cause; only the unsolicited
-        -- line is rationed.
-        if not said_no_component then
-            said_no_component = true
-            log.warn("no base camp component this machine owns, so nothing " ..
-                "can be changed and nothing is sent. On a dedicated server " ..
-                "this is normal while nobody is connected; this is said once.")
-        end
-        return released(stats)
-    end
-
-
-    -- Camp-scoped storage: one bucketed sweep for every loaded camp, here,
-    -- rather than one full sweep per camp inside run_camp.
-    --
-    -- Under the shipped storage_scope = "camp" each camp keys its own cache
-    -- entry, every entry is stamped on the same pass, and they expire
-    -- together - so a sweep pass paid the identical FindAllOf walk once per
-    -- camp, back to back. walk_containers reads the camp id off every
-    -- container anyway; bucketing on it makes the extra camps free. run_camp's
-    -- own cache check is untouched and simply finds fresh entries, and a camp
-    -- this sweep saw no containers for gets an explicit empty entry so it
-    -- cannot fall through to a walk of its own.
-    if cfg.storage_scope ~= "global" and needs_totals(cfg)
-        and M.stock_ttl > 0 and #camps > 1 then
-        local stale = false
-        for _, c in ipairs(camps) do
-            local k = api.guid_key(api.camp_id(c))
-            local held = k and stock[k]
-            if k and not (held and (os.clock() - held.at) < M.stock_ttl) then
-                stale = true
-                break
-            end
-        end
-
-        if stale then
-            trace.at("pass: bucketed chest sweep")
-            local by_camp, chest_counts = api.chest_totals_by_camp({
-                include = cfg.counted_containers,
-                exclude = cfg.uncounted_containers,
-            })
-            trace.done()
-
-            local now = os.clock()
-            for _, c in ipairs(camps) do
-                local k = api.guid_key(api.camp_id(c))
-                if k then
-                    stock[k] = {
-                        totals = by_camp[k] or {},
-                        chests = (chest_counts and chest_counts[k]) or 0,
-                        at = now,
-                    }
-                end
-            end
-        end
-    end
+    -- Resolve an owned send route only after a permission difference is found.
+    -- Reconciliation, authority checks and readback still run on every pass.
 
     -- The upgrade from unowned rules to guild owned ones is OFFERED here and
     -- carried out by "!pwp adopt". It used to happen on its own.
@@ -1253,13 +1374,58 @@ function M.run_pass(cfg)
         if sole then caps.offer_adopt(sole) end
     end
 
-    pass_totals = {}
+    -- Delay the shared scan until a readable, prepared, nonempty roster can
+    -- use it. No demand is still an idle reconciliation, so it does not skip
+    -- this step. Guild totals still include every loaded camp, even empty ones.
+    -- This closure and its camp wrappers live only for this synchronous pass.
+    local stock_prepared, stock_error = false, nil
+    local function prepare_stock()
+        if not stock_prepared then
+            stock_prepared = true
+            local ok, err = pcall(function()
+                if cfg.storage_scope == "global" then
+                    prepare_guild_stock(cfg, camps)
+                elseif M.stock_ttl > 0 and #camps > 1 then
+                    local stale = false
+                    for _, c in ipairs(camps) do
+                        local k = api.guid_key(api.camp_id(c))
+                        if k and not fresh_stock(stock[k]) then
+                            stale = true
+                            break
+                        end
+                    end
+                    if stale then
+                        trace.at("pass: bucketed chest sweep")
+                        local by_camp, chest_counts, evidence = api.chest_totals_by_camp({
+                            include = cfg.counted_containers,
+                            exclude = cfg.uncounted_containers,
+                        })
+                        trace.done()
+                        local now = os.clock()
+                        for _, c in ipairs(camps) do
+                            local k = api.guid_key(api.camp_id(c))
+                            if k then
+                                stock[k] = stock_entry(by_camp[k] or {},
+                                    (chest_counts and chest_counts[k]) or 0, evidence, stock[k], now)
+                            end
+                        end
+                    end
+                end
+            end)
+            if not ok then stock_error = tostring(err) end
+        end
+        -- A failed shared scan must neither repeat per camp nor let a later
+        -- camp consume old data after the failed preparation.
+        if stock_error then error(stock_error, 0) end
+    end
+    pass_totals, totals_guild, totals_ambiguous = {}, nil, false
 
     for camp_n, camp in ipairs(camps) do
         trace.at("pass: camp " .. camp_n .. " of " .. #camps)
-        local ok, err = pcall(function() run_camp(cfg, camp, stats) end)
+        local ok, err = pcall(function() run_camp(cfg, camp, stats, prepare_stock) end)
         trace.done()
         if not ok then
+            stats.failed = stats.failed + 1
             log.warn("pass threw on a camp: " .. tostring(err))
         end
     end
@@ -1267,7 +1433,11 @@ function M.run_pass(cfg)
     -- Only published when the pass actually read storage. A pass with no
     -- ceilings does not scan containers at all, and overwriting good totals
     -- with an empty table would make the panel show every rule at zero.
-    if next(pass_totals) ~= nil then
+    if totals_ambiguous then
+        -- Legacy consumers lack a selected guild. Do not publish whichever
+        -- guild happened to run last as if it described the local player.
+        M.last_totals = {}
+    elseif next(pass_totals) ~= nil then
         M.last_totals = pass_totals
     end
     pass_totals = nil
@@ -1283,6 +1453,24 @@ function M.run_pass(cfg)
     -- Dropped with the pass that resolved it. Nothing holds an engine object
     -- between passes - which is now true of the early returns above as well.
     return released(stats)
+end
+
+function M.run_pass(cfg)
+    if require('settings_gate').blocked() then
+        local stats=M.blank_stats()
+        stats.blocked=true;stats.blocked_reason=require('settings_gate').status()=='restart_required'
+            and 'settings locked; restart the game' or 'settings recovery is in progress'
+        return stats
+    end
+    pass_comp, pass_comp_tried = nil, false
+    local ok, result = pcall(run_pass_body, cfg)
+    pass_comp, pass_comp_tried, pass_totals = nil, false, nil
+    if ok then return result end
+    local stats = M.blank_stats()
+    stats.blocked, stats.failed = true, 1
+    stats.blocked_reason = "pass did not complete: " .. tostring(result)
+    log.warn(stats.blocked_reason)
+    return stats
 end
 
 -- Which types want a worker. "3 type(s)" says nothing when a pal is on the
@@ -1314,7 +1502,7 @@ function M.format_stats(cfg, stats)
     }
 
     local moved = cfg.dry_run and stats.would_toggle or stats.toggles
-    parts[#parts + 1] = moved .. (cfg.dry_run and " would toggle" or " toggled")
+    parts[#parts + 1] = moved .. (cfg.dry_run and " would request" or " permission request(s) sent")
 
     if stats.failed > 0 then parts[#parts + 1] = stats.failed .. " failed" end
     if stats.deferred > 0 then parts[#parts + 1] = stats.deferred .. " deferred" end
@@ -1322,8 +1510,37 @@ function M.format_stats(cfg, stats)
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " untyped" end
     if stats.covered > 0 then parts[#parts + 1] = stats.covered .. " covered" end
-    if stats.idle_skipped > 0 then parts[#parts + 1] = stats.idle_skipped .. " camp(s) idle" end
+    if stats.idle_reconciled > 0 then
+        parts[#parts + 1] = stats.idle_reconciled .. " idle camp(s) reconciled"
+    end
+    if stats.staff_limited > 0 then parts[#parts + 1] = stats.staff_limited .. " staffing restrictions" end
+    if stats.manual_conflicts > 0 then parts[#parts + 1] = stats.manual_conflicts .. " manual assignment conflicts" end
+    if stats.manual_limit_conflicts > 0 then
+        parts[#parts + 1] = stats.manual_limit_conflicts .. " fixed workers above staffing limit"
+    end
+    if stats.assignment_unknown > 0 then
+        parts[#parts + 1] = stats.assignment_unknown .. " assignment(s) unverified"
+    end
+    if stats.manual_unavailable > 0 then
+        parts[#parts + 1] = stats.manual_unavailable .. " current worker(s) awaiting assignment evidence"
+    end
+    if stats.unverified_limit_conflicts > 0 then
+        parts[#parts + 1] = stats.unverified_limit_conflicts .. " unverified workers above staffing limit"
+    end
+    if stats.unknown_scope > 0 then parts[#parts + 1] = stats.unknown_scope .. " work(s) quarantined" end
+    if stats.demand_unavailable > 0 then parts[#parts + 1] = "demand UNAVAILABLE" end
+    if stats.awaiting_withdrawal > 0 then parts[#parts + 1] = "waiting for permission withdrawals" end
+    if stats.pending_writes > 0 then parts[#parts + 1] = stats.pending_writes .. " permission request(s) unconfirmed" end
+    if stats.expired_writes > 0 then
+        parts[#parts + 1] = stats.expired_writes .. " permission request(s) timed out; delivery unresolved"
+    end
+    if stats.baseline_unavailable > 0 then parts[#parts + 1] = "baseline UNAVAILABLE" end
+    if stats.storage_unverified > 0 then parts[#parts + 1] = "storage UNVERIFIED" end
+    if stats.vanilla_edits > 0 then
+        parts[#parts + 1] = stats.vanilla_edits .. " unattributed permission change(s); priorities preserved"
+    end
     if stats.demand_estimated then parts[#parts + 1] = "demand ESTIMATED" end
+    if stats.blocked_reason then parts[#parts + 1] = "BLOCKED: " .. stats.blocked_reason end
 
     local wants = demand_summary(stats)
     if wants then return table.concat(parts, ", ") .. "  |  wanted: " .. wants end

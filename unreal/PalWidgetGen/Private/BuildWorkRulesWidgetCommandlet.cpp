@@ -7,6 +7,8 @@
 #include "WidgetBlueprintFactory.h"
 #include "Blueprint/WidgetTree.h"
 #include "Blueprint/UserWidget.h"
+#include "WorkRulesInput.h"
+#include "Misc/Parse.h"
 
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -32,6 +34,7 @@ namespace
 	{
 		UE_LOG(LogWorkRulesWidget, Display, TEXT("%s"), *Line);
 	}
+
 
 	/**
 	 * Named, and named on the GENERATED CLASS.
@@ -129,11 +132,25 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 		FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 	IAssetTools& AssetTools = AssetToolsModule.Get();
 
-	UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-	Factory->ParentClass = UUserWidget::StaticClass();
-
-	UWidgetBlueprint* Blueprint = Cast<UWidgetBlueprint>(AssetTools.CreateAsset(
-		WidgetName, UiFolder, UWidgetBlueprint::StaticClass(), Factory));
+	const FString ObjectPath = FString(UiFolder) / WidgetName + TEXT(".") + WidgetName;
+	UObject* Existing = LoadObject<UObject>(nullptr, *ObjectPath);
+	UWidgetBlueprint* Blueprint = Cast<UWidgetBlueprint>(Existing);
+	if (Existing && !Blueprint) { Say(TEXT("FAILED: existing asset is not a Widget Blueprint")); return 1; }
+	if (FParse::Param(*Params, TEXT("VerifyInputOnly")))
+	{
+		// Fresh-process readback of serialized defaults/bytecode, without fixing or saving them.
+		return Blueprint && Blueprint->ParentClass == WorkRulesInput::Parent()
+			&& WorkRulesInput::Verify(Blueprint, false) ? 0 : 2;
+	}
+	const bool bExisting = Blueprint != nullptr;
+	if (!Blueprint)
+	{
+		UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
+		Factory->ParentClass = WorkRulesInput::Parent();
+		if (!Factory->ParentClass) { Say(TEXT("FAILED: PalUserWidget unavailable")); return 1; }
+		Blueprint = Cast<UWidgetBlueprint>(AssetTools.CreateAsset(
+			WidgetName, UiFolder, UWidgetBlueprint::StaticClass(), Factory));
+	}
 
 	if (!Blueprint || !Blueprint->WidgetTree)
 	{
@@ -142,10 +159,17 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 	}
 
 	UWidgetTree* Tree = Blueprint->WidgetTree;
+	if (Blueprint->ParentClass != UUserWidget::StaticClass() && Blueprint->ParentClass != WorkRulesInput::Parent())
+	{
+		Say(TEXT("FAILED: unexpected widget parent; contract requires shipped PalUserWidget"));
+		return 1;
+	}
+	if (bExisting && !Tree->RootWidget) { Say(TEXT("FAILED: existing shell has no root")); return 1; }
 
-	// Re-runnable. Dropping the root detaches whatever a previous run built,
-	// so this can be edited and run again rather than being a one shot.
-	Tree->RootWidget = nullptr;
+	// Existing shells retain their tree, unrelated graphs and class defaults.
+	// The layout constructor is only for a genuinely new asset.
+	if (!bExisting)
+	{
 
 	UCanvasPanel* Root = Make<UCanvasPanel>(Tree, TEXT("Root"));
 	Tree->RootWidget = Root;
@@ -210,9 +234,13 @@ int32 UBuildWorkRulesWidgetCommandlet::Main(const FString& Params)
 	{
 		AddRow(Row);
 	}
+	}
 
-	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	if (!WorkRulesInput::Build(Blueprint) || !WorkRulesInput::Verify(Blueprint, true))
+	{
+		Say(TEXT("FAILED: input graph/default verification; asset not saved"));
+		return 2;
+	}
 
 	const bool bSaved = SaveAsset(Blueprint);
 

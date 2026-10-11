@@ -14,3 +14,9 @@ priority.log
 # the repository in a file no text search would find.
 __pycache__/
 *.pyc
+.test-deps/
+test-results/
+.tmp/assignment-census/
+
+# Local macro run logs; they record the private server address
+tools/*-last-run.log

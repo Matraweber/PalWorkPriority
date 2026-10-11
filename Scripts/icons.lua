@@ -24,11 +24,11 @@ local M = {}
 M.worst_load = 0
 M.load_ms = 0
 M.loads = 0
--- The same for StaticFindObject, which every drawn icon goes through.
 -- Bumped whenever an id is written off, so a caller memoising a list built
 -- from this can tell that the answer has changed.
 M.gave_up_n = 0
 
+-- Explicit diagnostic lookups only; the demand path uses LoadAsset.
 M.worst_find = 0
 M.find_ms = 0
 M.finds = 0
@@ -45,11 +45,9 @@ M.finds = 0
 -- so the check is the crash, and pcall does not catch an access violation
 -- because it is not a Lua error.
 --
--- Strings cannot dangle. The name is remembered and the object looked up
--- fresh each time it is wanted, which costs a hash lookup in the engine's
--- object table and removes the failure mode entirely. Once a texture is on an
--- Image's brush the engine holds a real reference to it, so the repeated
--- lookup keeps finding the same one.
+-- Strings cannot dangle. Cold requests load on the game-thread pump and
+-- hand the fresh object directly to the panel to pin in an engine brush.
+-- A draw without a usable pin reacquires by name within the same allowance.
 
 -- id (lowercased) -> icon name, or false once it is known there is none
 local resolved = {}
@@ -57,13 +55,8 @@ local resolved = {}
 -- icon name -> true once a load has been asked for, so it is asked once
 local requested = {}
 
--- Names waiting their turn, and one flag saying a turn is already scheduled.
---
--- Loads go out one at a time, spaced apart, and this is not tidiness. Asking
--- for one asset works; asking for nine at once, which is what a page of tiles
--- did the moment the object path started working, killed the game with an
--- access violation on a garbage pointer. Nothing in a draw loop should be
--- issuing a blocking package load, let alone nine of them in a frame.
+-- Cold loads wait in FIFO order on the game-thread pump. A draw may only
+-- reacquire a previously successful name, after the FIFO and within its budget.
 local queue = {}
 local queued = {}
 -- Names queued on spec rather than because the index named them. A guess that
@@ -87,37 +80,44 @@ local pumping = false
 -- load on the game thread and a filter that matches four hundred items should
 -- not try to load four hundred textures in one frame.
 local PUMP_MS = 100
--- Twelve, and the number comes from a measurement rather than a fear.
---
--- This was cut to three on the theory that LoadAsset was stalling the frame.
--- It is not: timed over five hundred loads it averages 0.3ms and has never
--- exceeded 2ms. The expensive call is StaticFindObject at 13ms, which is what
--- resolving an icon costs, and that is rationed by the panel instead.
---
--- Getting textures into memory quickly is what makes those lookups SUCCEED,
--- so starving the loader just meant the panel looked up the same icons over
--- and over and found nothing. Twelve loads is under 4ms a beat.
+-- Retain the twelve-attempt ceiling even when the clock does not advance.
 local PUMP_BATCH = 12
+-- Soft elapsed budget between loads. Historical averages do not bound a cold
+-- asset: one native LoadAsset can exceed this, but no second load should then
+-- compound the stall. Keep the count ceiling when the clock is coarse/quiet.
+local PUMP_BUDGET_SECONDS = 0.004
 
--- Called with the frame's name -> texture map at the end of a sweep, if
--- anything wants it. panel.lua sets this to pin what it did not ask for, which
--- is what makes sweeps stop happening.
---
--- Declared HERE because icons owns this table. It was written by panel and read
--- by icons and declared by neither, so a rename would have silently stopped the
--- pinning and nothing would have said so. tools/luacheck.py's cross-module
--- check now refuses that shape.
+-- Called synchronously with name -> fresh texture(s). A pump load sends a
+-- singleton; the rare name-discovery fallback sends its current-call results.
+-- Consumers must pin/use them before returning and must not retain wrappers.
+-- No return value or pin-success acknowledgement is required by icons.
 M.on_sweep = nil
 
--- icon name -> whether its load actually produced an object. Written by the
--- pump, which is the only code that finds out.
+-- Only primitive facts survive a callback, never a LoadAsset result.
 local arrived = {}
+local attempted_at = {}
+local discovery_pending = {}
+local discover
+local PUMP_ENTRY = "icons_pump"
+local pump
+local function schedule()
+    if not pumping then
+        pumping = true
+        clock.every(PUMP_ENTRY, PUMP_MS, function() pump() end)
+    end
+end
 
--- Names loaded this session whose arrival the next sweep will confirm.
-local awaiting = {}
-
--- Whether frame_tex holds a real sweep, or was emptied by the throttle.
-local frame_swept = false
+-- Draw fallback and the scheduled pump share the remaining load allowance.
+-- Each scheduled beat starts a slice; without a timer, elapsed time renews it.
+-- Callback/pinning time counts too. A single native operation can overrun.
+local slice_at, slice_count, slice_seconds = -1, 0, 0
+local function begin_slice()
+    slice_at, slice_count, slice_seconds = os.clock(), 0, 0
+end
+local function room()
+    if os.clock() - slice_at >= PUMP_MS / 1000 then begin_slice() end
+    return slice_count < PUMP_BATCH and slice_seconds < PUMP_BUDGET_SECONDS
+end
 
 -- id (lowercased) -> frames spent waiting for a load to finish
 local waited = {}
@@ -217,7 +217,8 @@ end
 -- merely unused costs one table entry.
 local function learn(key, name)
     if type(name) ~= "string" or name == "" then return end
-    if learned[key] == name or icondex.NAMES[key] == name then return end
+    if learned[key] == name then return end
+    if learned[key] == nil and icondex.NAMES[key] == name then return end
     learned[key], learned_dirty = name, true
 end
 
@@ -286,125 +287,70 @@ local function object_path(name)
     return icondex.FOLDER .. leaf .. "." .. leaf
 end
 
--- One load, then wait, then the next.
-local function pump_one()
-    local name = table.remove(queue, 1)
-
-    if name then
-        queued[name] = nil
-        requested[name] = true
-
-        -- The object path, not the package path, and this is measured rather
-        -- than assumed. Asked for the package it reports no error and loads
-        -- nothing; asked for the full object path the texture is there by the
-        -- next line. Silent success on the wrong argument is what made this
-        -- look like a threading problem, then a timing problem, then a
-        -- caching problem.
-        --
-        -- On the game thread, since the panel's tick is not it. Finding an
-        -- object is a lookup and works from anywhere. Loading one is real
-        -- engine work and does not.
-        local path = object_path(name)
-        -- The pump rides the clock, so this already runs on the game thread
-        -- and the load happens in place, with no registration.
-        --
-        -- Timed, because this is the one call in the mod that can block the
-        -- game thread for an unbounded stretch and nothing has ever measured
-        -- it. Every guess at the picker's remaining lag has been an inference
-        -- from a number that turned out to measure something else.
-        local t0 = os.clock()
-        pcall(function() LoadAsset(path) end)
-        local took = (os.clock() - t0) * 1000
-
-        M.load_ms = (M.load_ms or 0) + took
-        M.loads = (M.loads or 0) + 1
-        if took > M.worst_load then
-            M.worst_load = took
-            log.say(string.format("icon load %s took %.0fms (worst so far)",
-                name, took))
-        end
-
-        -- Said out loud, because "the icon did not appear" has covered a
-        -- failed lookup, a load that went nowhere, a texture that would
-        -- not go on a brush and a brush with no size, and telling them
-        -- apart from a screenshot has not been possible once.
-        -- The sweep already knows, and it reads the same object array.
-        --
-        -- This was one StaticFindObject per pumped name, purely to record
-        -- whether the load landed. Twelve per 100ms beat at 9-12ms each is
-        -- 1.0 to 1.4 SECONDS of game thread per second - more than the beat
-        -- budget, so the clock could not keep up and the game froze until the
-        -- queue drained. It went unnoticed because M.finds and M.find_ms are
-        -- initialised and never incremented, so the bench printed "0 finds,
-        -- 0.00ms average" while this ran.
-        --
-        -- The comment in find() already spells out why it is unnecessary:
-        -- FindAllOf and StaticFindObject read the same array, so anything the
-        -- sweep cannot see is not loaded. The answer is deferred to the next
-        -- sweep, which is already paid for. nil means "not known yet" and the
-        -- alternates scan already waits on exactly that.
-        -- Debug, not say. log.say always writes to file, and to_file does an
-        -- open/write/close per line - so filling one page of the picker was
-        -- eight file opens per beat alongside eight blocking loads, on the
-        -- game thread. Issue #1372's reporter mitigated this very crash class
-        -- by taking file I/O out of hot callbacks. A load that fails is worth
-        -- shouting about; a load that works is not.
-        -- Recorded, not just logged.
-        --
-        -- This is the one place that knows whether a name resolves, and it
-        -- was throwing the answer away - so the retry scan below re-asked the
-        -- engine about all two dozen candidates, at roughly 10ms per
-        -- StaticFindObject, once a second for every unresolved item on the
-        -- page. That is the ADD tab's remaining lag, and it is a table lookup.
-        arrived[name] = nil
-        awaiting[name] = true
-
-        -- A guess that misses is expected and silent. Only a name the index
-        -- promised is worth shouting about.
-        --
-        -- log.say writes to file per line, and one unknown id queues two
-        -- dozen guesses - so a single sweep of the picker wrote ninety six
-        -- file opens on the game thread announcing that made-up paths do not
-        -- exist. Issue #1372's reporter mitigated this very crash class by
-        -- taking file I/O out of hot callbacks.
-        -- Whether it arrived is not known here any more.
-        --
-        -- The old line branched on arrived[name], which pump_one used to fill
-        -- with its own StaticFindObject. That lookup is gone - the sweep
-        -- answers instead - so arrived[name] is deliberately nil at this point
-        -- and the "did not arrive" branch fired for EVERY name that was not a
-        -- guess. That is most of the picker, it is a log.say so it opens,
-        -- writes and closes a file per line, and at twelve names per beat it
-        -- put back the hundred-odd file opens a second the comment above says
-        -- it removed. It also asserted the opposite of the truth for icons
-        -- that were visibly on screen.
-        log.debug(string.format("icon load %-28s asked for", name))
-        guessed[name] = nil
+-- Validate only the wrapper returned by THIS native call. In particular,
+-- neither arrival booleans nor a successful earlier pin make an old wrapper safe.
+local function load_texture(name)
+    requested[name] = true
+    local t0 = os.clock()
+    local ok, texture = pcall(LoadAsset, object_path(name))
+    local valid = ok and real(texture)
+    local took = (os.clock() - t0) * 1000
+    M.load_ms = M.load_ms + took
+    M.loads = M.loads + 1
+    if took > M.worst_load then
+        M.worst_load = took
+        log.say(string.format("icon load %s took %.0fms (worst so far)", name, took))
     end
-
+    arrived[name] = valid
+    attempted_at[name] = os.clock()
+    if valid then return texture end
 end
 
--- The pump rides a NAMED clock entry rather than a chain of one-shots.
---
--- A one-shot chain cannot be cancelled, and this module hot-reloads: the old
--- pump kept firing after the swap, draining the OLD queue at eight blocking
--- LoadAsset calls per beat and writing a log line each, on behalf of a module
--- that had already been thrown away. reload.lua's own rule says a module
--- holding a timer must not be swapped, and this was the module breaking it.
--- A name is something M.shutdown can cancel.
-local PUMP_ENTRY = "icons_pump"
+local function pump_one()
+    local name = table.remove(queue, 1)
+    if not name then return end
+    queued[name], guessed[name] = nil, nil
+    local started = os.clock()
+    local texture = load_texture(name)
+    -- Hand off before another load can run. The callback is optional (closed
+    -- panel, pin cap, construction failure); a draw can reacquire by name.
+    if texture then
+        -- Resolve guessed/wrong-category ids before the panel next asks for a
+        -- pin by name. The association is a string; the texture is not cached.
+        local base = name:match("^[^_]+_(.+)$")
+        for key, candidate in pairs(alternates) do
+            if candidate == base then
+                resolved[key], waited[key], alternates[key] = name, nil, nil
+                learn(key, name)
+            end
+        end
+        if M.on_sweep then pcall(M.on_sweep, { [name] = texture }) end
+    end
+    slice_count = slice_count + 1
+    slice_seconds = slice_seconds + os.clock() - started
+    -- Start the cooldown at completion, including a single oversized load.
+    slice_at = os.clock()
+end
 
-local function pump()
+pump = function()
+    begin_slice()
     for _ = 1, PUMP_BATCH do
+        if #queue == 0 then break end
         pump_one()
+        if slice_seconds >= PUMP_BUDGET_SECONDS then break end
     end
 
-    if #queue == 0 then
+    -- Unknown/nonstandard names still need the game's resident-name fallback.
+    -- It runs only on demand, after the FIFO, on a separate beat from loads.
+    if #queue == 0 and slice_count == 0 and next(discovery_pending) then
+        local started = os.clock()
+        discover()
+        slice_seconds = slice_seconds + os.clock() - started
+        slice_at = os.clock()
+    end
+    if #queue == 0 and not next(discovery_pending) then
         pumping = false
         clock.cancel(PUMP_ENTRY)
-        -- Written here rather than as names are learned: the queue draining
-        -- is exactly when a page has finished arriving, it is on the clock
-        -- rather than in a draw, and it cannot happen twice for one batch.
         pcall(save_learned)
     end
 end
@@ -415,7 +361,7 @@ function M.shutdown()
     -- The outgoing module takes its queue with it, so anything it learned
     -- since the last drain would go too.
     pcall(save_learned)
-    queue, queued = {}, {}
+    queue, queued, discovery_pending = {}, {}, {}
     pumping = false
     clock.cancel(PUMP_ENTRY)
 end
@@ -427,250 +373,79 @@ local function want(name, speculative)
     queued[name] = true
     queue[#queue + 1] = name
 
-    if not pumping then
-        pumping = true
-        clock.every(PUMP_ENTRY, PUMP_MS, pump)
-    end
+    schedule()
 end
 
--- The object for an icon name, if it is in memory. Never stored.
---
--- Every loaded icon, found in ONE pass, for the length of one draw.
---
--- The picker's remaining lag was never loading. Measured 24 August with the
--- picker open: LoadAsset averages 1ms, and StaticFindObject averages 9.4ms and
--- gets asked once per tile - 17 finds, 160ms, which is the whole of it. A full
--- sweep of all 7072 textures in memory costs 26ms and answers for every tile
--- at once, so the break even is three icons and the picker draws eighteen.
---
--- This is the one place the module holds textures rather than names, and it is
--- allowed for exactly one reason: the map is built inside a draw and dropped
--- when that draw returns, so nothing here is ever read on a later frame. The
--- lifetime is enforced at both ends - draw_item_picker clears it going in, and
--- refresh clears it coming out - because a texture kept across a frame is the
--- use after free this file's every other rule exists to avoid.
-local frame_tex = nil
-
--- When the last sweep ran, and how many loads had completed by then.
---
--- The sweep is per FRAME for object safety, and that was read as "once per
--- draw". It is once per draw that needs it, and a draw needs it whenever any
--- icon is still unresolved - so a page with a handful of items the index has
--- no name for swept 7,171 textures ten times a second, for as long as the
--- picker stayed open. Measured: twelve sweeps and 958ms across one page turn,
--- ~80ms each, which is the whole of the picker's lag. The page turn was never
--- special; it is just when anyone looks.
---
--- A second sweep can only find something the first did not if a load has
--- landed in between, so that is the gate. The interval is a safety net for
--- textures the game itself brings in without the pump noticing.
-local swept_at = -1
-local swept_loads = -1
-local SWEEP_MIN_GAP = 0.5
-
-local function sweep_frame()
-    M.sweeps = (M.sweeps or 0) + 1
-    local _t = os.clock()
-    local out = {}
-
-    for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
-        -- GetFName():ToString(), not GetFullName().
-        --
-        -- The leaf is all this needs, and GetFullName builds the whole
-        -- "Class Package.Object" path to produce it - seven thousand times a
-        -- sweep, which is the sweep. GetName() returns nothing on this build,
-        -- which is why the original reached for GetFullName; the FName route
-        -- is what PerfectPlacement walks widget trees with.
-        --
-        -- And leave UE4SS-settings.ini alone while you are here.
-        -- DefaultFNameToStringMethod looks like the setting that governs
-        -- this, and it is the obvious thing to reach for, so it was A/B
-        -- tested across two restarts, three bench runs each, on 25 August:
-        --
-        --                        Scan      Conv_NameToString
-        --   FindAllOf sweep      14-17ms   14-15ms
-        --   GetFullName walk     14ms      16-20ms
-        --   GetFName walk        11-12ms   12-14ms
-        --   whole sweep          26-29ms   26-29ms
-        --
-        -- Scan wins or ties everywhere, so the default stays. The reading
-        -- that explains the shape: GetFName():ToString() calls FName::ToString
-        -- directly and never consults the setting at all, while GetFullName
-        -- does - which is why the only row that moved much is the one this
-        -- loop stopped using. Changing it would have cost every other mod on
-        -- the machine something and bought this one nothing.
-        local leaf
-        pcall(function() leaf = tex:GetFName():ToString() end)
-
-        if type(leaf) == "string" and leaf:sub(1, #PREFIX) == PREFIX then
-            local rest = leaf:sub(#PREFIX + 1)
-            if out[rest] == nil then out[rest] = tex end
-        end
-    end
-
-    -- One pass answers every outstanding load.
-    --
-    -- The sweep enumerates every texture in memory, so a name it found is
-    -- loaded and a name it did not find is not. Recording that here is what
-    -- lets pump_one stop asking the engine per name.
-    for rest in pairs(out) do
-        if awaiting[rest] then awaiting[rest] = nil end
-        arrived[rest] = true
-    end
-
-    for name in pairs(awaiting) do
-        arrived[name] = false
-        awaiting[name] = nil
-    end
-
-    M.sweep_ms = (M.sweep_ms or 0) + (os.clock() - _t) * 1000
-    return out
-end
-
--- Only ever a lookup. Wanting something loaded is a separate matter, handled
--- above at its own pace, and a later frame is what finds it.
+-- A cold draw only queues. The pump offers its fresh LoadAsset result to the
+-- panel's existing pin callback; normal later draws read that engine-owned pin.
+-- If no pin can serve this draw, reacquire a previously successful name here.
+-- This uses the shared count/time allowance and never overtakes queued work.
+-- No global object discovery and no wrapper cache is involved.
 local function find(name)
-    -- The sweep first, and only when one could tell us something new.
-    if frame_tex == nil then
-        local now = os.clock()
-        -- Time only. Gating on "has a load landed since" looked precise and
-        -- was useless: the pump lands twelve a beat, so the counter always
-        -- differed and the sweep ran every frame anyway - 53 sweeps and 4.2
-        -- seconds across four page turns, worse than before.
-        if (now - swept_at) >= SWEEP_MIN_GAP then
-            frame_tex = sweep_frame()
-            swept_at, swept_loads = now, M.loads
-
-            -- Hand the whole find to whoever registered for it, inside the
-            -- frame that found it. The sweep resolves every loaded icon at
-            -- once and the panel then throws all but the eighteen it is
-            -- drawing away - so the next page sweeps again. Letting the panel
-            -- pin what it did not ask for is what makes sweeps stop.
-            frame_swept = true
-            if M.on_sweep then pcall(function() M.on_sweep(frame_tex) end) end
-        else
-            -- Everything misses this frame, which costs the tile its picture
-            -- for a tenth of a second and costs the frame nothing at all.
-            frame_tex = {}
-            frame_swept = false
-        end
+    if queued[name] then return nil end
+    if not requested[name] then want(name); return nil end
+    if arrived[name] then
+        if #queue > 0 or not room() then return nil end
+        local started = os.clock()
+        local texture = load_texture(name)
+        slice_count = slice_count + 1
+        slice_seconds = slice_seconds + os.clock() - started
+        slice_at = os.clock()
+        return texture
     end
-
-    local hit = frame_tex[name]
-    if hit ~= nil and real(hit) then return hit end
-
-    -- "Not swept this frame" is not the same as "not loaded".
-    --
-    -- On a throttled frame frame_tex is emptied, so every lookup fell through
-    -- to the miss path below - which clears `requested` and calls want(),
-    -- re-queueing textures that were already loaded AND already pinned. At
-    -- three icons per refresh on the 16ms loop that is up to 187 re-queues a
-    -- second against a drain rate of 120, so the queue grew faster than it
-    -- emptied and the pump above never got to stop while the picker was open.
-    --
-    -- Returning here costs the tile its picture until the next sweep, which
-    -- is what the comment above already says the throttle costs.
-    if not frame_swept then return nil end
-
-    -- A miss is a no, and taken as one. No lookup.
-    --
-    -- There WAS a StaticFindObject here, kept as a safety net on the grounds
-    -- that the sweep "should" be authoritative but that a blank picker is not
-    -- a thing to be casually right about. Then it was counted, over eight pages
-    -- of a catalogue whose icons are mostly not resident:
-    --
-    --     sweep misses: 91, of which the lookup then found: 0
-    --
-    -- Ninety one lookups, 1097ms, and not one icon rescued. It could not be
-    -- otherwise: FindAllOf and StaticFindObject read the same object array, so
-    -- if the sweep did not see it, it is not loaded, and no amount of asking a
-    -- second way will make it so. Loading it is what is needed, and want()
-    -- below is what does that, at 0.3ms.
-    --
-    -- This is the whole of the browse case. Storage, whose icons are already
-    -- resident, went 17 lookups to none as soon as the sweep landed; browsing
-    -- everything stayed slow purely because every miss still paid 12ms to be
-    -- told what the sweep had already established.
-    M.sweep_misses = (M.sweep_misses or 0) + 1
-
-    -- It was here once and it is not here now, so ask for it again.
-    --
-    -- Historically nothing held a reference to one of these textures except
-    -- the Image currently drawing it: point that Image at a different item -
-    -- change page, switch to the storage view, anything - and the old texture
-    -- was unreferenced, the engine free to collect it, and the revisit found
-    -- nothing. The panel now pins every icon it has shown (see pin() in
-    -- panel.lua), so a revisit normally hits the sweep and never reaches
-    -- here. This path remains for what pinning does not cover: the pin cap,
-    -- and a world whose tree was rebuilt out from under the pins.
-    --
-    -- `requested` then made that permanent: it records that a load was asked
-    -- for, want() returns early on it, and so the reload was never issued.
-    -- Icons that had been drawing all session went blank after browsing away
-    -- and back, and could not recover. Clearing the flag lets the pump fetch
-    -- it again, which costs 0.3ms.
-    --
-    -- This is the same reason the module keeps names instead of textures: a
-    -- texture is not ours and does not stay put. The flag has to follow the
-    -- same rule as the thing it describes.
-    if requested[name] then
+    -- Failed/nil-return loads are not permanent evidence. Retrying through
+    -- the FIFO also recovers textures that arrive late or are collected.
+    if os.clock() - (attempted_at[name] or -1) >= 0.5 then
         requested[name] = nil
-        arrived[name] = nil
-        queued[name] = nil
+        want(name)
     end
-    want(name)
     return nil
 end
 
--- Icon names the game currently has loaded, keyed by item id.
---
--- One pass over every texture in memory is far too expensive to repeat per
--- icon, so it happens at most once a minute and answers for every id at once.
--- Only names are taken from it, never the objects.
-local function look_around()
-    local now = os.clock()
-    if sighted and (now - sighted_at) < SIGHT_TTL then return sighted end
-
-    local found = {}
-
+-- Rare fallback for names absent from the index and category guesses. Store
+-- names only, and never make the tile that requested discovery pay for it.
+-- A full native scan is still indivisible; the 60-second throttle and a separate
+-- idle beat limit frequency, not that operation's maximum duration.
+discover = function()
+    local pending = discovery_pending
+    discovery_pending = {}
+    local started = os.clock()
+    local found, textures = {}, {}
     for _, tex in ipairs(FindAllOf("Texture2D") or {}) do
-        -- GetFName():ToString(), not GetFullName - the same fix sweep_frame
-        -- above already carries, on the same loop, missed here.
-        --
-        -- This was the last big number in the panel. One list_row call was
-        -- taking 84ms of an 85ms draw, a different item each time, about once
-        -- a minute: whichever tile happened to be drawing when SIGHT_TTL
-        -- expired paid for the whole look around. GetFullName builds
-        -- "Class Package.Object" only for this to match the leaf back out of
-        -- it, seven thousand times, with FName resolution set to Scan on this
-        -- build. Measured at 84ms before and 24ms after, and the 24 left is
-        -- FindAllOf building the table, not the naming.
-        --
-        -- These come straight from the engine within this call, so they are
-        -- live and reading them is safe. What must not happen is keeping one,
-        -- and only names are taken.
         local leaf
         pcall(function() leaf = tex:GetFName():ToString() end)
-
         if type(leaf) == "string" and leaf:sub(1, #PREFIX) == PREFIX then
             local rest = leaf:sub(#PREFIX + 1)
             local id = rest:match("^[^_]+_(.+)$") or rest
             local key = id:lower()
             if found[key] == nil then found[key] = rest end
+            if pending[key] and real(tex) then textures[rest] = tex end
         end
     end
-
-    sighted, sighted_at = found, now
-    return found
+    sighted, sighted_at = found, os.clock()
+    M.sweeps = (M.sweeps or 0) + 1
+    M.sweep_ms = (M.sweep_ms or 0) + (os.clock() - started) * 1000
+    for key in pairs(pending) do
+        local name = found[key]
+        if name then
+            resolved[key], waited[key], alternates[key] = name, nil, nil
+            learn(key, name)
+            arrived[name], requested[name] = true, true
+        end
+    end
+    if next(textures) and M.on_sweep then pcall(M.on_sweep, textures) end
 end
 
--- Drops the frame's texture map.
---
--- Called on the way into a draw and again on the way out, so the textures the
--- sweep handed round are unreferenced the moment the draw that found them
--- ends. They are safe to use inside that draw and a use after free after it.
+local function look_around(key)
+    if sighted and os.clock() - sighted_at < SIGHT_TTL then return sighted end
+    discovery_pending[key] = true
+    schedule()
+    return {}
+end
+
+-- Kept for the panel's scope contract. No textures are retained even between
+-- get calls in a single draw, so errors/missed cleanup cannot age a wrapper.
 function M.new_frame()
-    frame_tex = nil
 end
 
 -- The texture for an item id, or nil when there is none to be had yet.
@@ -697,19 +472,8 @@ local function self_named(key)
     return self_names[key]
 end
 
--- Whether an item's icon is on screen-ready, without paying to fetch it.
---
--- get() ends in StaticFindObject, which walks the object array and cost about
--- ten milliseconds a call on this build. A tile asked it every frame purely to
--- decide between a picture and a name, so eleven tiles spent over a hundred
--- milliseconds per refresh, on a refresh that runs ten times a second. That is
--- the whole of "the ADD tab is super laggy": not loading, not drawing, one
--- lookup in a loop.
---
--- The answer is a boolean and booleans are safe to keep, unlike the texture it
--- came from. Once true it stays true: an icon that has loaded does not unload
--- while the panel is open, and a world change clears this with everything else.
-
+-- Demand resolution. Missing opportunities (queued work or an exhausted
+-- allowance) do not count as evidence that the icon does not exist.
 function M.get(item_id)
     if type(item_id) ~= "string" or item_id == "" then return nil end
 
@@ -719,9 +483,8 @@ function M.get(item_id)
     if name == false then return nil end
 
     if name == nil then
-        -- learned before look_around: the whole point is not to sweep.
-        name = icondex.NAMES[key] or learned[key]
-            or look_around()[key] or self_named(key)
+        name = learned[key] or icondex.NAMES[key] or self_named(key)
+            or (sighted and sighted[key])
         if name == nil then
             -- Nothing recorded and nothing loaded that matches.
             --
@@ -776,6 +539,7 @@ function M.get(item_id)
                     if arrived[alt] == nil then
                         all_tried = false
                     elseif arrived[alt] then
+                        all_tried = false
                         local found = find(alt)
                         if found ~= nil then
                             resolved[key] = alt
@@ -791,6 +555,13 @@ function M.get(item_id)
                 alternates[key] = nil
             end
 
+            local observed = look_around(key)[key]
+            if discovery_pending[key] then return nil end
+            if observed then
+                resolved[key] = observed
+                learn(key, observed)
+                return find(observed)
+            end
             resolved[key] = false
             M.gave_up_n = M.gave_up_n + 1
             return nil
@@ -829,6 +600,7 @@ function M.get(item_id)
         return texture
     end
 
+    if queued[name] or arrived[name] then return nil end
     -- Still loading. Waited on rather than given up on, but not for ever.
     waited[key] = (waited[key] or 0) + 1
     if waited[key] >= PATIENCE then
@@ -869,20 +641,34 @@ function M.get(item_id)
         elseif alternates[key] then
             -- Whichever of them landed is now this id's name.
             local base = alternates[key]
+            local pending = false
             for _, cat in ipairs(CATEGORIES) do
                 local alt = cat .. "_" .. base
+                if queued[alt] or arrived[alt] == nil then pending = true end
                 if arrived[alt] then
+                    pending = true
                     local found = find(alt)
                     if found ~= nil then
                         resolved[key] = alt
+                        learn(key, alt)
                         alternates[key] = nil
                         waited[key] = nil
                         return found
                     end
                 end
             end
+            if pending then return nil end
+        elseif not retried[key] and not idle and retries_left > 0 then
+            return nil
         end
 
+        local observed = look_around(key)[key]
+        if discovery_pending[key] then return nil end
+        if observed then
+            resolved[key], alternates[key], waited[key] = observed, nil, nil
+            learn(key, observed)
+            return find(observed)
+        end
         alternates[key] = nil
         resolved[key] = false
         M.gave_up_n = M.gave_up_n + 1
@@ -1087,7 +873,10 @@ function M.reset()
     resolved, requested, waited = {}, {}, {}
     retried, alternates, idle_waits = {}, {}, {}
     arrived = {}
-    awaiting = {}
+    attempted_at, discovery_pending = {}, {}
+    pumping = false
+    clock.cancel(PUMP_ENTRY)
+    slice_at, slice_count, slice_seconds = -1, 0, 0
     retries_left = RETRY_BUDGET
     queue, queued, guessed = {}, {}, {}
     sighted, sighted_at = nil, 0

@@ -30,6 +30,9 @@ local log = require("log")
 local M = {}
 
 local BEAT_MS = 100
+local BACKGROUND_BUDGET_MS = 8
+local BACKGROUND_MAX_WAIT = 300
+local sequence = 0
 
 -- name -> { every = ms, owed = ms, fn = f }. Insertion order is not
 -- guaranteed by pairs and nothing here needs it.
@@ -105,6 +108,10 @@ end
 
 -- Reused across beats so a healthy chain allocates nothing per tick.
 local due = {}
+local function error_text(err)
+    local ok, text=pcall(tostring,err)
+    return ok and text or "<unprintable callback error>"
+end
 
 -- The work of one beat, split out so body() can run it under pcall and still
 -- re-arm afterwards no matter what it does.
@@ -114,6 +121,9 @@ local due = {}
 local palapi = nil
 
 local function beat()
+    -- A previous batch may have failed outside an entry (including an error
+    -- formatter). Never sort stale entries beyond this beat's live snapshot.
+    for i=#due,1,-1 do due[i]=nil end
     -- Two passes, and the split is not tidiness. An entry's fn may call
     -- M.once or M.every - icons.lua re-arms its own pump from inside its
     -- pump, and every command handler that starts a timer runs from the ui
@@ -130,28 +140,51 @@ local function beat()
     -- second loop is live. New keys added by a callback land in `entries` and
     -- are picked up next beat, which is what one-shots want anyway.
     local n = 0
+    local generation = gen
+    local started = os.clock()
     for name, e in pairs(entries) do
         e.owed = e.owed + BEAT_MS
         if e.owed >= e.every then
-            e.owed = 0
             n = n + 1
-            due[n] = name
+            due[n] = {name=name, entry=e}
         end
     end
 
+    -- Cheap/input work first. Expensive maintenance/pass jobs are ordered by
+    -- how long they have waited, then registration order, not hash iteration.
+    table.sort(due, function(a,b)
+        local x,y=a.entry,b.entry
+        if x.background~=y.background then return not x.background end
+        local late_x,late_y=x.owed-x.every,y.owed-y.every
+        if late_x~=late_y then return late_x>late_y end
+        return x.order<y.order
+    end)
+    local background_ran=false
     for i = 1, n do
-        local name = due[i]
-        due[i] = nil
-        local e = entries[name]
+        local item=due[i]
+        local name,e=item.name,item.entry
         -- A callback earlier in this batch may have cancelled a later one.
-        if e then
+        -- It may also have replaced it or changed sessions. Neither permits
+        -- executing the replacement from the old due snapshot.
+        local allowed = not e.background or (not background_ran and
+            ((os.clock()-started)*1000 < BACKGROUND_BUDGET_MS
+                or e.owed-e.every >= BACKGROUND_MAX_WAIT))
+        if gen==generation and entries[name]==e and allowed then
+            if e.background then background_ran=true end
+            e.owed=0
+            -- Remove BEFORE invoking so a callback can re-arm the same key.
+            if e.once then entries[name]=nil end
+            local token = log.begin(e.once and not e.deferred and "clock: one-shot callback" or ("clock: " .. name))
             local ok, err = pcall(e.fn)
+            log.finish(token, not ok and "callback failed" or nil)
             if not ok then
-                log.warn("clock entry '" .. name .. "' threw: " .. tostring(err))
+                log.warn("clock entry '" .. name .. "' threw: " .. error_text(err))
             end
-            if e.once then entries[name] = nil end
+        elseif gen==generation and entries[name]==e and e.background then
+            log.count("clock: background deferred")
         end
     end
+    for i=1,n do due[i]=nil end
 end
 
 body = function(mygen)
@@ -179,12 +212,14 @@ body = function(mygen)
     end
     if palapi and palapi.pc_memo_begin then pcall(palapi.pc_memo_begin) end
 
+    local token = log.begin("clock: complete batch")
     local ok, err = pcall(beat)
+    log.finish(token, not ok and "batch failed" or nil)
 
     if palapi and palapi.pc_memo_end then pcall(palapi.pc_memo_end) end
 
     if not ok then
-        log.warn("clock beat threw: " .. tostring(err))
+        log.warn("clock beat threw: " .. error_text(err))
     end
 
     -- Unconditional, and deliberately last: whatever went wrong above, the
@@ -194,8 +229,9 @@ body = function(mygen)
 end
 
 -- Register or replace a repeating entry. fn runs on the game thread.
-function M.every(name, ms, fn)
-    entries[name] = { every = ms, owed = 0, fn = fn }
+function M.every(name, ms, fn, background)
+    sequence=sequence+1
+    entries[name] = { every = ms, owed = 0, fn = fn, background=background==true, order=sequence }
 end
 
 function M.cancel(name)
@@ -208,7 +244,20 @@ end
 -- is already on the game thread.
 function M.once(ms, fn)
     once_n = once_n + 1
-    entries["once#" .. once_n] = { every = ms, owed = 0, fn = fn, once = true }
+    M.every("once#" .. once_n,ms,fn)
+    entries["once#" .. once_n].once=true
+end
+
+-- Coalesced plain-data work: at most one background job per heartbeat.
+-- Updating a pending job retains its age, so repeated requests cannot starve it.
+-- Callers must not capture engine wrappers; world reset cancels these jobs.
+function M.defer(name, fn)
+    local key="deferred: "..name
+    local e=entries[key]
+    if e then e.fn=fn; return end
+    M.every(key,0,fn,true)
+    entries[key].once=true
+    entries[key].deferred=true
 end
 
 function M.start()
@@ -227,6 +276,10 @@ end
 -- had to under the old loops.
 function M.reset()
     gen = gen + 1
+    for name,e in pairs(entries) do
+        if e.deferred then entries[name]=nil
+        elseif not e.once then e.owed=0 end
+    end
     -- The chain needs a fresh link armed under the new gen; the loop just
     -- keeps firing and reads the new gen at its next beat.
     if armed and not looping then arm(gen) end

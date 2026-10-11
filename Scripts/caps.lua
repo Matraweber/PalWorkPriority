@@ -1,610 +1,709 @@
--- Resource ceilings per work type, editable in game.
---
--- config.lua owns the defaults in work_caps. This is the layer on top, one
--- entry per ceiling set with "!pwp limit", and it outranks config the same
--- way store.lua outranks it for priorities.
---
--- A ceiling suspends a work type once the base already holds that much of
--- the item, so the pals fenced to it fall through to the next priority
--- instead of producing something nobody needs.
-
+-- Legacy group limits and a strictly separate session view for clients.
 local log = require("log")
+local file = require("datafile")
+local settings_gate = require('settings_gate')
 local workdefs = require("workdefs")
-
-local M = {}
-
--- What a rule is allowed to be, in one place.
---
--- Everything that can write a ceiling goes through this: the chat command,
--- the panel, a client's request arriving over the network, and a server's
--- push arriving at a client. Before, the network paths went straight into
--- M.data and then to disk, so anything that could send the FName could put
--- arbitrary keys into the host's caps.txt - and an amount of zero read as
--- "capped at zero", which suspends that work type permanently.
---
--- The bounds are deliberately generous. This is not trying to guess what a
--- sensible limit is; it is refusing values that could not have come from a
--- person using the mod.
-M.MAX_CEILING = 9999999
-M.MAX_ID_LEN = 64
-
--- Returns ok, why, and the ceiling as a clean integer.
-function M.valid_rule(work_name, item, ceiling)
-    if not workdefs.is_known(work_name) then
-        return false, "unknown work type '" .. tostring(work_name) .. "'"
+local M = { MAX_CEILING = 9999999, MAX_ID_LEN = 64, MAX_RULES = 500, ANY_GUILD = "*",
+    LADDER = {100,250,500,1000,2000,3000,5000,7500,10000,15000,20000,30000,50000},
+    data = {}, remote = nil, decided = false, is_client = false, state = "unavailable",
+    generation = 0 }
+local dirty, retry_at, failures, offered = false, 0, 0, false
+local persistence,retiring,runtime_guild,persistence_guild
+local network_runtime
+local published_body,published_revision
+local retirement_snapshot
+local persistence_epoch,persistence_blocked=0,false
+local activating,activation_poison,attaching=false,false,false
+local function activation_busy()
+    if activating then activation_poison=true;return true end
+    return false
+end
+function M.detach_persistence()
+    network_runtime=nil
+    published_body,published_revision=nil,nil
+    persistence_epoch=persistence_epoch+1
+    local old=persistence
+    if old then
+        -- Capture before close makes matches() unavailable. Only exact accepted
+        -- bytes may clear pending state after a confirmed original-owner drain.
+        local ok,snapshot=pcall(function()
+            for guild in pairs(M.data) do if guild~=runtime_guild then return end end
+            local mapped={}
+            if M.data[runtime_guild] then mapped[persistence_guild]=M.data[runtime_guild] end
+            local body=M.serialize_snapshot(mapped)
+            local text=M.serialize()
+            if body and text and old:matches(body) then
+                return {owner=old,epoch=persistence_epoch,text=text,session=M.session,
+                    decided=M.decided,is_client=M.is_client,submit=M.submit}
+            end
+        end)
+        retirement_snapshot=ok and snapshot or nil
     end
+    persistence,runtime_guild,persistence_guild=nil,nil,nil
+    if old then persistence_blocked=true;retiring=old;return old:close() end
+    return retiring==nil
+end
+-- Lifecycle coordinator boundary: fence only the originally bound writer.
+-- First result means edits are fenced, NOT that native data is drained. The
+-- coordinator must still call the original settings_session:drain explicitly.
+function M.retire_persistence(expected)
+    if activation_busy() or attaching then return false,'activation_busy' end
+    if type(expected)~='table' or getmetatable(expected) then return false,'invalid_context' end
+    local p=persistence or retiring
+    if not p then return true end
+    local identity=p:identity()
+    for _,k in ipairs({'scope','session','incarnation','guild','stream','camp','epoch','authority'}) do
+        if expected[k]~=identity[k] then return false,'owner_mismatch' end
+    end
+    if persistence then M.detach_persistence() else p:close() end
+    return true
+end
+-- Clear only this writer after the native owner has actually drained. The
+-- writer drain merely observes session closure; it never starts a native join.
+function M.finish_retirement(expected)
+    if activation_busy() or attaching or persistence then return false end
+    if type(expected)~='table' or getmetatable(expected) then return false end
+    local p=retiring
+    if not p then return true end
+    local identity=p:identity()
+    for _,k in ipairs({'scope','session','incarnation','guild','stream','camp','epoch','authority'}) do
+        if expected[k]~=identity[k] then return false end
+    end
+    if p:drain()~=true or retiring~=p or persistence then return false end
+    local status=p:status()
+    local captured=retirement_snapshot
+    if captured and captured.owner==p and captured.epoch==persistence_epoch
+        and captured.session==M.session and captured.decided==M.decided
+        and captured.is_client==M.is_client and captured.submit==M.submit
+        and captured.text==M.serialize() and status.drained==true and not status.uncertain
+        and not status.candidate_retained then
+        -- No on_change/ACK: this is old-owner cleanup, not a current-session edit.
+        dirty,retry_at,failures=false,0,0
+        M.state,M.error,M.persisted_revision='saved',nil,status.revision
+    end
+    retirement_snapshot=nil
+    retiring=nil
+    return true
+end
+local config_rules = {}
+local config_source,config_epoch=nil,0
+function M.configure(cfg)
+    config_epoch=config_epoch+1
+    config_source=cfg
+    config_rules = (cfg or {}).work_caps or {}
+end
+-- Bound plain defaults, including OFF masks. Read the property afresh so replacing
+-- work_caps cannot leave a guard validating an obsolete table.
+local function defaults_text(cfg)
+    if cfg==nil then return '' end
+    if type(cfg)~='table' or getmetatable(cfg) then return nil end
+    local rules=cfg.work_caps or {}
+    if type(rules)~='table' or getmetatable(rules) then return nil end
+    local rows,n={},0
+    for work,items in pairs(rules)do
+        if type(work)~='string' or not workdefs.is_known(work)
+            or type(items)~='table' or getmetatable(items) then return nil end
+        for item,value in pairs(items)do
+            n=n+1;if n>M.MAX_RULES then return nil end
+            if type(item)~='string' or #item>M.MAX_ID_LEN or item==''
+                or item:find('[^%w_%.%-]') then return nil end
+            if value~=false and (type(value)~='number' or math.tointeger(value)==nil
+                or value<1 or value>M.MAX_CEILING) then return nil end
+            rows[#rows+1]=work..'|'..item..'|'..(value==false and 'OFF' or tostring(value))
+        end
+    end
+    table.sort(rows);return table.concat(rows,'\n')
+end
 
+function M.valid_rule(work, item, ceiling)
+    if not workdefs.is_known(work) then return false, "unknown work type" end
     if type(item) ~= "string" or item == "" or #item > M.MAX_ID_LEN
-        or item:find("[^%w_%.%-]") ~= nil then
-        return false, "implausible item id '" .. tostring(item) .. "'"
-    end
-
-    local n = tonumber(ceiling)
-    if n == nil or n ~= math.floor(n) or n < 1 or n > M.MAX_CEILING then
-        -- Zero is refused rather than clamped. It is the one value that looks
-        -- like a limit and behaves like a permanent shutdown of the work
-        -- type, and nothing in the UI can produce it - the ladder starts at
-        -- 100 and a typed zero already cancels.
-        return false, "ceiling out of range: " .. tostring(ceiling)
-    end
-
-    return true, nil, math.floor(n)
+        or item:find("[^%w_%.%-]") then return false, "invalid item id" end
+    local n = math.tointeger(tonumber(ceiling))
+    if not n or n < 1 or n > M.MAX_CEILING then return false, "ceiling out of range" end
+    return true, nil, n
 end
 
--- What a click or an arrow key walks a ceiling through. Ceilings run into the
--- thousands, so a step of one would be useless, and the steps coarsen as the
--- numbers grow.
---
--- Here rather than in a screen, because two screens walk it and both had
--- their own idea of where it lived. ui.lua kept it as a local and panel.lua
--- simply used the name, which in Lua is a nil global: adding a rule from the
--- picker threw "attempt to index a nil value (global 'LADDER')" every time,
--- and the arrow keys and right click on a ceiling were dead for the same
--- reason. All of it silent, because the click handler is wrapped in a pcall
--- that discarded the message.
-M.LADDER = {
-    100, 250, 500, 1000, 2000, 3000, 5000,
-    7500, 10000, 15000, 20000, 30000, 50000,
-}
-
-M.path = nil
-
--- guild key -> work name -> { [item id] = ceiling }
---
--- Guild keyed since 23 August. Before that it was work -> item -> ceiling for
--- the whole machine, which is right in single player and wrong the moment two
--- guilds share a server: a ceiling one guild set suspended that work at every
--- base on the box, including bases its guild had never seen.
---
--- The key is api.guid_key of the guild's FGuid, which a camp answers with
--- through GetGroupIdBelongTo and a player through
--- PlayerState.GuildBelongTo.Id. Both were measured returning the same value
--- for the same guild, and that shared id is the whole basis of the scoping.
-M.data = {}
-
--- Rules that predate guild scoping, and rules from a machine that cannot say
--- which guild it is acting for.
---
--- These apply to every guild that has not set its own ceiling for the same
--- work and item, so upgrading does not silently drop limits somebody was
--- relying on - an existing caps.txt keeps working, and the first guild edit
--- for a given item takes over from it. A wildcard is the conservative choice
--- here: adopting the old lines into whichever guild happened to load first
--- would hand one guild's settings to another.
-M.ANY_GUILD = "*"
-
--- One record per line: Guild|WorkType|ItemId|Ceiling, and the three field
--- form that predates guilds is still read. Flat text for the same reason
--- priorities.txt is flat: a truncated line costs one ceiling where half a
--- written Lua table costs the whole file.
-local function parse_line(line)
-    local guild, work, item, ceiling =
-        line:match("^([%w%*%-]+)|(%a+)|([%w_%.%-]+)|(%d+)$")
-
-    if not guild then
-        work, item, ceiling = line:match("^(%a+)|([%w_%.%-]+)|(%d+)$")
-        guild = M.ANY_GUILD
-    end
-    if not work then return nil end
-
-    -- A whole number in range, or the line is dropped.
-    --
-    -- "99999999999999999999" matches (%d+), overflows Lua 5.4's integer parse
-    -- and comes back as a float that math.floor cannot bring back. It loaded
-    -- cleanly and destroyed the next write, and caps.save is not debounced, so
-    -- the very first rule change took every guild's ceilings with it - inside
-    -- a bare pcall, so nothing was logged. math.tointeger asks exactly the
-    -- question the writer is about to ask.
-    ceiling = math.tointeger(tonumber(ceiling))
-    if ceiling == nil or ceiling < 1 or ceiling > M.MAX_CEILING then
-        return nil
-    end
-    return guild, work, item, ceiling
+local function guild_ok(guild)
+    return type(guild) == "string" and #guild > 0 and #guild <= 160
+        and not guild:find("[^%w%-%*]")
 end
 
-local function put(guild, work, item, ceiling)
-    M.data[guild] = M.data[guild] or {}
-    M.data[guild][work] = M.data[guild][work] or {}
-    M.data[guild][work][item] = ceiling
+local function put(data, guild, work, item, ceiling)
+    data[guild] = data[guild] or {}
+    data[guild][work] = data[guild][work] or {}
+    data[guild][work][item] = ceiling
+end
+
+local function decode(text)
+    local result = { data = {}, count = 0 }
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("\r$", "")
+        if line ~= "" and line:sub(1,1) ~= "#" then
+            local guild,work,item,amount = line:match("^([^|]+)|([^|]+)|([^|]+)|([^|]+)$")
+            if not guild then
+                work,item,amount = line:match("^([^|]+)|([^|]+)|([^|]+)$")
+                guild = M.ANY_GUILD
+            end
+            local ok, _, clean = M.valid_rule(work, item, amount == "OFF" and 1 or amount)
+            if amount == "OFF" then clean = false end
+            if not guild_ok(guild) or not ok then return nil, "invalid ceiling row" end
+            if result.data[guild] and result.data[guild][work]
+                and result.data[guild][work][item] ~= nil then return nil, "duplicate ceiling row" end
+            put(result.data, guild, work, item, clean)
+            result.count = result.count + 1
+        end
+    end
+    return result
+end
+
+-- Pure parser for recovered snapshot bytes. No IO, remote-view replacement or
+-- saved-state change. Scope/authority and generation remain caller obligations.
+function M.decode_snapshot(text)
+    if type(text) ~= 'string' or #text > 8 * 1024 * 1024 then
+        return nil, 'invalid ceiling snapshot size/type'
+    end
+    return decode(text)
 end
 
 function M.load(path)
-    M.path = path
-    M.data = {}
+    if settings_gate.blocked() then return 0,'settings_recovering' end
+    if activation_busy() then return 0 end
+    M.detach_persistence();persistence_blocked=false;M.persisted_revision=nil
+    M.path, M.data, M.remote = path, {}, nil
+    M.generation, M.error, dirty, retry_at, failures = 0, nil, false, 0, 0
+    local decoded, meta = file.read(path, decode)
+    if not decoded then
+        M.state, M.error = meta.state, meta.error
+        if M.error then log.error("limits unavailable: " .. M.error) end
+        return 0
+    end
+    M.data, M.generation, M.state = decoded.data, meta.generation, "saved"
+    if meta.recovered then
+        dirty, M.state = true, "saving"
+        log.warn("recovered limits from " .. meta.source)
+    end
+    return decoded.count
+end
 
-    local f = io.open(path, "r")
-    if not f then return 0 end
-
-    local count, legacy = 0, 0
-    for line in f:lines() do
-        if line ~= "" and line:sub(1, 1) ~= "#" then
-            local guild, work, item, ceiling = parse_line(line)
-            if work then
-                put(guild, work, item, ceiling)
-                count = count + 1
-                if guild == M.ANY_GUILD then legacy = legacy + 1 end
+-- Copy current durable rules into text without IO, notifications or saved-state
+-- changes. Remote snapshots remain separate and are never serialized here.
+-- Raw records, not all(cfg,guild): retain wildcard provenance and OFF masks.
+-- Formatting alone establishes neither scope nor durable completion.
+function M.serialize_snapshot(data)
+    local rows = {}
+    for guild, works in pairs(data) do
+        for work, items in pairs(works) do
+            for item, ceiling in pairs(items) do
+                if not guild_ok(guild) or not M.valid_rule(work, item, ceiling == false and 1 or ceiling) then
+                    return nil, "invalid ceiling in memory; previous save retained"
+                end
+                local amount = ceiling == false and "OFF" or tostring(math.tointeger(ceiling))
+                rows[#rows+1] = string.format("%s|%s|%s|%s\n",guild,work,item,amount)
             end
         end
     end
-    f:close()
-
-    log.debug("loaded " .. count .. " stock limit(s)")
-    if legacy > 0 then
-        log.debug(legacy .. " of them predate guild scoping and apply to " ..
-            "any guild that has not set its own")
-    end
-    return count
+    table.sort(rows)
+    local payload = "# Legacy work-type groups: may stop unrelated products of the same suitability.\n"
+        .. "# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n" .. table.concat(rows)
+    return payload
 end
 
--- Written on every edit rather than debounced. Priorities are clicked in
--- bursts and batch nicely; a ceiling is one typed command at a time, and
--- the debounce only buys a lost write if the game closes first.
+function M.serialize()
+    return M.serialize_snapshot(M.data)
+end
+
+local function only_guild(data,guild)
+    if type(data)~='table' then return false end
+    for key in pairs(data) do if key~=guild or key==M.ANY_GUILD then return false end end
+    return true
+end
+-- Mathematical identity only, NOT an ownership/authority proof. The caller must
+-- explicitly supply a proven runtime alias; the injected session still performs
+-- fresh authorization against its canonical context at attachment and admission.
+local function same_guild(runtime,canonical)
+    if type(canonical)~='string' or #canonical~=32 or canonical:find('[^0-9a-f]')
+        or canonical==string.rep('0',32) or type(runtime)~='string' then return false end
+    if runtime==canonical then return true end
+    if #runtime>160 then return false end
+    local a,b,c,d=runtime:match('^(%-?%d+)%-(%-?%d+)%-(%-?%d+)%-(%-?%d+)$')
+    if not a then return false end
+    local parts={}
+    for i,part in ipairs({a,b,c,d}) do
+        local n=math.tointeger(tonumber(part))
+        if not n or n < -2147483648 or n > 4294967295 or tostring(n)~=part then return false end
+        parts[i]=string.format('%08x',n & 0xffffffff)
+    end
+    return table.concat(parts)==canonical
+end
+local function persistence_snapshot(data,runtime,canonical)
+    if not only_guild(data,runtime) then return nil,'foreign_guild' end
+    -- Temporary serialization view only: never rename keys in the runtime table.
+    -- Reject every other key, including an equivalent alias or canonical collision.
+    local mapped={}
+    if data[runtime] then mapped[canonical]=data[runtime] end
+    return M.serialize_snapshot(mapped)
+end
+-- attach_persistence{..., runtime_guild=<explicitly proven legacy guild key>}
+-- keeps data/lookups/edit callbacks in runtime form and compares/submits only
+-- mapped canonical bytes. Omit it for canonical runtime data; detach forgets it.
+local function attach_persistence(o,activate)
+    local captured={}
+    for k,v in pairs(o) do captured[k]=v end
+    if type(o.context)=="table" then captured.context={};for k,v in pairs(o.context) do captured.context[k]=v end end
+    if type(o.recovery)=="table" then captured.recovery={};for k,v in pairs(o.recovery) do captured.recovery[k]=v end end
+    o=captured
+    if type(o)~='table' or o.enabled~=true or persistence or retiring or not M.decided or M.is_client
+        or M.submit or M.state~='saved' or dirty or type(o.context)~='table'
+        or o.context.stream~='limits' then return false,'unavailable' end
+    -- Omission preserves the original canonical-only attachment contract.
+    local runtime=o.runtime_guild
+    if activate and (runtime==nil or type(o.authorize)~='function') then return false,'activation_proof_required' end
+    if runtime==nil then runtime=o.context.guild end
+    local canonical=o.context.guild
+    if not same_guild(runtime,canonical) or not only_guild(M.data,runtime) then return false,'foreign_guild' end
+    local epoch=persistence_epoch
+    local before=M.serialize()
+    local current=persistence_snapshot(M.data,runtime,canonical)
+    local candidate
+    local ok,recovered=pcall(function()
+        if not only_guild(o.recovery.settings.data,o.context.guild) then return end
+        if activate then
+            -- A typed limits result contains integer ceilings/OFF, never string
+            -- coercions, baseline metadata, metatables or foreign empty groups.
+            local settings=o.recovery.settings
+            if getmetatable(settings) or getmetatable(settings.data) then return end
+            for k in pairs(settings) do if k~='data' and k~='count' then return end end
+            local count=0
+            candidate={}
+            for _,works in pairs(settings.data) do
+                if type(works)~='table' or getmetatable(works) or next(works)==nil then return end
+                candidate[runtime]={}
+                for work,items in pairs(works) do
+                    if not workdefs.is_known(work) or type(items)~='table' or getmetatable(items) or next(items)==nil then return end
+                    candidate[runtime][work]={}
+                    for item,n in pairs(items) do
+                        if n~=false and math.type(n)~='integer' then return end
+                        if not M.valid_rule(work,item,n==false and 1 or n) then return end
+                        candidate[runtime][work][item]=n;count=count+1
+                    end
+                end
+            end
+            if math.type(settings.count)~='integer' or settings.count~=count or count>M.MAX_RULES then return end
+        end
+        return M.serialize_snapshot(o.recovery.settings.data)
+    end)
+    if not ok or not current or not recovered or (not activate and current~=recovered) then return false,'recovery_mismatch' end
+    local function fresh()
+        local c={};for k,v in pairs(o.context) do c[k]=v end
+        return o.authorize(c,runtime)==true
+    end
+    local function unchanged()
+        return not persistence and not retiring and persistence_epoch==epoch and M.decided and not M.is_client
+            and not M.submit and M.state=='saved' and not dirty and not activation_poison
+            and M.serialize()==before and persistence_snapshot(M.data,runtime,canonical)==current
+    end
+    if activate and (not fresh() or not unchanged()) then return false,'activation_unauthorized' end
+    local p,why=require('settings_writer').new{enabled=true,session=o.session,context=o.context,
+        recovery=o.recovery,body=activate and recovered or current,recovery_body=recovered}
+    if not p then return false,why end
+    if activate then
+        -- Retain the writer before crossing the final caller callback; even a
+        -- thrown return must not discard an accepted session/native owner.
+        local authorized,yes=pcall(fresh)
+        local checked,stable=pcall(unchanged)
+        if not authorized or not yes or not checked or not stable then
+            retiring=p;p:close();return false,'stale_activation'
+        end
+        M.data=candidate
+    end
+    if not activate and (persistence or retiring or persistence_epoch~=epoch or not M.decided or M.is_client or M.submit
+        or M.serialize()~=before or persistence_snapshot(M.data,runtime,canonical)~=current) then
+        p:close();retiring=p;return false,'stale_attachment'
+    end
+    persistence,persistence_blocked=p,false;M.persisted_revision=o.recovery.revision
+    runtime_guild,persistence_guild=runtime,canonical
+    published_body,published_revision=activate and recovered or current,o.recovery.revision
+    network_runtime=activate and (o.runtime_guild or o.context.guild) or nil
+    return true
+end
+-- Fence callbacks in ownership proof and recovered-session validation.
+function M.attach_persistence(o)
+    if activation_busy() then return false,'attachment_busy' end
+    if attaching or type(o)~='table' then return false,'attachment_busy' end
+    attaching=true
+    local ok,result,why=pcall(attach_persistence,o)
+    attaching=false
+    if not ok then return false,'attachment_exception' end
+    return result,why
+end
+
+-- Explicit cutover only. The caller supplies take_recovered's typed envelope,
+-- a ready SettingsSession, and authorize(context,runtime_guild), which must
+-- freshly prove BOTH current authority and this exact runtime alias. No native
+-- setup, writes, notifications or main activation occur here. An enabled failed
+-- attempt blocks legacy fallback until an explicit load establishes a new owner.
+function M.activate_recovered(o)
+    if activating then activation_poison=true;return false,'attachment_busy' end
+    if attaching then return false,'attachment_busy' end
+    if type(o)~='table' or o.enabled~=true then return false,'disabled' end
+    if persistence or retiring then return false,'unavailable' end -- retain old owner
+    persistence_blocked=true
+    if getmetatable(o) or type(o.context)~='table' or getmetatable(o.context)
+        or type(o.recovery)~='table' or getmetatable(o.recovery) then return false,'invalid_activation' end
+    for _,v in pairs(o.context) do
+        if type(v)~='string' and type(v)~='number' and type(v)~='boolean' then return false,'invalid_context' end
+    end
+    activating,activation_poison,attaching=true,false,true
+    local ok,result,why=pcall(attach_persistence,o,true)
+    activating,attaching=false,false
+    if not ok then return false,'activation_exception' end
+    return result,why
+end
+
+function M.poll_persistence()
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if retiring then M.finish_retirement(retiring:identity()) end
+    local p,epoch,runtime,canonical=persistence,persistence_epoch,runtime_guild,persistence_guild
+    if not p or not M.decided or M.is_client or M.submit then return false,'unavailable' end
+    local r=p:poll()
+    if persistence~=p or persistence_epoch~=epoch or not M.decided or M.is_client or M.submit then return false,'stale' end
+    if r.state~='saved' then
+        M.state=(r.state=='saving' or r.state=='pending') and 'saving' or 'error'
+        M.error=M.state=='error' and (r.reason or r.state) or nil
+        return false,r.state
+    end
+    if persistence_snapshot(M.data,runtime,canonical)~=r.body then M.state,M.error='error','snapshot_changed';return false,'snapshot_changed' end
+    local notify=dirty
+    M.state,M.error,M.persisted_revision='saved',nil,r.revision
+    published_body,published_revision=r.body,r.revision
+    dirty,retry_at,failures=false,0,0
+    if notify and M.on_change then
+        local ok,why=pcall(M.on_change);if not ok then log.warn('limit notification failed: '..tostring(why)) end
+    end
+    if persistence~=p or persistence_epoch~=epoch or M.state~='saved'
+        or persistence_snapshot(M.data,runtime,canonical)~=r.body then return false,'changed_during_notification' end
+    return true
+end
+local function candidate_data()
+    local out={};for guild,works in pairs(M.data) do out[guild]={};for work,items in pairs(works) do
+        out[guild][work]={};for item,amount in pairs(items) do out[guild][work][item]=amount end
+    end end;return out
+end
+-- Internal admission identity for the explicitly enabled deferred transport.
+-- Only recovered activation with its authenticated runtime alias is eligible.
+-- False means ordinary synchronous storage; nil means unavailable, not legacy.
+function M.pending_owner(guild)
+    if activating or attaching or settings_gate.blocked() or not M.decided
+        or M.is_client or M.submit or retiring or persistence_blocked then return nil end
+    if not persistence then return false end
+    if guild~=network_runtime or M.state~='saved' or M.error~=nil then return nil end
+    return persistence:identity()
+end
+
+-- A publication lease covers only this plain-data snapshot. It does not poll
+-- storage or retain engine objects. Native send boundaries must recheck it.
+-- Legacy unsaved snapshots retain their explicit applied_unsaved protocol;
+-- an attached async stream may publish ONLY its last normally committed body.
+function M.publication_guard(expected_body,expected_revision,cfg)
+    if activation_busy() or attaching or settings_gate.blocked() or not M.decided
+        or M.is_client or M.submit or retiring or persistence_blocked then return nil end
+    local p,epoch,session=persistence,persistence_epoch,M.session
+    local defaults_epoch=config_epoch
+    cfg=cfg or config_source
+    local defaults=defaults_text(cfg)
+    if defaults==nil then return nil end
+    local text=M.serialize()
+    if type(text)~='string' then return nil end
+    local body,revision=published_body,published_revision
+    if expected_body~=nil and (not p or body~=expected_body or revision~=expected_revision) then return nil end
+    local function current()
+        local defaults_now=defaults_text(cfg)
+        local text_now=M.serialize()
+        local body_now=p and persistence_snapshot(M.data,runtime_guild,persistence_guild) or nil
+        if activating or attaching or settings_gate.blocked() or persistence~=p
+            or persistence_epoch~=epoch or M.session~=session or not M.decided
+            or M.is_client or M.submit or retiring or persistence_blocked
+            or text_now~=text or config_epoch~=defaults_epoch
+            or defaults_now~=defaults then return false end
+        if not p then return true end
+        return M.state=='saved' and M.error==nil and M.persisted_revision==revision
+            and published_revision==revision and published_body==body
+            and type(body)=='string' and body_now==body
+    end
+    if not current() then return nil end
+    return current
+end
+
+-- Internal-only query; successful native completion is not announced until
+-- normal module maintenance has published that exact durable snapshot.
+function M.receipt_status(receipt)
+    if activation_busy() or attaching or settings_gate.blocked()
+        or not M.decided or M.is_client or M.submit then return {state='unavailable'} end
+    local p,epoch,runtime,canonical=persistence,persistence_epoch,runtime_guild,persistence_guild
+    if not p or retiring or persistence_blocked then return {state='stale'} end
+    local r=p:receipt_status(receipt)
+    if persistence~=p or persistence_epoch~=epoch or not M.decided or M.is_client
+        or M.submit or settings_gate.blocked() then return {state='stale'} end
+    if r.state=='saved' then
+        if persistence_snapshot(M.data,runtime,canonical)~=r.body then
+            return {state='error',reason='snapshot_changed'}
+        end
+        if M.state~='saved' or M.error~=nil or M.persisted_revision~=r.revision then
+            return {state='saving',reason='awaiting_module_commit'}
+        end
+    end
+    return r
+end
+
+local function async_candidate(data,guild)
+    local p,epoch,runtime,canonical=persistence,persistence_epoch,runtime_guild,persistence_guild
+    local before=M.serialize()
+    if not p or runtime~=guild or not only_guild(data,runtime) then return false,'foreign_guild' end
+    local mapped_before=persistence_snapshot(M.data,runtime,canonical)
+    if not mapped_before or not p:matches(mapped_before) then return false,'snapshot_changed' end
+    local body,why=persistence_snapshot(data,runtime,canonical);if not body then return false,why end
+    local r=p:submit(body,false)
+    if persistence~=p or persistence_epoch~=epoch or not M.decided or M.is_client or M.submit then return false,'stale' end
+    if M.serialize()~=before or persistence_snapshot(M.data,runtime,canonical)~=mapped_before then
+        M.detach_persistence();M.state,M.error='error','snapshot_changed';return false,'snapshot_changed'
+    end
+    if r.state=='pending' then
+        M.data=data;dirty=true;M.state,M.error='saving',nil
+        return false,'pending',r.receipt
+    end
+    if r.state~='rejected' then M.state,M.error='error',r.reason or r.state end
+    return false,r.state
+end
+
 function M.save()
-    if not M.path then return false end
-
-    -- A client owns no rules file.
-    --
-    -- This guard was deleted when the write was made atomic, and two comments
-    -- elsewhere still cite it as the reason a client cannot push a ruleset -
-    -- one in this file and one in main.lua. Nothing reaches it today, because
-    -- set/clear short-circuit on M.submit and apply_set/apply_clear are only
-    -- called from the authority-gated message handler. It is back because
-    -- those comments are load-bearing for the next person who adds a caller.
-    if M.submit then return false end
-
-    -- Built in memory, written to a temp file, then renamed into place. The
-    -- reasoning is store.save's, and it matters more here: this save is not
-    -- debounced, so it runs on every single rule change.
-    local out = {
-        "# Pal Work Priority - stock limits set with !pwp limit.\n",
-        "# Guild|WorkType|ItemId|Ceiling\n",
-        "# A guild of " .. M.ANY_GUILD .. " applies to any guild that " ..
-            "has not set its own.\n",
-    }
-
-    -- Sorted so the file does not reshuffle on every write.
-    local guilds = {}
-    for guild in pairs(M.data) do guilds[#guilds + 1] = guild end
-    table.sort(guilds)
-
-    local dropped = 0
-    for _, guild in ipairs(guilds) do
-        local works = {}
-        for work in pairs(M.data[guild]) do works[#works + 1] = work end
-        table.sort(works)
-
-        for _, work in ipairs(works) do
-            local items = {}
-            for item in pairs(M.data[guild][work]) do
-                items[#items + 1] = item
-            end
-            table.sort(items)
-
-            for _, item in ipairs(items) do
-                local n = math.tointeger(M.data[guild][work][item])
-                if n == nil then
-                    dropped = dropped + 1
-                else
-                    out[#out + 1] = string.format("%s|%s|%s|%d\n",
-                        guild, work, item, n)
-                end
-            end
-        end
-    end
-
-    if dropped > 0 then
-        log.warn(dropped .. " ceiling(s) could not be written and were " ..
-            "dropped. A value that is not a whole number is the usual cause.")
-    end
-
-    local tmp = M.path .. ".tmp"
-    local f, err = io.open(tmp, "wb")
-    if not f then
-        log.warn("could not write " .. tmp .. ": " .. tostring(err))
-        return false
-    end
-
-    local wrote = pcall(function() f:write(table.concat(out)) end)
-    f:close()
-
-    if not wrote then
-        os.remove(tmp)
-        log.warn("could not write " .. tmp .. ", the existing file is intact")
-        return false
-    end
-
-    -- Remove then rename: Lua's os.rename will not replace an existing file on
-    -- Windows. The temp file holds the new content if the process dies between.
-    os.remove(M.path)
-    local moved, mv_err = os.rename(tmp, M.path)
-    if not moved then
-        -- Put it back by hand rather than leave nothing there.
-        --
-        -- The remove has already happened by this point, so returning here
-        -- would delete the live file outright - worse than the truncating
-        -- write this replaced. Nothing ever reads .tmp back, so it is not a
-        -- recovery path on its own.
-        log.warn("could not move " .. tmp .. " into place: " ..
-            tostring(mv_err) .. ", writing the ceilings directly")
-
-        local back = io.open(M.path, "wb")
-        if not back then return false end
-        local ok_back = pcall(function() back:write(table.concat(out)) end)
-        back:close()
-        if not ok_back then return false end
-        os.remove(tmp)
-    end
-
-    -- After the write, not before: a listener should never be told about a
-    -- ruleset that failed to reach the disk. pcall'd because a push walks the
-    -- object array and talks to the network, and none of that is worth losing
-    -- a saved rule over.
-    -- Told, and said if telling failed. Same reasoning as store.fire_change:
-    -- on the authority this callback is what pushes a ruleset to every client,
-    -- so a discarded error meant the rules were saved and nobody was informed.
-    if M.on_change == nil then
-        -- Authority only: a client sets M.submit and has no listener by
-        -- design, because its edits go up as requests. (M.save already refuses
-        -- on a client, so this is belt and braces.)
-        if M.submit == nil then
-            log.warn("ceilings changed but nothing is listening, so no " ..
-                "client will be told")
-        end
-    else
-        local ok_tell, tell_err = pcall(M.on_change)
-        if not ok_tell then
-            log.warn("telling the clients about a ceiling change failed: " ..
-                tostring(tell_err))
-        end
-    end
-
-    return true
-end
-
--- Set by main.lua on a client. When present, an edit is a request sent to
--- whoever owns the world rather than a local write, so two players cannot
--- drift apart and a client cannot invent rules the server never agreed to.
-M.submit = nil
-
--- Which machine this is, decided after the world loads.
---
--- false means not yet asked, and that is deliberately not the same as "I am
--- the authority". Undecided used to fall through to the local write, so for
--- the twenty seconds between a world loading and main.lua working out where
--- it was, a client's ceiling edit wrote a file the server never reads. The change
--- showed on screen, went nowhere, and was overwritten by the next push from
--- the server, which reads exactly like the feature being broken.
---
--- A refused click with a reason is a far better twenty seconds than a
--- silently discarded one.
-M.decided = false
-
-local function undecided()
-    if M.decided then return false end
-    log.say("still working out whether this is a server or a client, " ..
-        "try that again in a moment")
-    return true
-end
-
--- Called after any change that reached the file, set by main.lua.
---
--- The rules were pushed to clients from exactly one place: the handler for an
--- inbound client message. So a client that edited something got everyone's
--- copy updated, and the host editing the same rule in its own panel told
--- nobody - connected players kept drawing the previous ruleset until they
--- happened to edit something themselves or respawned. For a mod whose point
--- is that a base behaves the same for everyone in it, that is the wrong way
--- round.
---
--- Hung off save() rather than off the six edit sites, because a seventh edit
--- site is the likeliest thing to be added next and it would forget. save() is
--- the one place every committed change already passes through, and it is
--- refused on a client, so this cannot fire from a machine with no authority.
---
--- caps stays ignorant of the network. It says the rules moved; main.lua
--- decides that means a push, exactly as it does for submit above.
-M.on_change = nil
-
--- A write with no guild is refused rather than widened.
---
--- Every write names the guild it is for. When the caller cannot say which
--- guild it is acting for, the answer is to refuse and say so - NOT to fall
--- back to the wildcard, which would apply the ceiling to every guild on the
--- server. That widening is exactly the bug guild scoping exists to fix, and a
--- silent fallback would reintroduce it at the one moment nobody is watching.
-local function writable_guild(guild, what)
-    if type(guild) == "string" and guild ~= "" then return guild end
-    log.warn("refused to " .. what ..
-        " a rule with no guild: this machine cannot say which guild it is " ..
-        "acting for, and a rule without one would cap every base on the server")
-    return nil
-end
-
--- Returns whether the rule was taken. The authority path used to discard
--- apply_set's answer, so a refused rule looked exactly like an accepted one
--- to every caller - including the panel, which then reported a limit it had
--- not set.
-function M.set(work_name, item, ceiling, guild)
-    if undecided() then return false end
-    if M.submit then
-        return M.submit("set", work_name, item, ceiling, guild)
-    end
-    return M.apply_set(work_name, item, ceiling, guild)
-end
-
-function M.clear(work_name, item, guild)
-    if undecided() then return false end
-    if M.submit then return M.submit("clear", work_name, item, 0, guild) end
-    return M.apply_clear(work_name, item, guild)
-end
-
--- The write itself, with no opinion about who asked for it. The authority
--- calls these directly; a client only ever reaches them through a message
--- coming back down.
---
--- Applies a rule that came from somewhere else - a client's request on the
--- host, or the host's push on a client. Refuses anything that does not pass
--- M.valid_rule, and says why.
-function M.apply_set(work_name, item, ceiling, guild)
-    local ok, why, clean = M.valid_rule(work_name, item, ceiling)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if persistence then return M.poll_persistence() end
+    if persistence_blocked then return false,'detached' end
+    if not M.path or not M.decided or M.is_client or M.submit then return false end
+    if M.state == "error" and not dirty then return false end
+    local payload, why = M.serialize()
+    if not payload then M.state, M.error = "error", why; return false end
+    local ok, err, gen = file.write(M.path, payload, M.generation, decode)
     if not ok then
-        log.warn("refused a rule from the network: " .. why)
+        dirty, failures, M.state = true, failures+1, "error"
+        retry_at = os.clock() + math.min(60, 2^math.min(failures,6))
+        if M.error ~= err then log.warn("limits not saved: " .. tostring(err)) end
+        M.error = err
         return false
     end
+    M.state, M.error, M.generation = "saved", nil, gen
+    dirty, retry_at, failures = false, 0, 0
+    if M.on_change then
+        local called, why = pcall(M.on_change)
+        if not called then log.warn("limit notification failed: " .. tostring(why)) end
+    end
+    return true
+end
 
-    guild = writable_guild(guild, "set")
-    if not guild then return false end
-
-    put(guild, work_name, item, clean)
-
-    -- The save's answer IS the answer.
-    --
-    -- M.save has five ways to return false - no path, a write that would not
-    -- open, a formatting failure, a rename that could not happen. All were
-    -- discarded here, and the caller in main.lua trusts this `true`: it then
-    -- says the limit was set, in chat, and pushes it to every client. The
-    -- ceiling was on screen everywhere and gone at the next restart.
+function M.flush(now)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if persistence then return M.poll_persistence() end
+    if retiring then M.finish_retirement(retiring:identity()) end
+    if persistence_blocked then return false,'detached' end
+    if not dirty then return true end
+    if (now or os.clock()) < retry_at then return false end
     return M.save()
 end
 
-function M.apply_clear(work_name, item, guild)
-    -- A clear cannot invent data, but it can still be junk, and letting junk
-    -- through means the log reports work types that do not exist.
-    if not workdefs.is_known(work_name) or type(item) ~= "string" then
-        log.warn("refused a clear from the network: " ..
-            tostring(work_name) .. " / " .. tostring(item))
-        return false
+function M.set_role(role, session)
+    local changed = M.session ~= session or M.is_client ~= (role == "client") or role == nil
+    -- Repeating the same decided role is a refresh, not an owner transition.
+    -- Startup's delayed role checks must not retire an attached durable writer.
+    if changed or not M.decided then M.detach_persistence() end
+    M.decided, M.is_client = role ~= nil, role == "client"
+    M.submit, M.on_change, M.session = nil, nil, session
+    if changed then
+        M.remote, M.remote_scope = nil, nil
+        M.remote_state, M.remote_error = "connecting", nil
     end
-
-    guild = writable_guild(guild, "clear")
-    if not guild then return false end
-
-    local by_guild = M.data[guild]
-    local by_work = by_guild and by_guild[work_name]
-    if by_work == nil or by_work[item] == nil then
-        -- Names the common case rather than failing mute. A rule inherited
-        -- from before guild scoping is real and visible in the panel, but it
-        -- belongs to the wildcard, so a guild scoped clear cannot reach it.
-        -- That is a different problem from a clear for a rule nobody set, and
-        -- the two used to look identical from the log.
-        local shared = M.data[M.ANY_GUILD]
-        if shared and shared[work_name] and shared[work_name][item] then
-            log.say(string.format(
-                "%s %s is a shared limit from before guild rules, so it was " ..
-                "not removed for one guild", work_name, item))
-        end
-        return false
-    end
-
-    by_work[item] = nil
-    if next(by_work) == nil then by_guild[work_name] = nil end
-    if next(by_guild) == nil then M.data[guild] = nil end
-    -- The save's answer IS the answer, as in apply_set above.
-    return M.save()
 end
 
--- The client's whole view, replaced by what the server pushed.
---
--- Validated the same way an inbound request is. A client trusting a server
--- unconditionally sounds reasonable right up until the "server" is anything
--- that can send the FName, and the client then draws a panel full of rules
--- its own host never set. Bounded as well: a push is a batch, and a batch is
--- the easy way to make a client allocate until it dies.
---
--- The server pushes only the receiving guild's rules, so a row without a
--- guild belongs to the guild being pushed to, and lands under the wildcard
--- where the client's own reads will still find it.
-M.MAX_RULES = 500
+function M.view_status()
+    if settings_gate.status() == 'restart_required' then
+        return 'unavailable','Settings locked after a session change or save failure. Restart the game to edit priorities and limits.'
+    end
+    if settings_gate.blocked() then return 'unavailable','Settings recovery is in progress' end
+    if not M.decided then return "unavailable", "Session role is not established" end
+    if M.is_client then return M.remote_state or "connecting", M.remote_error end
+    return M.state, M.error
+end
 
-function M.replace_all(rows)
-    M.data = {}
+function M.rule_kind(work, item, guild)
+    local source = M.is_client and (M.remote or {}) or M.data
+    local own, shared = source[guild], source[M.ANY_GUILD]
+    if (own and own[work] and own[work][item] ~= nil)
+        or (not M.is_client and config_rules[work] and config_rules[work][item] ~= nil)
+        or (shared and shared[work] and shared[work][item] ~= nil) then return "legacy" end
+    return "item"
+end
 
-    local kept, refused = 0, 0
-    for _, row in ipairs(rows or {}) do
-        if kept >= M.MAX_RULES then
-            refused = refused + 1
+function M.support(work,item,guild)
+    if M.rule_kind(work,item,guild) == "legacy" then
+        return true, "Legacy group: affects the entire work type"
+    end
+    -- Registry capability is not an implemented item-rule persistence/admission
+    -- path. Keep presentation aligned with apply_set until that path exists.
+    return false, "Item-specific limits await a verified producer adapter and scope"
+end
+
+function M.set(work,item,ceiling,guild)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if not M.decided then return false end
+    if M.submit then return M.submit("set",work,item,ceiling,guild) end
+    return M.apply_set(work,item,ceiling,guild)
+end
+
+function M.clear(work,item,guild)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if not M.decided then return false end
+    if M.submit then return M.submit("clear",work,item,0,guild) end
+    return M.apply_clear(work,item,guild)
+end
+
+function M.apply_set(work,item,ceiling,guild)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    local ok, why, clean = M.valid_rule(work,item,ceiling)
+    if not ok or not guild_ok(guild) or guild == M.ANY_GUILD
+        or not M.decided or M.is_client then M.error=why or "scope unavailable"; return false end
+    if M.state == "error" and not dirty then return false end
+    local supported, reason = M.support(work,item,guild)
+    if not supported then M.error=reason; log.say(reason); return false,'unsupported_limit' end
+    -- Item controllers have their own admission state. Never write an item
+    -- rule into this legacy table, even when an adapter has been registered.
+    if M.rule_kind(work,item,guild) ~= "legacy" then
+        M.error="Item-specific limits await a verified producer adapter and scope"
+        return false,'unsupported_limit'
+    end
+    if persistence then local data=candidate_data();put(data,guild,work,item,clean);return async_candidate(data,guild) end
+    if persistence_blocked then return false,'detached' end
+    put(M.data,guild,work,item,clean)
+    dirty, M.state = true, "saving"
+    local saved = M.save()
+    return saved, not saved and "applied_unsaved" or nil
+end
+
+function M.apply_clear(work,item,guild)
+    if settings_gate.blocked() then return false,'settings_recovering' end
+    if activation_busy() then return false,'activation_busy' end
+    if not M.decided or M.is_client or not guild_ok(guild)
+        or guild == M.ANY_GUILD or not M.valid_rule(work,item,1) then return false end
+    if M.state == "error" and not dirty then return false end
+    local row = M.data[guild] and M.data[guild][work]
+    local shared = M.data[M.ANY_GUILD]
+    local inherited = (shared and shared[work] and shared[work][item] ~= nil)
+        or (config_rules[work] and config_rules[work][item] ~= nil)
+    if (not row or row[item] == nil) and not inherited then
+        M.error = "No active legacy rule for this guild"
+        return false,'no_active_legacy_rule'
+    end
+    if persistence then
+        local data=candidate_data()
+        if inherited then put(data,guild,work,item,false)
         else
-            local ok, _, clean = M.valid_rule(row.work, row.item, row.amount)
-            if ok then
-                local guild = row.guild
-                if type(guild) ~= "string" or guild == "" then
-                    guild = M.ANY_GUILD
-                end
-                put(guild, row.work, row.item, clean)
-                kept = kept + 1
-            else
-                refused = refused + 1
-            end
+            data[guild][work][item]=nil
+            if next(data[guild][work])==nil then data[guild][work]=nil end
+            if next(data[guild])==nil then data[guild]=nil end
         end
+        return async_candidate(data,guild)
     end
-
-    if refused > 0 then
-        log.warn("dropped " .. refused ..
-            " rule(s) the server sent that do not look like rules")
+    if persistence_blocked then return false,'detached' end
+    if inherited then
+        -- Removing an override must not expose a lower, inherited ceiling and
+        -- announce a deletion that never happened. The mask is guild-local;
+        -- another guild's inherited rule and the original config stay intact.
+        put(M.data,guild,work,item,false)
+    else
+        row[item] = nil
+        if next(row) == nil then M.data[guild][work] = nil end
+        if next(M.data[guild]) == nil then M.data[guild] = nil end
     end
-    return kept
+    dirty, M.state = true, "saving"
+    local saved = M.save()
+    return saved, not saved and "applied_unsaved" or nil
 end
 
--- Legacy rules become the owning guild's, once it is unambiguous who that is.
---
--- The wildcard carries rules written before guild scoping, and it earns its
--- keep exactly once: at the upgrade. After that it is a bucket nobody owns,
--- which is why a guild cannot remove a rule from it - the rule is not theirs
--- to remove, and deleting it for everyone would be the cross guild reach the
--- scoping exists to prevent. The panel could show a limit, say it removed it,
--- and change nothing.
---
--- On a machine where every base camp belongs to one guild the ambiguity is
--- not real: those rules were that guild's all along. They are adopted, the
--- wildcard is emptied, and from then on every rule has an owner and Remove
--- works on all of them. Where camps span guilds nothing is moved, because
--- there is no honest way to pick an heir - those stay shared until each guild
--- sets its own.
---
--- A rule the guild has already set wins: it is the more specific of the two
--- and was written later.
--- Said once per session, when there is something to adopt and a guild that
--- could take it. Nothing is changed here.
-local offered = false
+function M.replace_all(rows, session, guild)
+    if not M.is_client or session ~= M.session or not guild_ok(guild)
+        or type(rows) ~= "table" or #rows > M.MAX_RULES then return false end
+    local view = {}
+    for _, row in ipairs(rows) do
+        local ok, _, clean = M.valid_rule(row.work,row.item,row.amount)
+        if not ok or (row.guild ~= nil and row.guild ~= guild) then return false end
+        if view[guild] and view[guild][row.work]
+            and view[guild][row.work][row.item] ~= nil then return false end
+        put(view,guild,row.work,row.item,clean)
+    end
+    M.remote, M.remote_scope = view, { session=session, guild=guild }
+    return #rows
+end
 
 function M.offer_adopt(guild)
-    if offered then return false end
-    local shared = M.data[M.ANY_GUILD]
-    if shared == nil or next(shared) == nil then return false end
-    if type(guild) ~= "string" or guild == "" or guild == M.ANY_GUILD then
-        return false
-    end
-
-    local n = 0
-    for _, items in pairs(shared) do
-        for _ in pairs(items) do n = n + 1 end
-    end
-
+    if offered or not guild_ok(guild) or not M.data[M.ANY_GUILD] then return false end
     offered = true
-    log.say(string.format(
-        "%d limit(s) predate guild rules and apply to every guild that has " ..
-        "not set its own. Every base camp loaded here belongs to one guild, " ..
-        "so they can be made that guild's with '!pwp adopt' - or left shared, " ..
-        "which is what they do now.", n))
-    log.say("  on a server with more than one guild, check the others are " ..
-        "not relying on them first: adopting cannot be undone")
+    log.say("Shared legacy group limits exist. '!pwp adopt' moves them to this guild; check other guilds before doing so.")
     return true
 end
 
 function M.adopt_wildcard(guild)
-    local shared = M.data[M.ANY_GUILD]
-    if shared == nil or next(shared) == nil then return 0 end
-    if type(guild) ~= "string" or guild == "" or guild == M.ANY_GUILD then
-        return 0
-    end
-
-    local moved, kept = 0, 0
+    if settings_gate.blocked() then return 0,'settings_recovering' end
+    if activation_busy() then return 0 end
+    if persistence or persistence_blocked then return 0 end -- no implicit scoped migration
+    if not M.decided or M.is_client or not guild_ok(guild) or guild == M.ANY_GUILD then return 0 end
+    local shared, n = M.data[M.ANY_GUILD], 0
+    if not shared then return 0 end
     for work, items in pairs(shared) do
         for item, ceiling in pairs(items) do
-            local own = M.data[guild] and M.data[guild][work]
-            if own and own[item] ~= nil then
-                kept = kept + 1
-            else
-                put(guild, work, item, ceiling)
-                moved = moved + 1
+            if not (M.data[guild] and M.data[guild][work] and M.data[guild][work][item] ~= nil) then
+                put(M.data,guild,work,item,ceiling)
+                n=n+1
             end
         end
     end
-
     M.data[M.ANY_GUILD] = nil
-    M.save()
-
-    log.say(string.format(
-        "adopted %d limit(s) from before guild rules into this guild%s",
-        moved,
-        kept > 0 and (", " .. kept .. " already set here and kept") or ""))
-    return moved
+    dirty, M.state = true, "saving"
+    if not M.save() then return 0 end
+    return n
 end
 
--- ---------------------------------------------------------------------------
--- The merged view the scheduler reads
--- ---------------------------------------------------------------------------
-
--- Every ceiling in force for one guild, in precedence order:
---
---   cfg.work_caps        written into config.lua, applies to the whole server
---   M.data[ANY_GUILD]    set before guild scoping existed
---   M.data[guild]        set by that guild, and wins
---
--- A nil guild sees only the first two. That is deliberate: a camp whose guild
--- cannot be read must not inherit some other guild's ceilings.
-local function merged_for(cfg, guild)
+function M.all(cfg,guild)
     local out = {}
-
-    for work, items in pairs((cfg or {}).work_caps or {}) do
-        if type(items) == "table" then
-            out[work] = {}
-            for item, ceiling in pairs(items) do out[work][item] = ceiling end
-        end
-    end
-
-    local function layer(key)
-        for work, items in pairs(M.data[key] or {}) do
+    local function layer(works)
+        for work, items in pairs(works or {}) do
             out[work] = out[work] or {}
-            for item, ceiling in pairs(items) do out[work][item] = ceiling end
+            for item, ceiling in pairs(items) do
+                if ceiling == false then out[work][item] = nil else out[work][item] = ceiling end
+            end
         end
     end
-
-    layer(M.ANY_GUILD)
-    if type(guild) == "string" and guild ~= M.ANY_GUILD then layer(guild) end
-
+    if not M.is_client then layer((cfg or {}).work_caps) end
+    local source = M.is_client and (M.remote or {}) or M.data
+    layer(source[M.ANY_GUILD])
+    if guild and guild ~= M.ANY_GUILD then layer(source[guild]) end
+    for work, items in pairs(out) do if next(items) == nil then out[work] = nil end end
     return out
 end
 
--- Ceilings for one work type in one guild. Returns nil when nothing caps this
--- work type at all, so the caller can skip the check entirely rather than
--- walking an empty table.
-function M.for_work(cfg, work_name, guild)
-    local all = merged_for(cfg, guild)
-    local items = all[work_name]
-    if items == nil or next(items) == nil then return nil end
-    return items
+function M.for_work(cfg,work,guild)
+    local items = M.all(cfg,guild)[work]
+    if items and next(items) then return items end
 end
 
--- Whether anything caps anything at all.
---
--- The scheduler only pays to read chest contents when this is true, so a
--- limit set in game has to be visible here. Reading only cfg.work_caps would
--- leave totals empty and the new ceiling would never fire, which looks
--- exactly like the ceiling being broken.
---
--- Asked across every guild on purpose: this decides whether the pass reads
--- storage at all, and the pass covers every camp on the machine.
 function M.any(cfg)
-    if next(M.data) ~= nil then return true end
-    local from_cfg = cfg.work_caps
-    return type(from_cfg) == "table" and next(from_cfg) ~= nil
-end
-
--- Every ceiling in force for one guild, work name -> item -> ceiling, for
--- listing and for drawing the panel.
-function M.all(cfg, guild)
-    return merged_for(cfg, guild)
+    local source = M.is_client and (M.remote or {}) or M.data
+    if next(source) ~= nil then return true end
+    return not M.is_client and type((cfg or {}).work_caps) == "table" and next(cfg.work_caps) ~= nil
 end
 
 return M

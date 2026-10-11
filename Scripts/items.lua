@@ -28,6 +28,7 @@
 
 local log = require("log")
 local api = require("palapi")
+local measurement = require("measurement")
 
 local M = {}
 
@@ -35,28 +36,24 @@ local ITEM_TABLE = "/Game/Pal/DataTable/Item/DT_ItemDataTable.DT_ItemDataTable"
 
 M.ids = nil        -- sorted list of item ids
 M.lower = nil      -- parallel list, lowercased once for searching
+local building     -- private strings/indexes only; never native row wrappers
+local catalogue, attempts, retry_after = nil, 0, 0
+local picker_index, picker_building
+local picker_status = "pending"
 
-local function read_rows()
-    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
-    if not lib then
-        log.warn("DataTableFunctionLibrary unavailable, so no item list")
-        return nil
-    end
-
+local find_table = measurement.callback("items: table lookup", function()
     local tbl
     pcall(function() tbl = StaticFindObject(ITEM_TABLE) end)
-    if not api.valid(tbl) then
-        log.warn("item data table not found at " .. ITEM_TABLE)
-        return nil
-    end
+    return tbl
+end)
 
+local row_names = measurement.callback("items: native row names", function(lib, tbl)
     local raw = {}
-    local ok, err = pcall(function() lib:GetDataTableRowNames(tbl, raw) end)
-    if not ok then
-        log.warn("could not read item rows: " .. tostring(err))
-        return nil
-    end
+    lib:GetDataTableRowNames(tbl, raw)
+    return raw
+end)
 
+local copy_names = measurement.callback("items: row strings", function(raw)
     local ids = {}
     for _, entry in ipairs(raw) do
         local name
@@ -68,23 +65,34 @@ local function read_rows()
             ids[#ids + 1] = name
         end
     end
-
     return ids
-end
+end)
 
--- Built once and kept. Reading 2466 rows is not free, and the item list does
--- not change while the game is running.
-function M.load()
-    if M.ids then return M.ids end
-
-    local ids = read_rows()
-    if ids == nil or #ids == 0 then
-        -- Cache the failure as an empty list rather than nil, so a picker
-        -- retries once per world rather than once per keystroke.
-        M.ids, M.lower = {}, {}
-        return M.ids
+local function read_rows()
+    local lib = api.cdo("/Script/Engine.Default__DataTableFunctionLibrary")
+    if not lib then
+        log.warn("DataTableFunctionLibrary unavailable, so no item list")
+        return nil
     end
 
+    local tbl = find_table()
+    if not api.valid(tbl) then
+        log.warn("item data table not found at " .. ITEM_TABLE)
+        return nil
+    end
+
+    local ok, raw = pcall(row_names, lib, tbl)
+    if not ok then
+        log.warn("could not read item rows: " .. tostring(raw))
+        return nil
+    end
+
+    -- Native wrappers must all become strings in this call. Never suspend
+    -- this loop or retain raw/tbl for a later preparation slice.
+    return copy_names(raw)
+end
+
+local sort_ids = measurement.callback("items: scalar sort", function(ids)
     -- Sorted the way the list is READ, not the way the ids happen to be
     -- spelled.
     --
@@ -108,7 +116,9 @@ function M.load()
         -- Same display key, different ids: keep it deterministic.
         return a < b
     end)
+end)
 
+local index_slice = measurement.callback("items: name index slice", function(state, limit, deadline)
     -- Two keys per id: the raw id, and what the panel actually draws.
     --
     -- Only the raw id was indexed, while the picker displays the transformed
@@ -119,22 +129,115 @@ function M.load()
     --
     -- Both are kept rather than swapping one for the other, because anyone who
     -- learned to type the internal id should not lose that.
-    local lower, disp = {}, {}
-    for i, id in ipairs(ids) do
-        lower[i] = id:lower()
-        disp[i] = M.display_name(id):lower()
+    local n = 0
+    while state.next <= #state.ids and n < limit do
+        -- Check between complete calls, not inside native GetItemName/FText
+        -- conversion. One name is indivisible and can exceed the soft budget.
+        if n > 0 and os.clock() >= deadline then break end
+        local i = state.next
+        local id = state.ids[i]
+        state.lower[i] = id:lower()
+        state.disp[i] = M.display_name(id):lower()
+        state.next, n = i + 1, n + 1
     end
+end)
 
-    M.ids, M.lower, M.disp = ids, lower, disp
-    log.debug("item list: " .. #ids .. " id(s)")
+-- IDs-only picker route. No display-name/index work: the picker can reject
+-- non-job IDs with its existing scalar predicate before asking for names.
+-- Capture and sort remain indivisible, separately measured operations.
+-- Unavailable is not a known empty catalogue or continuous pending work.
+function M.catalogue_ids()
+    if catalogue then return catalogue, "ready" end
+    if attempts >= 3 or os.clock() < retry_after then return nil, "unavailable" end
+    attempts = attempts + 1
+    local ids = read_rows()
+    if ids == nil or #ids == 0 then
+        -- A late table gets a bounded recovery opportunity. Cooldown begins
+        -- after the attempt; repeated draws cannot create a native retry loop.
+        retry_after = os.clock() + 5
+        return nil, "unavailable"
+    end
+    sort_ids(ids)
+    catalogue = ids
+    return catalogue, "ready"
+end
+
+-- Lazy full search index for generic callers. Publish only a complete index;
+-- picker-specific eligibility must never narrow this catalogue.
+-- Defaults limit localization to 128 names / 2ms per call. Native capture,
+-- sorting and an individual GetItemName call may exceed this soft budget.
+function M.prepare(limit, budget_ms)
+    if M.ids then return M.ids, "ready" end
+    limit = math.max(1, math.floor(tonumber(limit) or 128))
+    local deadline = os.clock() + math.max(0, tonumber(budget_ms) or 2) / 1000
+    if not building then
+        local ids, status = M.catalogue_ids()
+        if not ids then return nil, status end
+        building = {ids=ids, lower={}, disp={}, next=1}
+        return nil, "pending"
+    end
+    index_slice(building, limit, deadline)
+    if building.next <= #building.ids then return nil, "pending" end
+    M.ids, M.lower, M.disp = building.ids, building.lower, building.disp
+    building = nil
+    log.debug("item list: " .. #M.ids .. " id(s)")
+    return M.ids, "ready"
+end
+
+local picker_slice = measurement.callback("items: picker index slice", function(state, eligible, limit, deadline)
+    local n = 0
+    while state.next <= #state.source and n < limit do
+        if n > 0 and os.clock() >= deadline then break end
+        local id = state.source[state.next]
+        -- Count every examined ID, including rejects, so filtering a large
+        -- excluded catalogue is bounded even when no native names are needed.
+        if eligible(id) then
+            local shown = M.display_name(id):lower()
+            local i = #state.ids + 1
+            state.ids[i], state.lower[i], state.disp[i] = id, id:lower(), shown
+        end
+        state.next, n = state.next + 1, n + 1
+    end
+end)
+
+-- Separate, scalar-only picker index. The caller supplies the same pure ID
+-- predicate for every slice until reset(); it is called before localization
+-- and is never retained here. Generic preparation can proceed independently.
+-- Capture/sort and one ID's predicate/name lookup remain indivisible.
+function M.prepare_picker(eligible, limit, budget_ms)
+    if picker_index then return picker_index.ids, "ready" end
+    limit = math.max(1, math.floor(tonumber(limit) or 128))
+    local deadline = os.clock() + math.max(0, tonumber(budget_ms) or 2) / 1000
+    if not picker_building then
+        local ids, status = M.catalogue_ids()
+        if not ids then picker_status = status; return nil, status end
+        picker_building = {source=ids, ids={}, lower={}, disp={}, next=1}
+        picker_status = "pending"
+        return nil, picker_status
+    end
+    picker_slice(picker_building, eligible, limit, deadline)
+    if picker_building.next <= #picker_building.source then return nil, "pending" end
+    picker_building.source, picker_building.next = nil, nil
+    picker_index, picker_building, picker_status = picker_building, nil, "ready"
+    return picker_index.ids, picker_status
+end
+
+-- Existing callers still receive a complete synchronous result. Interactive
+-- callers opt into prepare(); they must not call load/search while pending.
+function M.load()
+    while not M.ids do
+        local _, status = M.prepare(math.huge, math.huge)
+        if status == "unavailable" then return {} end
+    end
     return M.ids
 end
 
--- Dropped on a world switch along with everything else, since the table
--- object behind it is an engine wrapper.
+-- Cancel private preparation on a world switch as well as the published
+-- scalar index. Localized-name memo lifetime remains unchanged.
 function M.reset()
-    M.ids = nil
-    M.lower = nil
+    M.ids, M.lower, M.disp, building = nil, nil, nil, nil
+    catalogue, attempts, retry_after = nil, 0, 0
+    picker_index, picker_building, picker_status = nil, nil, "pending"
 end
 
 -- Substring match, case insensitive, capped so a single letter cannot try to
@@ -272,30 +375,36 @@ function M.display_name(id)
     return name
 end
 
-function M.search(text, limit)
-    M.load()
+local function search_index(ids, lower, disp, text, limit, accept)
     limit = limit or 40
 
     if type(text) ~= "string" or text == "" then
         local out = {}
-        for i = 1, math.min(limit, #M.ids) do out[i] = M.ids[i] end
+        if not accept then
+            for i = 1, math.min(limit, #ids) do out[i] = ids[i] end
+            return out
+        end
+        for _, id in ipairs(ids) do
+            if #out >= limit then break end
+            if accept(id) then out[#out + 1] = id end
+        end
         return out
     end
 
     local want = text:lower()
     local exact, prefix, rest = {}, {}, {}
 
-    for i, id in ipairs(M.lower) do
+    for i, id in ipairs(lower or {}) do
         -- Either key matches, and the better of the two decides the rank, so
         -- typing a displayed name is not punished for being the second key.
-        local shown = M.disp and M.disp[i] or id
+        local shown = disp and disp[i] or id
 
         if id == want or shown == want then
-            exact[#exact + 1] = M.ids[i]
+            exact[#exact + 1] = ids[i]
         elseif id:sub(1, #want) == want or shown:sub(1, #want) == want then
-            prefix[#prefix + 1] = M.ids[i]
+            prefix[#prefix + 1] = ids[i]
         elseif id:find(want, 1, true) or shown:find(want, 1, true) then
-            rest[#rest + 1] = M.ids[i]
+            rest[#rest + 1] = ids[i]
         end
     end
 
@@ -303,10 +412,27 @@ function M.search(text, limit)
     for _, group in ipairs({ exact, prefix, rest }) do
         for _, id in ipairs(group) do
             if #out >= limit then return out end
-            out[#out + 1] = id
+            if not accept or accept(id) then out[#out + 1] = id end
         end
     end
     return out
 end
 
+function M.search(text, limit)
+    local ids = M.load()
+    return search_index(ids, M.lower, M.disp, text, limit)
+end
+
+-- Never complete preparation synchronously from a draw. Dynamic eligibility
+-- (e.g. unnamed items or exhausted icons) is checked before the result cap;
+-- it is not baked into the scalar index or retained between calls.
+function M.search_picker(text, limit, accept)
+    if not picker_index then return nil, picker_status end
+    return search_index(picker_index.ids, picker_index.lower, picker_index.disp,
+        text, limit, accept), "ready"
+end
+
+measurement.bind(M, 'catalogue_ids', 'items: catalogue IDs')
+measurement.bind(M, 'prepare', 'items: prepare')
+measurement.bind(M, 'prepare_picker', 'items: prepare picker')
 return M

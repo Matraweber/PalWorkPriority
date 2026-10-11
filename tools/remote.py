@@ -6,9 +6,11 @@
     python tools/remote.py close
     python tools/remote.py cmd stat fps
 
-Deploys the Lua first, writes the instruction file the mod watches, waits, and
-prints whatever the mod said in reply. A snap also reports the png the game
-wrote, which can then be read directly.
+Writes an instruction to an already-enabled developer channel, then prints
+new log output. This does NOT deploy code by default. Use --deploy explicitly
+to run the checked deployment step. --no-deploy remains accepted for older
+test instructions. Log output is not a command-bound completion receipt;
+use stress.py to verify scheduler passes.
 
     python tools/remote.py reload
 
@@ -27,6 +29,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 
 from paths import resolve
 
@@ -59,7 +62,10 @@ def newest_png(since):
 
 def main(argv):
     argv = [a for a in argv if a != "--server"]
-    words = [a for a in argv if a != "--no-deploy"]
+    if "--deploy" in argv and "--no-deploy" in argv:
+        print("choose either --deploy or --no-deploy")
+        return 2
+    words = [a for a in argv if a not in ("--no-deploy", "--deploy")]
     if not words:
         print(__doc__)
         return 2
@@ -68,7 +74,7 @@ def main(argv):
     commands = [("cmd " + SNAP) if c == "snap" else c for c in commands]
     wants_snap = any(c == "cmd " + SNAP for c in commands)
 
-    if "--no-deploy" not in argv:
+    if "--deploy" in argv:
         cmd = ["powershell.exe", "-NoProfile", "-File", DEPLOY]
         if P["server"]:
             cmd += ["-GamePath", P["root"]]
@@ -83,11 +89,20 @@ def main(argv):
         print("mod folder not found: " + MOD)
         return 2
 
+    if not os.path.isfile(TRIGGER):
+        print("remote.txt must exist before game startup to enable the developer channel; no command was sent")
+        return 2
+
     before_log = os.path.getsize(LOG) if os.path.exists(LOG) else 0
     before_time = time.time()
 
-    io.open(TRIGGER, "w", encoding="utf-8").write(
-        "%.3f\n%s\n" % (time.time(), "\n".join(commands)))
+    temporary = TRIGGER + '.' + uuid.uuid4().hex + '.tmp'
+    try:
+        with io.open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("%s\n%s\n" % (uuid.uuid4().hex, "\n".join(commands)))
+        os.replace(temporary, TRIGGER)
+    finally:
+        if os.path.exists(temporary): os.remove(temporary)
     print("sent: " + ", ".join(commands))
 
     # The mod looks once a second, and a screenshot takes a moment to reach
@@ -104,6 +119,10 @@ def main(argv):
         else:
             print("the log said nothing, so the mod is not running or the "
                   "world is not loaded yet")
+            return 1
+    else:
+        print("no mod log appeared; execution is unverified")
+        return 1
 
     if wants_snap:
         shot = newest_png(before_time)

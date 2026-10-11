@@ -22,9 +22,12 @@ public class PalWidgetGen : ModuleRules {
             "UMGEditor",        // UWidgetBlueprint and its factory
             "Kismet",           // compiling the blueprint afterwards
             "KismetCompiler",
+            "BlueprintGraph",
             "AssetTools",
             "Slate",
             "SlateCore",
+            "InputCore",        // FKey and native key-event regression fixtures
+            "SlateNullRenderer", // hidden commandlet focus tests, no rendered window
             "Projects",
         });
     }

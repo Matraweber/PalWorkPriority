@@ -126,7 +126,7 @@ end
 -- static check can see the contract and a rename cannot fail silently. The
 -- behavioural half needs the readers to distinguish "no" from "not known",
 -- which none of them currently do.
-M.game_ui_active = false
+M.game_ui_active = nil -- no native UI observation yet
 
 -- Reads a property without letting a missing name take the pass down.
 local function prop(obj, name)
@@ -155,25 +155,42 @@ end
 -- address, so all four parts match, and so does every other object's key.
 -- That silently collapses distinct pals onto one identity, and a claim set
 -- keyed on it accepts exactly one pal per pass.
-function M.guid_key(g)
-    if g == nil then return nil end
-
-    local parts = {}
-    local ok = pcall(function()
-        for _, field in ipairs({ "A", "B", "C", "D" }) do
-            local n = as_int(g[field])
-            if n == nil then return end
-            parts[#parts + 1] = tostring(n)
-        end
-    end)
-
-    if ok and #parts == 4 then
-        local key = table.concat(parts, "-")
-        -- an all-zero guid is a replication placeholder, not an identity
-        if key:gsub("[0%-]", "") == "" then return nil end
-        return key
+local function guid_integer(value)
+    if type(value) == "number" then return math.tointeger(value) end
+    if type(value) == "userdata" then
+        local ok, number = pcall(function() return value:get() end)
+        if ok and type(number) == "number" then return math.tointeger(number) end
     end
     return nil
+end
+
+local function read_guid(g)
+    if g == nil then return nil, "scope_missing_guid" end
+
+    local a, b, c, d
+    local ok = pcall(function()
+        a = guid_integer(g.A); if a == nil then return end
+        b = guid_integer(g.B); if b == nil then return end
+        c = guid_integer(g.C); if c == nil then return end
+        d = guid_integer(g.D)
+    end)
+
+    if ok and a ~= nil and b ~= nil and c ~= nil and d ~= nil then
+        -- An all-zero GUID is unset, not a usable identity. Its cause (for
+        -- example a replication placeholder) is not established by the bits.
+        -- Check the numbers before allocating an identity string. The saved
+        -- September 13 scan has 534 such unknown observations per sweep.
+        if a == 0 and b == 0 and c == 0 and d == 0 then return nil, "scope_zero_guid" end
+        return tostring(a).."-"..tostring(b).."-"..tostring(c).."-"..tostring(d)
+    end
+    return nil, ok and "scope_guid_fields" or "scope_guid_read"
+end
+
+function M.guid_key(g)
+    -- Keep the public single-value contract. The storage reader uses the
+    -- private reason from these same four reads, never a second GUID probe.
+    local key = read_guid(g)
+    return key
 end
 
 -- Identity key for an FPalInstanceID (the shape GetIndividualID returns):
@@ -213,16 +230,20 @@ M.as_int = as_int
 local cdo_cache = {}
 
 function M.reset()
+    M.last_storage_scan = nil
+    M.last_camp_scan = nil
+    M.camps_available, M.camps_error = nil, nil
     -- The authority answer belongs to the world, so it goes with it.
     auth = nil
     owned_memo = nil
+    if M.pc_memo_end then M.pc_memo_end() end
 
     -- A new world is a new chance for a controller to exist, so the walk
     -- starts trusted again rather than serving out a backoff earned by the
     -- last one.
     pc_walk_misses = 0
     pc_walk_next = 0
-    M.game_ui_active = false
+    M.game_ui_active = nil
 
     cdo_cache = {}
     M._suitability_source = nil
@@ -271,13 +292,18 @@ end
 -- beat is one synchronous call - the same window rule one already calls safe.
 local pc_memo = nil
 local pc_memo_open = false
+-- Separate from the fallback controller: a populated dedicated server may
+-- return a remote controller from the walk, which never proves a viewport.
+local local_pc_memo = nil
 
 function M.pc_memo_begin()
     pc_memo, pc_memo_open = nil, true
+    local_pc_memo = nil
 end
 
 function M.pc_memo_end()
     pc_memo, pc_memo_open = nil, false
+    local_pc_memo = nil
 end
 
 -- Walked down from the engine rather than searched for.
@@ -352,16 +378,32 @@ end
 -- read at all counts as "no screen" - the safe direction here, since the
 -- worst case is refusing a diagnostic rather than ending the process.
 function M.has_viewport()
-    local yes = false
+    return M.local_player_controller() ~= nil
+end
+
+-- A non-nil result also proves the viewport gate, using the same existing
+-- chain and validity checks as has_viewport. Positive results may be reused
+-- only inside the caller's synchronous begin/end scope; misses stay fresh.
+-- Never substitute pc_memo here: its FindFirstOf route is not local evidence.
+function M.local_player_controller()
+    if local_pc_memo ~= nil then return local_pc_memo end
+    local pc
     pcall(function()
         local ue = require("UEHelpers")
-        yes = ue.GetEngine().GameViewport ~= nil
+        local viewport = ue.GetEngine().GameViewport
+        if not valid(viewport) then return end
+        local world = viewport.World
+        if not valid(world) then return end
+        local candidate = world.OwningGameInstance.LocalPlayers[1].PlayerController
+        if valid(candidate) then pc = candidate end
     end)
-    return yes
+    if pc ~= nil and pc_memo_open then local_pc_memo = pc end
+    return pc
 end
 
 function M.player_controller()
     if pc_memo ~= nil then return pc_memo end
+    if local_pc_memo ~= nil then return local_pc_memo end
 
     local pc = via_engine()
 
@@ -454,10 +496,6 @@ function M.owned_network_component()
     local pc = M.player_controller()
     if not valid(pc) then return nil end
 
-    local mine
-    pcall(function() mine = pc:GetFullName() end)
-    if type(mine) ~= "string" then return nil end
-
     -- Fastest path: the controller's own Children.
     --
     -- AActor.Children is the actors this actor OWNS, and the probe read it
@@ -500,6 +538,12 @@ function M.owned_network_component()
             return comp
         end
     end
+
+    -- The children route proves ownership structurally and needs no player
+    -- name. Only the name-memo/full-walk fallbacks need this native read.
+    local mine
+    pcall(function() mine = pc:GetFullName() end)
+    if type(mine) ~= "string" then return nil end
 
     -- Fast path: same player as last time, so try the remembered names.
     if owned_memo ~= nil and owned_memo.pc == mine then
@@ -605,10 +649,7 @@ end
 -- old price rather than a cheap wrong one.
 function M.has_authority()
     if auth ~= nil then return auth end
-
-    local gm
-    pcall(function() gm = FindFirstOf("PalGameMode") end)
-    return valid(gm)
+    return M.latch_authority()
 end
 
 -- The walk-free probe: the world names its own authority.
@@ -704,6 +745,13 @@ end
 -- is its price: the pointer chain answers where it can, and the full
 -- FindFirstOf walk remains the fallback for anything the chain cannot see.
 function M.latch_authority()
+    -- A local autonomous proxy belongs to the current client connection.
+    -- Global object enumeration may still find a retiring world's GameMode;
+    -- that must never override this affirmative client evidence.
+    local pc = M.local_player_controller()
+    local role
+    if pc then pcall(function() role = as_int(pc.Role) end) end
+    if role == 2 then auth = false; return false end
     -- Free evidence first: a demand pulse newer than this spawn can only
     -- have been produced by this machine running the authority's scheduler.
     -- The hint abstains with nil; only an explicit true is believed.
@@ -726,9 +774,12 @@ function M.latch_authority()
 
     log.count("api: authority via walk")
     local gm
-    pcall(function() gm = FindFirstOf("PalGameMode") end)
-    auth = valid(gm)
-    return auth
+    local ok = pcall(function() gm = FindFirstOf("PalGameMode") end)
+    if ok and valid(gm) then auth = true; return true end
+    -- Absence may mean loading, an unavailable property, or a failed lookup.
+    -- A local autonomous proxy is affirmative client evidence.
+    auth = nil
+    return nil
 end
 
 -- A string that changes when the world does, and does not change when the
@@ -766,12 +817,26 @@ function M.world_key()
 end
 
 function M.base_camps()
+    -- main.lua's saved elimination-route evidence establishes that
+    -- GetBaseCampManager exposes configuration, not a reflected live-camp
+    -- container. Its superclass walk crashed. Keep the proven fresh sweep;
+    -- do not retry that probe or infer a native collection from field names.
     local camps = {}
-    pcall(function()
-        for _, c in ipairs(FindAllOf("PalBaseCampModel") or {}) do
-            if valid(c) then camps[#camps + 1] = c end
+    local ok, err = pcall(function()
+        local all = FindAllOf("PalBaseCampModel")
+        if all == nil then error("camp enumeration unavailable") end
+        for _, camp in ipairs(all) do
+            -- An unreadable entry makes this a partial observation, not proof
+            -- that the remaining camps do not exist. Preserve the existing
+            -- partial-list return and mark its availability unknown.
+            if not valid(camp) then error("camp entry unavailable") end
+            camps[#camps + 1] = camp
         end
     end)
+    M.camps_available = ok
+    M.camps_error = not ok and tostring(err) or nil
+    -- Observation of this sweep only: no additional reads or kept wrappers.
+    M.last_camp_scan = {route="class_walk", complete=ok, camps=#camps}
     return camps
 end
 
@@ -906,116 +971,58 @@ end
 -- FGuid, usable directly as a Lua table key.
 function M.camp_pals(camp)
     local out = {}
-
-    trace.at("pals: WorkerDirector")
     local director = prop(camp, "WorkerDirector")
-    local director_ok = valid(director)
-    trace.done()
-    if not director_ok then
-        return out, "camp has no readable WorkerDirector"
-    end
-
-    -- The roster by property reads rather than by asking for it.
-    --
-    -- GetCharacterHandleSlots hands a Lua table to the engine as an out
-    -- parameter and lets it fill it in. That is the most unusual thing this
-    -- mod asks of UE4SS and the only call of its kind in the pass, and the
-    -- pass is now the proven half: disabled for eight minutes with every hook
-    -- firing, the UI loop answering, two camps loaded and the player at base,
-    -- the engine tick was never dropped. Enabled, it goes within two or three
-    -- minutes.
-    --
-    -- PalBaseInfoGrid reads WorkerDirector, CharacterContainer, SlotArray and
-    -- indexes the array, and is stable. Same data, nothing handed across the
-    -- boundary for the engine to write into.
-    local raw = {}
-    local count = 0
-
-    trace.at("pals: SlotArray by property")
+    if not valid(director) then return out, "camp has no readable WorkerDirector" end
     local container = prop(director, "CharacterContainer")
-    if valid(container) then
-        local slots = prop(container, "SlotArray")
-        if slots ~= nil then
-            pcall(function() count = #slots end)
-            for i = 1, count do
-                local one
-                pcall(function() one = slots[i] end)
-                raw[i] = one
-            end
-        end
-    end
-    trace.done()
-
-    -- Only if the property route found nothing, so a build that does not have
-    -- it still works rather than reporting an empty base.
-    if count == 0 then
-        trace.at("pals: GetCharacterHandleSlots fallback")
-        local ok = pcall(function() director:GetCharacterHandleSlots(raw) end)
-        trace.done()
-        if not ok then
-            return out, "GetCharacterHandleSlots threw"
-        end
-    end
-
-    for i = 1, #raw do
-        local slot = unwrap(raw[i])
-        local slot_ok = valid(slot)
-
-        if slot_ok then
-            local empty = true
-            pcall(function() empty = slot:IsEmpty() end)
-
-            if not empty then
-                local handle = unwrap(prop(slot, "Handle"))
-                local handle_ok = valid(handle)
-
-                local id, param
-
-                if handle_ok then
-                    pcall(function() id = handle:GetIndividualID() end)
-
-                    if id == nil then
-                        id = prop(handle, "ID")
-                    end
-
-                    pcall(function() param = handle:TryGetIndividualParameter() end)
-                end
-
-                if id == nil then id = prop(slot, "ReplicateHandleID") end
-                local param_ok = valid(param)
-                if not param_ok then
-                    param = prop(slot, "ReplicateIndividualParameter")
-                    param_ok = valid(param)
-                end
-
-                if id ~= nil and param_ok then
-                    local pal_nm = M.pal_name(param)
-
-                    local pal_sp = M.pal_species(param)
-
-                    local pal_key = M.instance_key(id) or M.guid_key(id)
-                        or ("slot" .. i)
-
-                    out[#out + 1] = {
-                        id = id,
-                        param = param,
-                        name = pal_nm,
-                        species = pal_sp,
-                        slot_index = i,
-                        -- Identity that survives the roster being reordered,
-                        -- and that the stand UI can rebuild from a row's own
-                        -- GetIndividualID. The fallbacks only stand in when
-                        -- the guids will not read; a pal on one of them still
-                        -- schedules correctly, it just cannot be matched to a
-                        -- row, so its cell shows the priority without the
-                        -- green assigned marker.
-                        key = pal_key,
-                    }
+    if not valid(container) then return out, "camp has no readable CharacterContainer" end
+    local slots = prop(container, "SlotArray")
+    if slots == nil then return out, "camp slot array is unavailable" end
+    local ok, count = pcall(function() return #slots end)
+    count = ok and type(count) == "number" and math.tointeger(count) or nil
+    if count == nil or count < 0 or count > 2048 then return out, "invalid camp slot count" end
+    -- A read zero is an empty roster. Do not pass a Lua out-table into
+    -- GetCharacterHandleSlots as a fallback: that native boundary was never
+    -- proven safe. Missing properties are unavailable rather than empty.
+    for i = 1, count do
+        local read, raw = pcall(function() return slots[i] end)
+        local slot = read and unwrap(raw) or nil
+        if not valid(slot) then return out, "unreadable camp slot " .. i end
+        local empty_ok, empty = pcall(function() return slot:IsEmpty() end)
+        if not empty_ok or type(empty) ~= "boolean" then return out, "unknown camp slot occupancy" end
+        if not empty then
+            local handle = unwrap(prop(slot, "Handle"))
+            local id, param, param_ok
+            if valid(handle) then
+                pcall(function() id = handle:GetIndividualID() end)
+                if id == nil then id = prop(handle, "ID") end
+                pcall(function() param = handle:TryGetIndividualParameter() end)
+                if valid(param) then
+                    param_ok = true
                 end
             end
+            if id == nil then id = prop(slot, "ReplicateHandleID") end
+            if not param_ok then
+                param = prop(slot, "ReplicateIndividualParameter")
+                param_ok = valid(param)
+            end
+            if id == nil or not param_ok then return out, "occupied slot has unavailable Pal data" end
+
+            local key = M.instance_key(id) or M.guid_key(id)
+            if type(key) ~= "string" or key == "" then return out, "occupied slot has no durable Pal identity" end
+            local name = name_text(param, "GetNickname")
+            local species
+            if not name then
+                species = name_text(param, "GetCharacterID")
+                name = species or "<unnamed>"
+            end
+            -- Reuse only a successful read within this roster call. A failed
+            -- display-name fallback retains the separate species read/retry.
+            species = species or name_text(param, "GetCharacterID")
+            -- Like param, handle is callback-local. Never publish this roster
+            -- to a timer/cache; assignment reads resolve its actor afresh.
+            out[#out+1] = { id=id, param=param, handle=handle, name=name, species=species, slot_index=i, key=key }
         end
     end
-
     return out, nil
 end
 
@@ -1032,7 +1039,7 @@ function M.suitability_rank(param, value)
         pcall(function() rank = param:GetWorkSuitabilityRank(value) end)
     end
 
-    if type(rank) ~= "number" then return 0 end
+    if type(rank) ~= "number" or rank ~= rank or rank < 0 or rank == math.huge then return nil end
     return rank
 end
 
@@ -1119,7 +1126,7 @@ function M.camp_required_works(camp)
     local list = prop(director, "RequiredAssignWorks")
     if list == nil then return nil end
 
-    local wpm = M.work_progress_manager()
+    local wpm, manager_asked
     local out, ok, seen = {}, false, 0
 
     -- An entry may be the work itself, the work's id, or a struct carrying
@@ -1135,6 +1142,13 @@ function M.camp_required_works(camp)
             return entry
         end
 
+        -- Empty lists and direct work objects need no manager at all. The
+        -- verified getter is resolved at most once in this synchronous read,
+        -- including misses, and its wrapper never survives this call.
+        if not manager_asked then
+            manager_asked = true
+            wpm = M.work_progress_manager()
+        end
         if wpm == nil then return nil end
 
         local w
@@ -1350,7 +1364,10 @@ function M.work_off_set(param)
         if list == nil then return end
         list:ForEach(function(_, entry)
             local v = as_int(unwrap(entry))
-            if v then out[v] = true end
+            if type(v) ~= "number" or math.tointeger(v) == nil or v < 0 or v > 255 then
+                error("unreadable off-list entry")
+            end
+            out[v] = true
         end)
         ok = true
     end)
@@ -1385,7 +1402,10 @@ function M.set_work_enabled(raw_id, work_value, on, comp)
     -- RPC, it is a silent no-op, which is exactly what made every toggle
     -- repeat forever.
     if comp == nil then
-        comp = M.owned_network_component() or M.network_component()
+        comp = M.owned_network_component()
+        -- Same authority-only fallback as net.to_server. A missing owned
+        -- route on a client is not permission to use a world transmitter.
+        if comp == nil and M.has_authority() == true then comp = M.network_component() end
     end
     if not valid(comp) then return false, "PalNetworkBaseCampComponent unavailable" end
 
@@ -1400,7 +1420,7 @@ end
 
 -- On a multiplayer client the camp's work data is not replicated until it is
 -- asked for. Harmless on a host.
-function M.request_work_replication(camp_id, on)
+function M.request_work_replication(camp_id, on, owned_comp)
     -- The owned one, like every other RequestX_ToServer on this component.
     --
     -- This was the last call still going through FindFirstOf, which picks by
@@ -1410,7 +1430,11 @@ function M.request_work_replication(camp_id, on)
     -- counting it. That single mistake caused both the rule transport bug and
     -- the toggle churn; this is the same mistake, latent because the branch
     -- only runs under run_pass and run_pass is authority gated.
-    local comp = M.owned_network_component() or M.network_component()
+    local comp = owned_comp
+    if comp == nil then
+        comp = M.owned_network_component()
+        if comp == nil and M.has_authority() == true then comp = M.network_component() end
+    end
     if not valid(comp) then return false end
     local ok = pcall(function()
         comp:RequestReplicateBaseCampWork_ToServer(camp_id, on and true or false)
@@ -1480,120 +1504,142 @@ end
 --
 -- The slot-reading loop is preserved exactly as it was, crash comments and
 -- all; only where the numbers land has changed.
-local function walk_containers(opts, keyfor)
-    local buckets, counts = {}, {}
+local function walk_containers(opts, keyfor, reader)
     opts = opts or {}
-
-    local include = nil
-    if type(opts.include) == "table" and #opts.include > 0 then
-        include = {}
-        for _, cls in ipairs(opts.include) do include[cls] = true end
+    local buckets, counts, seen = {}, {}, {}
+    local evidence = {complete=true, deduplicated=true, unknown_scope=0, failed_reads=0, reasons={}, outside_camp_loot=0}
+    local class_reads, class_skips = 0, 0
+    local traversal_token
+    local function failed(reason)
+        evidence.complete=false
+        evidence.failed_reads=evidence.failed_reads+1
+        evidence.reasons[reason]=(evidence.reasons[reason] or 0)+1
     end
-
-    local exclude = {}
-    for _, cls in ipairs(opts.exclude or M.DEFAULT_UNCOUNTED) do
-        exclude[cls] = true
+    local function finish()
+        if traversal_token and log.finish then log.finish(traversal_token) end
+        -- Fixed reason labels and scalar counts only. No error strings, object
+        -- identities or wrappers survive the scan; status never repeats it.
+        local reasons={}
+        for reason,n in pairs(evidence.reasons) do reasons[reason]=n end
+        M.last_storage_scan={reader=reader, complete=evidence.complete,
+            deduplicated=evidence.deduplicated, unknown_scope=evidence.unknown_scope,
+            failed_reads=evidence.failed_reads, reasons=reasons,
+            outside_camp_loot=evidence.outside_camp_loot,
+            class_reads=class_reads, class_skips=class_skips}
+        return buckets,counts,evidence
     end
-
-    pcall(function()
-        for _, m in ipairs(FindAllOf(M.CONTAINER_BASE_CLASS) or {}) do
-            pcall(function()
-                if not valid(m) then return end
-
-                -- Container FIRST, then whose it is, then the class name.
-                --
-                -- accept() used to run before any of this, and for the
-                -- per-camp caller it is a GetBaseCampIdBelongTo plus a guid
-                -- string build - paid for every wall, floor and fence that
-                -- derives from the container base class, which is most of a
-                -- built-up base. Measured in the panel's own timing line: a
-                -- refresh whose worst frame was 48ms spent 47 of them here.
-                --
-                -- Asking for the container module is the cheapest question
-                -- that excludes scenery, so it goes first. This is the same
-                -- ordering the next paragraph already argues for the class
-                -- name, applied one step earlier - the comment was right and
-                -- accept() was sitting above the thing it described.
-                local module
-                pcall(function() module = m:GetItemContainerModule() end)
-                if not valid(module) then return end
-
-                local bucket = keyfor(m)
-                if bucket == nil then return end
-
-                -- Class name last. Reading one means building a string per
-                -- object, so it is done only for things that hold items.
-                local container = prop(module, "TargetContainer")
-                if not valid(container) then return end
-
-                local slots = prop(container, "ItemSlotArray")
-                if slots == nil then return end
-
-                local cls = M.model_class(m)
-                if include then
-                    if not include[cls] then return end
-                elseif exclude[cls] then
-                    return
+    local include, exclude = nil, {}
+    if opts.include then include={}; for _,cls in ipairs(opts.include) do include[cls]=true end end
+    for _,cls in ipairs(opts.exclude or M.DEFAULT_UNCOUNTED) do exclude[cls]=true end
+    local filtered = include ~= nil or next(exclude) ~= nil
+    local enumeration_token=log.begin and log.begin("storage: model enumeration")
+    local ok, all = pcall(FindAllOf,M.CONTAINER_BASE_CLASS)
+    if enumeration_token and log.finish then log.finish(enumeration_token) end
+    if not ok or type(all) ~= "table" then failed("enumeration"); return finish() end
+    traversal_token=log.begin and log.begin("storage: container traversal")
+    for _,model in ipairs(all) do
+        local stage="model_validity"
+        local read_ok = pcall(function()
+            local cls
+            local function class_for()
+                if cls == nil then class_reads=class_reads+1; cls=M.model_class(model) end
+                return cls
+            end
+            if not valid(model) then failed(stage); return end
+            stage="container_module"
+            local module = model:GetItemContainerModule()
+            if not valid(module) then return end -- scenery has no container module
+            -- A configured class filter must be checked before scope: an
+            -- excluded zero-GUID holder is intentionally outside that query.
+            -- With no filter, only the known no-base loot exception needs a
+            -- class name before counting. Reuse it rather than reading twice.
+            -- Discover the module first: scenery is not unknown storage.
+            if filtered then
+                stage="model_class"
+                local name = class_for()
+                if name == "<unknown>" then failed(stage); return end
+                if (include and not include[name]) or (not include and exclude[name]) then return end
+            end
+            stage="scope"
+            local bucket, why = keyfor(model, class_for)
+            if bucket == nil then
+                if cls == nil then class_skips=class_skips+1 end
+                if why == "outside_camp_loot" then
+                    evidence.outside_camp_loot=evidence.outside_camp_loot+1
+                elseif why ~= "excluded" then evidence.unknown_scope=evidence.unknown_scope+1; failed(why or stage) end
+                return
+            end
+            if not filtered then
+                -- Preserve the existing class-read failure contract for
+                -- containers whose contents will actually be counted.
+                stage="model_class"
+                if class_for() == "<unknown>" then failed(stage); return end
+            end
+            stage="target_container"
+            local container=module.TargetContainer
+            if not valid(container) then failed(stage); return end
+            stage="container_identity"
+            local identity=container:GetFullName()
+            if type(identity) ~= "string" or identity=="" then failed(stage); return end
+            if seen[identity] then
+                if seen[identity] ~= bucket then
+                    evidence.unknown_scope=evidence.unknown_scope+1
+                    evidence.deduplicated=false
+                    failed("duplicate_scope")
                 end
-
-                local totals = buckets[bucket]
-                if totals == nil then
-                    totals = {}
-                    buckets[bucket] = totals
-                end
-                counts[bucket] = (counts[bucket] or 0) + 1
-
-                -- The count is taken again on every turn of the loop, and
-                -- the slot is asked whether it is still there before anything
-                -- is read off it.
-                --
-                -- Both because this array belongs to a chest that pals are
-                -- depositing into while the loop runs. Reading the length once
-                -- and then indexing against it is a promise the game never
-                -- made: on 21 August at 22:41 the sweep read a field at 0x88
-                -- off a slot that had gone, twenty seven minutes into a
-                -- session, having survived a hundred and fifty nine passes.
-                --
-                -- The validity check has to fail open. If ItemSlotArray holds
-                -- structs rather than objects then IsValid is not callable on
-                -- a slot at all, and treating "cannot ask" as "not valid"
-                -- would count every chest as empty and quietly drop every
-                -- ceiling in the mod. So only a definite no is believed.
-                local n = 0
-                pcall(function() n = #slots end)
-                for i = 1, n do
-                    pcall(function()
-                        local live = 0
-                        pcall(function() live = #slots end)
-                        if i > live then return end
-
-                        local slot = slots[i]
-                        if slot == nil then return end
-
-                        local asked, alive = pcall(function() return slot:IsValid() end)
-                        if asked and alive == false then return end
-
-                        local sid = slot.ItemId.StaticId:ToString()
-                        if sid and sid ~= "None" then
-                            totals[sid] = (totals[sid] or 0)
-                                + (tonumber(slot.StackCount) or 0)
-                        end
-                    end)
-                end
-            end)
-        end
-    end)
-
-    return buckets, counts
+                return
+            end
+            seen[identity]=bucket
+            stage="slot_array"
+            local slots=container.ItemSlotArray
+            if slots==nil then failed(stage); return end
+            stage="slot_count"
+            local n=#slots
+            if type(n) ~= "number" or n<0 then failed(stage); return end
+            local total={}
+            for i=1,n do
+                local slot_stage="slots_changed"
+                local slot_ok=pcall(function()
+                    if i>#slots then error("container changed while reading") end
+                    slot_stage="slot_read"
+                    local slot=slots[i]
+                    if slot==nil then error("slot unavailable") end
+                    slot_stage="slot_validity"
+                    local asked, live=pcall(function() return slot:IsValid() end)
+                    if asked and live==false then error("slot no longer live") end
+                    slot_stage="item_identity"
+                    local id=slot.ItemId.StaticId:ToString()
+                    if type(id) ~= "string" then error("item identity unavailable") end
+                    if id~="None" and id~="" then
+                        slot_stage="quantity"
+                        local amount=tonumber(slot.StackCount)
+                        if not amount or amount~=amount or amount<0 or amount==math.huge then error("quantity unavailable") end
+                        total[id]=(total[id] or 0)+amount
+                    end
+                end)
+                if not slot_ok then failed(slot_stage) end
+            end
+            stage="slots_changed"
+            if #slots~=n then failed(stage) end
+            stage="aggregation"
+            buckets[bucket]=buckets[bucket] or {}
+            for id,amount in pairs(total) do buckets[bucket][id]=(buckets[bucket][id] or 0)+amount end
+            counts[bucket]=(counts[bucket] or 0)+1
+        end)
+        if not read_ok then failed(stage) end
+    end
+    return finish()
 end
 
 -- The single-bucket shape every existing caller was written against.
-local function walk_chests(opts, accept)
-    local buckets, counts = walk_containers(opts, function(m)
-        if accept(m) then return "only" end
-        return nil
-    end)
-    return buckets.only or {}, counts.only or 0
+local function walk_chests(opts, accept, reader)
+    local buckets, counts, evidence = walk_containers(opts, function(m, class_for)
+        local accepted, why = accept(m, class_for)
+        if accepted == true then return "only" end
+        if accepted == false then return nil, "excluded" end
+        return nil, why
+    end, reader)
+    return buckets.only or {}, counts.only or 0, evidence
 end
 
 -- Only the chests belonging to one camp.
@@ -1601,14 +1647,41 @@ end
 -- A chest whose camp id will not read is skipped rather than counted:
 -- crediting someone else's chest to this base would silently inflate the
 -- total and suspend work that should still be running.
-function M.camp_item_totals(camp_key, opts)
-    if not camp_key then return {}, 0 end
+-- Exact world-loot types observed in the September 13 census. A successful
+-- numeric zero base ID means these pickups have no base for this sample.
+-- This is a scope rule, NOT a storage allowlist: owned pickups still count;
+-- unrecognized types, storage/stations, failed or malformed IDs stay unknown.
+-- In particular a guild chest with a zero base ID needs its own verified route.
+local NO_BASE_WORLD_LOOT = {
+    PalMapObjectTreasureBoxModel=true,
+    BP_MapObjectTreasureBoxModel_C=true,
+    PalMapObjectPickupItemOnLevelModel=true,
+    PalMapObjectPalEggModel=true,
+    -- Aged-session census: dropped piles also exist without a base. Recheck
+    -- their current ID every scan; the same class carries legitimate base stock.
+    PalMapObjectDropItemModel=true,
+}
+local function container_camp_key(model, class_for)
+    local ok, guid = pcall(function() return model:GetBaseCampIdBelongTo() end)
+    if not ok then return nil, "scope_call" end
+    local id, why = read_guid(guid)
+    -- Never infer absence from a client's possibly pending replication.
+    -- The scheduler confirms authority before storage; reset clears auth.
+    if why == "scope_zero_guid" and auth == true then
+        local cls = class_for and class_for() or M.model_class(model)
+        if NO_BASE_WORLD_LOOT[cls] then return nil, "outside_camp_loot" end
+    end
+    return id, why
+end
 
-    return walk_chests(opts, function(m)
-        local cid
-        pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
+function M.camp_item_totals(camp_key, opts)
+    if not camp_key then return {}, 0, {complete=false,deduplicated=false,unknown_scope=1} end
+
+    return walk_chests(opts, function(m, class_for)
+        local cid, why = container_camp_key(m, class_for)
+        if cid == nil then return nil, why end
         return cid == camp_key
-    end)
+    end, "camp")
 end
 
 -- Every camp's chests in ONE walk, keyed by camp id.
@@ -1618,11 +1691,7 @@ end
 -- filter always did: crediting an unowned chest to some base would silently
 -- inflate its totals and suspend work that should still be running.
 function M.chest_totals_by_camp(opts)
-    return walk_containers(opts, function(m)
-        local cid
-        pcall(function() cid = M.guid_key(m:GetBaseCampIdBelongTo()) end)
-        return cid
-    end)
+    return walk_containers(opts, container_camp_key, "by_camp")
 end
 
 -- Every chest that answers, whatever camp owns it.
@@ -1631,15 +1700,13 @@ end
 -- only ever cover bases currently streamed in: an unloaded camp has no chest
 -- objects in memory at all, so there is nothing there to add up.
 function M.all_chest_totals(opts)
-    return walk_chests(opts, function() return true end)
+    return walk_chests(opts, function() return true end, "all")
 end
 
 -- Every camp-owned map object holding items, whatever its class.
 --
--- Diagnostic only. camp_item_totals above counts chests and nothing else, so
--- a resource sitting in some other container is invisible to a ceiling. This
--- is how to find out what those other containers actually are on a live base
--- instead of guessing at the class list.
+-- Diagnostic only. Shows the contents of camp-owned holders, including those
+-- omitted by configured class filters, without guessing a station allowlist.
 --
 -- Returns a list of { class = string, items = { [StaticId] = count } }.
 function M.camp_containers(camp_key)

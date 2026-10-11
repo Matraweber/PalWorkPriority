@@ -1,30 +1,106 @@
--- A widget we own, built from Lua, and the host every panel draws into.
---
--- Everything that went wrong with the old panel came from living in widgets
--- the game owns. Two crashes when the HUD rebuilt underneath it, a duplicate
--- when a menu was hidden rather than destroyed, arrow keys and clicks eaten
--- by an input mode we could not switch. Guarding harder never helped, because
--- the host was always someone else's.
---
--- So we make our own:
---
---   1. construct a UserWidget
---   2. construct a WidgetTree and hand it to that widget
---   3. construct a CanvasPanel and make it the tree's root
---   4. AddToViewport
---
--- Proven in game before anything was built on it. Nothing in Palworld holds a
--- reference to this widget, so nothing can free it under us, and a widget we
--- own is one the engine will give keyboard focus to. That second part is why
--- a search box is possible at all.
+-- Own the panel attachment and input handoff. Lua references do not root
+-- Unreal widgets: each callback resolves the owned root afresh before using
+-- its current tree. Closing detaches the panel and drops every widget handle.
 
 local log = require("log")
 local api = require("palapi")
 local trace = require("trace")
+local lifecycle = require("panel_lifecycle")
+local session = require("session")
+local life = lifecycle.new()
+local widget_path = nil
 
 local M = {}
 
 M.open = false
+M.generation = 0
+M.phase = "closed"
+M.native_cancel = false
+
+local function input_contract(fresh)
+    local ok, version, pending, bound = pcall(function()
+        return fresh.PWP_InputContract, fresh.PWP_CancelRequested, fresh.PWP_CancelBindingAttempted
+    end)
+    if not ok or (version ~= 2 and version ~= 3) or type(pending) ~= "boolean" or bound ~= true then return false end
+    local active_ok, active = pcall(function() return fresh:IsActivated() end)
+    return active_ok and active == true, pending
+end
+
+-- Only the Pal action-router contract needs activation. Plain/legacy shells
+-- keep their existing lifecycle. Never pass a delegate by value through Lua;
+-- binding and its callback live entirely in the generated Blueprint.
+local function native_active(fresh, on)
+    local known, version = pcall(function() return fresh.PWP_InputContract end)
+    if not known or (version ~= 2 and version ~= 3) then return true end
+    local ok, active = pcall(function()
+        if fresh:IsActivated() ~= on then
+            if on then
+                -- PalActivatableWidget defaults to CapturePermanently. Its
+                -- native router applies that config after activation and can
+                -- undo our GameAndUIEx cursor setup. Configure the current
+                -- owned widget before activation; never fight vanilla focus
+                -- with a periodic input-mode reset.
+                fresh.GameMouseCaptureMode = 0 -- EMouseCaptureMode::NoCapture
+                if fresh.GameMouseCaptureMode ~= 0 then return nil end
+                fresh.PWP_CancelRequested = false
+                fresh:ActivateWidget()
+            else
+                fresh:DeactivateWidget()
+            end
+        end
+        return fresh:IsActivated()
+    end)
+    return ok and active == on
+end
+
+-- The caller supplies the widget obtained in this callback's current tree.
+-- Clear before dispatch so a cancelled editor cannot become a second close.
+function M.take_cancel(fresh)
+    if not M.open then M.native_cancel = false return false end
+    local supported, pending = input_contract(fresh)
+    M.native_cancel = supported
+    if not supported then return false end
+    if pending == false then return false, true end
+    local ok = pcall(function() fresh.PWP_CancelRequested = false end)
+    if not ok then return true, false end
+    local still_supported, after = input_contract(fresh)
+    return true, still_supported and after == false
+end
+
+-- This is an engine-owned reference on the current shell, not a retained Lua
+-- wrapper. Only the amount editor participates in the native Escape preview.
+function M.set_amount_editor(editor, return_focus)
+    local _, _, fresh = M.resolve_owned()
+    if not fresh then return editor == nil end
+    local known, version = pcall(function() return fresh.PWP_InputContract end)
+    if not known or version ~= 3 then return true end -- Legacy/missing-pak shell.
+    local ok, result = pcall(function()
+        local restore_focus = false
+        if editor == nil and return_focus == true and M.open then
+            -- Hiding an editable field does not relinquish its Slate focus.
+            -- Return only our editor's focus to the still-open shell; a menu
+            -- that already took focus must keep it. All handles are fresh.
+            local read, owned = pcall(function()
+                local previous = fresh.PWP_AmountEditor
+                return fresh:IsActivated() == true
+                    and previous and previous:IsValid() == true
+                    and (previous:HasAnyUserFocus() == true
+                        or previous:HasFocusedDescendants() == true)
+            end)
+            restore_focus = read and owned == true
+        end
+        fresh.PWP_AmountEditor = editor
+        local bound = fresh.PWP_AmountEditor
+        if editor == nil then
+            if bound ~= nil and bound:IsValid() == true then return false end
+            if restore_focus then fresh:SetKeyboardFocus() end
+            return true
+        end
+        return bound ~= nil and bound:IsValid() == true
+            and bound:GetFullName() == editor:GetFullName()
+    end)
+    return ok and result == true
+end
 
 local widget = nil
 local tree = nil
@@ -114,15 +190,7 @@ local BP_UNUSED_ROWS = {
 -- Building
 -- ---------------------------------------------------------------------------
 
--- The controller the widget was built under, by name.
---
--- The UserWidget is outered to the PlayerController, which the engine
--- destroys on a world or level change. ClientRestart fires on the NEW
--- controller - after the old one is gone - so between those two moments the
--- clock keeps beating and, if the panel is open, host() would ask a widget
--- whose owner had already been freed whether it is still valid. A name is a
--- string and cannot dangle; comparing it costs one engine call and closes the
--- window without needing an unload hook.
+-- Owner name detects ordinary transitions, but is not lifetime evidence.
 local built_under = nil
 
 
@@ -144,42 +212,9 @@ local fitted = nil
 local owner_cached = nil
 local owner_at = -1
 
--- No cache at all. This was 1.0, then 5.0, and both were wrong.
---
--- The reasoning for widening it was that host() validates the canvas, the
--- tree and the widget anyway, so this was only an early warning. That is
--- backwards: those validations are alive() calls on wrappers stored since an
--- earlier frame, and alive() on a freed object IS the crash. This check is
--- the only thing that decides whether they are safe to make, so it cannot be
--- staler than they are.
---
--- A cache made the failure worse rather than rarer. The nil case - no
--- controller yet - was already handled. What a TTL adds is a window where the
--- controller has been freed and this still returns its NAME, so the names
--- match, the drop is skipped, and the widget outered to that freed controller
--- is asked whether it is valid. At a 100ms beat, five seconds of that is up
--- to fifty attempts per world transition.
---
--- The price used to be the argument for a TTL: one FindFirstOf per refresh at
--- 9.6ms. palapi now reaches the controller down the engine's own pointers
--- instead of searching for it, so the check costs almost nothing and there is
--- nothing left to trade the safety for.
+-- Only an owner label. The root is separately reacquired on every callback.
 local OWNER_TTL = 0.0
 
--- Measured, rejected, recorded so it is not retried (2026-08-24).
---
--- owner_name is the last real cost in a refresh, and what it truly asks is
--- "is the widget I am holding still real" - answered indirectly, by watching
--- the controller it was built under. StaticFindObject on the widget's own
--- path answers it directly, and the path does resolve, valid.
---
--- It is not cheaper. Run in shadow beside the owner check for a session, it
--- agreed on every verdict and cost 11ms against the owner check's 9.4 - the
--- path carries a subobject chain (Transient.Engine:GameInstance.Widget), so
--- there is no single hash bucket to hit and it walks. Shipping it would have
--- traded a 9ms check for an 11ms one AND changed the safety rule at the same
--- time. Left as a comment because "look up the widget by path" is the obvious
--- next idea, and it is worth knowing it was tried and timed.
 local function owner_name()
     local now = os.clock()
     if owner_at >= 0 and (now - owner_at) < OWNER_TTL then return owner_cached end
@@ -255,24 +290,35 @@ end
 --
 -- Objects come from FindAllOf inside this call and none is kept.
 local function sweep_panels(keep_name)
-    local n = 0
-    pcall(function()
+    local n, failed = 0, 0
+    local scanned = pcall(function()
         for _, w in ipairs(FindAllOf("UserWidget") or {}) do
             if alive(w) then
                 local full
                 pcall(function() full = w:GetFullName() end)
-                if type(full) == "string"
-                    and full:find("WBP_WorkRules", 1, true)
-                    and full ~= keep_name
-                then
-                    pcall(function() w:SetVisibility(1) end)
-                    pcall(function() w:RemoveFromParent() end)
-                    n = n + 1
+                local ours = type(full) == "string" and lifecycle.owners[full]
+                if not ours and type(full) == "string" and full:find("WBP_WorkRules", 1, true) then
+                    local class_name
+                    pcall(function() class_name = w:GetClass():GetFullName() end)
+                    ours = type(class_name) == "string" and class_name:find(BP_PACKAGE, 1, true) ~= nil
+                end
+                if ours and full ~= keep_name then
+                    local ok, result = pcall(function()
+                        if not native_active(w, false) then return false end
+                        if w:SetVisibility(1) == false then return false end
+                        return w:RemoveFromParent()
+                    end)
+                    if ok and result ~= false then
+                        lifecycle.owners[full] = nil
+                        n = n + 1
+                    else
+                        failed = failed + 1
+                    end
                 end
             end
         end
     end)
-    return n
+    return n, scanned and failed or failed + 1
 end
 
 -- Construct the blueprint widget and take its parts.
@@ -319,9 +365,8 @@ local function build_blueprint(class)
     -- is stored, and the one just built is skipped by name.
     local mine
     pcall(function() mine = made:GetFullName() end)
-    pcall(function()
-        sweep_panels(mine)
-    end)
+    local _, failed_detach = sweep_panels(mine)
+    if failed_detach > 0 then return give_up("bpduplicate", "an earlier panel could not detach") end
 
     local made_tree
     pcall(function() made_tree = made.WidgetTree end)
@@ -336,7 +381,8 @@ local function build_blueprint(class)
     end
 
     pcall(function() made:SetIsFocusable(true) end)
-    pcall(function() made:AddToViewport(9000) end)
+    local attached = pcall(function() made:AddToViewport(9000) end)
+    if not attached then return give_up("bpattach", "the blueprint could not attach") end
     -- Collapsed until the panel opens: this now runs at world load, and a
     -- work-rules screen greeting every spawn would be a bug with a viewport.
     pcall(function() made:SetVisibility(1) end)
@@ -382,6 +428,10 @@ local function build_blueprint(class)
     -- the pak: it is the panel that knows how wide the panel is, and a number
     -- baked into a cooked asset can only be changed by rebuilding it.
     widget, tree, canvas = made, made_tree, parts.Root
+    widget_path = mine and mine:match("%s(.+)$")
+    if not widget_path then return give_up("bppath", "the blueprint has no resolvable name") end
+    lifecycle.owners[mine] = true
+    M.generation = M.generation + 1
     M.parts = parts
     M.fit_width()
 
@@ -398,6 +448,10 @@ local function build_blueprint(class)
     -- controller rather than the widget, so it survived the swap. Focus does
     -- not, because focus was given to the widget that is now gone.
     if M.open then
+        if not native_active(made, true) then
+            M.hide()
+            return give_up("bpactivate", "the panel action router did not activate")
+        end
         pcall(function() made:SetVisibility(0) end)
         pcall(function() made:SetKeyboardFocus() end)
     end
@@ -425,10 +479,17 @@ end
 -- has to happen on the game thread, and a panel that opened while waiting for
 -- it would open on the wrong host.
 function M.prepare()
+    if not M.open then return end
+    local requested = life.generation
     if bp_state ~= "unasked" then return end
     bp_state = "asking"
 
     M.mod_class(BP_PACKAGE, BP_ASSET, function(class)
+        if requested ~= life.generation or not M.open then return end
+        if api.has_viewport and api.has_viewport() ~= true then
+            M.hide()
+            return
+        end
         if class == nil then
             bp_state = "absent"
             log.say("overlay: no blueprint widget in the pak, " ..
@@ -520,6 +581,11 @@ local function build_now()
     -- input mode is set.
     pcall(function() made:SetIsFocusable(true) end)
 
+    local _, failed_detach = sweep_panels()
+    if failed_detach > 0 then
+        warn_once("duplicate", "an earlier panel could not detach; refusing another attachment")
+        return false
+    end
     local shown = false
     pcall(function()
         made:AddToViewport(9000)
@@ -541,6 +607,10 @@ local function build_now()
     end
 
     widget, tree, canvas = made, made_tree, made_canvas
+    local full = made:GetFullName()
+    widget_path = full:match("%s(.+)$")
+    lifecycle.owners[full] = true
+    M.generation = M.generation + 1
     built_under = owner_name()
     return true
 end
@@ -588,96 +658,58 @@ local function hp_report(total, parts)
     hp_worst, hp_parts = 0, ""
 end
 
+-- Resolve the root afresh. A matching controller/name is not evidence that a
+-- wrapper retained by Lua survived collection or a world transition.
+function M.resolve_owned()
+    M.native_cancel = false
+    widget, tree, canvas = nil, nil, nil
+    M.parts = nil
+    if not widget_path then return nil end
+    local fresh
+    local ok = pcall(function()
+        -- Visible roots come from the current viewport, avoiding a full UObject
+        -- lookup on every refresh. Closed/detached or unsupported roots retain
+        -- the old resolver; an empty viewport is not proof they were destroyed.
+        if M.open then fresh = require('widget_lookup').owned(widget_path) end
+        if not alive(fresh) then fresh = StaticFindObject(widget_path) end
+    end)
+    if not ok or not alive(fresh) then return nil end
+    local fresh_tree, fresh_canvas
+    ok = pcall(function()
+        fresh_tree = fresh.WidgetTree
+        fresh_canvas = fresh_tree.RootWidget
+    end)
+    if not ok or not alive(fresh_tree) or not alive(fresh_canvas) then return nil end
+    widget, tree, canvas = fresh, fresh_tree, fresh_canvas
+    M.native_cancel = M.open and input_contract(fresh)
+    if bp_state == "hosted" then M.parts = collect_parts(fresh) end
+    return canvas, tree, widget
+end
+
 function M.host()
-    local hp_t0 = os.clock()
-    -- A different controller than the one this was built under means the
-    -- world moved. Everything is dropped without being touched.
-    -- A nil owner counts as moved, and that is the whole point.
-    --
-    -- The guard used to require now_owner ~= nil, which skipped the drop in
-    -- exactly the interval it was written for: the old PlayerController freed
-    -- and the new one not yet made. In that window there is no controller to
-    -- compare, so the check passed, and the next line asked a widget outered
-    -- to freed memory whether it was still valid. That is the crash, not a
-    -- guard against it, and it is the LONGER half of the transition.
+    if not M.open then return nil end
+    local started = os.clock()
     local now_owner = owner_name()
-    local hp_owner = os.clock() - hp_t0
-
+    if not now_owner then return nil end
     if built_under ~= nil and now_owner ~= built_under then
-        widget, tree, canvas = nil, nil, nil
-        M.parts = nil
-        -- With the parts, always. fitted names the width of a backdrop that
-        -- has just been let go of, and the next one comes out of the pak at
-        -- its baked 900. Left set, fit_width sees its own stale number still
-        -- matching M.width, returns early, and the panel draws 1110 of content
-        -- on a 900 slab for the rest of the session - which is precisely the
-        -- thing runtime sizing exists to stop.
+        widget_path, built_under = nil, nil
+        widget, tree, canvas, M.parts = nil, nil, nil, nil
         fitted = nil
-        -- Re-armed, so the next world's ClientRestart loads and builds again.
+        M.generation = M.generation + 1
         if bp_state == "hosted" then bp_state = "unasked" end
-        built_under = nil
-        -- The input mode goes back with it. Dropping the widget while the UI
-        -- mode was still set left the cursor forced on and the panel's own
-        -- open flag true, so reopening took two presses.
-        M.open = false
-        pcall(function() M.release_input() end)
     end
-
-    -- Nothing to build onto yet. Said plainly rather than falling through to
-    -- a construct that would be outered to nil.
-    if now_owner == nil then return nil end
-
-    local hp_t1 = os.clock()
-    if alive(widget) and alive(tree) and alive(canvas) then
-        local hp_t2 = os.clock()
-        -- Cheap on the settled path: one comparison unless the width moved.
+    if M.resolve_owned() then
         if M.parts then M.fit_width() end
-        local hp_now = os.clock()
-        hp_report((hp_now - hp_t0) * 1000, string.format(
-            "owner %.1f, checks %.1f, fit %.1f",
-            hp_owner * 1000, (hp_t2 - hp_t1) * 1000, (hp_now - hp_t2) * 1000))
+        hp_report((os.clock() - started) * 1000, "fresh root and tree (inclusive)")
         return canvas, tree, widget
     end
-
-    -- Dropped without touching them. Whatever they pointed at is gone, and
-    -- asking a freed widget whether it is valid is the crash rather than the
-    -- check for it.
-    widget, tree, canvas = nil, nil, nil
-    -- The parts go with the widget they came out of: handles into a tree that
-    -- was just let go of, and a flag that describes an engine object has to
-    -- share that object's lifetime.
-    M.parts = nil
-    fitted = nil
-
-    -- Ask again if nobody has, before giving up on the blueprint.
-    --
-    -- main.lua calls prepare() once at world load and does not hot reload, so
-    -- after "pwp reload" - which re-arms bp_state to unasked and drops
-    -- M.parts - nothing ever asked a second time. host() fell straight
-    -- through to the hand built canvas below, which has no named rows, so
-    -- use_row failed for every chrome row, tidy_rows collapsed all seven, and
-    -- the header drew onto the bare canvas at absolute coordinates: tabs,
-    -- title, subtitle, caption and column headings stacked on one line with
-    -- the lists still correctly placed below. It reads exactly like a layout
-    -- regression, which is how it was chased - reverting a commit reproduced
-    -- it, because the cause was the reload rather than the code.
-    --
-    -- prepare() returns immediately unless bp_state is "unasked", so this
-    -- cannot loop and cannot re-ask something already in flight. The answer
-    -- arrives through a callback that builds the widget and reassigns widget,
-    -- tree and canvas, so the next host() leaves by the fast path above and
-    -- ensure_root notices the canvas changed and rebuilds the panel's caches.
-    -- Until then this call keeps returning the hand built canvas, which is
-    -- what it did before and is still a working panel.
-    if bp_state == "unasked" then
-        pcall(function() M.prepare() end)
-    end
-
-    -- The blueprint widget is built at world load, inside the callback that
-    -- receives its class, and the alive(widget) fast path above returns it.
-    -- Reaching here means there is none this session - never built, given up,
-    -- or dropped with a world - so the hand built canvas takes over, which is
-    -- the canvas that has drawn this panel all along.
+    widget_path, fitted = nil, nil
+    if bp_state == "hosted" then bp_state = "unasked" end
+    if bp_state == "unasked" then M.prepare() end
+    -- prepare may answer synchronously and close on activation failure.
+    -- Do not rebuild a fallback after that close invalidated this opening.
+    if not M.open then return nil end
+    if M.resolve_owned() then return canvas, tree, widget end
     if not build() then return nil end
     return canvas, tree, widget
 end
@@ -829,7 +861,17 @@ function M.release_pawn()
     return "pawn input restored"
 end
 
+-- Preserve three states even if an integration getter throws. Unknown
+-- cannot authorize taking the cursor or focus away from a vanilla menu.
+function M.vanilla_ui()
+    local ok, value = pcall(function() return api.game_ui_active end)
+    if ok and type(value) == "boolean" then return value end
+    return nil
+end
+
 local function set_input_now(on)
+    local game_ui = M.vanilla_ui()
+    if not on and life.phase == "handoff" then game_ui = nil end
     local pc = api.player_controller()
     if not alive(pc) then return end
 
@@ -855,7 +897,7 @@ local function set_input_now(on)
             -- One condition for all three, which is what was wrong before:
             -- the cursor flag was guarded and the two statements that actually
             -- hid the pointer were not.
-            if api.game_ui_active ~= true then
+            if game_ui == false then
                 pc.bShowMouseCursor = cursor_was
             end
             cursor_was = nil
@@ -883,8 +925,10 @@ local function set_input_now(on)
         -- So when a menu of the game's own is open, its input mode is its
         -- business and this leaves it alone. With nothing open, GameOnly is
         -- still exactly right and still runs.
-        if api.game_ui_active ~= true then
-            pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+        local restored = true
+        if game_ui == false then
+            local ok, result = pcall(function() return lib:SetInputMode_GameOnly(pc, false) end)
+            restored = ok and result ~= false
         end
 
         -- And the focus, which the input mode does not carry.
@@ -928,22 +972,15 @@ local function set_input_now(on)
         -- Same condition: this yanks focus off EVERY widget, including one
         -- the game owns, which is a global assertion this module cannot make
         -- safely while someone else's menu is up.
-        if api.game_ui_active ~= true then
-            pcall(function() lib:SetFocusToGameViewport() end)
+        if game_ui == false then
+            local ok, result = pcall(function() return lib:SetFocusToGameViewport() end)
+            restored = restored and ok and result ~= false
         end
 
-        -- Cleared only when the route was actually given back.
-        --
-        -- This was unconditional, which quietly disarmed the one safety net
-        -- covering the case it sits next to: when the game has its own UI up
-        -- the three restores above are skipped ON PURPOSE, so the route is
-        -- still ours - and clearing the flag told watch_input there was
-        -- nothing to watch. The net was switched off exactly where it was
-        -- needed.
-        if api.game_ui_active ~= true then
-            input_route = nil
-        end
-        return
+        input_route = nil
+        life.route = nil
+        if restored then life.release = nil end
+        return restored
     end
 
     -- Five parameters:
@@ -985,9 +1022,9 @@ local function set_input_now(on)
     -- worked, and no amount of rebinding them could have fixed it.
     local shapes = {
         { "GameAndUIEx(pc, widget, 0, false, false)",
-          function() lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
+          function() return lib:SetInputMode_GameAndUIEx(pc, widget, 0, false, false) end },
         { "UIOnlyEx(pc, widget, 0, false)",
-          function() lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
+          function() return lib:SetInputMode_UIOnlyEx(pc, widget, 0, false) end },
     }
 
     if M.prefer_ui_only then
@@ -999,12 +1036,19 @@ local function set_input_now(on)
     pcall(function() suppress_pawn(true) end)
 
     for _, shape in ipairs(shapes) do
-        if pcall(shape[2]) then
+        local ok, result = pcall(shape[2])
+        if ok and result ~= false then
+            local identified, name, address = pcall(function()
+                return pc:GetFullName(), pc:GetAddress()
+            end)
+            life.input_owner = identified and type(name) == "string" and name ~= ""
+                and type(address) == "number" and math.tointeger(address) and address > 0
+                and {name = name, address = address, epoch = session.epoch} or nil
             if input_route ~= shape[1] then
                 input_route = shape[1]
                 log.debug("overlay input mode via " .. shape[1])
             end
-            return
+            return true
         end
     end
 
@@ -1060,7 +1104,7 @@ function M.fit_width()
     if fitted == M.width and fitted_h == want_h then return end
     if not alive(parts.Backdrop) then return end
 
-    local ok = pcall(function()
+    local ok, result = pcall(function()
         local slot = parts.Backdrop.Slot
         if slot then
             -- Size only. NOT position, and NOT alignment.
@@ -1081,10 +1125,11 @@ function M.fit_width()
             -- So the jump stays, knowingly. If it is ever worth another go,
             -- the answer is a shell that reserves its full height and lets the
             -- list scroll inside it, not arithmetic on the slot.
-            slot:SetSize({ X = M.width + 36, Y = want_h })
+            return slot:SetSize({ X = M.width + 36, Y = want_h })
         end
+        return false
     end)
-    if ok then
+    if ok and result ~= false then
         fitted, fitted_h = M.width, want_h
     end
 end
@@ -1107,6 +1152,7 @@ end
 -- conditional on M.open, because the state it exists to fix is one where those
 -- flags already disagree with the game.
 function M.force_release()
+    M.resolve_owned()
     local pc = api.player_controller()
     if not alive(pc) then return "no player controller" end
 
@@ -1157,13 +1203,17 @@ function M.force_release()
     local swept = sweep_panels()
 
     widget, tree, canvas = nil, nil, nil
+    widget_path = nil
     M.parts = nil
     fitted = nil
     built_under = nil
+    M.generation = M.generation + 1
     if bp_state == "hosted" then bp_state = "unasked" end
 
     cursor_was, input_route = nil, nil
-    M.open = false
+    M.open, M.phase = false, "closed"
+    life.phase, life.route = "closed", nil
+    life.generation = life.generation + 1
     return string.format(
         "input forced back to the game, %d panel widget(s) taken off the "
         .. "viewport", swept)
@@ -1177,17 +1227,29 @@ local function set_input(on)
 end
 
 local function show_now()
-    if M.host() == nil then
+    if api.has_viewport and api.has_viewport() ~= true then return false end
+    if M.phase == "close_failed" and not M.hide() then return false end
+    if M.open and M.resolve_owned() then return true end
+    life.release = nil
+    M.open, M.phase = true, "opening"
+    lifecycle.open(life)
+    if M.host() == nil or not M.open then
+        -- Keep close_failed/handoff when construction already closed itself.
+        if M.open then M.hide() end
         return false
     end
-
-    pcall(function() widget:SetVisibility(0) end)
-    set_input(true)
-
-    -- Focus after the mode switch, or the mode switch takes it back.
+    if not native_active(widget, true) then
+        warn_once("activate", "panel action routing could not activate")
+        M.hide()
+        return false
+    end
+    local ok = pcall(function() widget:SetVisibility(0) end)
+    if not ok then M.hide() return false end
+    if set_input(true) ~= true then M.hide() return false end
+    M.native_cancel = input_contract(widget)
+    life.route = input_route
     pcall(function() widget:SetKeyboardFocus() end)
-
-    M.open = true
+    M.phase = "open"
     return true
 end
 
@@ -1196,81 +1258,101 @@ function M.show()
 end
 
 function M.hide()
-    if alive(widget) then
-        -- Collapsed rather than removed. Removing would drop the whole tree
-        -- and everything panels have built into it, and building it again on
-        -- every open is how the old panel ended up with two of everything.
-        pcall(function() widget:SetVisibility(1) end)
+    M.native_cancel = false
+    if not M.open and (M.phase == "closed" or M.phase == "handoff") then return false end
+    M.open = false
+    lifecycle.close(life, M.vanilla_ui())
+    M.phase = life.phase
+    -- No hidden backdrop remains attached for photo mode to reveal. Resolve
+    -- through the current tree, detach, then forget every collectable handle.
+    local _, _, fresh = M.resolve_owned()
+    local removed = true
+    if fresh then
+        local name = fresh:GetFullName()
+        local detached, result = pcall(function()
+            if not native_active(fresh, false) then return false end
+            local known, version = pcall(function() return fresh.PWP_InputContract end)
+            if known and version == 3 then
+                local cleared = pcall(function() fresh.PWP_AmountEditor = nil end)
+                if not cleared then warn_once("editorclear", "editor reference could not clear; detaching its inactive panel") end
+            end
+            if fresh:SetVisibility(1) == false then return false end
+            return fresh:RemoveFromParent()
+        end)
+        if detached and result ~= false then lifecycle.owners[name] = nil end
+        removed = detached and result ~= false
+    end
+    life.release = nil
+    if input_route and life.input_owner and life.phase == "closed" and M.vanilla_ui() == false then
+        life.release = {owner = life.input_owner, generation = M.generation + 1, remaining = 3}
     end
     set_input(false)
-    M.open = false
+    widget, tree, canvas, M.parts = nil, nil, nil, nil
+    if removed then widget_path = nil end
+    built_under, fitted = nil, nil
+    M.generation = M.generation + 1
+    if bp_state ~= "absent" then bp_state = "unasked" end
+    if not removed then
+        M.phase = "close_failed"
+        warn_once("detach", "panel detachment failed; another panel will not be opened over it")
+    end
+    return removed
 end
 
--- Take the cursor back when something else has helped itself to it.
---
--- Measured on 24 August, over an open panel: Esc opens the game's own menu and
--- changes nothing here, cursor included. The SECOND Esc, the one that closes
--- that menu, sets bShowMouseCursor to false - and set_input_now runs on show
--- and on hide and at no other time, so nothing noticed. The panel was left on
--- screen holding a UI-only input route with no pointer to drive it, and the
--- only way back was to close and reopen it.
---
--- The condition is deliberately "open AND the cursor is gone", not "open".
--- That same measurement is what makes it safe: while the game's menu is up the
--- cursor is ON, so this cannot be true then, and this cannot end up fighting
--- that menu for the pointer. A blunter re-assert on every tick would, and
--- would trade a lost cursor for an unusable pause menu.
---
--- Polled rather than hooked because there is no event for "someone took your
--- input mode away". Once a second, off the refresh that already runs.
--- The panel is shut but the game is still in the panel's input mode.
---
--- Called on the beat, and it exists because chasing the paths did not work.
--- hide() releases, reset() releases, host()'s drop releases, and the state
--- still came back twice in one session: cursor forced on, route UI-only,
--- cursor_was nil so nothing could put it back. A player cannot click the
--- pause menu, cannot open their inventory, and only Escape does anything,
--- because Escape is a raw key and everything else goes through focus.
---
--- Rather than find the one remaining door, this notices the room is wrong.
--- The panel being shut while the cursor is forced on is a state that has no
--- legitimate reason to exist, so whenever it lasts longer than a beat it is
--- corrected. If a path is still leaking, this bounds the damage to one tick
--- instead of the rest of the session.
---
--- Deliberately NOT keyed on cursor_was, which is exactly the record that goes
--- missing when a module is swapped mid-open, and therefore cannot be trusted
--- to decide whether there is anything to undo.
+-- Retry only an explicitly pending restoration from our own failed close.
+-- Cursor visibility or a closed panel alone never authorizes input changes.
+-- The scalar record binds controller name/address, session and generation;
+-- no engine handle survives callbacks. There are at most three retries.
+-- Fresh known gameplay state is required before each write. Unknown state,
+-- vanilla UI or lost ownership permanently cancels this record. An old
+-- callback may never clear a replacement record created during reentrancy.
+function M.recovery_controller(pending)
+    local ok, pc = pcall(api.player_controller)
+    local identified, name, address = pcall(function()
+        if alive(pc) then return pc:GetFullName(), pc:GetAddress() end
+    end)
+    if not ok or not identified or name ~= pending.owner.name
+        or address ~= pending.owner.address or session.epoch ~= pending.owner.epoch
+        or life.release ~= pending or M.open or life.phase ~= "closed"
+        or M.generation ~= pending.generation or M.vanilla_ui() ~= false then
+        if life.release == pending then life.release = nil end
+        return nil
+    end
+    return pc
+end
+
 function M.watch_input()
-    if M.open then return false end
-
-    -- OUR route, not the cursor.
-    --
-    -- The first version of this checked whether the cursor was on while the
-    -- panel was shut, and that is wrong in a way that would have been much
-    -- worse than the bug: the game turns the cursor on for its own pause menu,
-    -- inventory and map, so it would have switched the cursor off underneath
-    -- every one of them.
-    --
-    -- input_route is set only by this module, when it applies a UI mode, and
-    -- cleared only when it releases one. Non-nil while the panel is shut means
-    -- exactly one thing - we took the input and did not give it back - and it
-    -- is never true of the game showing its own UI.
-    if input_route == nil then return false end
-
-    local pc = api.player_controller()
-    if not alive(pc) then return false end
-
-
-    log.warn("the panel is shut but the game was still in its input mode, " ..
-        "putting it back. If this repeats, say so - it means a close path " ..
-        "is still leaking.")
-    M.force_release()
-    return true
+    local pending = life.release
+    if not pending then return false end
+    if pending.remaining <= 0 or not M.recovery_controller(pending) then
+        if life.release == pending then life.release = nil end
+        return false
+    end
+    pending.remaining = pending.remaining - 1
+    local got, lib = pcall(api.cdo, "/Script/UMG.Default__WidgetBlueprintLibrary")
+    -- Resolving the library and each native call can run other code. Recheck
+    -- authority after every boundary and before the next input write.
+    local pc = M.recovery_controller(pending)
+    if not pc then return false end
+    local restored = false
+    if got and lib then
+        local ok, result = pcall(function() return lib:SetInputMode_GameOnly(pc, false) end)
+        restored = ok and result ~= false
+        pc = M.recovery_controller(pending)
+        if not pc then return false end
+        if restored then
+            ok, result = pcall(function() return lib:SetFocusToGameViewport() end)
+            restored = ok and result ~= false
+            if not M.recovery_controller(pending) then return false end
+        end
+    end
+    if restored or pending.remaining <= 0 then if life.release == pending then life.release = nil end end
+    return restored
 end
 
 -- Apply the current preference now, without closing anything.
 function M.reapply_input()
+    if not M.resolve_owned() then return "the panel is unavailable" end
     if not M.open then return "the panel is shut" end
     input_route = nil
     pcall(function() set_input_now(true) end)
@@ -1298,14 +1380,14 @@ function M.watch_cursor()
 end
 
 function M.reassert_input()
-    if not M.open then return false end
-
+    if not M.open or M.vanilla_ui() ~= false then return false end
     local pc = api.player_controller()
     if not alive(pc) then return false end
 
     local cursor
     pcall(function() cursor = pc.bShowMouseCursor end)
     if cursor ~= false then return false end
+    if not M.resolve_owned() then return false end
 
     -- set_input_now leaves cursor_was alone when it is already set, so the
     -- state to restore on close is still the one captured when the panel
@@ -1319,6 +1401,12 @@ end
 
 -- A world switch takes every wrapper with it. Dropped without touching them.
 function M.reset()
+    M.native_cancel = false
+    life.generation = life.generation + 1
+    life.phase, life.route = "closed", nil
+    M.phase = "closed"
+    M.generation = M.generation + 1
+    widget_path = nil
     -- Put the game back BEFORE forgetting how.
     --
     -- This used to clear cursor_was and input_route and set M.open = false
@@ -1416,7 +1504,7 @@ end
 -- A callback rather than a return value, because that is what asking on
 -- another thread costs and pretending otherwise is what caused the hang.
 function M.mod_class(package, asset, done)
-    ExecuteInGameThread(function()
+    ExecuteInGameThread(session.guard(function()
         local reg = helpers()
         if reg == nil then return done(nil) end
 
@@ -1432,7 +1520,7 @@ function M.mod_class(package, asset, done)
         if class ~= nil then pcall(function() ok = class:IsValid() end) end
 
         done(ok and class or nil)
-    end)
+    end))
 end
 
 -- ---------------------------------------------------------------------------
@@ -1453,6 +1541,7 @@ end
 -- name is exactly what has taken this game down before, so a diagnostic is the
 -- last place to spend that risk.
 function M.input_report()
+    M.resolve_owned()
     local pc = api.player_controller()
 
     local cursor = "no controller"
@@ -1467,6 +1556,16 @@ function M.input_report()
     log.say("  bShowMouseCursor: " .. cursor)
     log.say("  cursor_was:       " .. tostring(cursor_was))
     log.say("  input_route:      " .. tostring(input_route))
+    if widget then
+        local ok, detail = pcall(function()
+            local editor = widget.PWP_AmountEditor
+            return string.format("contract=%s pending=%s held=%s focus=%s descendants=%s editor=%s",
+                tostring(widget.PWP_InputContract), tostring(widget.PWP_CancelRequested),
+                tostring(widget.PWP_EditorEscapeHeld), tostring(widget:HasAnyUserFocus()),
+                tostring(widget:HasFocusedDescendants()), tostring(editor and editor:IsValid()))
+        end)
+        log.say("  native editor:    " .. (ok and detail or "unavailable"))
+    end
 
     return string.format("open=%s cursor=%s route=%s",
         tostring(M.open), cursor, tostring(input_route))

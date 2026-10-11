@@ -1,0 +1,11 @@
+local input=require('stand_input')
+local rows={{key='a',work=1},{key='a',work=4},{key='b',work=2},{key='b',work=4}}
+local selected=input.select(rows,nil,'right')
+assert(selected.key=='a' and selected.work==4)
+selected=input.select(rows,selected,'down')
+assert(selected.key=='b' and selected.work==4)
+selected=input.select(rows,selected,'left')
+assert(selected.key=='b' and selected.work==2)
+selected=input.select(rows,selected,'up')
+assert(selected.key=='a' and selected.work==1)
+assert(input.select({},selected,'down')==nil)

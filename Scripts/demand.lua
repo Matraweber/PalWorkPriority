@@ -18,22 +18,10 @@ local log = require("log")
 
 local M = {}
 
--- How long a job survives without another pulse.
---
--- The most delicate number here. Work types announce at wildly different
--- rates: on one base all 77 gathering works pulsed while only 2 of 16
--- lumbering works ever did, so a short window starved lumbering entirely.
---
--- The real end-of-job signal is the work OBJECT dying, checked separately and
--- pruned within a pass. This is only the backstop, so it can afford to be
--- generous: overstating demand costs a fenced pal, understating it stops the
--- mod governing that work type at all.
--- Shorter now that it is the only pruning there is.
---
--- A finished job simply stops pulsing, so age is the honest signal that it is
--- over. Three minutes was tolerable while a validity check caught the dead
--- ones sooner; as the sole test it would count finished work as wanted for far
--- too long and over-assign against it.
+-- A recent request is an estimate of vacant work, not proof that a job is
+-- still ready, occupied or completed. No stored work object is dereferenced;
+-- age only expires the request estimate. Assignment retention uses separate
+-- evidence for the individual assignment in scheduler_plan.lua.
 M.FRESH_SECONDS = 45
 
 M.pulses = 0                -- total ever seen
@@ -41,12 +29,9 @@ M.pulses = 0                -- total ever seen
 -- announced itself once at world load and never again" from "it re-announces
 -- constantly", which decides whether standing work can be seen at all.
 M.pulses_by_value = {}
--- When the hook last fired, os.clock(). A pulse is authority-only by
--- construction (_ServerInternal), so "a pulse arrived after this spawn" is a
--- free definite yes for latch_authority - main.lua wires it in through
--- api.set_authority_hint, fenced by the spawn timestamp so a hosted
--- session's pulses can never vouch for a joined one. The pulse COUNTERS are
--- deliberately not used as evidence: they are cumulative and never reset.
+-- Diagnostic timestamp of a validated work pulse. main must not use it as
+-- authority evidence until the callback's native world/session association is
+-- verified. Cumulative counters cannot establish the current session's role.
 M.last_pulse_at = nil
 -- Whether the hook is in place. This, NOT the pulse count, is what says
 -- demand can be trusted: a base whose pals are all asleep produces no pulses
@@ -54,16 +39,49 @@ M.last_pulse_at = nil
 -- every work object and fence the whole roster onto imaginary night work.
 M.hooked = false
 
-local jobs = {}             -- work key -> { camp, value, seen, work }
+local jobs = {}             -- work key -> plain { camp, value, seen } only
 
 function M.reset()
     jobs = {}
+    M.last_pulse_at = nil
 end
 
 local function work_key(w)
     local key = api.guid_key(api.work_id(w))
     if key then return key end
-    return api.work_full_name(w)
+    local name = api.work_full_name(w)
+    if type(name) == "string" and name ~= "" and name ~= "<unknown work>" then
+        return name
+    end
+    return nil
+end
+
+-- Accept plain pulse evidence. Missing fields may be repaired by a later
+-- pulse, but an unreadable field never erases a previously verified one.
+-- Conflicting known camp/type data is treated as a new identity generation.
+function M.observe(key, camp, value, now)
+    if type(key) ~= "string" or key == "" then return false end
+    if type(camp) ~= "string" or camp == "" then camp = nil end
+    if type(value) ~= "number" or math.tointeger(value) == nil or value <= 0 then
+        value = nil
+    end
+    local known = jobs[key]
+    if known and ((camp and known.camp and camp ~= known.camp)
+        or (value and known.value and value ~= known.value)) then
+        known = nil
+    end
+    if not known then
+        known = {}
+        jobs[key] = known
+        M.pulses = M.pulses + 1
+    end
+    if value and not known.value then
+        M.pulses_by_value[value] = (M.pulses_by_value[value] or 0) + 1
+    end
+    known.camp = camp or known.camp
+    known.value = value or known.value
+    known.seen = now or os.time()
+    return true
 end
 
 -- Registering the hook and receiving from it are different things. The hook
@@ -93,24 +111,19 @@ function M.install()
                 local _b = log.count("hook: demand")
                 local _t0 = log.perf and os.clock() or nil
 
-                -- Every fire counts as evidence, repeat pulses included.
-                M.last_pulse_at = os.clock()
-
-                pcall(function()
+                local read_ok, read_error = pcall(function()
                     local w = Work:get()
                     if not api.valid(w) then return end
 
                     local key = work_key(w)
                     if key == nil then return end
 
-                    -- A repeat pulse for a job already known only refreshes
-                    -- it. Resolving its type again every few seconds would be
-                    -- pure waste, and the type cannot change.
+                    -- Resolve missing data again. The original fast path
+                    -- permanently retained nil camp/type fields from a pulse
+                    -- received before world data finished loading.
                     local known = jobs[key]
                     if known then
-                        known.seen = os.time()
                         log.count("hook: demand repeat pulse")
-                        return
                     end
 
                     local camp
@@ -133,18 +146,15 @@ function M.install()
                     --
                     -- Everything read from it is read now, while the engine
                     -- has just handed it over and it is certainly alive.
-                    jobs[key] = {
-                        camp = camp,
-                        value = api.work_suitability(w),
-                        seen = os.time(),
-                    }
-                    M.pulses = M.pulses + 1
-                    local v = jobs[key].value
-                    if v then
-                        M.pulses_by_value[v] = (M.pulses_by_value[v] or 0) + 1
+                    if M.observe(key, camp, api.work_suitability(w)) then
+                        -- Only a validated work pulse may support authority.
+                        -- reset() clears this evidence at a session boundary.
+                        M.last_pulse_at = os.clock()
                     end
                 end)
-
+                if not read_ok then
+                    log.warn("required-work pulse could not be read: " .. tostring(read_error))
+                end
                 if _t0 then _b.ms = _b.ms + (os.clock() - _t0) * 1000 end
             end)
     end)
@@ -159,32 +169,36 @@ function M.install()
     return M.hooked
 end
 
--- Prunes finished jobs and returns { [work value] = count } for one camp,
--- plus how many live jobs are known overall. A job whose camp will not read
--- counts for every camp: placing it twice beats losing it.
-function M.for_camp(camp_key)
-    local now = os.time()
+-- Recent pulses are evidence of a request, not proof of current occupancy or
+-- completion. Return only the requested camp's ready estimate. Unknown scope
+-- is quarantined and reported separately, never broadcast to every camp.
+function M.for_camp(camp_key, at)
+    local now = at or os.time()
     local out, live = {}, 0
+    local evidence = { source = "recent pulses", ready = out, unknown_scope = 0,
+        unknown_type = 0, jobs = {} }
 
     for key, e in pairs(jobs) do
-        local dead = (now - e.seen) > M.FRESH_SECONDS
-
-        -- The riskiest read in the mod, and the comment below says why
-        -- without meaning to: this expects the object to have died, then
-        -- asks it whether it is valid. IsValid is a member call, so on a
-        -- freed object the question is the crash.
+        local dead = now < e.seen or (now - e.seen) > M.FRESH_SECONDS
 
         if dead then
             jobs[key] = nil
         else
-            live = live + 1
-            if e.value and (e.camp == nil or camp_key == nil or e.camp == camp_key) then
-                out[e.value] = (out[e.value] or 0) + 1
+            if e.camp == nil then
+                evidence.unknown_scope = evidence.unknown_scope + 1
+            elseif camp_key ~= nil and e.camp == camp_key then
+                live = live + 1
+                if e.value then
+                    out[e.value] = (out[e.value] or 0) + 1
+                    evidence.jobs[key] = { value = e.value, seen = e.seen }
+                else
+                    evidence.unknown_type = evidence.unknown_type + 1
+                end
             end
         end
     end
 
-    return out, live
+    return out, live, evidence
 end
 
 return M

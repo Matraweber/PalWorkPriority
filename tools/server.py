@@ -1,7 +1,7 @@
 """Run the headless test server.
 
     python tools/server.py start      boot it, wait for the mod to come up
-    python tools/server.py stop
+    python tools/server.py stop       graceful local REST shutdown; never force kill
     python tools/server.py status
     python tools/server.py freshworld re-copy the singleplayer world (server off)
 
@@ -20,8 +20,12 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
+import re
+import uuid
 
 from paths import resolve
+from stress import LogTail, StressFailure, configured_executables, select_processes
 
 # Found rather than written down.
 #
@@ -49,13 +53,24 @@ SP_WORLD = os.environ.get("PWP_SP_WORLD") or _newest_sp_world()
 
 
 def ps(cmd):
-    return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd],
-                          capture_output=True, text=True).stdout.strip()
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                            capture_output=True, text=True, timeout=15,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "server control command failed")
+    return result.stdout.strip()
+
+
+def quoted(value):
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def running(p):
-    return ps("if (Get-Process %s -ErrorAction SilentlyContinue) {'y'} else {'n'}"
-              % p["process"]).endswith("y")
+    return bool(server_processes(p))
+
+
+def server_processes(p):
+    return select_processes(configured_executables(dict(p, server=True), include_launcher=True), query=ps)
 
 
 def read(path):
@@ -65,43 +80,60 @@ def read(path):
         return ""
 
 
+def wait_ready(tail, alive, timeout=300, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + timeout
+    while clock() < deadline:
+        if not alive():
+            raise StressFailure("server process exited before authority readiness")
+        for line in tail.read():
+            if "PWP_READY " not in line:
+                continue
+            fields = dict(pair.split("=", 1) for pair in line.split("PWP_READY ", 1)[1].split() if "=" in pair)
+            if fields.get("role") != "authority" or fields.get("settings") != "available":
+                raise StressFailure("server could not prove authority and available settings")
+            if not fields.get("session", "").isdigit() or not fields.get("version"):
+                raise StressFailure("malformed readiness marker")
+            return fields
+        sleep(min(1, max(0, deadline-clock())))
+    raise StressFailure("no new authority-ready marker; a Lua boot banner is insufficient")
+
+
 def start(p):
-    if running(p):
-        print("already running")
-        return 0
-    # Truncate the mod log so "this session" is unambiguous.
     try:
-        io.open(p["log"], "w").close()
-    except OSError:
-        pass
-    ps("Start-Process -FilePath '%s' -WorkingDirectory '%s'"
-       % (p["exe"], p["root"]))
-    print("server starting...")
-    for _ in range(60):
-        time.sleep(5)
-        log = read(p["log"])
-        if "loaded (enabled" in log:
-            print("mod is up:")
-            for ln in log.splitlines()[-3:]:
-                print("  " + ln)
-            return 0
-        if not running(p):
-            print("server process exited during boot; UE4SS.log tail:")
-            for ln in read(p["ue4ss_log"]).splitlines()[-8:]:
-                print("  " + ln)
+        if running(p):
+            print("already running; fresh authority readiness is unverified")
             return 1
-    print("timed out waiting for the mod to announce itself; log tail:")
-    for ln in read(p["ue4ss_log"]).splitlines()[-8:]:
-        print("  " + ln)
-    return 1
+        # Do not start a test we already know cannot request normal shutdown.
+        # Live listener ownership and process exit are still checked by stop().
+        from server_control import rest_config
+        rest_config(p["root"])
+        # Keep history and consume only bytes appended after this launch.
+        tail = LogTail(Path(p["log"]))
+        ps("Start-Process -WindowStyle Hidden -FilePath %s -WorkingDirectory %s -ErrorAction Stop"
+           % (quoted(p["exe"]), quoted(p["root"])))
+        print("server starting...")
+        ready = wait_ready(tail, lambda: running(p))
+        # A launcher alone cannot establish that the server is still alive.
+        if not select_processes(configured_executables(dict(p, server=True)), query=ps):
+            raise StressFailure("server image is not running after the readiness marker")
+        print("authority ready, version %s, session %s; run stress to verify completed passes"
+              % (ready["version"], ready["session"]))
+        return 0
+    except (StressFailure, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        print("server acceptance failed: " + str(exc))
+        return 1
 
 
 def stop(p):
-    ps("Get-Process %s -ErrorAction SilentlyContinue | Stop-Process -Force"
-       % p["process"])
-    time.sleep(2)
-    print("stopped" if not running(p) else "still running")
-    return 0
+    from server_control import graceful_stop
+    try:
+        targets = server_processes(p)
+        graceful_stop(p, targets, processes=lambda: server_processes(p), shell=ps)
+        print("graceful server exit observed; verify saved data separately" if targets else "already stopped")
+        return 0
+    except (StressFailure, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        print("server stop failed: " + str(exc))
+        return 1
 
 
 def status(p):
@@ -119,12 +151,26 @@ def freshworld(p):
     if running(p):
         print("stop the server first")
         return 1
-    dst = os.path.join(p["root"], "Pal", "Saved", "SaveGames", "0",
-                       os.path.basename(SP_WORLD))
-    if os.path.isdir(dst):
-        shutil.rmtree(dst)
-    shutil.copytree(SP_WORLD, dst)
-    print("world re-copied from the singleplayer save (original untouched)")
+    if not SP_WORLD or not (Path(SP_WORLD) / "Level.sav").is_file():
+        raise ValueError("no valid singleplayer source world found")
+    base = (Path(p["root"]) / "Pal" / "Saved" / "SaveGames" / "0").resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    source = Path(SP_WORLD).resolve()
+    dst = (base / source.name).resolve()
+    if dst.parent != base or dst == source or base in source.parents:
+        raise ValueError("world target/source is outside the isolated copy contract")
+    suffix = uuid.uuid4().hex
+    staging, backup = base / (".copy-" + suffix), base / (dst.name + ".backup-" + suffix)
+    shutil.copytree(source, staging)
+    if dst.exists():
+        dst.rename(backup)
+    try:
+        staging.rename(dst)
+    except OSError:
+        if backup.exists() and not dst.exists():
+            backup.rename(dst)
+        raise
+    print("world copied; source unchanged and any previous test world retained as a backup")
     return 0
 
 

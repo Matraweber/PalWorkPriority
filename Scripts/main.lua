@@ -1,8 +1,7 @@
 -- Pal Work Priority
 --
 -- Numeric work priorities for base pals, driven from config.lua. Priority 1
--- work is staffed before priority 5 work, and within a priority the best
--- suited pal takes the job.
+-- is highest; balanced and strict modes differ in how they distribute seats.
 --
 -- The mod does not hand pals jobs. It decides which work types each pal may
 -- do right now and switches the rest off through
@@ -29,9 +28,31 @@ local overlay = require("overlay")
 local demandidx = require("demand")
 local pad = require("pad")
 local darnmenu = require("darnmenu")
+local session = require("session")
+local configuration = require("configuration")
+local measurement = require("measurement")
+
+-- Each row covers a complete function; nested rows are explicitly inclusive.
+for _, entry in ipairs({
+    {scheduler,"run_pass","scheduler: complete"},
+    {api,"base_camps","api: camp enumeration"},
+    {api,"latch_authority","api: authority resolution"},
+    {api,"owned_network_component","api: owned component resolution"},
+    {api,"camp_item_totals","storage: camp totals"},
+    {api,"chest_totals_by_camp","storage: bucketed totals"},
+    {api,"all_chest_totals","storage: all totals"},
+    {ui,"refresh","stand: complete refresh"},
+    {panel,"refresh","panel: complete refresh"},
+    {panel,"hover_tick","panel: hover and input"},
+    {panel,"fill_tick","panel: incremental fill"},
+    {overlay,"host","overlay: host resolution"},
+    {icons,"get","icons: get"},
+    {pad,"drive","pad: complete drive"},
+    {net,"storage_tick","network storage: complete"},
+}) do measurement.bind(entry[1],entry[2],entry[3]) end
 
 local MOD_NAME = "Pal Work Priority"
-local VERSION = "0.4.1"
+local VERSION = "0.5.0-rc1"
 
 -- ---------------------------------------------------------------------------
 -- Paths
@@ -93,25 +114,62 @@ if net.WORKS ~= #workdefs.ORDER then
         ". Update net.WORKS or the grid will be missing a column.")
 end
 
-store.load(DIR .. "priorities.txt")
-caps.load(DIR .. "caps.txt")
+-- Checked local async trial only. Release packages never contain this launcher.
+-- Run inside this Lua state so Caps/Store and the recovery gate are shared.
+local async_trial
+do
+    -- Presence alone fences an interrupted offline cutover. Never read, execute
+    -- or remove this marker, and do not inspect either settings recovery set or
+    -- the trial launcher until absence has been positively established.
+    local cutover_checked, cutover_marker, _, cutover_code = pcall(io.open, DIR .. ".settings-cutover", "rb")
+    if cutover_checked and cutover_marker then pcall(function() cutover_marker:close() end) end
+    if not cutover_checked or cutover_marker or cutover_code ~= 2 then
+        local gate = require('settings_gate')
+        local token = gate.acquire()
+        if token then gate.require_restart(token) end
+        log.error("settings cutover marker exists or is unreadable; settings fenced until recovery and restart. " ..
+            "Preserve .settings-cutover; do not remove it to bypass recovery.")
+    else
+    store.load(DIR .. "priorities.txt")
+    caps.load(DIR .. "caps.txt")
+    local marker, marker_error, marker_code = io.open(DIR .. "async-trial/launch.lua", "rb")
+    if marker then
+        local closed = marker:close()
+        local ok, result = pcall(function()
+            assert(closed == true, "trial launcher close failed")
+            return assert(loadfile(DIR .. "async-trial/launch.lua"))()
+        end)
+        if ok and type(result) == "table" and type(result.transition) == "function" then
+            async_trial = result
+        else
+            -- A launch failure must never silently resume obsolete legacy writes.
+            if not require('settings_gate').blocked() then require('settings_gate').acquire() end
+            log.error("async trial unavailable; settings fenced: " .. tostring(result))
+        end
+    elseif marker_code ~= 2 then
+        if not require('settings_gate').blocked() then require('settings_gate').acquire() end
+        log.error("async trial presence is unknown; settings fenced: " .. tostring(marker_error))
+    else
+        -- A missing launcher is not evidence that legacy files are current.
+        -- Checked trial installers retain this receipt before journal admission.
+        -- Never execute it or interpret its contents as rollback authorization.
+        local checked, receipt, _, receipt_code = pcall(io.open, DIR .. "async-trial/receipt.lua", "rb")
+        if receipt and checked then pcall(function() receipt:close() end) end
+        if not checked or receipt or receipt_code ~= 2 then
+            local gate = require('settings_gate')
+            local token = gate.acquire()
+            if token then gate.require_restart(token) end
+            log.error("async trial launcher missing but recovery receipt exists or is unreadable; " ..
+                "settings fenced. Preserve journals and restore the checked trial before restarting; " ..
+                "do not delete its receipt to bypass recovery.")
+        end
+    end
+    end
+end
 
--- When this process last spawned into a world, and the authority evidence
--- built on it. A demand pulse can only be minted by the machine running the
--- scheduler, so "a pulse arrived after the most recent spawn" proves this
--- machine is the authority without a single engine call. The fence is
--- stamped on EVERY spawn (ClientRestart below), never only on world changes:
--- joining a server always spawns, so pulses minted while hosting can never
--- vouch for the joined session - which is the exact stale-true scenario the
--- per-pass latch probe exists to kill.
-local spawn_at = nil
-
-api.set_authority_hint(function()
-    if spawn_at == nil then return nil end
-    local at = demandidx.last_pulse_at
-    if at ~= nil and at > spawn_at then return true end
-    return nil
-end)
+-- Timestamp-only evidence cannot bind a delayed native callback to a connection.
+-- Fresh world/function probes remain until native event identity is verified.
+api.set_authority_hint(nil)
 
 -- ---------------------------------------------------------------------------
 -- Config
@@ -263,42 +321,25 @@ local function load_config()
     -- change made with pwp dry / mode / cap / scope, put the shipped values
     -- back, printed "config reloaded", and never once picked up an edit to
     -- config.lua - which the file's own header tells the user it does.
-    local loaded
-    -- Text only. config.lua is a literal table and has no business
-    -- being bytecode, and mode "bt" would load it if it were.
-    -- Text only AND no environment. config.lua is a literal table and
-    -- needs nothing from _G; mode "bt" alone would still have loaded
-    -- bytecode, and _ENV = _G still handed a chunk io and os.execute.
-    local chunk, load_err = loadfile(SCRIPT_DIR .. "config.lua", "t", {})
-
-    if chunk then
-        local ok_chunk, result = pcall(chunk)
-        if not ok_chunk or type(result) ~= "table" then
-            log.error("config.lua failed to load: " .. tostring(result))
-            return false
-        end
-        loaded = result
-    else
-        -- Only if the file cannot be read at all. Keeps first boot working if
-        -- the path is ever wrong, at the cost of the staleness described above.
-        log.warn("could not read config.lua (" .. tostring(load_err) ..
-            "), falling back to the compiled copy")
-        package.loaded["config"] = nil
-        local ok_req, result = pcall(require, "config")
-        if not ok_req or type(result) ~= "table" then
-            log.error("config.lua failed to load: " .. tostring(result))
-            return false
-        end
-        loaded = result
+    local loaded, load_err, fresh = configuration.load(DIR, SCRIPT_DIR)
+    if not loaded then
+        log.error("user config unavailable: " .. tostring(load_err))
+        return false
     end
+    if fresh and store.state == "missing" then store.baseline = true end
 
     -- Whatever the player set in DarnMenu, on top of config.lua and before
     -- validate sees it, so a value from the menu is checked by exactly the
     -- same rules as a value typed into the file. Absent DarnMenu, or absent a
     -- saved file, this changes nothing.
     pcall(function() darnmenu.apply(loaded) end)
-
+    local valid_cfg, cfg_error = configuration.validate(loaded)
+    if not valid_cfg then
+        log.error("configuration rejected; previous settings retained: " .. tostring(cfg_error))
+        return false
+    end
     cfg = validate(loaded)
+    caps.configure(cfg)
     log.set_level(cfg.log_level)
 
     -- Written on every load, so an edit to the schema reaches the menu without
@@ -346,15 +387,17 @@ local function pass_body()
             -- of the seven ways a pass can stop and wrong for the rest.
             log.say(pass_reason .. ": " .. stats.blocked_reason)
         elseif pass_explicit then
-            log.say(pass_reason .. ": no base camp loaded. Camps only exist while " ..
-                "streamed in, so stand inside your base and try again.")
+            log.say(pass_reason .. ": no loaded camp was available")
         end
+        return stats
     end)
     pass_queued = false
 
     if not ok then
         log.error("pass failed: " .. tostring(err))
+        return nil
     end
+    return err
 end
 
 -- Defined further down, needed here.
@@ -370,7 +413,19 @@ local restore_all
 local restored_for_disabled = false
 
 local function run_pass(reason, explicit)
-    if not cfg then return end
+    if require('settings_gate').blocked() then
+        if explicit then
+            log.say(require('settings_gate').status()=='restart_required'
+                and 'pass refused: settings locked; restart the game'
+                or 'pass refused: settings recovery is in progress')
+        end
+        return
+    end
+    if not cfg or not store.decided or store.is_client then return end
+    if store.state == "error" or caps.state == "error" then
+        if explicit then log.say("pass refused: settings are unavailable or awaiting a successful save") end
+        return
+    end
 
     -- Only the machine running the world decides anything. A client can see
     -- the base and could technically send work suitability changes, but two
@@ -448,7 +503,7 @@ local function run_pass(reason, explicit)
     -- ExecuteInGameThread that used to sit here was one more registry
     -- registration per pass, which is the currency the crash is paid in,
     -- bought to move to a thread we are already on.
-    pass_body()
+    return pass_body()
 end
 
 -- Both loops are clock entries now. The comment that used to be here said
@@ -462,6 +517,11 @@ end
 local function arm_pass_timer()
     clock.every("pass", cfg.interval_seconds * 1000, function()
         run_pass("tick")
+    end, true)
+    clock.every("stock refresh check", 1000, function()
+        if scheduler.stock_refresh_due(cfg) then
+            clock.defer("storage refresh", session.guard(function() scheduler.refresh_stock(cfg) end))
+        end
     end)
 end
 
@@ -491,42 +551,8 @@ local last_grid_error = nil
 local last_tick_error = nil
 
 
-local function ui_body()
-    -- The grid stays on its second, because refreshing it means a FindAllOf
-    -- over every cell and it has nothing to gain from ten times the rate.
-    -- A second, or immediately when the server has sent something new.
-    --
-    -- The grid's own reason for a one second beat is that noticing an edit
-    -- means a FindAllOf over every cell. That holds while hosting, where a
-    -- change can come from anywhere. On a client a change can only arrive as a
-    -- batch, and net.pals_gen says exactly when one has - so waiting out the
-    -- rest of the second afterwards is latency for nothing. It is what made
-    -- clicking feel slow: the edit reached the server and came back in well
-    -- under a second, then sat unpainted until the beat came round.
-    local pushed = (ui.wants_repaint ~= nil) and ui.wants_repaint() or false
-
-    if grid_owed >= 1000 or pushed then
-        grid_owed = 0
-        -- The message is kept, as panel.refresh's is a few lines below.
-        --
-        -- This was a bare pcall, so a grid that threw simply stopped updating
-        -- with nothing anywhere to say why - which is exactly how a
-        -- use-before-local in panel.lua hid for a session, and the panel got
-        -- this treatment for it while the grid did not. Rate limited to one
-        -- line per distinct error, because this runs on a beat.
-        local ok_grid, err_grid = pcall(function() ui.refresh(cfg) end)
-        if not ok_grid then
-            err_grid = tostring(err_grid)
-            if err_grid ~= last_grid_error then
-                last_grid_error = err_grid
-                log.warn("the stand grid stopped drawing: " .. err_grid)
-            end
-        elseif last_grid_error ~= nil then
-            last_grid_error = nil
-            log.say("the stand grid is drawing again")
-        end
-    end
-
+local function panel_body()
+    if not cfg or not api.has_viewport() then return end
     -- Drawn independently: the panel opens on a hotkey and has to keep
     -- working with the stand shut.
     -- The message is kept, not thrown away.
@@ -548,11 +574,68 @@ local function ui_body()
         log.say("the panel is drawing again")
     end
 
+end
+
+local function ui_body_flushed(flush_receipt)
+    -- Include attached persistence polling, not just disk writes. These calls
+    -- precede panel.refresh's own timer and may perform fresh authority proofs.
+    -- Inclusive, opt-in timings: do not add them to the enclosing maintenance.
+    log.around("persistence: limits maintenance", caps.flush)
+    pcall(remote.poll)
+    pcall(remote.drain)
+    if not api.has_viewport() then return end
+    -- Input paints affected cells on the fast beat. Maintenance refreshes the
+    -- complete current scoped roster once a second. With the rules panel open,
+    -- a pending repaint may use its faster maintenance beat.
+    local pushed = (ui.wants_repaint ~= nil) and ui.wants_repaint() or false
+
+    if grid_owed >= 1000 or pushed then
+        -- Retain elapsed remainder after a budget-delayed maintenance job.
+        -- Resetting to zero here could skip the next whole maintenance second.
+        grid_owed = grid_owed >= 1000 and grid_owed % 1000 or 0
+        -- The message is kept, as panel.refresh's is a few lines below.
+        --
+        -- This was a bare pcall, so a grid that threw simply stopped updating
+        -- with nothing anywhere to say why - which is exactly how a
+        -- use-before-local in panel.lua hid for a session, and the panel got
+        -- this treatment for it while the grid did not. Rate limited to one
+        -- line per distinct error, because this runs on a beat.
+        local ok_grid, err_grid = pcall(function() ui.refresh(cfg,flush_receipt) end)
+        if not ok_grid then
+            err_grid = tostring(err_grid)
+            if err_grid ~= last_grid_error then
+                last_grid_error = err_grid
+                log.warn("the stand grid stopped drawing: " .. err_grid)
+            end
+        elseif last_grid_error ~= nil then
+            last_grid_error = nil
+            log.say("the stand grid is drawing again")
+        end
+    end
+
+    -- Keep two complete native redraws out of one background callback.
+    -- Reacquire the current panel in its own session-bound heartbeat.
+    clock.defer("panel render", session.guard(panel_body))
+
     -- Instructions from outside, read and acted on here rather than on a
     -- timer of their own, so one can never land between two halves of a draw.
     -- Both are already on the game thread.
-    pcall(function() remote.poll() end)
-    pcall(function() remote.drain() end)
+
+end
+
+local function ui_body()
+    -- Only prepare a snapshot when the ordinary stand refresh is due. A
+    -- repaint requested later in this callback safely keeps its own flush.
+    if grid_owed<1000 then
+        log.around("persistence: priorities maintenance",store.flush)
+        return ui_body_flushed()
+    end
+    local epoch=session.epoch
+    return store.with_flush_receipt(function()
+        return log.around("persistence: priorities maintenance",store.flush)
+    end,function(receipt)
+        return ui_body_flushed(function()return session.epoch==epoch and receipt()end)
+    end)
 end
 
 -- LoopAsync takes one interval for the life of the loop, so the cadence that
@@ -581,28 +664,45 @@ local body_owed = 0
 local function ui_tick()
     grid_owed = grid_owed + UI_BEAT
     body_owed = body_owed + UI_BEAT
+    if not cfg then return end
 
+    -- Input belongs to the 100ms game-thread beat, even with the rules panel
+    -- closed. Drain a FIFO snapshot; actions added while draining wait for the
+    -- next beat, and session/UI guards still run before each action.
+    if session.has_pending() then
+        log.around("input: queued actions", session.drain, function(err)
+            log.warn("queued input failed: " .. tostring(err))
+        end, 8)
+    end
+
+    -- The client's 100ms edit-coalescing deadline must not wait for another
+    -- maintenance second. This plain role gate adds no server/unknown-role
+    -- network or viewport lookup. Transport keeps its own retry deadlines.
+    if store.decided and store.is_client == true and net.poll then net.poll() end
+
+    -- Keep ordinary stand redraw and maintenance at their existing cadence.
+    -- A queued panel-open action can make panel maintenance due on this beat.
     local want = panel.open and UI_BEAT or 1000
-    if body_owed < want then return end
-    body_owed = 0
+    if body_owed >= want then
+        body_owed = 0
+        -- Queue plain-data work for another heartbeat. The clock admits only
+        -- one expensive job, preventing a stand refresh and periodic pass
+        -- from forming the measured 70ms batch. No widget survives this call.
+        clock.defer("maintenance", session.guard(ui_body))
+    end
 
-    -- Runs even when disabled, so the grid still reflects edits. It costs
-    -- nothing while the stand is shut. Already on the game thread, so the
-    -- body is a call, not a registration.
-    if cfg then
-        ui_body()
-
-        if panel.wants_pass then
-            panel.wants_pass = false
-            run_pass("rule change")
-        end
-
-        -- A priority just changed. Re-fence now rather than leaving the edit
-        -- inert until the next tick, which reads as the click doing nothing.
-        if ui.wants_pass then
-            ui.wants_pass = false
-            run_pass("edit")
-        end
+    -- One reconciliation for all edits in this batch. Clear before running:
+    -- a request raised during the pass must remain for the next beat. The
+    -- independent periodic pass is intentionally not deduplicated here.
+    if (panel.wants_pass or ui.wants_pass) and not session.has_pending() then
+        clock.defer("reconcile", session.guard(function()
+            if session.has_pending() then return end -- the burst still has accepted edits to apply
+            local rule_change, priority_change = panel.wants_pass, ui.wants_pass
+            if rule_change or priority_change then
+                panel.wants_pass, ui.wants_pass = false, false
+                run_pass(rule_change and "rule change" or "edit")
+            end
+        end))
     end
 end
 
@@ -630,7 +730,15 @@ local function start_ui()
     if type(LoopInGameThreadWithDelay) == "function" then
         local ok = pcall(function()
             LoopInGameThreadWithDelay(16, function()
-                if panel.open and panel.hover_tick then
+                -- Both stand and panel use fresh local-controller reads within
+                -- this callback. Always release the scope, including failures.
+                api.pc_memo_begin()
+                local ok_fast, err_fast=pcall(function()
+                if not panel.open and ui.is_open() then
+                    local ok_input, err_input=pcall(ui.pad_tick,cfg)
+                    if not ok_input then log.warn("stand controller input: "..tostring(err_input)) end
+                end
+                if panel.open and api.has_viewport() and panel.hover_tick then
                     -- The message is kept. A throw here kills the gamepad and hover entirely,
     -- and this is three discards deep otherwise - panel wraps its own body,
     -- pad wraps its handlers, and this wrapped the lot.
@@ -661,6 +769,9 @@ local function start_ui()
         end
     end
                 end
+                end)
+                api.pc_memo_end()
+                if not ok_fast then log.warn("fast UI callback failed: "..tostring(err_fast)) end
             end)
         end)
         log.say(ok and "hover: 16ms game-thread loop"
@@ -693,6 +804,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " net       transport state, and echo test")
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("  " .. p .. " guilds    write Guilds.txt")
+    log.say("  " .. p .. " assignments  read-only authority assignment census")
     log.say("  " .. p .. " icons     probe the overlay icons")
     log.say("  " .. p .. " perf      hook counts and file writes " ..
             "(perf on for ms)")
@@ -719,7 +831,7 @@ COMMANDS.status = function()
     local beat_age = os.clock() - (clock.last_beat or 0)
     log.say(string.format("  heartbeat: %s (%.1fs since last beat)",
         beat_age < 1.0 and "alive" or "STALLED", beat_age))
-    log.say(string.format("%s %s | %s | %s | every %ds",
+    log.say(string.format("%s %s | local configuration: %s | %s | every %ds",
         MOD_NAME, VERSION,
         cfg.enabled and "enabled" or "disabled",
         cfg.dry_run and "dry run" or "live",
@@ -739,24 +851,98 @@ COMMANDS.status = function()
     log.say("  transport: " .. (net.installed and "hooked" or "NOT HOOKED") ..
         ", echo " .. net.stats.echo_returned .. "/" .. net.stats.echo_sent ..
         " returned")
-    log.say("  authority: " .. (api.has_authority()
-        and "yes, this machine runs the world"
-        -- Not "work is estimated here". Nothing is: run_pass returns
-        -- immediately without authority, so a client never reaches the code
-        -- that would estimate anything. The old wording described a fallback
-        -- that cannot execute, which is the same class of error as
-        -- documenting a keybind that never fires.
-        or "NO, this is a client. No passes run here and the Monitoring " ..
-           "Stand grid is drawn from what the server sends, and your edits " ..
-           "go back up to it"))
-    log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
-        (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
-    log.say("  ceilings measured against: " ..
-        (cfg.storage_scope == "global" and "every loaded base" or "each base on its own"))
+    local authority = api.has_authority()
+    log.say("  authority: " .. (authority == nil and "unknown; writes paused"
+        or (authority and "yes, this machine runs the world" or "client; server owns assignments")))
+    log.say("  priorities: " .. tostring(store.state) .. (store.error and ("; " .. store.error) or ""))
+    log.say("  limits: " .. tostring(caps.state) .. (caps.error and ("; " .. caps.error) or ""))
+    -- net.status describes a client's upstream connection, not host readiness.
+    local synchronization = "unknown; session role not established"
+    if store.decided == true and caps.decided == true and caps.session == session.epoch then
+        if authority == true and store.is_client == false and caps.is_client == false then
+            synchronization = "not required; local authority"
+        elseif authority == false and store.is_client == true and caps.is_client == true then
+            synchronization = "client; " .. tostring(
+                net.epoch == session.epoch and net.status or "unknown")
+        end
+    end
+    log.say("  synchronization: " .. synchronization)
+
+    if authority == true then
+        log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
+            (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
+        log.say("  ceilings measured against: " ..
+            (cfg.storage_scope == "global" and "every loaded base" or "each base on its own"))
+    elseif authority == false then
+        -- Client config is local, not a confirmed copy of server scheduling policy.
+        log.say("  staffing mode and worker maximum: server controlled; not synchronized")
+        log.say("  storage scope: see the confirmed scope in Production Limits")
+    else
+        log.say("  staffing policy and storage scope: unavailable until authority is established")
+    end
+    local scan = api.last_storage_scan
+    if scan then
+        log.say(string.format("  last storage scan (%s; cached diagnostic): complete=%s deduplicated=%s unknown_scope=%d failed_reads=%d",
+            scan.reader, tostring(scan.complete), tostring(scan.deduplicated), scan.unknown_scope, scan.failed_reads))
+        local reasons = {}
+        for reason, count in pairs(scan.reasons) do reasons[#reasons + 1] = reason .. "=" .. count end
+        table.sort(reasons)
+        log.say("  storage read failures: " .. (#reasons > 0 and table.concat(reasons, ", ") or "none recorded"))
+        log.say("  world loot outside bases (last scan): " .. tostring(scan.outside_camp_loot or 0))
+        if scan.class_reads ~= nil then
+            log.say("  storage class lookups (last scan): " .. tostring(scan.class_reads) ..
+                " read, " .. tostring(scan.class_skips or 0) .. " unnecessary reads skipped")
+        end
+    else
+        log.say("  last storage scan: unavailable (no scan since context reset)")
+    end
 end
 
-COMMANDS.run = function()
-    run_pass("manual", true)
+COMMANDS.run = function(args)
+    args = args or ""
+    if args:match("^%s*$") then return run_pass("manual", true) end
+    local run, request, mode = args:match("^([%w%-]+)%s+(%d+)%s+(%a+)%s*$")
+    request = math.tointeger(tonumber(request))
+    if not run or #run > 64 or not request or request < 1 or request > 1000000
+        or (mode ~= "normal" and mode ~= "sweep" and mode ~= "dry") then
+        log.say("run requires: <run-id> <request-id> <normal|sweep|dry>")
+        return false
+    end
+    local old_dry, old_ttl = cfg.dry_run, scheduler.stock_ttl
+    local before_pass, before_session = scheduler.pass_id, session.epoch
+    if mode == "dry" then cfg.dry_run = true end
+    if mode == "sweep" then scheduler.stock_ttl = 0 end
+    local actual_dry = cfg.dry_run == true
+    local ok, stats = pcall(run_pass, "manual", true)
+    cfg.dry_run, scheduler.stock_ttl = old_dry, old_ttl
+    local invocation_complete = ok and type(stats) == "table" and stats.camps > 0
+        and scheduler.pass_id > before_pass and session.epoch == before_session
+        and stats.pals > 0 and not stats.blocked_reason and (stats.failed or 0) == 0
+        and (stats.unreadable or 0) == 0 and (stats.baseline_unavailable or 0) == 0
+    local status = "aborted"
+    if invocation_complete then
+        -- A returned pass may preserve permissions because assignment/storage
+        -- evidence is missing, or leave requests/withdrawals unresolved. Neither
+        -- qualifies as completed stress work. Unknown evidence takes precedence
+        -- over unfinished work; zero requests alone is not a failure. Even a
+        -- completed receipt is not proof of native gameplay effects, and dry=true
+        -- continues to identify planning only.
+        if (stats.assignment_unknown or 0) > 0 or (stats.manual_unavailable or 0) > 0
+            or (stats.unverified_limit_conflicts or 0) > 0 or (stats.storage_unverified or 0) > 0 then
+            status = "unverified"
+        elseif (stats.deferred or 0) > 0 or (stats.pending_writes or 0) > 0
+            or (stats.expired_writes or 0) > 0 or (stats.awaiting_withdrawal or 0) > 0 then
+            status = "incomplete"
+        else
+            status = "completed"
+        end
+    end
+    log.say(string.format("PWP_PASS run=%s request=%d pass=%d session=%d status=%s mode=%s camps=%d dry=%s pending=%d invocation=%s",
+        run,request,scheduler.pass_id,session.epoch,status,mode,
+        (ok and type(stats)=="table") and stats.camps or 0,tostring(actual_dry),
+        (ok and type(stats)=="table") and (stats.pending_writes or 0) or 0,
+        invocation_complete and "completed" or "aborted"))
+    return status == "completed"
 end
 
 -- How long a chest count is kept. Zero sweeps on every pass.
@@ -783,7 +969,7 @@ end
 -- pass would skip re-issuing the ones that happen to match.
 COMMANDS.mode = function()
     cfg.assignment_mode = (cfg.assignment_mode == "fill") and "spread" or "fill"
-    scheduler.forget()
+    scheduler.forget_policy()
     log.say("assignment mode: " .. cfg.assignment_mode ..
         (cfg.assignment_mode == "spread"
             and " (one pal each, then seconds)"
@@ -826,7 +1012,7 @@ COMMANDS.cap = function(args)
     end
 
     cfg.max_pals_per_work_type = next_cap
-    scheduler.forget()
+    scheduler.forget_policy()
     log.say("max pals per work type: " ..
         (next_cap and tostring(next_cap) or "no limit"))
     run_pass("cap change", true)
@@ -879,60 +1065,17 @@ end
 -- path must not be the thing that makes the hot path slow.
 COMMANDS.perf = function(args)
     local want = (args or ""):match("^%s*(%S*)")
-
     if want == "on" then
-        log.perf = true
+        log.set_perf(true)
         log.reset_marks()
         log.say("perf: timing on, counters reset")
-        return
     elseif want == "off" then
-        log.perf = false
-        log.say("perf: timing off, counts kept")
-        return
+        log.set_perf(false)
+        log.say("perf: timing off; a new counts-only window started")
     elseif want == "reset" then
         log.reset_marks()
         log.say("perf: counters reset")
-        return
-    end
-
-    -- Read out before printing anything.
-    --
-    -- The report reaches the log through log.say, which goes through the very
-    -- to_file it reports on, so printing first would inflate the row being
-    -- printed. Snapshot, then talk.
-    local rows = {}
-    for name, b in pairs(log.marks) do
-        rows[#rows + 1] = { name = name, n = b.n, ms = b.ms }
-    end
-
-    local secs = os.time() - log.marks_since
-    if secs <= 0 then secs = 1 end
-
-    table.sort(rows, function(x, y)
-        if x.ms ~= y.ms then return x.ms > y.ms end
-        return x.n > y.n
-    end)
-
-    log.say(string.format("perf: timing %s, %ds since reset",
-        log.perf and "ON" or "off (counts only)", secs))
-
-    if #rows == 0 then
-        log.say("  nothing counted yet")
-        return
-    end
-
-    log.say(string.format("  %-32s %9s %9s %9s %8s",
-        "what", "calls", "per sec", "total ms", "ms/s"))
-
-    for _, r in ipairs(rows) do
-        log.say(string.format("  %-32s %9d %9.1f %9.1f %8.2f",
-            r.name, r.n, r.n / secs, r.ms, r.ms / secs))
-    end
-
-    if not log.perf then
-        log.say("  the ms columns stay zero until '" .. cfg.chat_prefix ..
-            " perf on'.")
-    end
+    else log.say(log.report()) end
 end
 
 -- Was Ctrl+F7 until Ctrl turned out to roll the character on every press. It
@@ -1039,7 +1182,7 @@ end
 
 COMMANDS.live = function()
     cfg.dry_run = false
-    scheduler.forget()
+    scheduler.forget_policy()
     log.say("live, changes are sent to the server")
 end
 
@@ -1056,53 +1199,34 @@ end
 -- needs several. Bounded itself so a pal whose permissions cannot be read
 -- cannot spin here for ever.
 function restore_all(why)
-    -- The fences belong to whoever set them, and a client never set any: the
-    -- passes run on the authority, for the reason given at run_pass. So there
-    -- is nothing here to give back.
-    --
-    -- It is worse than merely pointless. base_allowed asks every pal for its
-    -- suitability rank, and GetWorkSuitabilityRank on a replicated proxy is an
-    -- access violation rather than an error, so no pcall on the way down
-    -- catches it. That is what killed the game from the discovery probe on
-    -- 23 August, which is why THAT probe has been gated ever since - but the
-    -- same call sat one branch away behind '!pwp off', unguarded, where a
-    -- 14 pal base would have reached it a couple of thousand times before the
-    -- first sweep finished.
-    if not api.has_authority() then
-        log.say(why .. ": this is a client, so it has no fences to undo. " ..
-            "Run '" .. cfg.chat_prefix .. " restore' on the server.")
-        return
+    if not cfg then log.say(why .. ": configuration is unavailable"); return false end
+    if api.latch_authority() ~= true then
+        log.say(why .. ": authority is unavailable; restoration was not confirmed")
+        return false
     end
-
-    local sent, rounds, blocked = 0, 0, false
-
+    local sent, rounds, stats = 0, 0, nil
     repeat
         rounds = rounds + 1
-        local stats = scheduler.restore(cfg)
-        sent = sent + stats.toggles
-        blocked = stats.blocked or false
-        local owed = stats.deferred
-    until owed == 0 or blocked or rounds >= 12
-
-    -- Three different things, said three different ways. This used to print
-    -- "gave every pal its work back" for all of them, including the one where
-    -- it had changed nothing because it could not.
-    if blocked then
-        log.say(why .. ": nothing was restored, see the warning above")
-        return
+        stats = scheduler.restore(cfg)
+        sent = sent + (stats.toggles or 0)
+        -- More synchronous requests cannot make an asynchronous RPC arrive.
+        -- Keep the pending history for a later observation or explicit retry.
+        if stats.blocked or (stats.failed or 0)>0 or (stats.unreadable or 0)>0
+            or (stats.baseline_unavailable or 0)>0 or (stats.pending_writes or 0)>0
+            or (stats.expired_writes or 0)>0 or (stats.awaiting_withdrawal or 0)>0 then break end
+    until (stats.deferred or 0)==0 or rounds>=12
+    local incomplete = stats.blocked or (stats.failed or 0)>0 or (stats.unreadable or 0)>0
+        or (stats.baseline_unavailable or 0)>0 or (stats.pending_writes or 0)>0
+        or (stats.expired_writes or 0)>0 or (stats.awaiting_withdrawal or 0)>0
+        or (stats.deferred or 0)>0 or (stats.camps or 0)==0 or (stats.pals or 0)==0
+    if incomplete then
+        log.warn(string.format("%s: restoration UNCONFIRMED (%d requests, %d sweeps): %s. Keep the mod installed until readback is confirmed.",
+            why,sent,rounds,stats.blocked_reason or scheduler.format_stats(cfg,stats)))
+        return false
     end
-    if sent == 0 then
-        log.say(why .. ": nothing needed giving back, every pal already has " ..
-            "all of its work")
-        return
-    end
-    log.say(string.format(
-        "%s: gave every pal its work back (%d change(s) over %d sweep(s))",
-        why, sent, rounds))
-    if rounds >= 12 then
-        log.warn("stopped after 12 sweeps, run '" .. cfg.chat_prefix ..
-            " restore' again if any pal still looks fenced")
-    end
+    log.say(string.format("%s: allowed work permissions verified after %d request(s) over %d sweep(s); X choices remain disabled",
+        why,sent,rounds))
+    return true
 end
 
 -- Switching off now actually switches off.
@@ -1156,7 +1280,7 @@ end
 
 COMMANDS.reload = function()
     if load_config() then
-        scheduler.forget()
+        scheduler.forget_policy()
         -- Re-armed, or a changed interval_seconds does nothing at all:
         -- start_timer returns immediately once the timer is running, so the
         -- entry kept whatever interval it was first registered with while the
@@ -1206,8 +1330,10 @@ end
 -- are not children of the menu's own tree; the dump shows the tree as it
 -- actually is, plus cells_under's answer against the global walk's count.
 -- Needs the stand open on screen, and says so itself when it is not.
-COMMANDS.stand = function()
+COMMANDS.stand = function(args)
     run_now(function()
+        if args == 'input' then log.say(require('stand_event_probe').watch()); return end
+        if args == 'events' then log.say(require('stand_event_probe').report()); return end
         local path = DIR .. "StandTree.txt"
         local f = io.open(path, "w")
         if not f then
@@ -1256,6 +1382,49 @@ end
 -- function parameters killed the process once already. Everything here is a
 -- single property read or a verified-signature call under pcall, printing
 -- what answered and what did not; nothing is stored, nothing is walked.
+COMMANDS.lookup = function()
+    log.say(require('widget_lookup').probe())
+end
+
+COMMANDS.prefetch = function(args)
+    local want=(args or ""):match("^%s*(%S*)")
+    if want=="on" or want=="off" then scheduler.set_prefetch(want=="on") end
+    log.say("storage prefetch: " .. (scheduler.prefetch_enabled and "on" or "off") ..
+        "; global scope only; use prefetch on|off for developer A/B testing")
+end
+
+COMMANDS.frameevents = function(args)
+    local want=(args or ''):match('^%s*(%S*)')
+    if want=='start' then
+        log.start_frame_events()
+        log.say('frame events: started; bounded 180s / 4096 events; minimum 4ms; inclusive')
+    elseif want=='stop' or want=='export' then
+        if want=='stop' then log.stop_frame_events() end
+        local ok,reason=log.export_frame_events(DIR..'frame-events.tsv')
+        log.say(ok and 'frame events: exported frame-events.tsv' or ('frame events: '..tostring(reason)))
+    else log.say('usage: frameevents start|stop|export (developer capture only)') end
+end
+
+COMMANDS.frameanchor = function(args)
+    local id=(args or ''):match('^%s*([%w_-]+)%s*$')
+    local ok,reason=log.frame_anchor(DIR..'perf-anchor.txt',id)
+    log.say(ok and ('frame anchor: '..id) or ('frame anchor failed: '..tostring(reason)))
+end
+
+COMMANDS.storageprobe = function()
+    run_now(function()
+        local storage_census = require('storage_probe')
+        log.say(storage_census.format(storage_census.read()))
+    end)
+end
+
+COMMANDS.assignments = function()
+    run_now(function()
+        local census = require('assignment_probe')
+        log.say(census.format(census.read()))
+    end)
+end
+
 COMMANDS.probe = function()
     run_now(function()
         log.say("probe: elimination-route reads")
@@ -1347,7 +1516,7 @@ COMMANDS.stock = function()
         if f then f:write("base storage " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n") end
 
         for ci, camp in ipairs(camps) do
-            local totals, chests = api.camp_item_totals(
+            local totals, chests, evidence = api.camp_item_totals(
                 api.guid_key(api.camp_id(camp)),
                 { include = cfg.counted_containers,
                   exclude = cfg.uncounted_containers })
@@ -1359,8 +1528,9 @@ COMMANDS.stock = function()
                 return a.id < b.id
             end)
 
-            local header = string.format("camp %d: %d chest(s), %d item type(s)",
-                ci, chests, #rows)
+            local complete = evidence and evidence.complete == true and evidence.deduplicated == true
+            local header = string.format("camp %d: %d container(s), %d item type(s); %s",
+                ci, chests, #rows, complete and "complete for base-scoped stock" or "PARTIAL / stock unavailable")
             log.say(header)
             if f then f:write("\n" .. header .. "\n") end
 
@@ -1374,13 +1544,11 @@ COMMANDS.stock = function()
                 log.say(string.format("  ... and %d more, full list in Stock.txt", #rows - 15))
             end
             if chests == 0 then
-                log.say("  no container answered, so ceilings would read as unmet")
+                log.say(complete and "  no counted storage in this base" or "  no verified storage total; ceilings remain undecided")
             end
 
-            -- Ceilings count chests only. Anything else on the base holding
-            -- stock is invisible to them, so name it rather than leaving a
-            -- limit to look broken when the resource is really just sitting
-            -- somewhere that is not counted.
+            -- Report containers excluded by the user's class filters.
+            -- Stations and feed boxes are included by default.
             local include = nil
             if type(cfg.counted_containers) == "table"
                 and #cfg.counted_containers > 0 then
@@ -1469,42 +1637,14 @@ local function resolve_work(text)
     return workdefs.from_label(text)
 end
 
--- Item totals across every loaded camp. Used to check a spelling and to show
--- what a ceiling is up against. The ceilings themselves are still judged one
--- camp at a time by the scheduler.
--- How the scheduler is currently told to read storage, so the listing and
--- the pass can never disagree about what counts.
-local function container_opts()
-    return {
-        include = cfg.counted_containers,
-        exclude = cfg.uncounted_containers,
-    }
-end
-
 local function stock_across_camps()
-    -- Global scope counts chests the camp filter would drop, so ask for them
-    -- the same way the scheduler does rather than summing per camp.
-    if cfg.storage_scope == "global" then
-        return (api.all_chest_totals(container_opts()))
-    end
-
-    local totals = {}
-
-    for _, camp in ipairs(api.base_camps()) do
-        local camp_id = api.camp_id(camp)
-        if camp_id then
-            local part = api.camp_item_totals(api.guid_key(camp_id), container_opts())
-            for id, n in pairs(part or {}) do
-                -- The fullest base, not the sum. Same reason as
-                -- panel.stock_totals: the ceiling is checked against one base
-                -- at a time, so the total across bases is a figure nothing is
-                -- ever compared against, and printing it beside a limit that
-                -- has not fired reads as the limit being broken.
-                if n > (totals[id] or 0) then totals[id] = n end
-            end
-        end
-    end
-    return totals
+    -- Reuse the same positively scoped evidence as the panel. Commands must
+    -- not scan another guild's chests or present failed reads as zero stock.
+    -- With camp scope the first known base is named explicitly in the output.
+    local status = require("panel_status")
+    local view = status.stock(cfg, scheduler, api.my_guild(), nil,
+        api.has_authority() ~= true)
+    return view.verified and view.totals or {}, view.verified, view.label
 end
 
 -- The id as the base actually spells it. Ceilings are compared against ids
@@ -1528,16 +1668,15 @@ local function show_limits()
     table.sort(works)
 
     if #works == 0 then
-        log.say("no stock limits set")
-        log.say("  " .. cfg.chat_prefix .. " limit Lumbering Wood 5000")
-        log.say("run " .. cfg.chat_prefix .. " stock for the item ids this base holds")
+        log.say("no legacy group limits in the available view")
+        log.say("new item-specific limits are unavailable until producer controls are verified")
         return
     end
 
     run_now(function()
-        local totals = stock_across_camps()
+        local totals, verified, scope = stock_across_camps()
 
-        log.say("stock limits:")
+        log.say("legacy group limits; " .. scope .. (verified and "" or " (stock unavailable)"))
         for _, work in ipairs(works) do
             local items = {}
             for item in pairs(all[work]) do items[#items + 1] = item end
@@ -1545,13 +1684,13 @@ local function show_limits()
 
             for _, item in ipairs(items) do
                 local ceiling = all[work][item]
-                local have = totals[item] or 0
-                log.say(string.format("  %-22s %-24s %d / %d%s",
-                    workdefs.label(work), item, have, ceiling,
-                    have >= ceiling and "   met" or ""))
+                local have = verified and (totals[item] or 0) or nil
+                log.say(string.format("  %-22s %-24s %s / %d%s",
+                    workdefs.label(work), item, have and tostring(have) or "unavailable", ceiling,
+                    have and have >= ceiling and "   threshold met" or ""))
             end
         end
-        log.say("a work type pauses once every item listed for it is at its limit")
+        log.say("legacy groups can restrict the entire work type, including unrelated products; thresholds do not prove actual activity")
     end)
 end
 
@@ -1589,7 +1728,7 @@ COMMANDS.limit = function(args)
     end
 
     local lowered = amount_text:lower()
-    local ceiling = tonumber(amount_text)
+    local ceiling = amount_text:match("^%d+$") and math.tointeger(tonumber(amount_text)) or nil
 
     -- 0 removes the ceiling rather than being read literally. Taken at face
     -- value it would mean "you already have at least none of these", which
@@ -1598,52 +1737,41 @@ COMMANDS.limit = function(args)
     local clearing = (lowered == "off" or lowered == "none"
         or lowered == "clear" or ceiling == 0)
 
-    if not clearing and (ceiling == nil or ceiling < 1) then
-        log.say(amount_text .. " is not an amount, use a number or 0 to remove")
+    if not clearing and (ceiling == nil or ceiling < 1 or ceiling > caps.MAX_CEILING) then
+        log.say("use a whole amount from 1 to " .. caps.MAX_CEILING .. ", or off/0 to remove; previous limit retained")
         return
     end
 
     run_now(function()
-        local totals = stock_across_camps()
+        local totals, verified, scope = stock_across_camps()
+        local id = match_stock_id(totals, item_text) or item_text
+        local written, outcome
 
         if clearing then
-            local id = match_stock_id(totals, item_text) or item_text
-            if caps.clear(work, id, api.my_guild()) then
-                log.say("limit removed: " .. workdefs.label(work) .. " " .. id)
-            else
-                log.say("no limit was set for " .. workdefs.label(work) .. " " .. id)
-                return
-            end
+            written, outcome = caps.clear(work, id, api.my_guild())
         else
-            local id = match_stock_id(totals, item_text)
-            if id == nil then
-                -- Not fatal: capping something the base has none of yet is a
-                -- perfectly good thing to want. A typo looks the same though,
-                -- so say so rather than letting it fail quietly later.
-                id = item_text
-                log.warn("nothing called " .. item_text .. " is in this base right " ..
-                    "now, so check the spelling with " .. cfg.chat_prefix .. " stock")
-            end
-
-            local written = caps.set(work, id, math.floor(ceiling),
-                api.my_guild())
-            if not written then
-                -- The clearing branch above already read this answer; setting
-                -- discarded it. caps.set refuses outright when there is no
-                -- guild, and on a client it reports only whether the request
-                -- was SENT, so this is the strongest claim available either
-                -- way.
-                log.say(string.format(
-                    "asked for %s to pause at %d %s, "
-                    .. "it has not been confirmed",
-                    workdefs.label(work), math.floor(ceiling), id))
-                return
-            end
-            log.say(string.format("limit set: %s pauses at %d %s, base holds %d",
-                workdefs.label(work), math.floor(ceiling), id, totals[id] or 0))
+            written, outcome = caps.set(work, id, ceiling, api.my_guild())
         end
-
-        scheduler.forget()
+        if not written then
+            if outcome == "pending" then
+                log.say("limit change accepted; saving asynchronously: " .. workdefs.label(work)
+                    .. " " .. id .. (clearing and " off" or " " .. ceiling))
+            elseif outcome == "applied_unsaved" then
+                log.say("legacy limit changed in memory but not saved; retry pending: " .. tostring(caps.error))
+            else
+                log.say("limit change unconfirmed: " .. tostring(caps.error or "session or rule unavailable"))
+            end
+            return
+        end
+        if caps.is_client then
+            log.say("limit change queued; awaiting server confirmation")
+            return
+        end
+        log.say("legacy group limit " .. (clearing and "removed and saved: " or "saved: ")
+            .. workdefs.label(work) .. " " .. id .. (clearing and "" or " " .. ceiling))
+        log.say(scope .. ": stock " .. (verified and tostring(totals[id] or 0) or "unavailable")
+            .. "; this does not confirm actual production")
+        scheduler.forget_policy()
         run_pass("limit change", true)
     end)
 end
@@ -1896,55 +2024,58 @@ end
 -- seconds and a client's grid is open for a few of them, so caching would
 -- keep a table of engine-derived values warm for minutes to save a walk
 -- nobody is waiting on.
--- want_guild nil means every camp, which is what a local pass wants. A guild
--- means only that guild's camps, which is what a client may see or write.
-local function stand_rows(want_guild)
-    local rows = {}
-
-    -- No guild means NO rows, never every row.
-    --
-    -- This used to read "want_guild == nil or camp_guild == want_guild", so an
-    -- unresolvable guild silently widened to every camp on the server. Both
-    -- callers are network paths - the ownership check for an incoming edit and
-    -- the batch built for one client - so that turned the ownership test back
-    -- into "does this pal exist anywhere", which is the exact defect the
-    -- comment in the Prio handler says was fixed, and made the push hand one
-    -- client every guild's roster.
-    --
-    -- nil is an ordinary state, not an error: a player in no guild, or one
-    -- whose guild has not replicated yet. palapi says what to do with it -
-    -- "Callers must read that as 'no scope known', never as 'applies
-    -- everywhere'." The ceilings path already refuses; this now does too.
-    if type(want_guild) ~= "string" or want_guild == "" then
-        return rows
+-- A verified guild is required: only that guild's camps may enter a client's
+-- snapshot or edit validation. Missing scope is unavailable, never global.
+local function stand_rows(want_guild, observation)
+    if type(want_guild) ~= "string" or want_guild == "" then return nil, "guild unavailable" end
+    -- Only a synchronous push may share this observation. Standalone edit
+    -- validation creates its own, and nothing survives a callback or session.
+    observation = observation or {epoch=session.epoch}
+    if observation.epoch ~= session.epoch then return nil, "session changed" end
+    if not observation.attempted then
+        observation.attempted = true
+        observation.error = "authority unavailable"
+        if api.latch_authority() == true then
+            observation.error = "camp enumeration unavailable"
+            local camps = api.base_camps()
+            if type(camps) == "table" and api.camps_available == true then
+                observation.camps, observation.error = camps, nil
+            end
+        end
     end
-
-    for _, camp in ipairs(api.base_camps() or {}) do
-        local camp_guild = api.camp_guild(camp)
-        if camp_guild == want_guild then
-        for _, pal in ipairs(api.camp_pals(camp) or {}) do
-            if type(pal.key) == "string" and api.valid(pal.param) then
+    if observation.epoch ~= session.epoch then return nil, "session changed" end
+    if observation.error then return nil, observation.error end
+    local camps = observation.camps
+    local rows, seen = {}, {}
+    for _, camp in ipairs(camps) do
+        local guild = api.camp_guild(camp)
+        if type(guild) ~= "string" or guild == "" then return nil, "camp ownership unavailable" end
+        if guild == want_guild then
+            local pals, pal_error = api.camp_pals(camp)
+            if type(pals) ~= "table" or pal_error then return nil, pal_error or "Pal roster unavailable" end
+            for _, pal in ipairs(pals) do
+                if not store.durable_key(pal.key) or not api.valid(pal.param) or seen[pal.key] then
+                    return nil, "Pal identity unavailable or duplicated"
+                end
                 local ranks, prios = {}, {}
-
                 for t = 1, #workdefs.ORDER do
                     local value = workdefs.value(workdefs.ORDER[t])
                     local r = api.suitability_rank(pal.param, value)
-                    if type(r) == "number" and r > 0 then
+                    if type(r) ~= "number" or r ~= r or r < 0 or r >= math.huge or r ~= math.floor(r) then
+                        return nil, "Pal capability unavailable"
+                    end
+                    if r > 0 then
                         ranks[t] = r
-                        -- Only where the pal is capable. A priority on work it
-                        -- cannot do would draw a number over the vanilla dash,
-                        -- which is the one thing the grid promises never to do.
-                        prios[t] = store.effective(cfg, pal,
-                            workdefs.ORDER[t], value)
+                        prios[t] = store.effective(cfg,pal,workdefs.ORDER[t],value)
                     end
                 end
-
-                rows[#rows + 1] = { key = pal.key, ranks = ranks, prios = prios }
+                seen[pal.key] = true
+                rows[#rows+1] = {key=pal.key,ranks=ranks,prios=prios}
             end
         end
-        end
     end
-
+    -- Complete roster of the currently loaded, positively scoped camps.
+    -- An empty table is valid; failure above is a different result.
     return rows
 end
 
@@ -1955,7 +2086,7 @@ end
 -- time; it is sixteen RPCs to report a single changed number in every other
 -- case, and on a client each RPC costs roughly seventeen milliseconds of game
 -- thread. That was the per-click hitch.
-local function push_stand(comp, only_key)
+local function push_stand(comp, only_key, current)
     if not api.has_authority() then return end
 
     -- Nobody to tell, so nothing to walk.
@@ -1965,86 +2096,28 @@ local function push_stand(comp, only_key)
     -- native rank calls per pal, built a batch, and discarded it.
     if comp == nil and next(net.clients) == nil then return end
 
-    -- Said out loud, because the failure this had was silent.
-    --
-    -- The first version called api.camps(), which does not exist - the name is
-    -- base_camps - so stand_rows threw inside a pcall, returned nothing, and
-    -- the client drew the vanilla grid exactly as if the feature were still
-    -- switched off. Nothing caught it but the game: luacheck could not see an
-    -- undefined cross-module call at the time. It can now - that is what the
-    -- cross_module check in tools/luacheck.py was added for, and api.camps()
-    -- is the case it is tested against.
-    -- Each recipient gets their own guild's pals, and nobody else's. Passed as
-    -- a function because net.lua caches one batch per guild and calls this
-    -- once for each distinct guild it is actually sending to.
-    local seen = 0
-    local built_rows = {}
-
+    local seen, built_rows, failures = 0, {}, {}
+    local observation = {epoch=session.epoch}
     local function rows_for(guild)
-        -- Cached per guild, because the zero-row check below has to ask the
-        -- same question push_pals is about to ask and neither should pay for
-        -- a second base walk.
-        local ck = guild or "<none>"
-        if built_rows[ck] then return built_rows[ck] end
-
-        local rows = {}
-        local ok, err = pcall(function() rows = stand_rows(guild) end)
-        if not ok then
-            -- Cached like a success, or the failure is paid for twice.
-            --
-            -- The zero-row guard and net.push_pals each call rows_for for the
-            -- same guild, so an uncached throw meant two full base walks and
-            -- two identical warns per hello. An empty result is a real answer
-            -- here - the guard reads it as "nothing to send", which is the
-            -- right thing to do with a guild whose rows could not be built.
-            log.warn("stand rows failed: " .. tostring(err))
-            built_rows[ck] = {}
-            return {}
+        if observation.epoch ~= session.epoch then return nil end
+        local key = guild or "<unknown>"
+        if failures[key] then return nil end
+        if built_rows[key] then return built_rows[key] end
+        local ok, rows, why = pcall(stand_rows,guild,observation)
+        if not ok or type(rows) ~= "table" then
+            failures[key] = true
+            log.warn("stand data unavailable: " .. tostring(ok and why or rows))
+            return nil
         end
+        built_rows[key] = rows
         seen = seen + #rows
-        built_rows[ck] = rows
         return rows
-    end
-
-    -- Nothing to say is not the same as "you have nothing".
-    --
-    -- A guild that resolves fine but whose camps are not streamed in yields
-    -- zero rows, and a full push then sends PalReset+PalDone - an empty table
-    -- that moves the client's generation and reads to it as a definite answer.
-    -- Its backoff latched on that and stopped asking for the session, so a
-    -- player who joined away from their base got a vanilla grid for ever.
-    --
-    -- Only the addressed-reply case: a broadcast with no rows for a guild is
-    -- ordinary and must still clear that guild's clients.
-    if comp ~= nil and not only_key then
-        -- Asked, not assumed.
-        --
-        -- This read `seen == 0` directly, and seen is only incremented INSIDE
-        -- rows_for - which push_pals calls lazily, after this line. So it was
-        -- always zero here and the guard fired on every single hello: the
-        -- server refused to answer any client at all, while logging a reason
-        -- that sounded plausible. Exactly the shape this whole audit keeps
-        -- finding, written while fixing it.
-        if #rows_for(net.guild_of_sender(comp)) == 0 then
-            -- Warn, not debug.
-            --
-            -- This is the server deciding not to answer a client at all, and
-            -- at the shipped level it was invisible. Tonight's "seen == 0"
-            -- bug - the guard that read a counter before the thing that fills
-            -- it had run, so every hello was refused - lived on this exact
-            -- line. The guard was fixed and the diagnostic was left where it
-            -- could not be seen, which is how it would go unnoticed again.
-            --
-            -- Bounded: hello is budgeted at two per minute per sender.
-            log.warn("no camps loaded for that guild yet, so nothing was " ..
-                "sent and the client will ask again")
-            return
-        end
     end
 
     local sent = false
     local ok, err = pcall(function()
-        sent = net.push_pals(rows_for, comp, only_key)
+        sent = log.around(only_key and "network: stand delta" or "network: stand full",
+            net.push_pals, rows_for, comp, only_key, current)
     end)
     if not ok then
         log.warn("stand push failed: " .. tostring(err))
@@ -2053,9 +2126,42 @@ local function push_stand(comp, only_key)
 
     log.debug("stand push: " .. (only_key and ("1 row of " .. seen) or
         (seen .. " pal(s)")) .. ", sent=" .. tostring(sent))
+    return sent
 end
 
-net.on_command = function(command, _, comp)
+-- All snapshot routes (Hello, recovery, edit and broadcasts) share the same
+-- owner-bound publication policy; pending async memory is never confirmed state.
+net.publication_guard = function(stream,publication_cfg)
+    if stream=="P" then return store.publication_guard() end
+    if stream=="R" then return caps.publication_guard(nil,nil,publication_cfg or cfg) end
+end
+
+-- These callbacks are inert until a reviewed trial explicitly enables net's
+-- deferred transport before negotiation. No config/default enables it here.
+net.pending_owner = function(stream,guild)
+    if stream=="P" then return store.pending_owner(guild) end
+    if stream=="R" then return caps.pending_owner(guild) end
+end
+net.pending_status = function(stream,receipt)
+    local module=stream=="P" and store or stream=="R" and caps
+    if not module then return nil end
+    local receipt_state=module.receipt_status(receipt)
+    if receipt_state.state~='saved' then return receipt_state end
+    return receipt_state,module.publication_guard(receipt_state.body,receipt_state.revision,stream=="R" and cfg or nil)
+end
+net.publish_pending = function(stream,comp,current)
+    if stream=="P" then return push_stand(comp,nil,current) end
+    if stream=="R" then return net.push_rules(caps,cfg,comp,current) end
+    return false
+end
+
+net.on_command = function(command, _, comp, command_token)
+    if not store.decided or store.is_client then return false end
+    if api.latch_authority() ~= true then
+        store.set_role(nil, session.epoch)
+        caps.set_role(nil, session.epoch)
+        return false, "authority_unavailable"
+    end
     local parts = net.split(command)
     local verb = parts[1]
 
@@ -2155,7 +2261,12 @@ net.on_command = function(command, _, comp)
         -- minutes, logged only as "a player". The guild comes from the
         -- component the message arrived on, which a client cannot forge, for
         -- exactly the reason the ceiling path takes it from there too.
-        local sender_guild = net.guild_of_sender(comp)
+        local sender_guild
+        if command_token ~= nil then
+            sender_guild = net.command_guild(command_token, comp, session.epoch)
+        else
+            sender_guild = net.guild_of_sender(comp)
+        end
 
         -- Refused, not widened. stand_rows would now return nothing for a nil
         -- guild anyway, but an edit that cannot be attributed to a guild
@@ -2168,7 +2279,12 @@ net.on_command = function(command, _, comp)
         end
 
         local known = false
-        for _, row in ipairs(stand_rows(sender_guild)) do
+        local sender_rows, rows_error = log.around("network edit: roster validation", stand_rows, sender_guild)
+        if not sender_rows then
+            log.warn("priority edit refused: " .. tostring(rows_error))
+            return false
+        end
+        for _, row in ipairs(sender_rows) do
             if row.key == key then known = true break end
         end
         if not known then
@@ -2195,98 +2311,110 @@ net.on_command = function(command, _, comp)
             end
         end
 
-        if prio == nil then store.apply_clear(key, value)
-        else store.apply_set(key, value, prio) end
+        -- Roster reads can dispatch nested engine callbacks. Do not carry an
+        -- authenticated guild across an invalidated invocation into a write.
+        if command_token ~= nil
+            and net.command_guild(command_token, comp, session.epoch) ~= sender_guild then
+            return false, "session_changed"
+        end
+        local accepted, state, receipt
+        if prio == nil then accepted, state, receipt = store.apply_clear(key, value)
+        else accepted, state, receipt = store.apply_set(key, value, prio) end
+        -- Memory acceptance is neither failure nor durability. Preserve the
+        -- attachment receipt for deferred completion; do not flush again,
+        -- broadcast uncommitted memory, or run a pass in this handler.
+        if not accepted then return false, state, receipt end
+        local saved, committed_scope = log.around("network edit: save and notify", store.flush, nil, true, true)
+        if not saved then
+            push_stand(nil,key)
+            return "applied_unsaved", "save_failed"
+        end
 
         log.say(string.format("priority %s set to %s by a player",
             workdefs.ORDER[value] or tostring(value), tostring(raw)))
 
-        -- Pushed explicitly, and this was removed once on the reasoning that
-        -- store.apply_set fires store.on_change which does the same job. The
-        -- reasoning was sound and the result was that NOTHING was pushed:
-        -- every edit applied on the server and no client was ever told. The
-        -- log said so plainly - a priority line with no stand push after it.
-        --
-        -- So the explicit call is back, because a duplicate push is a cost and
-        -- a missing one is a broken feature. Whether on_change fires at all is
-        -- now logged rather than assumed.
-        push_stand(nil, key)
+        -- This handler owns notification for this successful save. Do not
+        -- also let the save callback broadcast the entire stand. A no-op
+        -- clear still needs a fresh snapshot for the client's edit to settle.
+        -- A flush can commit earlier dirty changes too: include them instead
+        -- of silently narrowing that batch to the last request's Pal.
+        local only_key = key
+        if committed_scope and (committed_scope.full or committed_scope.key ~= key) then only_key = nil end
+        push_stand(nil, only_key)
         run_pass("priority change")
-        return
+        return true
     end
 
     if verb == net.PREFIX .. "Set" and #parts >= 4 then
         if not may_change(comp) then return end
         local guild = net.guild_of_sender(comp)
-        if not caps.apply_set(parts[2], parts[3], parts[4], guild) then
-            return
+        local saved, state, receipt = caps.apply_set(parts[2], parts[3], parts[4], guild)
+        if not saved then
+            if state == "pending" then return false, state, receipt end
+            if state == "applied_unsaved" then
+                net.push_rules(caps,cfg,nil)
+                return "applied_unsaved", "save_failed"
+            end
+            return false, state
         end
 
         log.say(string.format("%s set %s to %s by a player",
             parts[2], parts[3], parts[4]))
         net.push_rules(caps, cfg, nil)
         run_pass("rule change")
-        return
+        return true
     end
 
     if verb == net.PREFIX .. "Clear" and #parts >= 3 then
         if not may_change(comp) then return end
-        if not caps.apply_clear(parts[2], parts[3],
-            net.guild_of_sender(comp)) then
+        local saved, state, receipt = caps.apply_clear(parts[2], parts[3], net.guild_of_sender(comp))
+        if not saved then
+            if state == "pending" then return false, state, receipt end
             -- Refused, so the asking client is still drawing a rule it
             -- believes it deleted. Pushing the unchanged set back corrects it
             -- on the next refresh instead of leaving the panel and the server
             -- quietly disagreeing until something else happens to sync them.
             net.push_rules(caps, cfg, comp)
-            return
+            if state == "applied_unsaved" then return "applied_unsaved", "save_failed" end
+            return false, state
         end
 
         log.say(string.format("%s %s cleared by a player", parts[2], parts[3]))
         net.push_rules(caps, cfg, nil)
         run_pass("rule change")
-        return
+        return true
     end
 end
 
--- Client side. The server sent state; take it as the truth.
-local incoming = nil
-
-net.on_state = function(message)
-    local parts = net.split(message)
-    local verb = parts[1]
-
-    if verb == net.PREFIX .. "Reset" then
-        incoming = {}
-        return
+-- Only complete, negotiated snapshots reach this callback.
+net.on_snapshot = function(rows, metadata)
+    if metadata.stream ~= nil and metadata.stream ~= 'R' then return false end
+    if not store.decided or not store.is_client or metadata.epoch ~= session.epoch then return false end
+    return caps.replace_all(rows, session.epoch, metadata.guild) ~= false
+end
+net.on_edit = function(key, work, status, reason)
+    if ui.edit_status then ui.edit_status(key,work,status,reason) end
+    ui.detach() -- invalidates the visible generation; no widgets are touched.
+    if key == nil then caps.remote_state, caps.remote_error = status, reason end
+end
+net.on_status = function(status, reason)
+    caps.remote_state, caps.remote_error = status, reason
+    if status=='unavailable' then
+        caps.remote,caps.remote_scope=nil,nil
     end
-
-    if verb == net.PREFIX .. "Rule" and #parts >= 4 and incoming then
-        -- Bounded while it accumulates, not only when it is applied.
-        --
-        -- replace_all caps what it keeps, but the batch is built here first -
-        -- so a server that never sends Done can grow this table until the
-        -- client runs out of memory, and nothing would have stopped it. The
-        -- ceiling is caps.MAX_RULES with slack, since anything past it is
-        -- dropped anyway.
-        if #incoming < (caps.MAX_RULES or 500) * 2 then
-            incoming[#incoming + 1] = {
-                work = parts[2], item = parts[3], amount = parts[4],
-            }
-        end
-        return
+end
+net.on_session = function(epoch)
+    if store.is_client and epoch == session.epoch then
+        -- Transport re-handshake does not change the proven local role.
+        -- Requests remain blocked by net until the new snapshot is complete.
+        caps.remote, caps.remote_scope = nil, nil
+        caps.remote_state, caps.remote_error = "connecting", nil
+    else
+        store.set_role(nil, epoch)
+        caps.set_role(nil, epoch)
     end
-
-    if verb == net.PREFIX .. "Done" then
-        -- Swapped in whole, only once the batch has ended. Applying each rule
-        -- as it lands would leave the panel showing a half built list every
-        -- time the server pushed.
-        if incoming then
-            caps.replace_all(incoming)
-            log.debug("rules updated from the server, " .. #incoming .. " of them")
-            incoming = nil
-        end
-        return
-    end
+    session.invalidate_ui()
+    ui.detach()
 end
 
 -- A client's edits are requests, not writes. Setting this is what makes
@@ -2304,16 +2432,25 @@ end
 -- The same trap is called out twenty lines below for the demand estimate. It
 -- was worth writing down once and then obeying in both places.
 local function decide_write_or_send()
-    store.decided = true
-    caps.decided = true
+    local authority = api.latch_authority()
+    if authority == nil then
+        store.set_role(nil, session.epoch)
+        caps.set_role(nil, session.epoch)
+        return
+    end
+    local role = authority and "authority" or "client"
+    store.set_role(role, session.epoch)
+    caps.set_role(role, session.epoch)
+
 
     -- Probed once here and remembered, which is the whole point of doing this
     -- on a timer: every later caller reads a boolean instead of walking the
     -- object array. A client's grid repaint asked this twice per cell, so a
     -- fourteen column grid over fifteen pals paid four hundred full array
     -- walks - seconds of game thread - for one clicked cell.
-    if api.latch_authority() then
+    if authority then
         caps.submit = nil
+        if store.baseline then store.save() end
 
         -- The authority tells everyone when its own rules move. Set here
         -- rather than at load for the same reason submit is: there is no world
@@ -2335,6 +2472,13 @@ local function decide_write_or_send()
         store.on_change = function(key)
             pcall(function() push_stand(nil, key) end)
         end
+        -- Loading Lua alone is not world readiness. Report after baseline
+        -- persistence and writer installation, never from a historical banner.
+        local settings_ready = not require('settings_gate').blocked()
+            and cfg ~= nil and store.state ~= "error" and store.state ~= "unavailable"
+            and caps.state ~= "error" and caps.state ~= "unavailable"
+        log.say(string.format("PWP_READY version=%s session=%d role=%s settings=%s",
+            VERSION, session.epoch, role, settings_ready and "available" or "unavailable"))
         return
     end
 
@@ -2374,17 +2518,59 @@ local function decide_write_or_send()
     end
 end
 
--- The world the caches were built against. nil until the first spawn.
-local world_key = nil
+local function role_tick()
+    if not store.decided then decide_write_or_send() end
+end
+-- Read-only stock requests extend normal scheduler interest; no RPC callback
+-- scans containers, runs a pass, or applies rows to the durable rule store.
+net.on_storage_interest = function(guild)
+    if not store.decided or store.is_client or api.has_authority() ~= true then return false end
+    return scheduler.request_stock(guild)
+end
+net.on_storage_request = function(guild, selected, now)
+    if not store.decided or store.is_client or api.has_authority() ~= true then return nil end
+    return require('storage_snapshot').build(cfg, scheduler, guild, selected, now)
+end
+clock.every('storage transport', 100, function()
+    net.set_storage_open(store.decided and store.is_client == true and panel.open == true)
+    net.storage_tick()
+end)
+clock.every("deferred settings replies",1000,function()net.complete_pending()end)
+clock.every("role", 2000, role_tick)
+clock.every("log summaries", 5000, log.flush_repeats)
+clock.start()
 
+-- The world the caches were built against. nil until the first spawn.
 -- Said once. The decision it reports is re-made on every spawn now, and
 -- a player does not need telling on each death that this is a client.
 local said_client_warning = false
 
-RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
-  -- The authority-evidence fence, before anything that can fail: pulses
-  -- older than this instant stop counting the moment a new pawn exists.
-  spawn_at = os.clock()
+RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callback("hook: complete spawn", function(Context)
+  -- Ignore another player's spawn on a listen/dedicated authority.
+  local local_pc = api.local_player_controller()
+  if local_pc then
+      local same = nil
+      pcall(function()
+          local owner = Context:get()
+          local owner_name = owner:GetFullName()
+          local local_name = local_pc:GetFullName()
+          same = type(owner_name) == "string" and owner_name ~= "" and
+              type(local_name) == "string" and local_name ~= "" and
+              owner_name == local_name
+      end)
+      -- An unreadable context is not proof of a local spawn. In particular,
+      -- another player's restart must not discard this player's queued edits.
+      if same ~= true then return end
+  elseif api.latch_authority() == true then
+      return -- dedicated startup uses role_tick; a remote spawn is not a new server session.
+  end
+  -- Stop writers and invalidate queued work before resolving the new session.
+  if async_trial then async_trial.transition() end
+  session.begin(nil)
+  store.set_role(nil, session.epoch)
+  caps.set_role(nil, session.epoch)
+  api.reset()
+  if net.begin_session then net.begin_session(session.epoch) end
 
   -- Every line below runs under one pcall.
   --
@@ -2395,14 +2581,10 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
   -- with nothing in the log.
   local ok, err = pcall(function()
 
-    -- ClientRestart fires on every spawn, not only on a world load, so this
-    -- also ran on every death. That wiped the demand index, the hold timers,
-    -- the stock cache and every icon cache, and re-queued four one-shots -
-    -- after which the scheduler saw no demand and idle-skipped every camp for
-    -- up to forty five seconds. Dying is not a world change, so the caches
-    -- only go when the world key actually moves.
+    -- ClientRestart also fires on a same-map reconnect and respawn. A matching
+    -- map name cannot prove that the old connection or widget lifetime survives.
     local now_key = api.world_key()
-    local switched = (now_key == nil) or (now_key ~= world_key)
+    local switched = true -- names are not connection identities; reset every spawn
 
     if switched then
         -- Engine wrappers do not survive a world switch, and neither should
@@ -2429,22 +2611,14 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
                     tostring(err_step))
             end
         end
-    else
-        log.debug("respawn in the same world, caches kept")
     end
 
-    -- Printed so the question can be answered from a log rather than argued.
-    --
-    -- world_key is the level's own object path, and Palworld runs one
-    -- persistent map - so it is not obvious that single player and a dedicated
-    -- server produce different strings. If they do not, "switched" is false for
-    -- every reconnect and the whole reset list stops running. Play solo once,
-    -- join the server once, compare these two lines.
+    -- Record the map as diagnostic context; the new epoch identifies the session.
     if switched then
         log.say("world key: " .. tostring(now_key))
     end
 
-    world_key = now_key
+    session.world = now_key
 
     -- Registration is idempotent and cheap; this covers a world load that
     -- happened before the class existed.
@@ -2454,7 +2628,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- lookup answers through a callback on the game thread, and a panel
     -- opened while it was in flight would open on the wrong host. Guarded
     -- because overlay hot-swaps and this file does not.
-    if overlay.prepare then
+    if api.has_viewport() and overlay.prepare then
         pcall(function() overlay.prepare() end)
     end
 
@@ -2483,24 +2657,21 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
         -- re-announce was the only thing putting a player back on the list.
         -- The register keeps anyone who still resolves now, so the crutch can
         -- go with the thing it was propping up.
-        clock.once(18000, function()
+        clock.once(18000, session.guard(function()
             if not api.has_authority() then
                 if net.to_server(net.PREFIX .. "Hello", 1) then
                     log.debug("announced to the server, waiting for the rules")
                 end
             end
-        end)
+        end))
 
         if cfg.run_on_world_load then
             -- Base camps and their worker slots are not populated the instant
             -- the controller restarts, so the first look is late on purpose.
-            clock.once(15000, function() run_pass("world load") end)
-
-            -- One question, asked once: does the game hand out item icons
-            -- itself? If it does, most of icons.lua stops being necessary.
-            clock.once(25000, function()
-                pcall(function() icons.data_probe() end)
-            end)
+            clock.once(15000, session.guard(function()
+                clock.defer("world load", session.guard(function() run_pass("world load") end))
+            end))
+            -- Icon-route diagnostics are manual commands, never startup work.
         end
     end
     -- Not behind the switched guard, and not on a twenty second delay.
@@ -2517,8 +2688,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     -- It does not wait on base camps or worker slots like the first pass does.
     -- Asked again at twenty in case two was optimistic on a slow load; the
     -- function is idempotent, so a second answer only ever confirms the first.
-    clock.once(2000, function() decide_write_or_send() end)
-    clock.once(20000, function()
+    clock.once(2000, session.guard(function() decide_write_or_send() end))
+    clock.once(20000, session.guard(function()
         decide_write_or_send()
 
         if not api.has_authority() and not said_client_warning then
@@ -2529,17 +2700,19 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
                 "down for the Monitoring Stand grid to draw, and your " ..
                 "edits go back up to it.")
         end
-    end)
+    end))
 
     start_timer()
     start_ui()
+    clock.every("role", 2000, role_tick)
+    clock.every("log summaries", 5000, log.flush_repeats)
 
   end)
 
   if not ok then
       log.warn("world load handler threw: " .. tostring(err))
   end
-end)
+end))
 
 -- Started at load as well, not only on world entry. ClientRestart fires when
 -- a player spawns, and a dedicated server with nobody connected never fires
@@ -2580,20 +2753,15 @@ for _, path in ipairs({
     "/Script/Pal.PalHUDInGame:IsAnyOverlayUIActive",
 }) do
     local ok = pcall(function()
-        RegisterHook(path, function() end, function(_, ReturnValue)
-            -- Counted because this was the one recurring hook with no rate
-            -- data at all - "probably per-frame" was the best anyone could
-            -- say. Counting is always on; the fire rate is the answer, and
-            -- the count() bucket lookup is nothing next to the reflected
-            -- read below it.
-            log.count("hook: overlay ui active")
-
+        RegisterHook(path, function() end, measurement.callback("hook: overlay ui active", function(_, ReturnValue)
             -- The game's own answer, read BEFORE we override it, and kept on
             -- palapi because that module is never swapped. It is the only way
             -- anything else can ask "does the GAME have UI up" without reading
             -- back our own lie and believing it.
+            api.game_ui_active = nil
             pcall(function()
-                api.game_ui_active = (ReturnValue:get() == true)
+                local observed = ReturnValue:get()
+                if type(observed) == "boolean" then api.game_ui_active = observed end
             end)
 
             if not (panel and panel.open) then return end
@@ -2603,14 +2771,14 @@ for _, path in ipairs({
             -- is not worth a separate experiment when doing both is free.
             pcall(function() ReturnValue:set(true) end)
             return true
-        end)
+        end))
     end)
     if not ok then
         log.debug("overlay gate: could not hook " .. path)
     end
 end
 
-RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
+RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", measurement.callback("hook: complete chat", function(context, message)
     local ok, err = pcall(function()
         local received = message:get()
         if not (received and received.Message) then return end
@@ -2632,11 +2800,13 @@ RegisterHook("/Script/Pal.PalUIChat:OnReceivedChat", function(context, message)
         handle_command(received.Message:ToString(), true, from_me)
     end)
     if not ok then log.debug("chat hook: " .. tostring(err)) end
-end)
+end))
 
 -- A keybind that fails to register does so silently, which then reads as
 -- "the mod is broken" the first time a key does nothing. Report it.
 local function bind(key, label, fn, modifiers)
+    local action = fn
+    fn = function() session.enqueue(action, true) end
     local ok, err = pcall(function()
         if modifiers then
             RegisterKeyBind(key, modifiers, fn)
@@ -2730,7 +2900,7 @@ end)
 do
     local n = ui.bind_mouse(function() return cfg end, function(dir)
         return panel.handle_click(cfg, dir)
-    end)
+    end, function() return panel.open end)
     if n < 2 then
         log.warn("only " .. n .. " of 2 mouse buttons bound, " ..
             "priority clicking will be partly unavailable")
@@ -2769,26 +2939,13 @@ bind(Key.F9, "Alt+F9 (transport test)", function()
     COMMANDS.net()
 end, { ModifierKey.ALT })
 
--- Esc closes the panel, so it can never be open while the game's own menu is.
---
--- Both of the cursor faults came from those two overlapping. With the panel
--- open, Esc opens Palworld's menu and changes nothing here; then either the
--- second Esc closes that menu and takes the cursor with it while this panel is
--- still up, or closing this panel first calls SetInputMode_GameOnly and takes
--- the cursor away from the menu, which is still up. Same collision, either
--- order, and in both cases the pointer is gone until Esc is pressed again.
---
--- overlay.reassert_input covers the first. This covers the second, and is the
--- better half of the pair because it stops the overlap happening at all
--- rather than repairing it afterwards.
---
--- Close only, never toggle: with the panel shut this is a no-op and the game's
--- own Esc is untouched, which is the shape BreedingHelper settled on for the
--- same reason. Unmodified, because Esc is Esc.
-bind(Key.ESCAPE, "Esc (close the rules panel)", function()
-    if panel.open then
-        pcall(function() panel.toggle() end)
-    end
+-- Cancel the current edit first; a later press closes the panel. This raw
+-- key observer does not consume Palworld's Escape action. Native testing
+-- still shows it closing a Monitoring Stand underneath the editor, so input
+-- isolation remains a separate release gate. The overlay handoff must not
+-- try to repair that collision by stealing another menu's focus.
+bind(Key.ESCAPE, "Esc (cancel editing or close the rules panel)", function()
+    if panel.open and overlay.native_cancel ~= true then panel.escape() end
 end)
 
 -- Arrow keys for the rules panel.
@@ -2803,11 +2960,11 @@ local function arrows()
     -- screen: on the rules list left and right change a ceiling, in the
     -- picker they move across a grid, and only the panel knows which is up.
     local moves = {
-        { "UP_ARROW",    function() return panel.nav(cfg, "up") end },
-        { "DOWN_ARROW",  function() return panel.nav(cfg, "down") end },
-        { "RIGHT_ARROW", function() return panel.nav(cfg, "right") end },
-        { "LEFT_ARROW",  function() return panel.nav(cfg, "left") end },
-        { "RETURN",      function() return panel.nav(cfg, "enter") end },
+        { "UP_ARROW",    function() if panel.open then return panel.nav(cfg, "up") end; return ui.raw_nav(cfg,"up") end },
+        { "DOWN_ARROW",  function() if panel.open then return panel.nav(cfg, "down") end; return ui.raw_nav(cfg,"down") end },
+        { "RIGHT_ARROW", function() if panel.open then return panel.nav(cfg, "right") end; return ui.raw_nav(cfg,"right") end },
+        { "LEFT_ARROW",  function() if panel.open then return panel.nav(cfg, "left") end; return ui.raw_nav(cfg,"left") end },
+        { "RETURN",      function() if panel.open then return panel.nav(cfg, "enter") end; return ui.raw_nav(cfg,"enter") end },
     }
 
     for _, entry in ipairs(moves) do
@@ -2824,3 +2981,7 @@ local function arrows()
     end
 end
 arrows()
+
+-- Stand 1-5/X is delivered by the focused native input surface. A global
+-- key observer has neither event-time hover identity nor Slate input ownership
+-- and must not acquire either later when the game-thread queue drains.

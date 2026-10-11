@@ -37,6 +37,7 @@ local log = require("log")
 local api = require("palapi")
 local panel = require("panel")
 local reload = require("reload")
+local session = require("session")
 
 local M = {}
 
@@ -64,6 +65,16 @@ local checked_at = 0
 -- is already on the game thread, so passing it a string to run costs no new
 -- callback at all.
 local pending = nil
+local panel_request = nil
+
+local function request_panel(wanted, screen)
+    if not panel_request or panel_request.epoch ~= session.epoch then
+        panel_request = { epoch = session.epoch }
+    end
+    if wanted ~= nil then panel_request.wanted = wanted end
+    if wanted == false then panel_request.screen = nil end
+    if screen then panel_request.screen = screen end
+end
 
 -- This module is not itself swapped, so its panel is the one from before the
 -- reload unless it is told otherwise. Missing this makes a reload look like it
@@ -91,20 +102,20 @@ local function run(line)
     if line == "" then return end
 
     if line == "open" or line == "close" then
-        local wanted = (line == "open")
-        if panel.open ~= wanted then
-            pcall(function() panel.toggle() end)
-        end
-        log.say("panel is now " .. (panel.open and "open" or "closed"))
+        -- One bounded desired state, not competing toggles. The latest request
+        -- in this batch wins; a world transition invalidates it before drain.
+        request_panel(line == "open")
+        log.say("panel " .. line .. " requested")
         return
     end
 
     local screen = line:match("^mode%s+(%a+)$")
     if screen then
-        if panel.set_screen and panel.set_screen(screen) then
-            log.say("panel screen: " .. screen)
-        else
+        if screen ~= "item" and screen ~= "list" then
             log.warn("no such screen: " .. screen)
+        else
+            request_panel(nil, screen)
+            log.say("panel screen requested: " .. screen)
         end
         return
     end
@@ -126,7 +137,7 @@ local function run(line)
 
     local command = line:match("^cmd%s+(.+)$")
     if command then
-        pending = command
+        pending = { command = command, epoch = session.epoch }
         return
     end
 
@@ -135,20 +146,44 @@ end
 
 -- Called from the tick, already on the game thread.
 function M.drain()
+    local request = panel_request
+    panel_request = nil
+    if request then
+        local wanted = request.wanted and "open" or "closed"
+        if request.epoch ~= session.epoch then
+            log.warn("panel request cancelled: session changed")
+        else
+            local ok, reached = pcall(function() return panel.set_open_now(request.wanted, request.screen) end)
+            if ok and reached == true then
+                if request.wanted ~= nil then log.say("panel is now " .. wanted) end
+                if request.screen then log.say("panel screen set: " .. request.screen) end
+            else
+                log.warn("panel could not " .. (request.wanted == nil and "change screen"
+                    or (request.wanted and "open" or "close"))
+                    .. "; inspect panel state and the preceding errors")
+            end
+        end
+    end
+
     local command = pending
     if command == nil then return end
     pending = nil
-
-    local lib = api.cdo("/Script/Engine.Default__KismetSystemLibrary")
-    local pc = api.player_controller()
-
-    if not lib or not api.valid(pc) then
-        log.warn("cmd: no player controller, so no console")
+    if command.epoch ~= session.epoch then
+        log.warn("cmd cancelled: session changed")
         return
     end
-
-    pcall(function() lib:ExecuteConsoleCommand(pc, command, pc) end)
-    log.say("cmd: " .. command)
+    local ok, result = pcall(function()
+        local lib = api.cdo("/Script/Engine.Default__KismetSystemLibrary")
+        local pc = api.player_controller()
+        if not lib or not api.valid(pc) then return false end
+        return lib:ExecuteConsoleCommand(pc, command.command, pc)
+    end)
+    if not ok or result == false then
+        log.warn("cmd dispatch failed; no successful execution is confirmed")
+    else
+        -- A non-throwing engine call proves dispatch, not the console result.
+        log.say("cmd submitted: " .. command.command)
+    end
 end
 
 -- Called from the tick. One small file read a second.

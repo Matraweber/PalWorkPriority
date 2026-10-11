@@ -10,9 +10,10 @@
 -- works on this build. The code is written fresh; two of its crash findings
 -- are load-bearing here and worth restating:
 --
---   CRASH RULE 1: pcall cannot catch the native access violation that calling
---   a method on a null/stale wrapper causes. Every member call on anything
---   received from the engine must be behind an affirmative IsValid() == true.
+--   CRASH RULE 1: resolve objects through the current callback's tree or
+--   native arguments. IsValid on a stored, freed wrapper is itself unsafe;
+--   pcall cannot catch the native access violation. Only strings and plain
+--   identity data are retained between callbacks.
 --
 --   CRASH RULE 2: never READ a row's bindedSlot property. The read itself
 --   crashes natively inside UE4SS before Lua sees anything. Pal identity is
@@ -20,6 +21,15 @@
 --   slot arrives as a safe hook argument.
 
 local log = require("log")
+local measurement = require("measurement")
+local session = require("session")
+local tree_lookup = require("ui_tree")
+local render = require("ui_render")
+local stand_input = require("stand_input")
+local stand_pointer = require("stand_pointer")
+local stand_lifecycle = require("stand_lifecycle")
+local input_blocked
+local pad = require("pad")
 local api = require("palapi")
 local workdefs = require("workdefs")
 local net = require("net")
@@ -85,14 +95,20 @@ local missing_key = nil        -- which pal that was, so it is asked about once
 local ASK_GAP_MAX = 120
 local last_hook_try = -math.huge
 local menu_likely_open = false
+local menu_lookup_uncertain = false
 
 -- Cells.
 local cell_row = {}             -- cell full name -> row full name
-local cell_text = {}            -- cell full name -> injected TextBlock
+local cell_text = {}            -- cell full name -> injected TextBlock NAME only
+local cell_paths = {}           -- bounded scalar tree-edge hints, never widgets
+local cell_text_count = 0       -- bounded ownership registry; never evict live ownership
 -- Which menu instance those TextBlocks were injected into. See live_menu.
 local menu_name = nil
 local cell_last = {}            -- cell full name -> last style token written
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
+local edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
+local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like cell_text
+M.EDIT_LEGEND = "1 highest - 5 lowest; X off | * sending/confirming | ! unsaved/rejected | ? unavailable"
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -125,31 +141,96 @@ end
 -- recycle rather than die, and dropping the reference to a live TextBlock
 -- makes the next tick inject a second one on top of it.
 
-local function invalidate_cells()
+local function invalidate_cells(rebound)
+    if rebound then
+        session.invalidate_ui()
+        M.selection = nil
+        pad.forget()
+    end
     -- Only the name-to-name lookup. There is no widget array to drop any
     -- more; cells are resolved inside the call that uses them.
     cell_row = {}
+    cell_last = {}
+    inject_epoch = inject_epoch + 1
 end
 
--- Lost sight of the menu. Injected references are kept and alive() decides
--- what is still usable: detach fires on a merely-invisible frame too, so
--- dropping them here would duplicate widgets on the next tick.
+stand_lifecycle.configure(function(event)
+    if event=='open' then menu_likely_open=true end
+    M.selection=nil
+    M.selection_revision=(M.selection_revision or 0)+1
+    invalidate_cells() -- stand-only token revocation; keep other UI queues
+end)
+
+-- Invalidate the paint, retaining only ownership names. A data edit is not
+-- a widget-generation change and must not cancel other queued rapid clicks.
 function M.detach()
     invalidate_cells()
+end
+
+local function current_edits()
+    if edit_states.epoch ~= session.epoch or edit_states.transport ~= net.local_nonce then
+        edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
+    end
+    return edit_states
+end
+
+-- Called by net.on_edit. No native reads, logging, or engine objects enter
+-- this bounded record. Only an explicit durable acceptance clears an issue;
+-- another attempt or a snapshot alone cannot prove a failed save recovered.
+function M.edit_status(key, work, status, reason)
+    if type(key) ~= "string" or #key == 0 or #key > 128 or key:find("[^%w_%-]") then return false end
+    if type(work) ~= "number" and type(work) ~= "string" then return false end
+    work = math.tointeger(work)
+    if not work or not workdefs.name(work) then return false end
+    local allowed = {pending=true, acknowledged=true, accepted=true, applied=true,
+        applied_unsaved=true, rejected=true, timed_out=true, connecting=true, incompatible=true}
+    if not allowed[status] then return false end
+    local state = current_edits()
+    local token = key .. "|" .. work
+    local entry = state.entries[token]
+    if not entry then
+        if state.count == 128 then
+            local oldest, sequence
+            for id, item in pairs(state.entries) do
+                if not sequence or item.sequence < sequence then oldest, sequence = id, item.sequence end
+            end
+            if state.entries[oldest].status ~= "accepted" then state.incomplete = true end
+            state.entries[oldest] = nil
+            state.count = state.count - 1
+        end
+        entry = {}; state.entries[token] = entry; state.count = state.count + 1
+    end
+    state.sequence = state.sequence + 1
+    entry.status, entry.sequence = status, state.sequence
+    entry.reason = type(reason) == "string" and reason:sub(1,192) or nil
+    if status == "accepted" then entry.issue, entry.issue_reason = nil, nil
+    elseif status == "applied_unsaved" or status == "rejected" or status == "timed_out" then
+        entry.issue, entry.issue_reason = status, entry.reason
+    end
+    invalidate_cells()
+    return true, state.count
 end
 
 -- World switch: every engine wrapper is dead. The bind hook itself survives
 -- (UE4SS hooks are global), so bind_hooked stays.
 function M.reset()
-    M.detach()
+    stand_lifecycle.reset()
+    M.selection = nil
+    M.pad_handlers = nil
+    invalidate_cells(true)
     -- A world switch really does destroy everything, so this is where the
     -- injected references are dropped rather than in detach.
     cell_text = {}
+    cell_paths = {}
+    cell_text_count = 0
     cell_last = {}
     cell_cb = {}
+    edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
+    legend_names, legend_count = {}, 0
     menu_name = nil
     row_pal = {}
     menu_likely_open = false
+    menu_lookup_uncertain = false
     ftext_mode = nil
     warned = {}
 
@@ -208,6 +289,7 @@ end
 -- rows bound before registration are never captured. LoadAsset forces the
 -- class in, and the retry keeps trying every few seconds until it lands.
 local function try_hook_bind()
+    if not api.has_viewport() then return end
     if bind_hooked then return end
     local now = os.clock()
     if now - last_hook_try < 5 then return end
@@ -225,7 +307,7 @@ local function try_hook_bind()
 
     local _t1 = os.clock()
     local ok, err = pcall(function()
-        RegisterHook(ROW_BIND_FN, function(Context, SlotParam)
+        RegisterHook(ROW_BIND_FN, measurement.callback("hook: stand row binding", function(Context, SlotParam)
             -- The message is kept, once per distinct error.
             --
             -- This body is where row_pal is filled, and row_pal is what every
@@ -324,10 +406,12 @@ local function try_hook_bind()
                         key = key, name = name, species = species,
                         ranks = ranks, raw = raw,
                     }
-                    -- rows binding means the screen is opening or scrolling;
-                    -- either way the cell list has moved
+                    -- A bind is a native input boundary even when the same
+                    -- Pal and generated row name are reused. A close/reopen
+                    -- can fit between polls; equality cannot keep old edits
+                    -- authorized. Pure data repaints still use detach().
                     menu_likely_open = true
-                    invalidate_cells()
+                    invalidate_cells(true)
                 end
             end)
 
@@ -342,7 +426,7 @@ local function try_hook_bind()
                 last_bind_error = nil
                 log.say("the Monitoring Stand rows are readable again")
             end
-        end)
+        end))
     end)
 
     local _reg = log.count("ui: try_hook_bind RegisterHook")
@@ -389,71 +473,64 @@ end
 
 local function is_showing(m)
     local ok, vis = pcall(function() return m:IsVisible() end)
-    -- a failed visibility call counts as visible: don't go dark on a quirk
-    if not ok then return true end
-    return vis == true
+    return ok and vis == true
 end
 
--- Only a VISIBLE non-CDO instance counts. Returns menu, tree, root.
--- The full name of the menu instance the injected TextBlocks were put into.
---
--- They are deliberately kept across frames - rows recycle rather than die, so
--- dropping the reference makes the next tick inject a second widget on top of
--- the one already there - and that is safe only for as long as the menu they
--- were injected INTO still exists. When the stand is closed and reopened the
--- game builds a new instance, whose cells carry the SAME generated names
--- (Row_3.Cell_2 and so on), so a map keyed by cell name silently keeps
--- pointing at widgets belonging to the destroyed one. Then ensure_cell_text
--- asks one of them whether it is still valid, which is the crash rather than
--- a check against it, and this file already records two crashes from exactly
--- that.
---
--- Keying the whole map on the menu instance closes it: same instance, the
--- widgets are real and worth keeping; different instance, everything from the
--- old one goes at once, before anything asks it a question. menu_name is
--- declared with the maps it guards, because M.reset clears it.
-local function forget_injected(why)
-    if next(cell_text) == nil and next(cell_last) == nil then return end
-    log.debug("stand: dropping injected cell text (" .. why .. ")")
-    cell_text, cell_last, cell_cb, cell_row = {}, {}, {}, {}
-    inject_epoch = inject_epoch + 1
-end
-
+-- Ownership is a bounded registry of strings, retained while a menu is hidden.
+-- A hidden tree may survive reopening. Its names are only resolved through
+-- the current cell tree; retaining the names never retains an engine wrapper.
 local function live_menu()
-    -- Resolved fresh, never from a kept reference.
-    --
-    -- This used to hold menu_ref between calls and ask alive() on it, which
-    -- is the same stored-wrapper dereference the cells were fixed for one
-    -- function down. It costs one FindAllOf a second, which is what the cell
-    -- sweep beside it already pays.
+    -- Both routes return current-call objects. The typed native query reloads
+    -- the generated class from its learned asset path each time; no widget or
+    -- generated-class wrapper survives a callback. Empty/unavailable queries
+    -- retain the global discovery route, including the first menu opening.
     local menu, tree, root
-    pcall(function()
-        for _, m in ipairs(FindAllOf(M.MENU_CLASS) or {}) do
-            if menu == nil and alive(m) then
-                local name = full_name(m) or ""
-                if not name:find("Default__", 1, true) and is_showing(m) then
+    local complete = pcall(function()
+        local lookup = require('widget_lookup')
+        local candidates = lookup.stands()
+        if not candidates or #candidates==0 then
+            candidates = FindAllOf(M.MENU_CLASS) or {}
+            log.count('ui: menu via global lookup')
+        else log.count('ui: menu via typed query') end
+        for _, m in ipairs(candidates) do
+            if alive(m) then
+                local name = full_name(m)
+                if not name or name=='' then error('unreadable stand identity') end
+                local showing = false
+                if not name:find("Default__", 1, true) then
+                    showing=m:IsVisible()
+                    if type(showing)~='boolean' then error('unknown stand visibility') end
+                end
+                if showing then
+                    if menu ~= nil then error('ambiguous visible Monitoring Stands') end
                     local t, r
                     pcall(function() t = m.WidgetTree end)
                     if alive(t) then pcall(function() r = t.RootWidget end) end
-                    if alive(t) and alive(r) then
-                        menu, tree, root = m, t, r
-                    end
+                    if not alive(t) or not alive(r) then error('visible stand tree unavailable') end
+                    menu, tree, root = m, t, r
                 end
             end
         end
     end)
+    menu_lookup_uncertain = not complete
+
+    -- A partial/ambiguous enumeration never authorizes whichever menu was
+    -- visited first. Keep native objects confined to this invocation.
+    if not complete then menu, tree, root = nil, nil, nil end
+    if menu then require('widget_lookup').remember_stand(menu) end
 
     -- A different instance than the one holding our widgets means the old
     -- ones are gone with it.
     local now_name = menu and full_name(menu) or nil
     if now_name ~= menu_name then
-        forget_injected("menu instance changed")
         menu_name = now_name
-        invalidate_cells()
+        invalidate_cells(true)
     end
+    stand_lifecycle.observe(menu)
 
     return menu, tree, root
 end
+live_menu = measurement.callback("stand: menu lookup", live_menu)
 
 -- ---------------------------------------------------------------------------
 -- Cell -> row
@@ -498,18 +575,22 @@ local function inject_at_checkbox(cell, tb)
     local ok = pcall(function() new_slot = parent:AddChild(tb) end)
     if not ok or not alive(new_slot) then return false end
 
-    if class_name(cb_slot) == "CanvasPanelSlot" then
-        pcall(function() new_slot:SetAnchors(cb_slot:GetAnchors()) end)
-        pcall(function() new_slot:SetPosition(cb_slot:GetPosition()) end)
-        pcall(function() new_slot:SetSize(cb_slot:GetSize()) end)
-        pcall(function() new_slot:SetAlignment(cb_slot:GetAlignment()) end)
-        pcall(function() new_slot:SetZOrder(cb_slot:GetZOrder() + 1) end)
-    else
-        pcall(function() new_slot:SetHorizontalAlignment(cb_slot.HorizontalAlignment) end)
-        pcall(function() new_slot:SetVerticalAlignment(cb_slot.VerticalAlignment) end)
-        pcall(function() new_slot:SetPadding(cb_slot.Padding) end)
-    end
-    return true
+    local placed = pcall(function()
+        local function wrote(result) if result == false then error("cell placement failed") end end
+        if class_name(cb_slot) == "CanvasPanelSlot" then
+            wrote(new_slot:SetAnchors(cb_slot:GetAnchors()))
+            wrote(new_slot:SetPosition(cb_slot:GetPosition()))
+            wrote(new_slot:SetSize(cb_slot:GetSize()))
+            wrote(new_slot:SetAlignment(cb_slot:GetAlignment()))
+            wrote(new_slot:SetZOrder(cb_slot:GetZOrder() + 1))
+        else
+            wrote(new_slot:SetHorizontalAlignment(cb_slot.HorizontalAlignment))
+            wrote(new_slot:SetVerticalAlignment(cb_slot.VerticalAlignment))
+            wrote(new_slot:SetPadding(cb_slot.Padding))
+        end
+    end)
+    if not placed then pcall(function() tb:RemoveFromParent() end) end
+    return placed
 end
 
 -- Fallback when the checkbox route fails: first Overlay in the cell's tree,
@@ -547,21 +628,24 @@ local function inject_fallback(cell, tb)
         end
     end
 
-    return pcall(function() root:AddChild(tb) end)
+    local ok, slot = pcall(function() return root:AddChild(tb) end)
+    return ok and alive(slot)
 end
 
 local function ensure_cell_text(cell, cell_name)
-    local cached = cell_text[cell_name]
-    if cached then
-        -- A widget we put into the game's own stand menu, kept since an
-        -- earlier frame. The menu rebuilds itself, and this mod has two
-        -- crashes in its history from exactly that.
-        local still = alive(cached)
-
-        if still then return cached end
-        cell_text[cell_name] = nil
-        cell_last[cell_name] = nil
+    local cached_name = cell_text[cell_name]
+    local current, complete, hint = tree_lookup.find(cell, cached_name, alive, cell_paths[cell_name])
+    cell_paths[cell_name] = hint
+    cell_last[cell_name] = nil -- same instance names cannot prove a previous write survived.
+    if current then return current end
+    if not complete then return nil end -- unknown is not permission to inject again
+    if not cached_name and cell_text_count >= 2048 then
+        warn_once("cellbudget", "stand control limit reached; new cells remain unavailable")
+        return nil
     end
+    -- A complete walk proved this tree does not contain our old label. Its
+    -- checkbox is a new instance too; do not reuse the old visibility value.
+    cell_cb[cell_name] = nil
 
     local tree
     pcall(function() tree = cell.WidgetTree end)
@@ -586,13 +670,15 @@ local function ensure_cell_text(cell, cell_name)
     pcall(function() tb:SetJustification(1) end)
     pcall(function() tb:SetShadowOffset({ X = 1, Y = 1 }) end)
 
-    cell_text[cell_name] = tb
+    if not cached_name then cell_text_count = cell_text_count + 1 end
+    cell_text[cell_name] = full_name(tb)
     return tb
 end
 
--- RimWorld's work-tab palette (WidgetsWork.ColorOfPriority), lifted slightly
--- off pure primaries for this darker UI. Colour means priority and nothing
--- else, so the same number is always the same colour.
+ensure_cell_text = measurement.callback("stand: label lookup or construction", ensure_cell_text)
+
+-- Priority colours, overridden while synchronization needs attention. The
+-- suffix carries the same information without relying on colour perception.
 local COLOUR = {
     p1       = { R = 0.25, G = 1.00, B = 0.25, A = 1.0 },
     p2       = { R = 1.00, G = 1.00, B = 0.15, A = 1.0 },
@@ -601,6 +687,9 @@ local COLOUR = {
     p5       = { R = 0.62, G = 0.62, B = 0.62, A = 1.0 },
     off      = { R = 0.42, G = 0.42, B = 0.45, A = 0.9 },
     blank    = { R = 1.00, G = 1.00, B = 1.00, A = 1.0 },
+    pending  = { R = 0.35, G = 0.85, B = 1.00, A = 1.0 },
+    issue    = { R = 1.00, G = 0.65, B = 0.25, A = 1.0 },
+    unknown  = { R = 0.75, G = 0.75, B = 0.80, A = 1.0 },
     -- Ceilings are blue on purpose. Nothing in the priority run is blue, so
     -- a number in the header can never be mistaken for a priority.
     -- cap_set and cap_none used to sit here, blue and grey, for a ceiling
@@ -625,49 +714,173 @@ end
 -- does not shift. Re-hidden every tick because the vanilla row refresh can
 -- put it back.
 local function hide_checkbox(cell, cell_name)
-    pcall(function()
+    local ok, hidden = pcall(function()
         local cb = cell.PalCheckBox
-        if not alive(cb) then return end
-        if cell_cb[cell_name] == nil then
-            local ok, v = pcall(function() return cb:GetVisibility() end)
-            cell_cb[cell_name] = (ok and type(v) == "number") and v or 0
+        if not alive(cb) then return false end
+        local previous = cell_cb[cell_name]
+        if previous == nil then
+            previous = api.as_int(cb:GetVisibility())
+            if previous == nil then return false end
         end
-        cb:SetVisibility(2)
+        if cb:SetVisibility(2) == false then return false end
+        cell_cb[cell_name] = previous
+        return true
     end)
+    return ok and hidden == true
 end
 
+hide_checkbox = measurement.callback("stand: hide vanilla checkbox", hide_checkbox)
+
 local function restore_checkbox(cell, cell_name)
-    if cell_cb[cell_name] == nil then return end
+    if cell_cb[cell_name] == nil then return true end
     local want = cell_cb[cell_name]
-    pcall(function()
+    local ok, restored = pcall(function()
         local cb = cell.PalCheckBox
-        if alive(cb) then cb:SetVisibility(want) end
+        return alive(cb) and cb:SetVisibility(want) ~= false
     end)
-    cell_cb[cell_name] = nil
+    if ok and restored then cell_cb[cell_name] = nil; return true end
+    return false
 end
 
 -- The grid does not mark which job a pal is on right now. Three
 -- attempts all made it worse, and the game already answers that in its own
 -- info panel. This is an editor: it shows what you set.
 local function set_cell(tb, cell_name, glyph, colour_key)
-    local token = glyph .. "|" .. colour_key
-    if cell_last[cell_name] == token then return end
-
     local ft = make_ftext(glyph)
-    if not ft then return end
-
-    local ok = pcall(function() tb:SetText(ft) end)
-    if not ok then return end
-
-    pcall(function()
-        tb:SetColorAndOpacity({
-            SpecifiedColor = COLOUR[colour_key],
-            ColorUseRule = 0,
-        })
-    end)
-
-    cell_last[cell_name] = token
+    local result = render.write(tb, ft, COLOUR[colour_key])
+    if result == "rendered" then cell_last[cell_name] = glyph .. "|" .. colour_key end
+    return result
 end
+
+set_cell = measurement.callback("stand: text and colour writes", set_cell)
+
+local EDIT_MESSAGES = {
+    pending="Sending change; the value is not confirmed yet.",
+    acknowledged="Server acknowledged the change; waiting for confirmed data.",
+    applied="Waiting for durable confirmation.",
+    accepted="Confirmed by server.",
+    applied_unsaved="The server applied this change but could not save it; it may be lost after a restart.",
+    rejected="The server rejected this change; showing the last confirmed value.",
+    timed_out="The change was not confirmed in time.",
+    connecting="Connecting to server; priority data unavailable.",
+    incompatible="Server version incompatible; priority data unavailable.",
+}
+local EDIT_REASONS = {
+    save_failed=EDIT_MESSAGES.applied_unsaved,
+    ack_timeout="Server did not acknowledge the change.",
+    snapshot_timeout="Confirmed server data did not arrive.",
+    queue_timeout="The queued change expired before it could be confirmed.",
+    not_authorized="The server did not authorize this edit.",
+    transport_unavailable="The server connection is unavailable.",
+}
+
+-- Read the current gate on every presentation/action, never retain its token.
+function M.settings_message()
+    local state=require('settings_gate').status()
+    if state=='restart_required' then
+        return 'Settings locked after a session change or save failure. Restart the game to edit priorities and limits.'
+    elseif state=='recovering' then
+        return 'Loading saved settings. Priority and limit editing is temporarily locked.'
+    end
+    if api.has_authority()==false and net.status=='unavailable' then
+        if net.status_reason=='settings_restart_required' then
+            return 'Server settings are locked. The host must restart the game or server before editing can resume.'
+        elseif net.status_reason=='settings_recovering' then
+            return 'The server is loading saved settings. Priority and limit editing is temporarily locked.'
+        end
+        return 'Server settings are unavailable. Priority and limit editing is locked.'
+    end
+end
+function M.legend_text() return M.settings_message() or M.EDIT_LEGEND end
+
+local function edit_presentation(key, work)
+    local blocked=M.settings_message()
+    if blocked then return "?","unknown",blocked end
+    local state=current_edits()
+    local entry=state.entries[key.."|"..work]
+    local status=entry and entry.status
+    -- The pending value may become visible before main delivers on_edit.
+    if net.pending_priority then
+        local _,present,pending_status=net.pending_priority(key,work)
+        if present then status=pending_status or "pending" end
+    end
+    if entry and entry.issue then
+        local detail=EDIT_REASONS[entry.issue_reason] or EDIT_MESSAGES[entry.issue]
+        if status=="pending" or status=="acknowledged" then
+            detail=detail.." Retry pending; this warning clears after durable confirmation."
+        end
+        return "!","issue",detail
+    end
+    if status=="applied_unsaved" or status=="rejected" or status=="timed_out" then
+        return "!","issue",EDIT_MESSAGES[status]
+    end
+    if status=="pending" or status=="acknowledged" or status=="applied" then
+        return "*","pending",EDIT_MESSAGES[status]
+    end
+    if status=="connecting" or status=="incompatible" then
+        return "?","unknown",EDIT_MESSAGES[status]
+    end
+    if state.incomplete and not entry then
+        return "?","unknown","Earlier edit status is unavailable; durable confirmation is needed."
+    end
+    return "",nil,status and EDIT_MESSAGES[status] or "Priority setting; this is not current work activity."
+end
+
+-- One small legend in a known multi-child root. Ownership is names only; each
+-- refresh discovers it in the CURRENT tree. Single-child/unknown roots are
+-- left intact and receive the same legend in cell tooltips instead.
+local function refresh_legend(menu)
+    local ok,shown=pcall(function()
+        local name=full_name(menu)
+        local tree=menu.WidgetTree
+        if not alive(tree) then return false end
+        local root=tree.RootWidget
+        if not name or not alive(root) then return false end
+        local kind=root:GetClass():GetFName():ToString()
+        if kind~="CanvasPanel" and kind~="Overlay" and kind~="VerticalBox" then return false end
+        local n=api.as_int(root:GetChildrenCount())
+        if not n or n<0 or n>1024 then return false end
+        local tb
+        for i=0,n-1 do
+            local child=root:GetChildAt(i)
+            if not alive(child) then return false end -- incomplete is not absent
+            if full_name(child)==legend_names[name] then tb=child end
+        end
+        if not tb then
+            if not legend_names[name] and legend_count>=64 then return false end
+            local class=api.cdo("/Script/UMG.TextBlock")
+            if not class then return false end
+            tb=StaticConstructObject(class,tree)
+            if not alive(tb) then return false end
+            local label_name=full_name(tb)
+            if not label_name then return false end
+            local slot=root:AddChild(tb)
+            -- Record attachment before style writes, so a retry cannot double it.
+            if not legend_names[name] then legend_count=legend_count+1 end
+            legend_names[name]=label_name
+            if not alive(slot) then return false end
+        end
+        local slot=tb.Slot
+        if not alive(slot) then return false end
+        local function write(value) if value==false then error("legend write refused") end end
+        if kind=="CanvasPanel" then
+            write(slot:SetAnchors({Minimum={X=0.5,Y=1},Maximum={X=0.5,Y=1}}))
+            write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-8}))
+            write(slot:SetAutoSize(true)); write(slot:SetZOrder(20))
+        else
+            write(slot:SetHorizontalAlignment(2))
+            if kind=="Overlay" then write(slot:SetVerticalAlignment(3)) end
+            write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=4}))
+        end
+        local font=tb.Font; font.Size=12; write(tb:SetFont(font))
+        write(tb:SetText(make_ftext(M.legend_text())))
+        write(tb:SetColorAndOpacity({SpecifiedColor=COLOUR.unknown,ColorUseRule=0}))
+        write(tb:SetVisibility(3))
+        return true
+    end)
+    M.legend_mode=ok and shown and "footer" or "tooltip"
+end
+refresh_legend = measurement.callback("stand: legend refresh", refresh_legend)
 
 -- ---------------------------------------------------------------------------
 -- What a cell should show
@@ -703,7 +916,7 @@ end
 -- nil while net.pals_gen is 0, so the first test falls through and the second
 -- answers false exactly as it did before.
 function M.wants_repaint()
-    if painted_gen == net.pals_gen then return false end
+    if painted_gen == net.pals_gen and painted_epoch == inject_epoch then return false end
     return not api.has_authority()
 end
 
@@ -718,6 +931,10 @@ end
 
 local function shown_prio(cfg, pal, work_name, t)
     if not api.has_authority() then
+        if net.pending_priority then
+            local pending, present = net.pending_priority(pal.key,t)
+            if present then return pending end
+        end
         local entry = pal.key and net.pals and net.pals[pal.key]
         if entry and entry.prios then return entry.prios[t] end
         return nil
@@ -781,8 +998,10 @@ local function handle_cell(cfg, cell, known_name)
     -- the pal will do something it is incapable of.
     local ranks = shown_ranks(pal)
     local capable = ranks and ranks[t] ~= nil
-    if not capable or prio == nil then
-        local existing = cell_text[cell_name]
+    if ranks and not capable then
+        stand_pointer.disable(cell,cell_name)
+        local existing, _, hint = tree_lookup.find(cell, cell_text[cell_name], alive, cell_paths[cell_name])
+        cell_paths[cell_name] = hint
         local usable = false
         if existing then
             usable = alive(existing)
@@ -791,179 +1010,103 @@ local function handle_cell(cfg, cell, known_name)
         if usable then
             set_cell(existing, cell_name, "", "blank")
         end
-        restore_checkbox(cell, cell_name)
+        -- Recycled rows must not carry another Pal's edit error on a vanilla dash.
+        pcall(function() cell:SetToolTipText(make_ftext("")) end)
+        if not restore_checkbox(cell, cell_name) then return "failed" end
         return
     end
 
     local tb = ensure_cell_text(cell, cell_name)
-    if not tb then return end
+    if not tb then return "failed" end
 
-    -- Ours now, so the tick underneath has to go or it shows through.
-    hide_checkbox(cell, cell_name)
+    if prio~=nil and ranks and capable and store.decided and not M.settings_message() then
+        if not stand_pointer.ensure(cell,cell_name,pal.key,t,inject_at_checkbox) then
+            warn_once("pointer", "stand mouse input unavailable; matching input asset required, navigation remains available")
+        end
+    else stand_pointer.disable(cell,cell_name) end
 
+    local marker, edit_colour, detail = edit_presentation(pal.key,t)
+    local unavailable = not api.has_authority() and net.status~="ready" and net.status~="rejected"
+        and net.status~="applied_unsaved"
     local glyph, colour
-    if prio == false then
+    if prio == nil or not ranks or unavailable or M.settings_message() then
+        glyph,colour="?","unknown"
+        if unavailable then detail=M.settings_message() or EDIT_MESSAGES[net.status] or "Priority data unavailable." end
+        if prio==nil and not unavailable then detail="Priority data unavailable; waiting for a confirmed value." end
+        if marker=="?" then marker="" end
+    elseif prio == false then
         glyph, colour = "X", "off"
     else
         glyph, colour = tostring(math.floor(prio)), colour_for(prio)
     end
 
-    set_cell(tb, cell_name, glyph, colour)
-end
-
--- The cells that exist right now, resolved inside this call.
---
--- They used to be found once and kept until something invalidated the cache,
--- which is the stored-wrapper dereference this codebase is built to avoid.
--- FindAllOf returns cells from EVERY instance of the menu, and the file
--- already records that a hidden stale instance coexists with the open one -
--- so when the stale one is torn down while the live one stays visible, the
--- kept array is holding freed objects, and alive() on one of those IS the
--- crash rather than a guard against it.
---
--- The sweep is once a second, not once a frame, which is the rate the caller
--- was built around: main.lua's comment on the grid says it stays on its
--- second precisely because refreshing means a FindAllOf over every cell.
--- The cells of ONE menu, found by walking its own widget tree.
---
--- FindAllOf(CELL_CLASS) is a full object-array walk - 27-34ms on a grown
--- session - and it answers with cells from EVERY menu instance, including the
--- hidden stale one the file already documents, which live_cells then has to
--- take on faith. Walking the found menu's tree costs a few hundred property
--- reads (under a millisecond), and cannot see another instance's widgets at
--- all, so the non-unique-instance-name hazard never arises.
---
--- Both descent routes are needed, same as dump_tree above: a panel's children
--- sit behind GetChildAt, but a nested UserWidget keeps its children in its
--- own WidgetTree - and the stand's rows are nested user widgets, so the cells
--- live two trees down. Everything is resolved inside this call and nothing is
--- kept, which is the same age rule live_cells always had.
-local function cells_under(menu)
-    local root
-    pcall(function()
-        local t = menu.WidgetTree
-        if t ~= nil then root = t.RootWidget end
-    end)
-    if not alive(root) then return nil end
-
-    local out = {}
-    local seen = {}
-    local stack, top = { root }, 1
-    local visited = 0
-    local want = M.CELL_CLASS .. " "
-
-    while top > 0 do
-        -- A walk that runs out of budget is REFUSED, not returned.
-        --
-        -- refresh_cells' prune reasons from "the sweep enumerated every cell
-        -- that exists", and a truncated list breaks that quietly: cells past
-        -- the horizon never paint, their kept TextBlocks are pruned as
-        -- stale, and the next enumeration order that reaches them injects a
-        -- second TextBlock over the live first - the double-injection bug
-        -- this file already documents. nil sends the caller to the global
-        -- walk, which is slower and complete.
-        --
-        -- 4000, not 1200. A StandTree.txt dump measured the real menu at
-        -- MORE than 1200 nodes - dump_tree's own 1200 cap cut the file at
-        -- exactly that count with the tree still going - so the first
-        -- budget refused every single walk and the tree route never ran at
-        -- all: "ui: cells via tree" stayed at zero while the fallback paid
-        -- the full walk every second the stand was open. A 9-row stand
-        -- visits roughly 1300-2000 nodes with cell subtrees skipped; 4000
-        -- leaves room for a taller list while still bounding a cycle to a
-        -- few milliseconds of property reads, far under the walk this
-        -- route exists to avoid.
-        if visited >= 4000 then
-            log.count("ui: cells walk refused, over budget")
-            return nil
-        end
-
-        local w = stack[top]
-        stack[top] = nil
-        top = top - 1
-        visited = visited + 1
-
-        local fn = full_name(w)
-        if fn and not seen[fn] then
-            seen[fn] = true
-
-            if fn:sub(1, #want) == want then
-                -- A cell is a leaf of this search. Its own subtree holds a
-                -- checkbox and some art, never another cell, and descending
-                -- into every match multiplies the node count by the size of
-                -- a cell's innards - which is what pushed a full stand past
-                -- the budget in the first place.
-                out[#out + 1] = w
-            else
-                pcall(function()
-                    local t = w.WidgetTree
-                    if t ~= nil then
-                        local r = t.RootWidget
-                        if alive(r) then
-                            top = top + 1
-                            stack[top] = r
-                        end
-                    end
-                end)
-
-                local count = 0
-                pcall(function() count = w:GetChildrenCount() end)
-                if type(count) == "number" then
-                    for i = 0, count - 1 do
-                        pcall(function()
-                            local child = w:GetChildAt(i)
-                            if alive(child) then
-                                top = top + 1
-                                stack[top] = child
-                            end
-                        end)
-                    end
-                end
-            end
-        end
+    glyph=glyph..marker
+    colour=edit_colour or colour
+    if M.settings_message() then detail=M.settings_message() end
+    local help=M.EDIT_LEGEND.."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
+        .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
+    if M.settings_message() then help=M.settings_message() end
+    pcall(function() cell:SetToolTipText(make_ftext(help)) end)
+    if M.selection and M.selection.key == pal.key and M.selection.work == t then glyph = "[" .. glyph .. "]" end
+    local result = set_cell(tb, cell_name, glyph, colour)
+    local shown, visible = pcall(function() return tb:SetVisibility(3) end)
+    if result == "rendered" and shown and visible ~= false and hide_checkbox(cell, cell_name) then
+        return "rendered"
     end
-
-    if #out == 0 then return nil end
-    return out
+    -- A failed number must not erase the still-usable vanilla control.
+    stand_pointer.disable(cell,cell_name)
+    pcall(function() tb:SetVisibility(2) end)
+    restore_checkbox(cell, cell_name)
+    return "failed"
 end
+
+-- Only the current visible menu may supply draw or input targets. An
+-- incomplete tree is unavailable; a global class sweep includes hidden menus
+-- and must never become a fallback source of editable targets.
+handle_cell = measurement.callback("stand: cell refresh", handle_cell)
 
 local function live_cells(menu)
-    -- The tree route, whenever the caller has a live menu in hand. nil from
-    -- cells_under means "could not walk" or "found none", and either way the
-    -- global sweep below still answers, so a build whose tree will not walk
-    -- keeps exactly the old behaviour at the old price.
-    if menu ~= nil then
-        local found = cells_under(menu)
-        if found then
-            log.count("ui: cells via tree")
-            return found
-        end
-    end
+    if not menu then return nil end
+    local found, meta, names = tree_lookup.stand_cells(menu, M.CELL_CLASS, alive,
+        log.perf and log or nil)
+    log.count(found and "ui: cells via tree" or "ui: cells unavailable")
+    return found, meta, names
+end
+live_cells = measurement.callback("stand: roster lookup", live_cells)
 
-    log.count("ui: cells via global walk")
-    local out = {}
-    pcall(function()
-        for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
-            -- Asked in the same call that produced it, which is the only age
-            -- at which the question is safe.
-            if alive(c) then out[#out + 1] = c end
-        end
-    end)
-    return out
+-- All fields are bounded plain data from the resolver's existing reads. This
+-- summary must never retain, resolve, or inspect an engine wrapper.
+local function tree_summary(meta)
+    if not meta then return "tree metadata unavailable" end
+    local summary = string.format("visits=%d/%d budget_exhausted=%s",
+        meta.visits, meta.budget, tostring(meta.budget_exhausted))
+    if meta.scope then summary = "scope=" .. meta.scope .. " " .. summary end
+    if meta.owner_visits then
+        summary = summary .. string.format(" owner_visits=%d/%d",meta.owner_visits,meta.owner_budget)
+    end
+    if meta.row_scopes then
+        summary = summary .. string.format(" row_scopes=%d row_fallbacks=%d",
+            meta.row_scopes,meta.row_fallbacks or 0)
+    end
+    if meta.stage then
+        summary = string.format("stage=%s class=%s name=%s refusal_visit=%d %s",
+            meta.stage, meta.class, meta.name, meta.refusal_visit, summary)
+    end
+    return summary
 end
 
 -- Returns how many cells it actually painted, so the caller can tell a draw
 -- that happened from one that did not.
 local function refresh_cells(cfg, menu)
-    local cells = live_cells(menu)
-    if #cells == 0 then return 0 end
+    local cells, meta, names = live_cells(menu)
+    if not cells or #cells == 0 then return 0, false, meta end
 
-    local seen = {}
-    local painted = 0
+    local painted, complete = 0, true
 
-    for _, cell in ipairs(cells) do
-        local name = full_name(cell)
-        if name then seen[name] = true end
+    for index, cell in ipairs(cells) do
+        -- The completed traversal just read this name. handle_cell still
+        -- validates the fresh target before touching its properties/widgets.
+        local name = names and names[index] or full_name(cell)
 
         -- Counted, and the error kept.
         --
@@ -972,10 +1115,11 @@ local function refresh_cells(cfg, menu)
         -- shown_prio, shown_ranks and the injected TextBlocks, so one bad
         -- assumption in any of them blanks the whole grid silently. Said once
         -- per distinct message, because it fires per cell.
-        local ok, err = pcall(function() handle_cell(cfg, cell, name) end)
-        if ok then
+        local ok, err = pcall(function() return handle_cell(cfg, cell, name) end)
+        if ok and err == "rendered" then
             painted = painted + 1
-        else
+        elseif not ok or err == "failed" then
+            complete = false
             err = tostring(err)
             if err ~= last_cell_error then
                 last_cell_error = err
@@ -984,35 +1128,19 @@ local function refresh_cells(cfg, menu)
         end
     end
 
-    if painted > 0 then last_cell_error = nil end
-
-    -- Entries whose cell no longer exists are dropped.
-    --
-    -- These are keyed by cell full name and were cleared only on a world
-    -- switch, so every open and close of the stand added a fresh set that
-    -- nothing ever reclaimed. Safe to prune here and only here: the sweep
-    -- above just enumerated every cell that exists, so a key missing from it
-    -- names something gone. Guarded on a non-empty sweep, because an empty
-    -- one means the menu is shut, not that every cell died - and cell_text
-    -- must survive a shut menu, or the next tick injects a second widget on
-    -- top of the one already there.
-    for name in pairs(cell_text) do
-        if not seen[name] then
-            cell_text[name] = nil
-            cell_last[name] = nil
-            cell_cb[name] = nil
-            cell_row[name] = nil
-        end
-    end
-
-    return painted
+    if complete and painted > 0 then last_cell_error = nil end
+    -- Missing cells may belong to another still-live hidden tree. Pruning by
+    -- this menu would lose their ownership and duplicate controls on reopen.
+    return painted, complete, meta
 end
+refresh_cells = measurement.callback("stand: grid refresh (includes roster)", refresh_cells)
 
 -- ---------------------------------------------------------------------------
 -- Entry point, once per UI tick
 -- ---------------------------------------------------------------------------
 
-function M.refresh(cfg)
+function M.refresh(cfg,flush_receipt)
+    if not api.has_viewport() then return false end
     -- The stand grid used to be authority-only, and the reason was a crash
     -- rather than a preference. It draws on a client now - from what the
     -- server sends, never from a local read - and the paragraph below records
@@ -1150,8 +1278,10 @@ function M.refresh(cfg)
     -- function, under two early returns - so closing the stand within that
     -- window took the only path that reaches it away, and the edit never
     -- reached priorities.txt. Silently: the checkbox had visibly moved.
-    -- Flushing here costs nothing when nothing is dirty.
-    store.flush()
+    -- An attached writer polls even while saved. Main may supply a single-use
+    -- receipt for this callback; intervening edits/ownership changes invalidate
+    -- it. Standalone calls and failed/pending maintenance retain this flush.
+    if type(flush_receipt)~='function' or flush_receipt()~=true then store.flush()end
 
     -- Plain Lua read while the stand has never been opened: zero engine calls
     -- is the whole idle cost of the mod.
@@ -1200,7 +1330,7 @@ function M.refresh(cfg)
             -- because its parameter was momentarily invalid) re-asked on every
             -- tick until the hello budget ran out, and restarted every time
             -- anyone edited anything.
-            if absent and absent ~= missing_key then
+            if absent and (absent ~= missing_key or os.clock() - last_ask >= ASK_GAP_MAX) then
                 -- Committed only once the message has gone, as the backoff
                 -- above already is. Setting the memos first meant a send
                 -- attempted before the network component resolves - the first
@@ -1215,6 +1345,7 @@ function M.refresh(cfg)
                 if sent then
                     missing_gen = net.pals_gen
                     missing_key = absent
+                    last_ask = os.clock()
                     log.debug("stand: no data for " .. absent .. ", asked once")
                 end
             end
@@ -1239,20 +1370,12 @@ function M.refresh(cfg)
     local menu = live_menu()
     if not menu then
         M.detach()
-        -- Stand down until a row binds again. Without this the mod runs a
+        -- A proven close stands down until a row binds again. Without this the mod runs a
         -- FindAllOf every second for the rest of the session after the stand
-        -- is opened once.
-        menu_likely_open = false
+        -- is opened once. Unknown/ambiguous queries must remain retryable;
+        -- they do not prove a close and may recover without any row bind.
+        menu_likely_open = menu_lookup_uncertain
         return false
-    end
-
-    -- Decided AFTER the menu is known, and consumed only once a draw has
-    -- actually happened. A generation marked as painted by a refresh that
-    -- painted nothing is what made the grid blank.
-    if not api.has_authority() then
-        if painted_gen == net.pals_gen and painted_epoch == inject_epoch then
-            return false
-        end
     end
 
     -- Committed only if something was drawn.
@@ -1263,13 +1386,22 @@ function M.refresh(cfg)
     -- code did not implement it. refresh_cells returned nothing, and every
     -- per-cell paint inside it is a discarded pcall, so all 62 could fail and
     -- the epoch still committed. The gate then returned early for ever after.
-    local painted = refresh_cells(cfg, menu)
+    refresh_legend(menu)
+    local painted, complete, tree_meta = refresh_cells(cfg, menu)
 
-    if painted == 0 then
+    if painted == 0 or not complete then
         if not said_painted_none then
             said_painted_none = true
-            log.warn("the stand grid found rows but painted no cells, so the " ..
-                "numbers will not appear")
+            if tree_meta and not tree_meta.complete then
+                log.warn("the stand grid is unavailable: incomplete tree; no cells painted (" ..
+                    tree_summary(tree_meta) .. ")")
+            elseif painted == 0 then
+                log.warn("the stand grid painted no cells (" ..
+                    tostring(tree_meta and tree_meta.matched_cells or 0) .. " cells found)")
+            else
+                log.warn("the stand grid paint incomplete: " .. painted ..
+                    " cells rendered; some cells failed")
+            end
         end
         return false
     end
@@ -1291,16 +1423,19 @@ M.wants_pass = false
 
 -- Exactly one cell can be hovered. IsHovered still answers with the checkbox
 -- hidden, since Hidden removes the checkbox from hit testing, not the cell.
-local function hovered_cell(menu)
-    -- Resolved here rather than read from a kept array. This runs from the
-    -- mouse keybind, which can fire arbitrarily long after the last refresh,
-    -- so a kept array is at its most stale exactly when this reads it.
-    for _, cell in ipairs(live_cells(menu)) do
-        local hit = false
-        pcall(function() hit = cell:IsHovered() end)
-        if hit == true then return cell end
+local function hovered_cell(cells)
+    -- The caller resolves this complete roster inside the current action.
+    -- It must never be kept for the next keybind or refresh callback.
+    local hovered
+    for _, cell in ipairs(cells or {}) do
+        local ok,hit=pcall(function() return cell:IsHovered() end)
+        if not ok or type(hit)~='boolean' then return nil,false end
+        if hit then
+            if hovered then return nil,false end
+            hovered=cell
+        end
     end
-    return nil
+    return hovered,true
 end
 
 -- Resolves a cell to the pal and work type it represents, or nil when it is
@@ -1356,59 +1491,223 @@ local function cell_target(cell)
     return pal, t, work_name, cname
 end
 
--- dir -1 for left click (towards priority 1), +1 for right click.
-local function bump(cfg, dir)
-    if not menu_likely_open then return end
+-- Only the edited cell and the former navigation focus need immediate paint.
+-- All wrappers belong to this action's freshly proved roster. Data/snapshot
+-- invalidations still get a complete refresh at the normal maintenance beat.
+local function paint_input(cfg, cells, edited, previous)
+    for _, cell in ipairs(cells or {}) do
+        local paint = cell == edited
+        if not paint and previous then
+            local pal, work = cell_target(cell)
+            paint = pal and pal.key == previous.key and work == previous.work
+        end
+        if paint then
+            local name = full_name(cell)
+            if name then cell_last[name] = nil end
+            local ok, result = pcall(handle_cell, cfg, cell, name)
+            if not ok or result ~= "rendered" then
+                -- Do not consume the full-grid generation on a partial draw.
+                invalidate_cells()
+                if not ok then warn_once("input paint", "stand edit could not be drawn: " .. tostring(result)) end
+            end
+        end
+    end
+end
 
-    -- Prove the menu is the one these caches were built against, before
-    -- touching any of them.
-    --
-    -- live_menu is the only thing that calls forget_injected, and on a client
-    -- M.refresh returns at the generation check ABOVE it - so once the grid
-    -- has painted, live_menu may never run again. Two consequences, both
-    -- reached only from here. menu_likely_open is never cleared, so every left
-    -- click for the rest of the session pays a full cell-class walk whether
-    -- the stand is open or shut. And cell_text keeps widgets belonging to a
-    -- destroyed menu instance, which the reopened stand hands back under the
-    -- SAME generated names - so alive() lands on a freed widget, and that is
-    -- the crash rather than an error.
-    --
-    -- It costs one more object walk on a click that was already paying one.
-    -- Clicks are rare and user-initiated; the alternative is a stale
-    -- dereference on the one path that can still reach it.
+-- dir -1 for left click (towards priority 1), +1 for right click.
+local function bump(cfg, dir, cell_name, key, work, token, revision)
+    if M.settings_message() then return false end
+    if not menu_likely_open or not store.decided then return end
+
+    -- Fresh discovery also invalidates queued actions when the visible menu
+    -- changes without a preceding row-bind event. Do not finish this action
+    -- against the replacement menu merely because discovery succeeded.
+    local epoch = session.ui_epoch
     local menu = live_menu()
+    if epoch ~= session.ui_epoch then return end
     if not menu then
-        menu_likely_open = false
+        menu_likely_open = menu_lookup_uncertain
         return
     end
 
-    local cell = hovered_cell(menu)
+    local cells = live_cells(menu)
+    local cell
+    for _, candidate in ipairs(cells or {}) do
+        if full_name(candidate)==cell_name
+            and stand_pointer.matches(candidate,cell_name,key,work,token) then cell=candidate; break end
+    end
     if not cell then return end
 
-    local pal, t, work_name, cname = cell_target(cell)
-    if not pal then return end
+    local pal, t, work_name = cell_target(cell)
+    if not pal or pal.key~=key or t~=work then return end
 
     local current = shown_prio(cfg, pal, work_name, t)
+    if current==nil then return end
     local next_prio = store.cycle(current, dir)
-    if next_prio == current then return end
+    local previous = M.selection
+    -- An accepted press must not erase navigation performed after that press.
+    if revision==(M.selection_revision or 0) then M.selection = nil end
+    if next_prio == current then paint_input(cfg, cells, cell, previous); return end
 
-    store.set(pal.key, t, next_prio)
+    local saved = store.set(pal.key, t, next_prio)
+    paint_input(cfg, cells, cell, previous)
+    if not saved then return end
 
     -- Deliberately NOT writing the game's permission flag here: the fence
     -- owns those. A click changes policy, the pass applies it. Writing here
     -- too gave one click three authorities and made the checkbox flicker.
     M.wants_pass = true
 
-    -- Repaint this one cell immediately rather than waiting up to a second
-    -- for the poll: a priority control that answers late feels broken even
-    -- when it is working, and repainting also re-hides the checkbox the
-    -- vanilla click just made visible again.
-    cell_last[cname] = nil
-    pcall(function() handle_cell(cfg, cell) end)
-
     log.debug(string.format("%s %s -> %s",
         tostring(pal.name), work_name,
         next_prio == false and "X" or tostring(next_prio)))
+end
+
+function M.is_open() return menu_likely_open end
+
+local function input_targets(cells)
+    local targets, row_order, next_row = {}, {}, 0
+    for _, cell in ipairs(cells or {}) do
+        local pal, work, name, cname = cell_target(cell)
+        if pal then
+            if not row_order[pal.key] then next_row=next_row+1; row_order[pal.key]=next_row end
+            targets[#targets+1] = {key=pal.key,work=work,name=name,cname=cname,pal=pal,cell=cell}
+        end
+    end
+    table.sort(targets,function(a,b)
+        if a.key ~= b.key then return row_order[a.key]<row_order[b.key] end
+        return a.work<b.work
+    end)
+    return targets
+end
+
+function M.nav(cfg,direction,origin)
+    if M.settings_message() then return false end
+    if not menu_likely_open or not store.decided or (input_blocked and input_blocked()) then return false end
+    local epoch=session.ui_epoch
+    local menu=live_menu()
+    if epoch~=session.ui_epoch then return false end
+    if not menu then menu_likely_open=menu_lookup_uncertain; M.selection=nil; return false end
+    local owns, focused=pcall(function()
+        return menu:HasAnyUserFocus()==true or menu:HasFocusedDescendants()==true
+    end)
+    if not owns or not focused then return false end
+    local cells=live_cells(menu)
+    local targets=input_targets(cells)
+    local previous=M.selection
+    if origin then
+        local found=false
+        for _,target in ipairs(targets) do
+            if target.key==origin.key and target.work==origin.work then found=true; break end
+        end
+        if not found then return false end
+    end
+    local wanted=stand_input.select(targets,origin or M.selection,direction)
+    if not wanted then return false end
+    local selected
+    for _,target in ipairs(targets) do
+        if target.key==wanted.key and target.work==wanted.work then selected=target; break end
+    end
+    if not selected or not stand_pointer.focus(selected.cell,selected.cname,selected.key,selected.work) then return false end
+    M.selection=wanted
+    M.selection_revision=(M.selection_revision or 0)+1
+    if direction=="enter" or direction=="raise" or direction=="lower" or direction=="disable" then
+        local token=stand_pointer.token(selected.cell,selected.cname,selected.key,selected.work)
+        if not token then return false end
+        local intent={cell=selected.cname,key=selected.key,work=selected.work,token=token,
+            world=session.epoch,ui=session.ui_epoch,pointer=false}
+        if direction~='disable' then intent.cycle=direction=='lower' and 1 or -1 end
+        -- Controller mutations share the same FIFO as native mouse/numbers.
+        -- Cycle from the pending value at execution, never the old snapshot.
+        if not session.enqueue(M.direct,true,cfg,false,intent) then return false end
+    end
+    paint_input(cfg,cells,selected and selected.cell,previous)
+    return true
+end
+
+-- Native keyboard callback only. Resolve the target NOW, while Slate has
+-- delivered the event to our focused receiver, and keep scalar identity only.
+function M.capture_direct(source_name,source_key,source_work,source_token,source_only)
+    if M.settings_message() then return false end
+    if not menu_likely_open or not store.decided then return false end
+    local epoch=session.ui_epoch
+    local menu=live_menu()
+    if epoch~=session.ui_epoch then return false end
+    if not menu then menu_likely_open=menu_lookup_uncertain; return false end
+    local cells=live_cells(menu)
+    local source
+    for _,candidate in ipairs(cells or {}) do
+        if full_name(candidate)==source_name
+            and stand_pointer.matches(candidate,source_name,source_key,source_work,source_token) then
+            source=candidate; break
+        end
+    end
+    if not source then return false end
+    local hovered,complete
+    if source_only then complete=true else hovered,complete=hovered_cell(cells) end
+    if not complete then return false end
+    local cell=hovered or source
+    local pal,work,_,name=cell_target(cell)
+    if not pal then return false end
+    local token=stand_pointer.token(cell,name,pal.key,work)
+    if not token then return false end
+    return {cell=name,key=pal.key,work=work,token=token,world=session.epoch,ui=epoch,
+        pointer=hovered~=nil,selection_revision=M.selection_revision or 0}
+end
+
+function M.direct(cfg,priority,intent)
+    if M.settings_message() then return false end
+    if not menu_likely_open or not store.decided or (input_blocked and input_blocked()) or type(intent)~='table'
+        or intent.world~=session.epoch or intent.ui~=session.ui_epoch then return false end
+    if priority~=false and (type(priority)~='number' or priority%1~=0 or priority<1 or priority>5) then return false end
+    local menu=live_menu()
+    if not menu or intent.ui~=session.ui_epoch then return false end
+    local cells=live_cells(menu)
+    local cell,pal,work
+    for _,candidate in ipairs(cells or {}) do
+        if full_name(candidate)==intent.cell
+            and stand_pointer.matches(candidate,intent.cell,intent.key,intent.work,intent.token) then
+            pal,work=cell_target(candidate)
+            if pal and pal.key==intent.key and work==intent.work then cell=candidate end
+            break
+        end
+    end
+    if not cell then return false end
+    if intent.cycle then
+        if intent.cycle~=-1 and intent.cycle~=1 then return false end
+        local current=shown_prio(cfg,pal,workdefs.name(work),work)
+        if current==nil then return false end
+        priority=store.cycle(current,intent.cycle)
+    end
+    local previous=M.selection
+    -- A number key over a capable cell is the same pointer-directed edit as
+    -- a click. Without hover, retain the navigation marker on the selected cell.
+    if intent.pointer and intent.selection_revision==(M.selection_revision or 0) then M.selection=nil end
+    local saved=store.set(pal.key,work,priority)
+    paint_input(cfg,cells,cell,previous)
+    if not saved then return false end
+    M.wants_pass=true
+    return true
+end
+
+function M.pad_tick(cfg)
+    if not menu_likely_open or not api.has_viewport() then return end
+    if not M.pad_handlers then
+        M.pad_handlers={
+            nav=function(verb) M.nav(M.pad_cfg,verb) end,
+            up=function() M.nav(M.pad_cfg,"up") end,
+            down=function() M.nav(M.pad_cfg,"down") end,
+            left=function() M.nav(M.pad_cfg,"left") end,
+            right=function() M.nav(M.pad_cfg,"right") end,
+            enter=function() M.nav(M.pad_cfg,"raise") end,
+            tab_prev=function() M.nav(M.pad_cfg,"raise") end,
+            tab_next=function() M.nav(M.pad_cfg,"lower") end,
+            remove=function() M.nav(M.pad_cfg,"disable") end,
+        }
+    end
+    M.pad_cfg=cfg
+    pad.tick_ms=16 -- main drives this from its 16ms game-thread loop
+    pad.drive(M.pad_handlers)
 end
 
 -- Bound once, not per menu. The handlers bail on a plain Lua flag when the
@@ -1416,8 +1715,28 @@ end
 -- `before` gets first refusal on every click and returning true consumes it.
 -- The rules panel uses that: it can be open over the stand, and a click meant
 -- for a rule must not also land on whatever priority cell sits underneath.
-function M.bind_mouse(cfg_ref, before)
+function M.bind_mouse(cfg_ref, before, blocked)
+    input_blocked=blocked
     local bound = 0
+    stand_pointer.configure(function(cell,key,work,token,dir,revision)
+        if blocked and blocked() then return end
+        bump(cfg_ref(),dir,cell,key,work,token,revision)
+    end,function()
+        return menu_likely_open and store.decided and not (blocked and blocked())
+    end,function(priority,cell,key,work,token)
+        if type(priority)=='number' and priority>=6 and priority<=9 then
+            local direction=({[6]='up',[7]='down',[8]='left',[9]='right'})[priority]
+            if direction then M.nav(cfg_ref(),direction,{key=key,work=work}) end
+            return
+        end
+        local intent=M.capture_direct(cell,key,work,token,priority==10)
+        if not intent then return end
+        if priority==10 then intent.cycle=-1; priority=false end
+        session.enqueue(function()
+            if blocked and blocked() then return end
+            M.direct(cfg_ref(),priority,intent)
+        end,true)
+    end,function() return M.selection_revision or 0 end)
 
     local function try(key_name, dir)
         local key
@@ -1430,13 +1749,11 @@ function M.bind_mouse(cfg_ref, before)
         end
         local ok = pcall(function()
             RegisterKeyBind(key, function()
-                local consumed = false
-                if before then
-                    pcall(function() consumed = before(dir) == true end)
-                end
-                if not consumed then
-                    pcall(function() bump(cfg_ref(), dir) end)
-                end
+                session.enqueue(function()
+                    -- Raw callbacks have no native target. They may service the
+                    -- separate panel, but must never acquire a stand cell later.
+                    if before then before(dir) end
+                end, true)
             end)
         end)
         if ok then bound = bound + 1 end
@@ -1445,6 +1762,14 @@ function M.bind_mouse(cfg_ref, before)
     try("LEFT_MOUSE_BUTTON", -1)
     try("RIGHT_MOUSE_BUTTON", 1)
     return bound
+end
+
+-- Raw arrows may establish initial focus while the vanilla stand owns it.
+-- Once a native receiver has taken over this generation, only its own key
+-- events navigate; the global observer must not duplicate Slate delivery.
+function M.raw_nav(cfg,direction)
+    if direction=='enter' or stand_pointer.keyboard_active() then return false end
+    return M.nav(cfg,direction)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1535,6 +1860,8 @@ end
 
 function M.dump(f)
     f:write("=== monitoring stand (" .. M.MENU_CLASS .. ")\n")
+    f:write(stand_pointer.report().."\n")
+    f:write(stand_lifecycle.report().."\n")
     f:write("  bind hook: " .. tostring(bind_hooked) ..
         "  rows captured: " .. tostring((function()
             local n = 0
@@ -1563,13 +1890,10 @@ function M.dump(f)
             f:write("   widget tree:\n")
             dump_tree(f, r, 4, { n = 0 })
 
-            -- The fix-D question, answered next to the evidence: does the
-            -- tree route see the cells this menu is drawing? cells_under
-            -- answering nil here, against a non-zero global count and the
-            -- tree printed just above, is the virtualized-ListView verdict
-            -- in one line - the rows live somewhere GetChildAt and the
-            -- menu's own WidgetTree cannot reach.
-            local found = cells_under(m)
+            -- Use the same resolver as drawing/input. A refusal is not proof
+            -- that rows are virtualized: report its first failed traversal
+            -- stage and budget separately from the diagnostic global count.
+            local found, meta = tree_lookup.stand_cells(m, M.CELL_CLASS, alive)
             local global_cells = 0
             pcall(function()
                 for _, c in ipairs(FindAllOf(M.CELL_CLASS) or {}) do
@@ -1577,10 +1901,11 @@ function M.dump(f)
                 end
             end)
             f:write(string.format(
-                "   cells_under: %s | global cell walk: %d\n",
+                "   tree cells: %s | global cell walk: %d\n",
                 found and tostring(#found)
-                    or "nil (no root, none found, or budget refused)",
+                    or "unavailable (incomplete tree)",
                 global_cells))
+            f:write("   tree walk: " .. tree_summary(meta) .. "\n")
         end
     end
 
@@ -1608,6 +1933,9 @@ function M.dump(f)
         if shown >= 5 then break end
         if alive(c) then
             shown = shown + 1
+            if shown == 1 then
+                f:write(require('stand_event_probe').read(c, alive, StaticFindObject))
+            end
             local t, battle
             pcall(function() t = c.BindedSuitability end)
             pcall(function() battle = c.IsBattleSettingMode end)
