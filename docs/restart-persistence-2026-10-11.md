@@ -129,3 +129,36 @@ refusal removed) made it fail as intended. The click-to-cell mapping above
 **Verdict: the singleplayer save path passes** (edit, immediate durable save,
 restart, value in force). Remaining G1 items: the server run, the 0.4.1 upgrade
 route and rapid edits.
+
+## Dedicated server (GPortal "RAM"), 2026-10-11 21:20-21:54
+
+**Install.** The server still ran the old schema-3 build. The browser panel's
+file actions were blocked by the agent's permission check, and the agent may
+not log in with the user's FTP password, so the user logged in once to
+`tools/ftp_session.py` and the agent drove it from its queue. Server mod path:
+`/Pal/Binaries/Win64/ue4ss/Mods/PalWorkPriority`. Old `Scripts` (53 files) kept
+as `Scripts-before-0.5-20261011`; new `Scripts` = the 55 files of b793e32, every
+one downloaded back and SHA-256 identical. (A dropped connection during the
+first readback made the helper re-run the install; fixed in 442be46, see
+LESSONS.) The panel's Restart button then worked from the browser.
+
+**Identity.** Server log 21:40:00 "0.5.0-rc1 loaded", 21:40:06 PWP_READY
+authority. The client (schema 4) joined, resolved the server guild and the echo
+round trip worked; an old schema-3 server could not have synchronised it.
+
+| Step | Evidence |
+|---|---|
+| client `setprio` Pal 050BF1CE... Transporting 1 -> X | server log 21:46:06 "priority Transport set to X by a player"; server file generation 94 -> 95, row `|12|X`; priority-change pass ran |
+| server restart (panel, 21:47) | reloaded 21:47:22 on 0.5.0-rc1; file still `|12|X`, payload checksum unchanged (5accec05; load rewrite moved generation 95 -> 96) |
+| client rejoin (server macro `--title`) | stand screenshot: exactly one X on the whole grid, Flambelle's Transporting cell; every other server value is 1 |
+| restore 1 from the client | server payload checksum back to 7e4eefdc, all 34 rows identical to the pre-test copy |
+
+Artifacts: `test-results/server-g1-20261011/` (stand screenshot, server file
+before / after restart / restored).
+
+**Verdict: G1 "restart keeps priorities" PASSES on the dedicated server.**
+Known tool quirk: the server macro reports "STOPPED: Game did not receive
+focus" at its last step even when the stand did open (the user's windows were
+in front; game is windowed). Treat its report as advisory and check the screen.
+
+**G1 still open:** 0.4.1 upgrade route, rapid edits.
