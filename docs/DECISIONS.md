@@ -120,3 +120,14 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   without prompts, and an independent agent cross-checks each live run.
   Lua changes may be staged while the game runs; a restart activates them.
   Full protocol: [testing.md](testing.md).
+
+## Test installation
+
+- **2026-10-11 - The local client was switched from the async trial back to the
+  shipping path** so 0.5.0 is tested as it will ship. Codex's planned migration
+  machinery was not needed: journals and legacy files held identical rows,
+  verified byte for byte against the export bundle. The trial was disarmed by
+  moving its launcher and receipt into a verified full backup, not deleted.
+  *Rejected:* testing on the trial install (wrong code path, older build) and
+  running the multi-step cutover tooling for data that did not differ.
+  *Evidence:* [restart-persistence-2026-10-11.md](restart-persistence-2026-10-11.md).

@@ -56,3 +56,54 @@ design).
 Singleplayer and server: set 1-5 and X on at least 3 Pals, restart twice via
 the AHK macros, then compare the stand, `priorities.txt` and the first passes'
 fence and toggle lines. Watch the Pals' Current Task for the X job.
+
+## Live run, singleplayer, 2026-10-11 20:15-20:25
+
+**Install switched to the shipping path first.** The client had been running a
+hand-patched older rc1 with the async trial armed (see DECISIONS.md, same date).
+Steps: game and server closed; whole mod folder backed up with a SHA-256
+manifest (4,154 files, verified identical) to
+`D:\PalWorkPriority-backups\pre-ship-path-20261011-201543`, journal store copied
+beside it. Journals matched today's export bundle byte for byte and the legacy
+files held the same 41 priority and 2 limit rows, so nothing needed migrating.
+`async-trial/launch.lua` and `receipt.lua` were MOVED into that backup's
+`disarmed-trial/` (re-arm by moving them back, game closed). Then
+`tools/deploy.ps1` installed the branch: 55/55 Lua files match `reliability-0.5`
+at e1bdd63, pak unchanged and matching, auto reload 0, Workshop copy not in
+ActiveModList.
+
+**Launch method.** The AHK macro was started through a one-off Interactive
+scheduled task so the game runs in the user's real session, not as a child of
+the agent's shell. (Writes to D: and to the repo on the Desktop were confirmed
+visible to the real session with a scheduled-task probe.)
+
+**Test data.** The existing file: 15 Pals, values 1-5 and two X:
+Grizzbolt (`BOSS_ElecPanda`, key 679D42C8...) Transporting = X, the Two Bob
+Games case; GrassRabbitMan (key 7B48FA63...) Handiwork = X.
+
+**Discriminating readback.** Fence lines and fenced off-lists cannot tell X from
+fencing, because a fenced Pal has every other type off anyway. So after each
+restart `!pwp restore` (unfence, verified readback) was followed in the same
+remote write by `!pwp worksuit`, which reads the game's own
+OffWorkSuitabilityList. With fencing gone, only X and caps can be off.
+
+| | Restart 1 (`--launch`, 20:20) | Restart 2 (`--stand`, 20:23) |
+|---|---|---|
+| world ready / first pass | 20:21:19 / 20:21:32 | 20:24:19 / 20:24:32 |
+| Grizzbolt off-list | `[Transport]` | `[Transport]` |
+| GrassRabbitMan off-list | `[Anyone Handcraft]` | `[Anyone Handcraft]` |
+| restore line | "X choices remain disabled", 25 requests | same, 26 requests |
+| priorities.txt / caps.txt | unchanged (6a06f03d / b2de8be4) | unchanged |
+| WARN/ERROR in priority.log | 0 | 0 |
+
+(`Anyone` appears on two Pals with no matching mod rule; it is untouched vanilla
+state, not an X.)
+
+**Verdict for the "restart keeps priorities and applies them" item, singleplayer:
+PASS for saved values.** Both X choices were in force in the game's own state
+within a minute of loading, twice, with no edit. Only the first tick after load
+reported unverified assignments; they cleared by the next tick.
+
+**Still open in G1:** an in-game edit then save then restart (this run reused
+saved rows, it did not exercise the save path), the same check on the server,
+the 0.4.1 upgrade route, and rapid edits.
