@@ -55,11 +55,16 @@ class Session:
             ftp.prot_p()
         self.ftp = ftp
 
-    def call(self, fn):
+    def call(self, fn, retry=True):
+        """retry=False for anything that changes the server. Re-running a
+        half-finished install after a dropped connection produced a misleading
+        'backup already exists' on 2026-10-11 while the upload had finished."""
         try:
             return fn(self.ftp)
         except (ftplib.error_temp, OSError, EOFError):
-            self.connect()  # one reconnect, then let the error surface
+            self.connect()  # reconnect either way so the session stays usable
+            if not retry:
+                raise
             return fn(self.ftp)
 
 
@@ -76,8 +81,7 @@ def tail(ftp, path, nbytes):
     return buf.getvalue()[-nbytes:], size
 
 
-def handle(session, rid, op, args):
-    lines = []
+def handle(session, rid, op, args, lines):
     say = lines.append
     ok = True
     if op == "ls" and len(args) == 1:
@@ -102,9 +106,9 @@ def handle(session, rid, op, args):
         else:
             files = deploy.lua_files(args[0])
             say(f"{len(files)} Lua files from {args[0]}")
-            ok = session.call(lambda f: deploy.do_install(f, files, args[1], say=say))
+            ok = session.call(lambda f: deploy.do_install(f, files, args[1], say=say), retry=False)
     elif op == "rollback" and len(args) == 1:
-        ok = session.call(lambda f: deploy.do_rollback(f, args[0], say=say))
+        ok = session.call(lambda f: deploy.do_rollback(f, args[0], say=say), retry=False)
     else:
         ok = False
         say(f"refused: unknown or malformed request '{op} {' '.join(args)}'")
@@ -134,10 +138,13 @@ def main():
                     session.ftp.quit()
                     print("quit requested, session closed")
                     return
+                progress = []
                 try:
-                    handle(session, rid, op, args)
-                except Exception as e:  # report, keep the session alive
-                    (OUT / f"{rid}.txt").write_text(f"FAILED\n{type(e).__name__}: {e}\n", encoding="utf-8")
+                    handle(session, rid, op, args, progress)
+                except Exception as e:  # report what already happened, keep the session alive
+                    (OUT / f"{rid}.txt").write_text(
+                        "FAILED\n" + "\n".join(progress) + f"\nstopped by {type(e).__name__}: {e}"
+                        + "\nNOT retried; check the server state before anything else\n", encoding="utf-8")
                     print(f"{rid} {op}: error {type(e).__name__}")
         seen = len(rows)
         if time.time() - last_noop > 30:

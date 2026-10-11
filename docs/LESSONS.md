@@ -113,3 +113,9 @@ discovers a new one, with the date and a link to the evidence.
   It stops the upstream script once it has N objects, so `deploy.ps1` died
   silently after its compile step and replaced nothing (2026-10-11). Check the
   installed hash after every deploy; that is what caught it.
+- **Never auto-retry an operation that changes a remote system.** The FTP
+  helper retried a whole server install after a dropped connection; the
+  retry refused ("backup already exists") and made a finished upload look
+  failed (2026-10-11). Changing operations now stop and report what already
+  happened. Then verify the actual remote state before acting again: all 55
+  files were downloaded back and compared before the result was trusted.
