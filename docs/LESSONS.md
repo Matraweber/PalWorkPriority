@@ -119,3 +119,7 @@ discovers a new one, with the date and a link to the evidence.
   failed (2026-10-11). Changing operations now stop and report what already
   happened. Then verify the actual remote state before acting again: all 55
   files were downloaded back and compared before the result was trusted.
+- **Read a command before calling it to "just look".** `!pwp cap` cycles the
+  staffing maximum instead of printing it, so a status check silently changed
+  the user's setting from 3 to 4 mid-test (2026-10-12). `!pwp reload` restored
+  it from config. Status lives in `!pwp status`.

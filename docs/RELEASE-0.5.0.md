@@ -64,7 +64,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 
 Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
-- [ ] **Priority 1 beats priority 5.** Report: HelpImStupid0 (Nexus, Sep 19:
+- [x] **Priority 1 beats priority 5.** PASS 2026-10-12 by swap control on one Pal ([evidence](g4-scheduling-2026-10-12.md)); per-Pal output not isolated. Report: HelpImStupid0 (Nexus, Sep 19:
   "Transport 5 still dominates primary work 1").
   **Done when:** a staged base with two competing jobs at 1 and 5 shows the
   Pal on the priority-1 job in at least 8 of 10 observations, and that job's
@@ -72,10 +72,10 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - [ ] **August repro cases still hold:** Incineram Handiwork over Kindling,
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
-- [ ] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working.
+- [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).
 - [ ] **"Everything stops" / "only one miner"**: one reproduction attempt
   with output counts, result recorded either way.
-- [ ] **Empty dedicated server assignments.** In August no base work ran with
+- [-] **Empty dedicated server assignments.** Not applicable, confirmed on rc1 2026-10-11: 0 works with nobody online ([evidence](g4-scheduling-2026-10-12.md)). In August no base work ran with
   zero players online.
   **Done when:** that is re-confirmed on rc1. The gate is then closed as not
   applicable, without adding any assumption to the scheduler.

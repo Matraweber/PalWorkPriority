@@ -1507,18 +1507,22 @@ end
 -- store.set and flags the post-edit pass), so restart and sync tests can run
 -- without driving the mouse. Remote channel only: REMOTE_ONLY refuses it from
 -- every chat line, including the host's own.
---   setprio <palkey> <work value> <1-5|X>
+--   setprio <palkey> <work value> <1-5|X|clear>   (clear removes the row)
 COMMANDS.setprio = function(args)
     local key, work, token = (args or ""):match("^%s*(%S+)%s+(%d+)%s+(%S+)%s*$")
     work = math.tointeger(tonumber(work))
     local prio
-    if token == "X" or token == "x" then prio = false else prio = math.tointeger(tonumber(token)) end
+    if token == "X" or token == "x" then prio = false
+    elseif token == "clear" then prio = "clear"
+    else prio = math.tointeger(tonumber(token)) end
     if not key or not work or prio == nil then
-        log.say("use: setprio <palkey> <work value> <1-5|X>")
+        log.say("use: setprio <palkey> <work value> <1-5|X|clear>")
         return false
     end
     if not store.decided then log.say("setprio: role not decided yet, nothing changed"); return false end
-    local saved, why = store.set(key, work, prio)
+    local saved, why
+    if prio == "clear" then saved, why = store.clear(key, work)
+    else saved, why = store.set(key, work, prio) end
     if saved then ui.wants_pass = true end
     log.say(string.format("setprio %s|%d|%s -> %s (state %s%s)", key, work,
         prio == false and "X" or tostring(prio), saved and "accepted" or "refused",
