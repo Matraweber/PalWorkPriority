@@ -123,3 +123,8 @@ discovers a new one, with the date and a link to the evidence.
   staffing maximum instead of printing it, so a status check silently changed
   the user's setting from 3 to 4 mid-test (2026-10-12). `!pwp reload` restored
   it from config. Status lives in `!pwp status`.
+- **Before calling it a priority failure, check the station can take a worker.**
+  A Pal "ignoring" Generating Electricity 1 was blamed on the mod for an hour
+  (2026-10-14); the generators were unbuilt blueprints and then full. A proposed
+  fix would have sent Pals to stand at full generators. Ask the user about the
+  station (built? full? powered? inside the base?) before reading the census.

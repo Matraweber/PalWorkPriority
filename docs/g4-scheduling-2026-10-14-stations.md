@@ -1,4 +1,13 @@
-# Continuous stations lose their worker for good (Cosmic Warbear, cooling reports), 2026-10-14
+# Continuous stations: a suspected defect, RETRACTED, 2026-10-14
+
+**Retracted the same evening.** The "reproduction" below was confounded. The
+user had replaced the base's generators: during 20:37-20:45 both were unbuilt
+blueprints, so no Pal could work them, and from 20:54 they filled up, so they
+offered no work. Grizzbolt's return at 20:54 was the first generator finishing.
+There is no evidence of a mod defect. The proposed "standing demand" fix would
+have been harmful: it would have counted a full generator as a vacant seat and
+parked Pals at it. Not implemented. Kept below as the record of how the wrong
+conclusion formed.
 
 ## Reproduced live
 
@@ -71,3 +80,14 @@ only does so once that other job ends. The proposed standing-demand fix still
 applies, and the live test should be "Grizzbolt pulled onto a long workbench
 queue returns to the generator within a few passes after its priorities are
 set back", not just "after a night".
+
+
+## Retraction (21:15)
+
+The user reported that the base has only two generators, the ones being built
+from ~20:46, and that they are now full. A clean re-run (Grizzbolt fenced onto
+Transporting, then set back to Electricity 1) was started and stopped, since a
+full generator offers no work and cannot show anything. Settings restored to
+the 2026-10-12 snapshot. The cooling reports (GammaEuviex, srvtsonn, poiman)
+stay open but unexplained: this base has no cooler. A valid test needs a station
+that is built, not full, and has a consumer draining it.
