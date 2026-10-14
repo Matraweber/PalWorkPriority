@@ -69,7 +69,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   **Done when:** a staged base with two competing jobs at 1 and 5 shows the
   Pal on the priority-1 job in at least 8 of 10 observations, and that job's
   output rises.
-- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling,
+- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt move/sleep still open. Incineram Handiwork over Kindling,
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
 - [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).

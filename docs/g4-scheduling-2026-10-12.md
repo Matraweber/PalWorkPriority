@@ -66,3 +66,38 @@ applicable**; the scheduler makes no assumption to cover it.
 
 Tooling added: `!pwp setprio <palkey> <work> clear` removes a row through
 `store.clear`, so a test can put the file back exactly.
+
+## Incineram: Handiwork 1 over Kindling 2 (Glave's report), 2026-10-14
+
+Sampler: `tools/sample_assignments.py` (census every ~17 s, prints each working
+Pal's job and the latest demand line). Raw rows:
+`test-results/g4-20261012/incineram-samples.txt`. To make Incineram the deciding
+Pal, the user set Arsox Kindling X and Penking/Anubis Handiwork X, and the agent
+set the Pal Recruiter's Handiwork X. All were restored afterwards; all 41 rows
+match the 2026-10-12 snapshot again.
+
+**First attempt, Pal Sphere Workbench queue: no Handiwork job existed.** The
+game announced Handiwork once (at queue time) and never again. With the mod
+switched off (`!pwp off`, vanilla permissions, 3 minutes) no Pal took Handiwork
+either: the game was not offering that workbench's job to Pals. Not a mod
+fault, but worth knowing when reproducing reports: a Sphere Workbench queue is
+not a usable Handiwork test.
+
+**Second attempt, ordinary workbench queue, 20:25-20:29:**
+
+| Demand line had Handiwork | Incineram's job |
+|---|---|
+| yes (20:25:50, 20:26:08, 20:27:53, 20:28:11, 20:28:46, 20:29:03) | Handiwork every time it was working |
+| no (20:26:43, 20:27:00) | Kindling (correct, nothing at the workbench) |
+
+Fences in the same window: `Baphomet -> Handiwork` (15 passes) or
+`Handiwork, Kindling` (27, when seats allowed both). Incineram was never on
+Kindling while Handiwork work was announced. **Verdict: PASS.**
+
+Earlier "mismatch" scare, recorded so it is not re-derived: a first look
+compared fence lines from 19:48-19:50 with job samples from 19:51-19:56. In
+the sample window Incineram was unfenced (no Handiwork demand), so Kindling was
+correct. Compare intent and observation from the same pass window only.
+
+Still open: Grizzbolt after being moved, sleep/wake; "everything stops" /
+"only one miner".
