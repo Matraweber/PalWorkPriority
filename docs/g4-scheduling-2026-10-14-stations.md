@@ -119,3 +119,46 @@ would park Pals at full generators, the mistake retracted above. Reading the
 energy value means a new, narrow engine probe (LESSONS: no class dumps; probe
 one named property on a copied save). Recommended for 0.5.x, not 0.5.0, unless
 the user decides otherwise.
+
+## The signal, and the fix (21:55-22:20)
+
+**Signal found in the modding kit headers and verified live.** A read-only probe
+(`!pwp stations`, `Scripts/station_probe.lua`) printed per generator work:
+`CurrentState`, the station model's `StoredEnergyAmount` / `MaxEnergyStorage`
+(via the work's `CachedOwnerMapObjectConcreteModel` property) and the build
+state (`manager:FindModel(work.OwnerMapObjectModelId).BuildProcess.State`; the
+model's outer is the map object manager, its own outer path does not lead to
+the build process). Checked against the in-game Power Capacity readout:
+
+| Time | Generator A | Generator B | Grizzbolt |
+|---|---|---|---|
+| 22:00:41 | Building | Building | building |
+| 22:00:56 | Completed, 0 | Building | Handiwork (building B) |
+| 22:04:47 | Completed, 11,731 | Completed, 0 | Electricity |
+| 22:08:13 | Completed, 106,595 / 250,000 | Completed, 0 | Electricity |
+
+`CurrentState` reads Workable for blueprints too, so it is not sufficient;
+build Completed AND stored < max is.
+
+**Fix** (`Scripts/stations.lua`, hook in `scheduler.lua` before planning): in
+pulse mode, if Generating Electricity is configured and not capped, count the
+camp's generators that are Completed and not full, subtract the Pals whose
+current job is already Generating Electricity there, and add the remainder as
+demand. Any failed or odd read counts as "not needed" (unknown never becomes
+demand). `cfg.station_demand = false` switches it off. Tests:
+`tests/test_stations.lua` (12 cases incl. full, within margin, unbuilt, model
+not found, throwing outer, unreadable values, trees) and three scheduler cases
+(empty generator pulls an Electricity-1 Pal off Handiwork 3; none needing adds
+nothing; a manned generator is not counted twice). Negative control: with the
+hook disabled the first scheduler case fails.
+
+**Live acceptance (22:14-22:20):** after restart the demand line showed
+"Generating Electricity 1" (B empty, A manned). Grizzbolt was moved onto
+Transporting (Transport 1 / Electricity 4); then set back to Electricity 1 /
+Transporting 3 at 22:18:08. The very next pass (22:18:07, the edit pass) fenced
+it `-> Generating Electricity` with demand 2, and it was on a generator at
+22:18:24, 16 s later, staying there (one short gap while switching). 0 ERROR.
+User settings restored to the 2026-10-12 snapshot.
+
+Not covered: coolers (no cooler in this base; no equivalent energy reading is
+known for them yet), and the dedicated server (same code path, untested there).

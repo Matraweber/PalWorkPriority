@@ -1418,6 +1418,10 @@ COMMANDS.storageprobe = function()
     end)
 end
 
+COMMANDS.stations = function()
+    run_now(function() log.say(require('station_probe').report()) end)
+end
+
 COMMANDS.assignments = function()
     run_now(function()
         local census = require('assignment_probe')

@@ -29,6 +29,7 @@ local allocator = require("scheduler_plan")
 local permissions = require("scheduler_permissions")
 local storage_scope = require("scheduler_storage")
 local stock_prefetch = require("storage_prefetch")
+local stations = require("stations")
 
 local M = {}
 
@@ -1156,6 +1157,33 @@ local function run_camp(cfg, camp, stats, prepare_stock)
                     state = state,
                     manual = manual,
                 }
+            end
+        end
+    end
+
+    -- Continuous stations never announce work (stations.lua), so the pulse
+    -- index cannot see an empty generator. Count generators that are built
+    -- and not full as vacancies, minus Pals already on Generating Electricity
+    -- in this camp, so a manned generator is never counted twice. Only in
+    -- pulse mode (the camp_works fallback already reads free slots) and only
+    -- when the type is configured and not capped. Unknown reads add nothing.
+    local gen = stations.GENERATOR
+    if cfg.station_demand ~= false and demandidx.live() and gen and not capped[gen]
+        and cfg.work_priority[workdefs.name(gen)] ~= nil then
+        local ok, works = pcall(api.camp_works, camp)
+        if ok and type(works) == "table" then
+            local read_ok, needing = pcall(measured, "scheduler: station read", stations.generators_needing, works)
+            local on = 0
+            for _, pal in ipairs(pals) do
+                if pal.current == gen then on = on + 1 end
+            end
+            local vacant = (read_ok and type(needing) == "number" and needing or 0) - on
+            if vacant > 0 then
+                if not demand[gen] then stats.demand_types = stats.demand_types + 1 end
+                demand[gen] = math.max(demand[gen] or 0, vacant)
+                local name = workdefs.name(gen)
+                stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + vacant
+                stats.station_vacancies = (stats.station_vacancies or 0) + vacant
             end
         end
     end

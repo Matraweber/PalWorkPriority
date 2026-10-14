@@ -131,3 +131,12 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   *Rejected:* testing on the trial install (wrong code path, older build) and
   running the multi-step cutover tooling for data that did not differ.
   *Evidence:* [restart-persistence-2026-10-11.md](restart-persistence-2026-10-11.md).
+- **2026-10-14 - Generators count as demand when built and not full.** The
+  game never announces generator work, so an empty generator could not pull a
+  Pal off other work. The scheduler now adds vacancies = generators with
+  BuildProcess Completed and StoredEnergyAmount < MaxEnergyStorage, minus Pals
+  already on Generating Electricity in that camp. *Rejected:* counting every
+  generator work object (parks Pals at full or unbuilt generators, the
+  retracted first proposal) and the work's CurrentState alone (Workable for
+  blueprints too). Coolers are not included until a reliable signal is found.
+  *Evidence:* [g4-scheduling-2026-10-14-stations.md](g4-scheduling-2026-10-14-stations.md).

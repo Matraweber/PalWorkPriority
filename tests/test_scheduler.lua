@@ -88,6 +88,9 @@ package.loaded.demand = { live = function() return demand_available end,
         for value, count in pairs(required) do out[value], n = count, n + count end
         return out, n, {unknown_scope = 0, unknown_type = 0}
     end }
+local station_needing = 0
+package.loaded.stations = { GENERATOR = 4,
+    generators_needing = function() return station_needing end }
 package.loaded.log = { info = noop, debug = noop, warn = noop }
 package.loaded.trace = { at = noop, done = noop }
 local scheduler = require("scheduler")
@@ -102,6 +105,7 @@ local function reset(pals)
     component_reads, component_available = 0, true
     replication_requests = 0
     demand_available, required, work_error, works, rules = true, {}, nil, {}, {}
+    station_needing = 0
     store.baseline, store.decided, store.state, store.data = false, true, "saved", {}
     config.max_pals_per_work_type, config.dry_run = 3, false
     api.camps_available, api.camps_error = true, nil
@@ -663,3 +667,33 @@ store.baseline = true
 api.suitability_rank = function(_, value) if value == 8 then return nil end return 0 end
 stats = scheduler.run_pass(config)
 assert(stats.baseline_unavailable == 1 and capture_count == 0 and #sends == 0)
+
+-- Continuous stations never announce work. A built, not-full generator is a
+-- vacancy that pulls an Electricity-1 Pal off lower work; a full/unbuilt one
+-- (station_needing 0) adds nothing; a Pal already on it is not counted twice.
+-- Earlier blocks replace these engine stubs without restoring them.
+api.suitability_rank = function(param, value) return param.ranks[value] or 0 end
+api.base_camps = function() return { { id = "camp" } } end
+api.camp_guild = function() return "guild" end
+config.storage_scope = "camp"
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5} })
+store.data.g = {[4] = 1, [5] = 3}
+required = {[5] = 1}
+station_needing = 1
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 1, "empty generator was not counted as a vacancy")
+assert(fixture[1].off[5] and not fixture[1].off[4], "Electricity 1 did not beat Handiwork 3 at an empty generator")
+
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5} })
+store.data.g = {[4] = 1, [5] = 3}
+required = {[5] = 1}
+station_needing = 0
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil, "a full or unbuilt generator became demand")
+assert(not fixture[1].off[5], "Pal was pulled off Handiwork with no generator needing it")
+
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 4} })
+store.data.g = {[4] = 1, [5] = 3}
+station_needing = 1
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil, "a manned generator was counted twice")
