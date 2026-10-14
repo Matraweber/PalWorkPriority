@@ -162,3 +162,15 @@ User settings restored to the 2026-10-12 snapshot.
 
 Not covered: coolers (no cooler in this base; no equivalent energy reading is
 known for them yet), and the dedicated server (same code path, untested there).
+
+## Dedicated server updated (22:28-22:33)
+
+GPortal "RAM" got the fix through the browser panel this time (the earlier
+permission block did not recur): the live `Scripts` was renamed to
+`Scripts-before-3893aa6` (backup), `pwp-server-scripts-3893aa6.zip` (git archive
+of 3893aa6, 57 Lua files, sha256 ce29f14f...) was uploaded and unzipped in
+place. The new `Scripts` holds 57 files; stations.lua, station_probe.lua,
+scheduler.lua and main.lua match the commit's sizes byte for byte. Restart from
+the panel; the server's UE4SS log shows PWP_READY at 22:32:52 (authority,
+settings available) and no PalWorkPriority ERROR. The server base was not
+checked for generators; generator behaviour on the server is untested.
