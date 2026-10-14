@@ -45,3 +45,29 @@ bushes, see demand.lua), are not affected. Unknown census data adds no demand
 manned generator gives 0; unreadable census gives 0; trees never get standing
 demand. Live acceptance: Grizzbolt returns to the generator within a few passes
 after leaving it, with Electricity 1 above its other jobs.
+
+## Long watch, 20:47-21:11 (user building two generators; nightfall and dawn)
+
+Census every ~15 s (`test-results/g4-20261012/generator-watch.txt`; the first
+block was reconstructed from the census lines in priority.log after the
+background sampler died silently with its output sent to /dev/null).
+
+| Time | Grizzbolt | Notes |
+|---|---|---|
+| 20:47-20:53:43 | Handiwork (3) | nobody on Electricity, no generator demand announced |
+| 20:54:01 | Electricity | game moved it; most likely the workbench queue ran out |
+| 20:53:44 on | fenced `-> Generating Electricity` | first fence came AFTER the move: retention, not the mod's doing |
+| ~21:01 | not working | nightfall, almost all Pals stop |
+| 21:06:54 | Electricity | dawn: back on the generator by itself, stayed through 21:11 |
+
+Generator work objects stayed at 2 the whole time (the two new generators had
+not finished or not registered by 21:11). Generating Electricity was announced
+0 times all session.
+
+**Reading:** sleep and wake are fine (the game returns the Pal to its station
+at dawn and the mod then holds it there). The gap is specific: when a Pal is
+pulled off its station onto another job, the mod never sends it back; the game
+only does so once that other job ends. The proposed standing-demand fix still
+applies, and the live test should be "Grizzbolt pulled onto a long workbench
+queue returns to the generator within a few passes after its priorities are
+set back", not just "after a night".
