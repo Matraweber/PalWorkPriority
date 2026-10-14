@@ -91,3 +91,31 @@ full generator offers no work and cannot show anything. Settings restored to
 the 2026-10-12 snapshot. The cooling reports (GammaEuviex, srvtsonn, poiman)
 stay open but unexplained: this base has no cooler. A valid test needs a station
 that is built, not full, and has a consumer draining it.
+
+## Clean observation with a valid empty generator (21:21-21:30)
+
+The user rebuilt the base's two generators and stood in front of them, so the
+station state could be read off the screen (Power Capacity) while the census ran.
+
+| Time | Grizzbolt | Generators |
+|---|---|---|
+| 21:21-21:27:43 | Handiwork 3 (construction) | generator 1 finished ~21:23:40, **0 % and unmanned** for about 4 min |
+| 21:27:43 | idle | generator 2 finished |
+| 21:27:58 | Electricity 1 | mod fence `-> Generating Electricity` from 21:27:47, holding it there |
+| 21:29-21:31 | Electricity | one generator charging (36 %), the other at 0 % |
+
+Generating Electricity was announced 0 times throughout.
+
+**What is real:** a short priority inversion. While another job exists, an
+empty generator does not pull a Pal whose top priority is Generating
+Electricity, because the game never announces generator work and the mod has
+no other signal. It ends when the competing job ends. This is a milder form of
+Cosmic Warbear's report; whether the cooling reports are the same cannot be
+checked without a cooler.
+
+**Why not fix it now:** a fix needs a trustworthy "this station needs a worker"
+read (for a generator, stored energy below full). Counting stations without it
+would park Pals at full generators, the mistake retracted above. Reading the
+energy value means a new, narrow engine probe (LESSONS: no class dumps; probe
+one named property on a copied save). Recommended for 0.5.x, not 0.5.0, unless
+the user decides otherwise.

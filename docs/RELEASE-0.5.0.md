@@ -69,7 +69,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   **Done when:** a staged base with two competing jobs at 1 and 5 shows the
   Pal on the priority-1 job in at least 8 of 10 observations, and that job's
   output rises.
-- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; a suspected generator defect was retracted: the generators were blueprints, then full ([record](g4-scheduling-2026-10-14-stations.md)). Cooling reports still need a test with a working cooler. Incineram Handiwork over Kindling,
+- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; generators: a short inversion is real (an empty generator does not pull an Electricity-1 Pal off other work until that job ends; the game never announces generator work), fix needs a station-energy read, proposed for 0.5.x ([record](g4-scheduling-2026-10-14-stations.md)). Cooling untested (no cooler). Incineram Handiwork over Kindling,
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
 - [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).
