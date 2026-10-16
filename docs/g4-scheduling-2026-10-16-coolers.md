@@ -93,3 +93,15 @@ the new window never appeared, also with `--launch` and with
 `steam://rungameid`. No Palworld process started at all and UE4SS wrote
 nothing. The user started it from Steam by hand, which worked. Cause unknown
 (the Steam window is masked for computer use). See LESSONS.
+
+## Dedicated server updated (23:00-23:04)
+
+GPortal "RAM" through the browser panel, same recipe as 2026-10-14, with 0 players
+online: the live `Scripts` was renamed to `Scripts-before-eb54d28` (backup of
+3893aa6), `pwp-server-scripts-eb54d28.zip` (git archive of eb54d28, 57 Lua
+files, sha256 e93af257...) was uploaded (399.5 KiB) and unzipped in place. The new
+`Scripts` holds 57 files; stations.lua (4334 B), scheduler.lua, station_probe.lua
+and main.lua match the commit's sizes. After a panel restart the server's UE4SS
+log shows PWP_READY at 23:03:47 (0.5.0-rc1, authority, settings available) and
+no PalWorkPriority error or warning. Station behaviour on the server is still
+untested (no check of its base's generators or coolers).
