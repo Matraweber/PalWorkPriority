@@ -128,3 +128,15 @@ discovers a new one, with the date and a link to the evidence.
   (2026-10-14); the generators were unbuilt blueprints and then full. A proposed
   fix would have sent Pals to stand at full generators. Ask the user about the
   station (built? full? powered? inside the base?) before reading the census.
+- **A priority test needs the Pal busy with the other job first.** A Pal with
+  no current job takes its top priority anyway, so "Penking went to the fridge"
+  on the old build proved nothing (2026-10-16). The control only showed the
+  gap once he was watering when Cooling became 1. Same for every station test.
+- **`sample_assignments.py` appends to its output file.** A loop of single
+  samples into one file re-reads every earlier line; delete the file before
+  each sample or read only its last line (2026-10-16).
+- **If the macro reports "New game window did not appear", look at Steam,
+  not the macro.** On 2026-10-16 no Palworld process started at all, whether
+  launched directly, by the macro or by `steam://rungameid`; starting it from
+  Steam by hand worked. Steam's windows are masked for computer use, so ask
+  the user what Steam shows instead of retrying.

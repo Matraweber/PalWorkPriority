@@ -140,3 +140,11 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   retracted first proposal) and the work's CurrentState alone (Workable for
   blueprints too). Coolers are not included until a reliable signal is found.
   *Evidence:* [g4-scheduling-2026-10-14-stations.md](g4-scheduling-2026-10-14-stations.md).
+- **2026-10-16 - Coolers count as demand when built and holding spoilable food.**
+  Same gap as generators: Cooling never announces work, so a Cooling-1 Pal
+  stayed on Watering 2 for about 2 minutes. The game marks a cooler's work
+  Workable only while spoilable food is inside, verified live in both
+  directions, so vacancies = coolers with BuildProcess Completed and
+  CurrentState Workable, minus Pals already cooling. Both kinds go through one
+  list (`stations.KINDS`). *Rejected:* counting every built cooler (would park
+  a Pal at an empty one). *Evidence:* [g4-scheduling-2026-10-16-coolers.md](g4-scheduling-2026-10-16-coolers.md).

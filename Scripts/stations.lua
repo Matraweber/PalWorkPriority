@@ -15,6 +15,15 @@
 --   manager:FindModel(work.OwnerMapObjectModelId) (BlueprintPure UFUNCTION,
 --     same call shape as palapi's GetWork(id)) -> .BuildProcess.State
 --     (0 Building, 1 Completed)
+-- Coolers (Cooler Box, Refrigerator) are the same kind of silent station but
+-- have no energy store. The game marks their Cooling work Workable only while
+-- spoilable food is inside (UPalMapObjectFunctionAffectItemCorruptionBy-
+-- WorkStatus.bWorkableOnlyExistsCorruptibleItem). Verified live 2026-10-16 on
+-- a Cooler Box: 1656 berries Workable, emptied NotWorkable within 13 s, food
+-- back Workable within 13 s, under construction NotWorkable. So a cooler
+-- needs a worker when its build is Completed and work.CurrentState is 1.
+-- (CurrentState alone is not enough for generators: Workable while a
+-- blueprint, seen 2026-10-14.)
 -- Nothing is stored. Any failed or odd read means "does not need a worker":
 -- unknown must never become demand (a full or unbuilt generator counted as a
 -- vacancy would park Pals beside it). Authority only; callers run on it.
@@ -24,6 +33,8 @@ local workdefs = require('workdefs')
 local M = {}
 
 M.GENERATOR = workdefs.value('GenerateElectricity')
+M.COOLER = workdefs.value('Cool')
+M.WORKABLE = 1 -- EPalWorkProgressState.Workable
 M.FULL_MARGIN = 1.0 -- stored within this of max counts as full
 
 local function completed(work, model)
@@ -57,5 +68,26 @@ function M.generators_needing(works)
     end
     return n
 end
+
+-- Number of coolers in `works` that are built and hold spoilable food.
+function M.coolers_needing(works)
+    local n = 0
+    for _, w in ipairs(works or {}) do
+        if api.work_suitability(w) == M.COOLER
+            and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then
+            local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
+            if model ~= nil and api.valid(model) and completed(w, model) then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
+-- The silent station kinds the scheduler checks, with their counters.
+M.KINDS = {
+    { value = M.GENERATOR, needing = M.generators_needing },
+    { value = M.COOLER, needing = M.coolers_needing },
+}
 
 return M

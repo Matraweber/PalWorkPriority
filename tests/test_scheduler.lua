@@ -88,9 +88,10 @@ package.loaded.demand = { live = function() return demand_available end,
         for value, count in pairs(required) do out[value], n = count, n + count end
         return out, n, {unknown_scope = 0, unknown_type = 0}
     end }
-local station_needing = 0
-package.loaded.stations = { GENERATOR = 4,
-    generators_needing = function() return station_needing end }
+local station_needing, cooler_needing = 0, 0
+package.loaded.stations = { GENERATOR = 4, COOLER = 11, KINDS = {
+    { value = 4, needing = function() return station_needing end },
+    { value = 11, needing = function() return cooler_needing end } } }
 package.loaded.log = { info = noop, debug = noop, warn = noop }
 package.loaded.trace = { at = noop, done = noop }
 local scheduler = require("scheduler")
@@ -105,7 +106,7 @@ local function reset(pals)
     component_reads, component_available = 0, true
     replication_requests = 0
     demand_available, required, work_error, works, rules = true, {}, nil, {}, {}
-    station_needing = 0
+    station_needing, cooler_needing = 0, 0
     store.baseline, store.decided, store.state, store.data = false, true, "saved", {}
     config.max_pals_per_work_type, config.dry_run = 3, false
     api.camps_available, api.camps_error = true, nil
@@ -697,3 +698,36 @@ store.data.g = {[4] = 1, [5] = 3}
 station_needing = 1
 stats = scheduler.run_pass(config)
 assert(stats.station_vacancies == nil, "a manned generator was counted twice")
+
+-- Coolers are silent the same way: a built cooler holding spoilable food is a
+-- vacancy that pulls a Cooling-1 Pal off Watering 2 (the 2026-10-16 Penking
+-- case). An empty or unbuilt one (cooler_needing 0) adds nothing, a Pal
+-- already cooling is not counted twice, and both kinds add up independently.
+reset({ {key = "c", camp = "camp", ranks = {[11] = 1, [2] = 1}, off = {}, current = 2} })
+store.data.c = {[11] = 1, [2] = 2}
+required = {[2] = 1}
+cooler_needing = 1
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 1, "a cooler with food was not counted as a vacancy")
+assert(fixture[1].off[2] and not fixture[1].off[11], "Cooling 1 did not beat Watering 2 at a cooler with food")
+
+reset({ {key = "c", camp = "camp", ranks = {[11] = 1, [2] = 1}, off = {}, current = 2} })
+store.data.c = {[11] = 1, [2] = 2}
+required = {[2] = 1}
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil, "an empty or unbuilt cooler became demand")
+assert(not fixture[1].off[2], "Pal was pulled off Watering with no cooler needing it")
+
+reset({ {key = "c", camp = "camp", ranks = {[11] = 1, [2] = 1}, off = {}, current = 11} })
+store.data.c = {[11] = 1, [2] = 2}
+cooler_needing = 1
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil, "a manned cooler was counted twice")
+
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5},
+        {key = "c", camp = "camp", ranks = {[11] = 1, [2] = 1}, off = {}, current = 2} })
+store.data.g = {[4] = 1, [5] = 3}
+store.data.c = {[11] = 1, [2] = 2}
+station_needing, cooler_needing = 1, 1
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 2, "generator and cooler vacancies did not add up")

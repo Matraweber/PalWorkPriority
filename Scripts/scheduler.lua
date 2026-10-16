@@ -1162,28 +1162,37 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     end
 
     -- Continuous stations never announce work (stations.lua), so the pulse
-    -- index cannot see an empty generator. Count generators that are built
-    -- and not full as vacancies, minus Pals already on Generating Electricity
-    -- in this camp, so a manned generator is never counted twice. Only in
-    -- pulse mode (the camp_works fallback already reads free slots) and only
-    -- when the type is configured and not capped. Unknown reads add nothing.
-    local gen = stations.GENERATOR
-    if cfg.station_demand ~= false and demandidx.live() and gen and not capped[gen]
-        and cfg.work_priority[workdefs.name(gen)] ~= nil then
-        local ok, works = pcall(api.camp_works, camp)
-        if ok and type(works) == "table" then
-            local read_ok, needing = pcall(measured, "scheduler: station read", stations.generators_needing, works)
-            local on = 0
-            for _, pal in ipairs(pals) do
-                if pal.current == gen then on = on + 1 end
-            end
-            local vacant = (read_ok and type(needing) == "number" and needing or 0) - on
-            if vacant > 0 then
-                if not demand[gen] then stats.demand_types = stats.demand_types + 1 end
-                demand[gen] = math.max(demand[gen] or 0, vacant)
-                local name = workdefs.name(gen)
-                stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + vacant
-                stats.station_vacancies = (stats.station_vacancies or 0) + vacant
+    -- index cannot see an empty generator or a cooler with food in it. Count
+    -- the stations that need a worker (generator built and not full, cooler
+    -- built and holding spoilable food) as vacancies, minus Pals already on
+    -- that work type in this camp, so a manned station is never counted
+    -- twice. Only in pulse mode (the camp_works fallback already reads free
+    -- slots) and only for types that are configured and not capped. Unknown
+    -- reads add nothing.
+    if cfg.station_demand ~= false and demandidx.live() then
+        local works
+        for _, kind in ipairs(stations.KINDS or {}) do
+            local value = kind.value
+            if value and not capped[value] and cfg.work_priority[workdefs.name(value)] ~= nil then
+                if works == nil then
+                    local ok, got = pcall(api.camp_works, camp)
+                    works = ok and type(got) == "table" and got or false
+                end
+                if works then
+                    local read_ok, needing = pcall(measured, "scheduler: station read", kind.needing, works)
+                    local on = 0
+                    for _, pal in ipairs(pals) do
+                        if pal.current == value then on = on + 1 end
+                    end
+                    local vacant = (read_ok and type(needing) == "number" and needing or 0) - on
+                    if vacant > 0 then
+                        if not demand[value] then stats.demand_types = stats.demand_types + 1 end
+                        demand[value] = math.max(demand[value] or 0, vacant)
+                        local name = workdefs.name(value)
+                        stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + vacant
+                        stats.station_vacancies = (stats.station_vacancies or 0) + vacant
+                    end
+                end
             end
         end
     end

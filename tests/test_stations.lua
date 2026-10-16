@@ -35,3 +35,29 @@ local n = stations.generators_needing({
 })
 assert(n == 2, 'expected 2 generators needing a worker, got ' .. tostring(n))
 assert(stations.generators_needing(nil) == 0 and stations.generators_needing({}) == 0)
+
+-- stations.coolers_needing: built AND Workable (spoilable food inside) counts;
+-- empty (NotWorkable), unbuilt, unknown or a generator count as nothing.
+assert(stations.COOLER == 11)
+local function cooler(state, owner, bad_outer)
+    local m = {}
+    m.GetOuter = bad_outer and function() error('boom') end or function() return manager end
+    return { value = 11, CurrentState = state, CachedOwnerMapObjectConcreteModel = m, OwnerMapObjectModelId = owner }
+end
+local c = stations.coolers_needing({
+    cooler(1, 'built'),                 -- food inside, built: needs
+    cooler(2, 'built'),                 -- empty: no
+    cooler(1, 'blueprint'),             -- unbuilt: no
+    cooler(2, 'blueprint'),             -- under construction (seen live): no
+    cooler(0, 'built'),                 -- Init: no
+    cooler(nil, 'built'),               -- unreadable state: no
+    cooler(1, 'missing'),               -- model not found: no
+    cooler(1, 'nobp'),                  -- no build process: no
+    cooler(1, 'built', true),           -- GetOuter throws: no
+    { value = 11, CurrentState = 1 },   -- no model: no
+    gen(0, 250000, 'built'),            -- a generator is not a cooler
+})
+assert(c == 1, 'expected 1 cooler needing a worker, got ' .. tostring(c))
+assert(stations.coolers_needing(nil) == 0 and stations.coolers_needing({}) == 0)
+assert(#stations.KINDS == 2 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
+    and stations.KINDS[2].needing == stations.coolers_needing)
