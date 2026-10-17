@@ -31,7 +31,32 @@ Recorded as a single unexplained miss.
 
 Not covered: photo mode from a Pal bed (Zekrom144's report).
 
-## C. Death while editing: NOT DONE (no hostile spawn available)
+## C. Death while editing: RUN 14:13, one finding
+
+The game has a real kill: `APalPlayerController:SelfKillPlayer()` (what
+dkoz/AdminCommands' `!slay` calls). With the editor open on Wood ("Set Wood:
+whole number; confirm saves, Esc cancels", field 30000), a temporary helper
+called it at 14:13:17:
+
+- The DEFEAT screen appeared with the respawn timer and Respawn button. The
+  game closed the Monitoring Stand, but **our Production Limits panel and the
+  open editor stayed on top of the death screen** (overlay rebuilt at 14:13:25
+  and 14:13:30). Finding: the panel does not close itself on death.
+- Not stuck: Esc cancelled the edit (30,000 unchanged), a second Esc closed
+  the panel, leaving the clean DEFEAT screen. Respawn -> map -> base -> Yes
+  worked.
+- After respawn: Tab opened and closed the inventory, Alt+F1 opened the panel
+  (14:14:38, 21 of 21 widgets, rules Wood 30,000 / Stone 35,000), Esc closed
+  it, back to play. Rules and priorities diff equal to the snapshots; 0 ERROR /
+  WARN; helper restored (cmp equal).
+
+Verdict: no lost input, no grey box, nothing stuck, but the editor stays open
+over the death screen until Esc. Proposed fix: close Production Limits (and
+cancel any draft) when the local player dies.
+
+### Earlier attempts (kept for the record)
+
+
 
 With the editor open the character cannot move, so death needs an outside
 attacker. Tried the UE4SS console route (user-approved, test world): enabled

@@ -166,6 +166,9 @@ discovers a new one, with the date and a link to the evidence.
   species never attacks; `SetHP(0)` leaves the player at 0 HP without dying.
   Pick a naturally aggressive species, or have the user steer. The UE console
   keys (F10, ~) did nothing in-game even with ConsoleEnablerMod on.
+  The game's own `APalPlayerController:SelfKillPlayer()` is the clean way:
+  a real death with the DEFEAT screen and respawn. Check for a built-in kill
+  before staging fights (an hour went into spawning first).
 - **Park the mouse off the panel before handing focus back.** With the panel
   open, keys and pad buttons act on the selected row; one unexplained step
   (30000 to 50000) happened right after a focus click (2026-10-17). Diff the
