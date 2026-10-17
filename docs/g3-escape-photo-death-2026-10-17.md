@@ -70,6 +70,22 @@ So death while editing is still not covered. A real death needs actual damage:
 an aggressive species provoked or naturally hostile near a stand, with the user
 steering, or a Summoning Altar boss.
 
+Fourth attempt (14:09-14:12, user suggested many aggressive Pals because the
+level 100 base Pals would kill them): six `PREDATOR_` Pals (the always-hostile
+variants: Manticore_Dark, Ronin_Dark, 2x Garm, Gorilla, DarkScorpion; IDs from
+AdminCommands' enums/paldata.lua) at level 60, spawned and AI-activated in a
+ring 2.5-4.5 m around the player with the editor open. All six were at 0 HP
+within about 25 s, killed by the base Pals; the player took no damage. Repeat
+with the player's HP first set to 1 (SetHP 1000) and the ring at 1.5-2.3 m:
+the predators (labels "Lv60 Blazehowl Noct", "Lv60 Bushi Noct", "Direhowl")
+fought the base Pals, the player's HP regenerated from 1 upwards without a
+hit. HP restored to 1250000 at 14:12; all predators dead; editor cancelled
+(30,000); helper restored (cmp equal); rules unchanged; 0 ERROR / WARN.
+
+Conclusion: at a base defended by level 100 Pals, staged hostiles never reach
+the player, so death while editing needs a stand outside such a base (a
+fresh test base) or the user steering. Not covered for 0.5.0.
+
 Cleanup 14:06-14:08 (user asked): a read-only listing found three
 `BP_ElecPanda_BOSS_C` actors: level 50 with individual data and no controller
 (the NPC spawn), the user's level 24 base Grizzbolt (BaseCamp AI controller),
