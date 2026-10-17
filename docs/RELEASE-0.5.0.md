@@ -45,7 +45,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 
 ## G3. Frontend reports
 
-- [ ] **No second or stuck panel.** Report: Extramrdo (Steam, Sep 28: Alt-F1
+- [x] **No second or stuck panel.** PASS 2026-10-17: 10 cycles plus 7 rapid presses, one panel each time, pause/inventory/map fine ([evidence](g3-panel-2026-10-17.md)). Report: Extramrdo (Steam, Sep 28: Alt-F1
   opens a second panel, stuck panel blocks menus).
   **Done when:** 10 open/close cycles including rapid Alt-F1 presses leave
   exactly one panel, and pause, inventory and map all work afterwards.

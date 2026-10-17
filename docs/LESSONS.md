@@ -154,7 +154,11 @@ discovers a new one, with the date and a link to the evidence.
   the in-world step (Esc, Return to Title, Yes) with computer use when it is
   allowed, then run the macro with `--title`. A title-bar click gets focus
   back; keep CoordMode Client for every other click.
-- **Never send Alt+F1 through computer use.** It opened a full-screen overlay
-  (Game Bar / NVIDIA) instead of the mod panel and the game vanished behind it.
+- **Alt+F1 through computer use works, but is also NVIDIA's screenshot key.**
+  On 2026-10-17 it looked as if an overlay swallowed the game: the panel had
+  opened, NVIDIA took a screenshot, and the game sat on the other monitor
+  while screenshots showed only one. Check `switch_display` before concluding
+  a window is gone. Run `pwp-focus` before every computer-use batch; focus
+  drifts to the input host between batches.
 - **Long foreground waits drop the remote session.** Run restarts and waits
   over a minute with run_in_background.
