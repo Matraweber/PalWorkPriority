@@ -160,9 +160,12 @@ discovers a new one, with the date and a link to the evidence.
   while screenshots showed only one. Check `switch_display` before concluding
   a window is gone. Run `pwp-focus` before every computer-use batch; focus
   drifts to the input host between batches.
-- **`summon` through the CheatManager spawns an inert Pal.** No AI, no
-  attack (2026-10-17). It is not a way to stage combat or death. And in-game
-  the UE console keys (F10, ~) did nothing even with ConsoleEnablerMod on.
+- **Staging combat or death in singleplayer is harder than it looks**
+  (2026-10-17). CheatManager `summon` gives an inert Pal (no AI); the NPC
+  manager route from dkoz/AdminCommands gives a working one, but a neutral
+  species never attacks; `SetHP(0)` leaves the player at 0 HP without dying.
+  Pick a naturally aggressive species, or have the user steer. The UE console
+  keys (F10, ~) did nothing in-game even with ConsoleEnablerMod on.
 - **Park the mouse off the panel before handing focus back.** With the panel
   open, keys and pad buttons act on the selected row; one unexplained step
   (30000 to 50000) happened right after a focus click (2026-10-17). Diff the

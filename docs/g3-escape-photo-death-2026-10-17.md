@@ -47,8 +47,29 @@ Class paths of loaded Pals follow
 Cleanup: editor cancelled (30,000), helper file restored (cmp equal), both
 console mods back to `: 0`. The inert Grizzbolt stays until the next restart.
 
-Remaining routes: a real wild hostile Pal lured to the stand (needs the user in
-the game) or a Summoning Altar next to a stand.
+Second attempt, after the user pointed at the wiki (13:58-14:01). The modding
+wiki has no hostility recipe, but the open-source dkoz/AdminCommands mod
+spawns working Pals: `PalUtility:GetNPCManager(pc):SpawnNPCForServer({
+ControllerClass = mgr.NPCAIControllerBaseClass, CharacterID, Level, Location,
+Yaw, Squad }, nil)`, then activates the AI (`libs/palai.lua`: SetActiveAI,
+SetupAI_BP, StartDefaultAIAction, StartCombatMode, sensor and damage-reaction
+setup). The same, from the temporary helper with the editor open, spawned a
+level 50 `BOSS_ElecPanda` and logged "activated", but it never attacked:
+Grizzbolt is neutral in the wild, and an 8-round burst at the large Grizzbolt
+in front hit the inert one from the first attempt. HP stayed 1250/1250.
+
+Third attempt: the wiki's Blueprint example "Modifying a Player's HP"
+(`CharacterParameterComponent:SetHP(FixedPoint64)` then
+`OnRep_IndividualParameter`). Set to 0 with the editor open: HP went 1250000 to
+0 and the character crouched, but no death was triggered, not with the panel
+open and not after closing editor, panel and stand. The panel and editor stayed
+consistent and usable throughout (overlay rebuilt 14:00:44, no errors). HP set
+back to 1250000 at 14:01:29; helper file restored (cmp equal); rules unchanged.
+
+So death while editing is still not covered. A real death needs actual damage:
+an aggressive species provoked or naturally hostile near a stand, with the user
+steering, or a Summoning Altar boss. Two spawned Grizzbolts (one inert, one
+neutral level 50) remain near the test base.
 
 ## Finding: a limit stepped without a deliberate input
 
