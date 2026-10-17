@@ -68,8 +68,15 @@ back to 1250000 at 14:01:29; helper file restored (cmp equal); rules unchanged.
 
 So death while editing is still not covered. A real death needs actual damage:
 an aggressive species provoked or naturally hostile near a stand, with the user
-steering, or a Summoning Altar boss. Two spawned Grizzbolts (one inert, one
-neutral level 50) remain near the test base.
+steering, or a Summoning Altar boss.
+
+Cleanup 14:06-14:08 (user asked): a read-only listing found three
+`BP_ElecPanda_BOSS_C` actors: level 50 with individual data and no controller
+(the NPC spawn), the user's level 24 base Grizzbolt (BaseCamp AI controller),
+and one with no individual data and no controller (the `summon` model). Only
+that last one was removed (`K2_DestroyActor`, filter: no individual data AND
+no controller). A second listing showed only the user's Grizzbolt: the level 50
+spawn had already been unloaded by the game. Helper file restored each time.
 
 ## Finding: a limit stepped without a deliberate input
 
