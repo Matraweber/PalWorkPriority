@@ -31,8 +31,36 @@ Recorded as a single unexplained miss.
 
 Not covered: photo mode from a Pal bed (Zekrom144's report).
 
-## C. Death while editing
+## C. Death while editing: NOT DONE (no hostile spawn available)
 
-See below.
+With the editor open the character cannot move, so death needs an outside
+attacker. Tried the UE4SS console route (user-approved, test world): enabled
+`ConsoleEnablerMod` and `CheatManagerEnablerMod` (bundled, normally off) and
+restarted. Neither F10 nor ~ opened the console in Palworld (the console object
+was created and the keys mapped, per UE4SS.log). Calling
+`CheatManager:Summon('/Game/Pal/Blueprint/Character/Monster/PalActorBP/ElecPanda/BP_ElecPanda_BOSS.BP_ElecPanda_BOSS_C')`
+from a temporary Lua helper (the lazily re-read `stand_lifecycle_probe.lua`,
+restored afterwards) with the editor open did spawn a Grizzbolt model at
+13:49:27, but it stood still: no AI, no attack, HP 1250/1250 for 25 s.
+Class paths of loaded Pals follow
+`/Game/Pal/Blueprint/Character/Monster/PalActorBP/<Name>/BP_<Name>.BP_<Name>_C`.
+Cleanup: editor cancelled (30,000), helper file restored (cmp equal), both
+console mods back to `: 0`. The inert Grizzbolt stays until the next restart.
+
+Remaining routes: a real wild hostile Pal lured to the stand (needs the user in
+the game) or a Summoning Altar next to a stand.
+
+## Finding: a limit stepped without a deliberate input
+
+At 13:44:22, during an Esc chain that started right after a focus click on the
+title bar (the panel had just been rebuilt, "overlay: host ... fresh root" at
+13:44:17), the log shows `Lumbering Wood limit requested: 50000`: the Wood rule
+went from 30000 to the next ladder rung. Only Enter, the right arrow and the
+gamepad A button raise a selected row (main.lua RETURN / RIGHT_ARROW, pad.lua
+FaceButton_Bottom); none was sent by the test. Sunshine was running, so a
+Moonlight virtual gamepad is a candidate, unproven. Restored with
+`!pwp limit Lumbering Wood 30000` at 13:48; rules diff equal to the snapshot.
+Open question for 0.5.0: a raise or lower on Enter/A/arrow changes a saved
+limit with no confirmation, only an announcement.
 
 0 ERROR / WARN in priority.log 12:48-12:59.

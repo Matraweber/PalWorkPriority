@@ -160,5 +160,12 @@ discovers a new one, with the date and a link to the evidence.
   while screenshots showed only one. Check `switch_display` before concluding
   a window is gone. Run `pwp-focus` before every computer-use batch; focus
   drifts to the input host between batches.
+- **`summon` through the CheatManager spawns an inert Pal.** No AI, no
+  attack (2026-10-17). It is not a way to stage combat or death. And in-game
+  the UE console keys (F10, ~) did nothing even with ConsoleEnablerMod on.
+- **Park the mouse off the panel before handing focus back.** With the panel
+  open, keys and pad buttons act on the selected row; one unexplained step
+  (30000 to 50000) happened right after a focus click (2026-10-17). Diff the
+  rules after every UI test.
 - **Long foreground waits drop the remote session.** Run restarts and waits
   over a minute with run_in_background.
