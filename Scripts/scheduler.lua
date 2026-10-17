@@ -30,6 +30,8 @@ local permissions = require("scheduler_permissions")
 local storage_scope = require("scheduler_storage")
 local stock_prefetch = require("storage_prefetch")
 local stations = require("stations")
+-- The panel protocol caps how old a published stock reading may be.
+local storage_snapshot_max_age = require("protocol").MAX_STORAGE_MS / 1000
 
 local M = {}
 
@@ -877,6 +879,19 @@ function M.refresh_stock(cfg)
     return stock_prefetch.refresh(cfg,M.stock_ttl)
 end
 
+-- How long a published stock reading stays valid for the panel and commands.
+-- The scheduler keeps using a reading for up to stock_ttl, and it stays in
+-- force until the next pass, one interval later. Publishing only stock_ttl
+-- made the display call a reading "unavailable" for the last part of every
+-- reuse window while the scheduler was still acting on it: every other
+-- '!pwp limit' said "stock unavailable" on 2026-10-17 (global scope, Stone
+-- 44751 of 35000 and Mining stopped). Never above the protocol's limit.
+local function published_ttl(cfg)
+    if M.stock_ttl <= 0 then return M.stock_ttl end
+    local interval = tonumber(cfg.interval_seconds) or 10
+    return math.min(M.stock_ttl + math.max(interval, 0), storage_snapshot_max_age)
+end
+
 local function publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock)
     local has_limits = limits_apply(cfg, camp_guild)
     local totals, limits_available = {}, true
@@ -899,7 +914,7 @@ local function publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock)
             if camp_guild then
                 M.last_storage[camp_guild] = { verified = limits_available,
                     unknown_scope = grouped and grouped.unknown_scope or 1, scope = "guild",
-                    pass = M.pass_id, sampled_at = guild_stock_at, ttl = M.stock_ttl }
+                    pass = M.pass_id, sampled_at = guild_stock_at, ttl = published_ttl(cfg) }
                 M.last_totals_by_guild[camp_guild] = totals
             end
         elseif fresh_stock(held) then
@@ -919,7 +934,7 @@ local function publish_storage(cfg, camp_key, camp_guild, stats, prepare_stock)
         M.last_storage_by_camp[camp_key] = { verified = limits_available, guild = camp_guild,
             scope = cfg.storage_scope == "global" and "guild" or "camp", pass = M.pass_id,
             sampled_at = cfg.storage_scope == "global" and guild_stock_at
-                or (stock[scope_key] and stock[scope_key].at), ttl = M.stock_ttl }
+                or (stock[scope_key] and stock[scope_key].at), ttl = published_ttl(cfg) }
         if cfg.storage_scope ~= "global" then M.last_totals_by_camp[camp_key] = totals end
 
         stats.chests = stats.chests + (chests or 0)

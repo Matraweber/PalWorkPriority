@@ -137,9 +137,51 @@ GameWindow() {
 }
 Focus() {
     id := GameWindow()
-    WinActivate 'ahk_id ' id
-    if !WinWaitActive('ahk_id ' id, , 5)
+    wasActive := WinActive('ahk_id ' id)
+    loop 3 {
+        WinActivate 'ahk_id ' id
+        if WinWaitActive('ahk_id ' id, , 2)
+            break
+        ; Windows refuses a focus change while another process holds the
+        ; foreground (on 2026-10-17 the text input host, so every macro run
+        ; stopped here). Attaching to that window's input thread for the
+        ; moment of the switch lets SetForegroundWindow through.
+        fg := DllCall('GetForegroundWindow', 'Ptr')
+        fgThread := fg ? DllCall('GetWindowThreadProcessId', 'Ptr', fg, 'Ptr', 0, 'UInt') : 0
+        me := DllCall('GetCurrentThreadId', 'UInt')
+        attached := fgThread && fgThread != me && DllCall('AttachThreadInput', 'UInt', me, 'UInt', fgThread, 'Int', 1)
+        DllCall('BringWindowToTop', 'Ptr', id)
+        DllCall('SetForegroundWindow', 'Ptr', id)
+        if attached
+            DllCall('AttachThreadInput', 'UInt', me, 'UInt', fgThread, 'Int', 0)
+        if WinWaitActive('ahk_id ' id, , 2)
+            break
+        ; The foreground lock only refuses programmatic switches. A click is
+        ; input, and the clicked window becomes active, so click the game's
+        ; title bar: window frame, not game content, so nothing in-game fires.
+        ; Windowed mode only; a borderless/fullscreen window has no title bar.
+        WinGetPos &wx, &wy, &ww, , 'ahk_id ' id
+        WinGetClientPos &cx, &cy, , , 'ahk_id ' id
+        if cy - wy >= 20 {
+            ; Screen coordinates for this one click only: every other click
+            ; in this script is window-relative (CoordMode at the top), and
+            ; leaving Screen set sent them to the wrong places on 2026-10-17.
+            CoordMode 'Mouse', 'Screen'
+            MouseMove wx + ww // 2, wy + (cy - wy) // 2, 0
+            Click
+            CoordMode 'Mouse', 'Client'
+            if WinWaitActive('ahk_id ' id, , 2)
+                break
+        }
+    }
+    if !WinActive('ahk_id ' id)
         throw Error('Game did not receive focus.')
+    ; A window that has just become active takes a moment before the game
+    ; reads keys again. Without this wait the Escape after a focus click
+    ; was lost on 2026-10-17 and the menu clicks that followed fired the
+    ; weapon in the world instead of pressing menu buttons.
+    if !wasActive
+        Sleep 800
     WinGetClientPos , , &w, &h, 'ahk_id ' id
     if w < 800 || h < 450 || Abs(w / h - 16 / 9) > 0.035
         throw Error('This calibration needs a 16:9 game window, at least 800x450.')

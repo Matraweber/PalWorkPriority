@@ -148,3 +148,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   CurrentState Workable, minus Pals already cooling. Both kinds go through one
   list (`stations.KINDS`). *Rejected:* counting every built cooler (would park
   a Pal at an empty one). *Evidence:* [g4-scheduling-2026-10-16-coolers.md](g4-scheduling-2026-10-16-coolers.md).
+- **2026-10-17 - Rocks and trees count as demand while Workable.** The game
+  announces them only once at world load, so Mining and Lumbering never came
+  back once a Pal left them. Vacancies = Workable Mining/Lumbering works (built,
+  when a building owns them; a natural tree's owner reads as a null wrapper)
+  minus Pals already on them. *Rejected:* relying on pulses (2 rock
+  announcements in a whole session while Pals mined for minutes).
+  *Evidence:* [g4-scheduling-2026-10-17-miners.md](g4-scheduling-2026-10-17-miners.md).
+- **2026-10-17 - A published stock reading stays valid for the reuse window
+  plus one pass interval** (max 60 s), because the scheduler acts on it until
+  the next pass. *Rejected:* the bare reuse window (the display said "stock
+  unavailable" between passes while Mining stayed stopped on that reading).
+  *Evidence:* same file.

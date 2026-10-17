@@ -88,10 +88,11 @@ package.loaded.demand = { live = function() return demand_available end,
         for value, count in pairs(required) do out[value], n = count, n + count end
         return out, n, {unknown_scope = 0, unknown_type = 0}
     end }
-local station_needing, cooler_needing = 0, 0
+local station_needing, cooler_needing, rocks_needing = 0, 0, 0
 package.loaded.stations = { GENERATOR = 4, COOLER = 11, KINDS = {
     { value = 4, needing = function() return station_needing end },
-    { value = 11, needing = function() return cooler_needing end } } }
+    { value = 11, needing = function() return cooler_needing end },
+    { value = 8, needing = function() return rocks_needing end } } }
 package.loaded.log = { info = noop, debug = noop, warn = noop }
 package.loaded.trace = { at = noop, done = noop }
 local scheduler = require("scheduler")
@@ -106,7 +107,7 @@ local function reset(pals)
     component_reads, component_available = 0, true
     replication_requests = 0
     demand_available, required, work_error, works, rules = true, {}, nil, {}, {}
-    station_needing, cooler_needing = 0, 0
+    station_needing, cooler_needing, rocks_needing = 0, 0, 0
     store.baseline, store.decided, store.state, store.data = false, true, "saved", {}
     config.max_pals_per_work_type, config.dry_run = 3, false
     api.camps_available, api.camps_error = true, nil
@@ -731,3 +732,27 @@ store.data.c = {[11] = 1, [2] = 2}
 station_needing, cooler_needing = 1, 1
 stats = scheduler.run_pass(config)
 assert(stats.station_vacancies == 2, "generator and cooler vacancies did not add up")
+
+-- Rocks and trees are silent as well (announced once at world load). With
+-- Workable rocks in the camp a Mining-1 Pal leaves Planting 2; with none it
+-- stays; three Workable rocks and two miners already on them leave one seat.
+reset({ {key = "m", camp = "camp", ranks = {[8] = 1, [3] = 1}, off = {}, current = 3} })
+store.data.m = {[8] = 1, [3] = 2}
+required = {[3] = 1}
+rocks_needing = 36
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 36, "Workable rocks were not counted as mining demand")
+assert(fixture[1].off[3] and not fixture[1].off[8], "Mining 1 did not beat Planting 2 with rocks to mine")
+
+reset({ {key = "m", camp = "camp", ranks = {[8] = 1, [3] = 1}, off = {}, current = 3} })
+store.data.m = {[8] = 1, [3] = 2}
+required = {[3] = 1}
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil and not fixture[1].off[3], "no Workable rocks still created mining demand")
+
+reset({ {key = "a", camp = "camp", ranks = {[8] = 1}, off = {}, current = 8},
+        {key = "b", camp = "camp", ranks = {[8] = 1}, off = {}, current = 8} })
+store.data.a, store.data.b = {[8] = 1}, {[8] = 1}
+rocks_needing = 3
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 1, "miners already on rocks were not subtracted")

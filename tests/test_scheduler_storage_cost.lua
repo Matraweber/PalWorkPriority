@@ -411,6 +411,21 @@ check('requested empty-base storage does not depend on a worker roster', functio
     assert(view.verified and view.totals.Stone==100 and #view.choices==2)
     now=110;run();assert(s.scans==1 and scheduler.last_storage_by_camp.a.sampled_at==100)
 end)
+check('a reading the scheduler still uses is shown as verified until the next pass', function()
+    -- 2026-10-17: global scope, a 30 s reuse window and 10 s passes made every
+    -- other '!pwp limit' say "stock unavailable" while Mining stayed stopped
+    -- on that very reading. Valid for the reuse window plus one interval.
+    local s=setup('global'); s.complete,s.unknown=true,0
+    now=100; run(); assert(s.scans==1)
+    now=129; run(); assert(s.scans==1 and scheduler.last_storage.g.sampled_at==100, 'reading was not reused')
+    now=135
+    local view=require('storage_snapshot').build(cfg,scheduler,'g',nil,now)
+    assert(view.verified, 'display rejected the reading the last pass used')
+    assert(scheduler.last_storage.g.ttl==40, 'published validity is not reuse window plus one interval')
+    now=141
+    view=require('storage_snapshot').build(cfg,scheduler,'g',nil,now)
+    assert(not view.verified, 'a reading past the next pass stayed verified')
+end)
 os.clock = clock_before
 assert(#failures == 0, table.concat(failures, "\n"))
 print(passed .. " scheduler storage cost checks passed")

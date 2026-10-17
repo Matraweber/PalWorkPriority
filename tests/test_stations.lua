@@ -13,7 +13,7 @@ package.loaded.palapi = {
     work_suitability = function(w) return w.value end,
     prop = function(o, n) return o[n] end,
     unwrap = function(v) return v end,
-    valid = function(o) return o ~= nil end,
+    valid = function(o) return o ~= nil and o ~= 'null' end,
     as_int = function(v) return type(v) == 'number' and math.floor(v) or nil end,
 }
 package.loaded.stations = nil
@@ -59,5 +59,37 @@ local c = stations.coolers_needing({
 })
 assert(c == 1, 'expected 1 cooler needing a worker, got ' .. tostring(c))
 assert(stations.coolers_needing(nil) == 0 and stations.coolers_needing({}) == 0)
-assert(#stations.KINDS == 2 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
+assert(#stations.KINDS == 4 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
     and stations.KINDS[2].needing == stations.coolers_needing)
+
+-- stations.resources_needing: Workable trees/rocks count; a node owned by a
+-- building (stone pit) only when built; anything else counts as nothing.
+assert(stations.LUMBERING == 7 and stations.MINING == 8)
+assert(stations.KINDS[3].value == 7 and stations.KINDS[4].value == 8)
+local function node(value, state, owner, bad_model)
+    local w = { value = value, CurrentState = state }
+    if owner then
+        w.CachedOwnerMapObjectConcreteModel = { GetOuter = function() return manager end }
+        w.OwnerMapObjectModelId = owner
+    end
+    if bad_model then w.CachedOwnerMapObjectConcreteModel = 'null' end
+    return w
+end
+local works = {
+    node(8, 1),                 -- rock, Workable: needs
+    node(8, 1),                 -- rock, Workable: needs
+    node(8, 2),                 -- rock, NotWorkable: no
+    node(8, nil),               -- rock, unreadable state: no
+    node(8, 1, 'built'),        -- built stone pit: needs
+    node(8, 1, 'blueprint'),    -- unbuilt stone pit: no
+    node(8, 1, 'missing'),      -- pit model not found: no
+    node(8, 1, nil, true),      -- null model wrapper (a natural node): needs
+    node(7, 1),                 -- tree, Workable: Lumbering only
+    node(7, 3),                 -- tree, Finish: no
+    cooler(1, 'built'),         -- a cooler is not a resource
+}
+local mined = stations.resources_needing(works, 8)
+assert(mined == 4, 'expected 4 mining works needing a worker, got ' .. tostring(mined))
+assert(stations.resources_needing(works, 7) == 1)
+assert(stations.KINDS[4].needing(works) == 4 and stations.KINDS[3].needing(works) == 1)
+assert(stations.resources_needing(nil, 8) == 0)

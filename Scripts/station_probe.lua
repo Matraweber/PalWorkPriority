@@ -20,6 +20,9 @@ local workdefs = require('workdefs')
 local M = {}
 local STATE = { [0] = 'Init', [1] = 'Workable', [2] = 'NotWorkable', [3] = 'Finish', [4] = 'Dispose' }
 local WATCH = { GenerateElectricity = true, Cool = true }
+-- Resource nodes come in dozens, so they are summarised per type instead of
+-- one line per work: how many in each state / model / build combination.
+local SUMMARISE = { Deforest = true, Mining = true }
 
 local function num(v)
     if type(v) == 'number' then return string.format('%.1f', v) end
@@ -30,12 +33,39 @@ function M.report()
     if api.latch_authority() ~= true then
         return 'stations: host/server only (station models are read where the world runs)'
     end
-    local lines, seen = {}, 0
+    local lines, seen, summary = {}, 0, {}
     for ci, camp in ipairs(api.base_camps() or {}) do
         for _, w in ipairs(api.camp_works(camp) or {}) do
             local value = api.work_suitability(w)
             local name = value and workdefs.name(value)
-            if name and WATCH[name] then
+            if name and SUMMARISE[name] then
+                local st = api.as_int(api.prop(w, 'CurrentState'))
+                local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
+                local mtxt, build = 'none', 'n/a'
+                if model ~= nil then
+                    mtxt = api.valid(model) and 'yes' or 'invalid'
+                    if mtxt == 'yes' then
+                        local ok, manager = pcall(function() return model:GetOuter() end)
+                        local id = api.prop(w, 'OwnerMapObjectModelId')
+                        if ok and manager ~= nil and api.valid(manager) and id ~= nil then
+                            local found, owner = pcall(function() return manager:FindModel(id) end)
+                            owner = found and api.unwrap(owner) or nil
+                            if owner ~= nil and api.valid(owner) then
+                                local bp = api.unwrap(api.prop(owner, 'BuildProcess'))
+                                local bst = bp ~= nil and api.valid(bp) and api.as_int(api.prop(bp, 'State')) or nil
+                                build = bst == 1 and 'Completed' or bst == 0 and 'Building'
+                                    or (bp == nil and 'no BuildProcess' or 'unreadable')
+                            else
+                                build = found and 'model not found' or 'FindModel failed'
+                            end
+                        else
+                            build = 'no manager/id'
+                        end
+                    end
+                end
+                local k = string.format('camp %d %-9s state=%s model=%s build=%s', ci, name, tostring(st), mtxt, build)
+                summary[k] = (summary[k] or 0) + 1
+            elseif name and WATCH[name] then
                 seen = seen + 1
                 local st = api.as_int(api.prop(w, 'CurrentState'))
                 local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
@@ -73,6 +103,17 @@ function M.report()
                     ci, name, tostring(st), STATE[st] or '?', has_model and 'yes' or 'no', stored, max, build)
             end
         end
+    end
+    local keys = {}
+    for k in pairs(summary) do keys[#keys + 1] = k end
+    table.sort(keys)
+    for _, k in ipairs(keys) do lines[#lines + 1] = string.format('  %3dx %s', summary[k], k) end
+    local okc, sched = pcall(require, 'scheduler')
+    local capped = okc and type(sched) == 'table' and sched.last_capped or {}
+    for _, n in ipairs({ 'Deforest', 'Mining' }) do
+        local c = capped[n]
+        lines[#lines + 1] = string.format('  last pass limit %s: %s', n, c and string.format(
+            'capped in %d of %d camp(s), unknown %d', c.capped or 0, c.camps or 0, c.unknown or 0) or 'no record')
     end
     table.insert(lines, 1, string.format('stations: %d generator/cooler work(s)', seen))
     return table.concat(lines, '\n')

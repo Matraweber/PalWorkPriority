@@ -161,6 +161,29 @@ function M.format(report)
     table.sort(keys)
     for _,key in ipairs(keys) do lines[#lines+1]='  ' .. key .. ': ' .. report.groups[key] end
     for _,example in ipairs(report.examples) do lines[#lines+1]='  example: ' .. example end
+    -- What the scheduler itself compared in its last pass: per base, each
+    -- limited item's count against its ceiling, and the decision. Read only
+    -- from tables the scheduler already published; nothing is recomputed
+    -- except cap_state over those same published totals.
+    local okm, sched = pcall(require, 'scheduler')
+    local okc, caps = pcall(require, 'caps')
+    if okm and okc and type(sched) == 'table' and type(caps) == 'table' then
+        local cfg = {}
+        for key, totals in pairs(sched.last_totals_by_camp or {}) do
+            local st = (sched.last_storage_by_camp or {})[key] or {}
+            local parts = {}
+            for _, work in ipairs({ 'Deforest', 'Mining' }) do
+                local okw, ceilings = pcall(caps.for_work, cfg, work, st.guild)
+                for item, ceiling in pairs(okw and ceilings or {}) do
+                    parts[#parts + 1] = string.format('%s %s %s/%s', work, item, tostring(totals[item]), tostring(ceiling))
+                end
+                local okd, capped = pcall(sched.cap_state, cfg, work, totals, st.guild)
+                parts[#parts + 1] = work .. ' capped=' .. tostring(okd and capped)
+            end
+            lines[#lines+1] = '  scheduler base ' .. tostring(key) .. ' verified=' .. tostring(st.verified)
+                .. ' scope=' .. tostring(st.scope) .. ': ' .. table.concat(parts, ', ')
+        end
+    end
     return table.concat(lines, '\n')
 end
 

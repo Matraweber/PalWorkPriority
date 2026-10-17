@@ -26,6 +26,7 @@ package.loaded.palapi = {
     valid = function(o) return o ~= nil end,
     as_int = function(v) return type(v) == 'number' and math.floor(v) or nil end,
 }
+package.loaded.scheduler = { last_capped = { Mining = { camps = 2, capped = 2, unknown = 0 } } }
 package.loaded.station_probe = nil
 local probe = require('station_probe')
 
@@ -35,7 +36,11 @@ assert(out:find('state=1 (Workable) model=yes stored=120.0 max=1000.0 build=Comp
 assert(out:find('stored=0.0 max=1000.0 build=Building', 1, true), out)
 assert(out:find('build=model not found', 1, true), out)
 assert(out:find('state=3 (Finish) model=no stored=n/a max=n/a build=n/a', 1, true), out)
-assert(not out:find('Lumbering', 1, true) and not out:find('Deforest', 1, true), 'tree listed: ' .. out)
+-- Trees and rocks are summarised, never listed per work.
+assert(out:find('  1x camp 1 Deforest  state=1 model=none build=n/a', 1, true), 'tree summary: ' .. out)
+assert(not out:find('Deforest%s+state=1 %(Workable%)'), 'tree listed per work: ' .. out)
+assert(out:find('last pass limit Mining: capped in 2 of 2 camp(s), unknown 0', 1, true), out)
+assert(out:find('last pass limit Deforest: no record', 1, true), out)
 
 authority = nil
 assert(probe.report():find('host/server only', 1, true), 'client or unknown authority must not read models')

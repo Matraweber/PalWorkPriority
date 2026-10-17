@@ -73,7 +73,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
 - [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).
-- [ ] **"Everything stops" / "only one miner"**: one reproduction attempt
+- [x] **"Everything stops" / "only one miner"**: reproduced 2026-10-16/17 (mod: 0 miners and lumberjacks in 42 samples; vanilla 1-3 and 2-5). Two causes, both fixed and verified live: met limits under the "all bases" option shown as "stock unavailable" half the time, and rocks/trees never announced after load ([evidence](g4-scheduling-2026-10-17-miners.md)). One reproduction attempt
   with output counts, result recorded either way.
 - [-] **Empty dedicated server assignments.** Not applicable, confirmed on rc1 2026-10-11: 0 works with nobody online ([evidence](g4-scheduling-2026-10-12.md)). In August no base work ran with
   zero players online.

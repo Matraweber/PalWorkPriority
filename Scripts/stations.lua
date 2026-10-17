@@ -24,6 +24,16 @@
 -- needs a worker when its build is Completed and work.CurrentState is 1.
 -- (CurrentState alone is not enough for generators: Workable while a
 -- blueprint, seen 2026-10-14.)
+-- Resource nodes (trees for Lumbering, rocks and the stone pit for Mining)
+-- are silent too: in three days of play on 2026-10-14..16 the game announced
+-- them only once each at world load, so Mining and Lumbering never reached
+-- the demand index and no Pal mined or chopped while the mod ran (0 of 42
+-- samples, even with Mining 1). With the mod off the same base had 1-3
+-- miners and 2-5 lumberjacks per sample. Rechecked 2026-10-17 with the
+-- limits lifted: announcements stayed at 2 (rocks) and 48 (trees, all at
+-- load) while Pals mined and chopped for minutes, so the game never asks
+-- again. A node needs a worker while its work.CurrentState is Workable; one
+-- that belongs to a building (rocks, the stone pit) must also be built.
 -- Nothing is stored. Any failed or odd read means "does not need a worker":
 -- unknown must never become demand (a full or unbuilt generator counted as a
 -- vacancy would park Pals beside it). Authority only; callers run on it.
@@ -84,10 +94,35 @@ function M.coolers_needing(works)
     return n
 end
 
+M.LUMBERING = workdefs.value('Deforest')
+M.MINING = workdefs.value('Mining')
+
+-- Number of `value` resource works in `works` that are Workable (and built,
+-- when they belong to a building).
+function M.resources_needing(works, value)
+    local n = 0
+    for _, w in ipairs(works or {}) do
+        if api.work_suitability(w) == value
+            and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then
+            -- A natural tree has no owning model: the property reads as nil or
+            -- as an invalid (null) object wrapper, seen live for all 46 trees
+            -- on 2026-10-17. Rocks and the stone pit have a model and count
+            -- only when its build reads Completed.
+            local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
+            if model == nil or not api.valid(model) or completed(w, model) then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
 -- The silent station kinds the scheduler checks, with their counters.
 M.KINDS = {
     { value = M.GENERATOR, needing = M.generators_needing },
     { value = M.COOLER, needing = M.coolers_needing },
+    { value = M.LUMBERING, needing = function(works) return M.resources_needing(works, M.LUMBERING) end },
+    { value = M.MINING, needing = function(works) return M.resources_needing(works, M.MINING) end },
 }
 
 return M

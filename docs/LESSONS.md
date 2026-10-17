@@ -140,3 +140,21 @@ discovers a new one, with the date and a link to the evidence.
   launched directly, by the macro or by `steam://rungameid`; starting it from
   Steam by hand worked. Steam's windows are masked for computer use, so ask
   the user what Steam shows instead of retrying.
+- **Read the in-game options before calling a limit a bug.** DarnMenu writes
+  `Mods/shared/PalWorkPriority_user.lua`; `storage_scope = "global"` there adds
+  up every base, which made both of the user's limits met and stopped all
+  mining (2026-10-17). An hour went into reading scheduler code first.
+- **A rule restored by copying an old caps.txt is refused.** The loader keeps
+  the newer generation and recovers from caps.txt.bak (correct). New legacy
+  rules are locked in 0.5; re-add one via a temporary config.lua `work_caps`
+  entry plus `!pwp limit`, then restore config.lua.
+- **The restart macro's keys stopped arriving on 2026-10-17, its clicks did
+  not.** With the Windows input host holding the foreground, the in-world Esc
+  never reached the game, and the following menu clicks fired the weapon. Do
+  the in-world step (Esc, Return to Title, Yes) with computer use when it is
+  allowed, then run the macro with `--title`. A title-bar click gets focus
+  back; keep CoordMode Client for every other click.
+- **Never send Alt+F1 through computer use.** It opened a full-screen overlay
+  (Game Bar / NVIDIA) instead of the mod panel and the game vanished behind it.
+- **Long foreground waits drop the remote session.** Run restarts and waits
+  over a minute with run_in_background.
