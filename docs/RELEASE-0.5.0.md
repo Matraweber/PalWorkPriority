@@ -49,7 +49,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   opens a second panel, stuck panel blocks menus).
   **Done when:** 10 open/close cycles including rapid Alt-F1 presses leave
   exactly one panel, and pause, inventory and map all work afterwards.
-- [ ] **Layout holds at every list size.**
+- [x] **Layout holds at every list size.** PASS 2026-10-17: 0/1/13/14/26/27 entries, picker pages 1-2 of 8, editor on a single row and above the pager ([evidence](g3-layout-2026-10-17.md)).
   **Done when:** screenshots of the rules list at 0/1/13/14/26/27 entries and
   two picker pages show no overlap, and the amount editor sits on its row.
 - [ ] **Search/Add crash** (Nexus, DarkWyrmReaper, with Cosmetic Outfits mod 5049).
