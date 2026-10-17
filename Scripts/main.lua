@@ -18,6 +18,7 @@ local store = require("store")
 local caps = require("caps")
 local items = require("items")
 local panel = require("panel")
+local deathwatch = require("deathwatch")
 local remote = require("remote")
 local reload = require("reload")
 local clock = require("clock")
@@ -737,6 +738,18 @@ local function start_ui()
                 if not panel.open and ui.is_open() then
                     local ok_input, err_input=pcall(ui.pad_tick,cfg)
                     if not ok_input then log.warn("stand controller input: "..tostring(err_input)) end
+                end
+                -- Death closes the panel and drops any draft (deathwatch.lua).
+                -- Before hover, so a closing panel is not ticked once more.
+                if panel.open and api.has_viewport() then
+                    local ok_dead, err_dead = pcall(deathwatch.check, panel, log)
+                    if not ok_dead then
+                        err_dead = tostring(err_dead)
+                        if err_dead ~= last_tick_error then
+                            last_tick_error = err_dead
+                            log.warn("the panel's death check stopped: " .. err_dead)
+                        end
+                    end
                 end
                 if panel.open and api.has_viewport() and panel.hover_tick then
                     -- The message is kept. A throw here kills the gamepad and hover entirely,

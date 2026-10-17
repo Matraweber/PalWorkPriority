@@ -54,6 +54,30 @@ Verdict: no lost input, no grey box, nothing stuck, but the editor stays open
 over the death screen until Esc. Proposed fix: close Production Limits (and
 cancel any draft) when the local player dies.
 
+### Fix and retest: PASS (14:18-14:22)
+
+`Scripts/deathwatch.lua`: while the panel is open, the 16 ms UI loop checks
+the local player's HP every 0.25 s through properties only (Pawn ->
+CharacterParameterComponent -> IndividualParameter -> SaveParameter.HP.Value,
+verified live equal to GetHP). A positive 0 cancels any draft and closes the
+panel; an unreadable chain changes nothing. Test `tests/test_deathwatch.lua`
+(alive, unknown chain, unreadable HP, dead with and without a draft,
+throttle, closed panel); negative control: with the 0-HP check broken it
+fails. 218 scripts pass. Deployed (hashes equal), restarted, 0.5.0-rc1 loaded
+14:19:11.
+
+Retest with a real unsaved draft (the user asked for a number other than the
+saved 30000): panel opened without a stand (Alt+F1), editor on Wood, field
+cleared and **12345 typed, not confirmed**, then SelfKillPlayer at 14:21:02.
+Same second: `Production Limits closed: the player died; the unsaved limit edit
+was discarded`. The DEFEAT screen showed no panel and no editor. caps.txt kept
+Wood 30000 (12345 nowhere). Respawn at the base, Tab inventory, Alt+F1 shows
+Wood 30,000 / Stone 35,000, Esc closes. 0 ERROR / WARN; rules and priorities
+equal to the snapshots; helper restored.
+
+**Gate met:** Escape, photo mode and death while editing each leave no grey box,
+no lost input and no stale editor.
+
 ### Earlier attempts (kept for the record)
 
 

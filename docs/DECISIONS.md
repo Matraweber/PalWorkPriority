@@ -103,6 +103,13 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-10-17 - Production Limits closes itself when the local player dies**,
+  dropping any unsaved draft. Detected by polling HP (property reads, every
+  0.25 s, only while the panel is open) because ClientRestart only fires at
+  respawn. *Rejected:* waiting for ClientRestart (the editor sat on the death
+  screen until then) and hooking an unknown death function by guessed name.
+  *Evidence:* [g3-escape-photo-death-2026-10-17.md](g3-escape-photo-death-2026-10-17.md).
+
 - **The panel keeps its original position.** The user preferred it over the
   audit's move (Aug 2026, reverted). Layout fixes happen inside it.
 - **Queued clicks and keys bind their target cell at press time**, not when

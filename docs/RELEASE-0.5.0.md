@@ -56,7 +56,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   **Done when:** with that mod installed, Search all and Add run 5 times
   without a crash, or the attempt is recorded as not reproducible and the
   reporter is asked for the crash log.
-- [ ] **Escape, photo mode, death while editing.** Escape and photo mode PASS 2026-10-17; death run 2026-10-17 via SelfKillPlayer: no lost input or stuck UI, but the panel/editor stay on top of the death screen until Esc (fix proposed); one unexplained limit step recorded ([evidence](g3-escape-photo-death-2026-10-17.md)).
+- [x] **Escape, photo mode, death while editing.** PASS 2026-10-17: Escape and photo mode clean; death (SelfKillPlayer) left the editor over the death screen, fixed by deathwatch.lua and retested with an unsaved 12345 draft (discarded, not saved); one unexplained limit step recorded ([evidence](g3-escape-photo-death-2026-10-17.md)).
   **Done when:** one recorded run each leaves no grey box, no lost input and no
   stale editor.
 
