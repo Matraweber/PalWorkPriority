@@ -93,3 +93,14 @@ priorities diff equal to the snapshots.
   ammo, harmless). The title-screen part (`--title`) works. See LESSONS.
 - Alt+F1 sent through computer use opened a full-screen overlay (Game Bar /
   NVIDIA) instead of the mod panel; the game kept running behind it.
+
+## Dedicated server updated (12:23-12:27)
+
+GPortal "RAM" through the browser panel, 0 players online: `Scripts` renamed to
+`Scripts-before-34c95ad` (backup of eb54d28), `pwp-server-scripts-34c95ad.zip`
+(git archive of 34c95ad, 57 Lua files, sha256 699f0267...) uploaded (401.34 KiB)
+and unzipped in place. The new `Scripts` holds 57 files; stations.lua,
+scheduler.lua, station_probe.lua and storage_probe.lua match the commit's
+sizes. After a panel restart (12:26:55) the server's UE4SS log shows PWP_READY
+at 12:27:09 (0.5.0-rc1, authority, settings available) and no PalWorkPriority
+error or warning. Behaviour on the server's own base is untested.
