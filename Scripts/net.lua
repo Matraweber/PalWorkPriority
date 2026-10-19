@@ -385,6 +385,50 @@ function M.who(comp, current)
     return full_name(comp)
 end
 
+-- Tell a player with an older copy of the mod why nothing they change sticks.
+--
+-- On 2026-10-19 a 0.4.1 client on the rc1 server got PWP_Incompatible, which
+-- it cannot read: it showed an empty limit list and answered a refused change
+-- with "limit set ... your rules are sent to it". The game's own system chat
+-- needs no mod on the receiving side, so the server says it there, once per
+-- client per session: UPalUtility::SendSystemToPlayerChat(world, text, {uid}),
+-- the player reached through the same component -> transmitter -> owner chain
+-- as guild_via. Only names are kept between calls. Any failure is silent apart
+-- from the log and never blocks the Incompatible reply itself.
+M.OLD_CLIENT_NOTICE = "Pal Work Priority: this server runs a newer version of the mod (0.5.0). " ..
+    "Your copy is older, so your priority and limit changes are not applied here. " ..
+    "Please update Pal Work Priority."
+local told_old = {}
+
+function M.notify_old_client(comp)
+    if api.has_authority() ~= true or not api.valid(comp) then return false end
+    local name = full_name(comp)
+    if not name or told_old[name] then return false end
+    told_old[name] = true
+    local ok, why = pcall(function()
+        local outer = comp:GetOuter()
+        if not api.valid(outer) then error("no transmitter") end
+        local t = transmitters()[full_name(outer)]
+        if not api.valid(t) then error("transmitter not found") end
+        local owner = t:GetOwner()
+        if not api.valid(owner) then error("no owning controller") end
+        local ps = owner.PlayerState
+        if not api.valid(ps) then error("no player state") end
+        local uid = ps.PlayerUId
+        local util = api.cdo("/Script/Pal.Default__PalUtility")
+        local world = FindFirstOf("World")
+        if not (api.valid(util) and api.valid(world)) then error("utility or world missing") end
+        util:SendSystemToPlayerChat(world, M.OLD_CLIENT_NOTICE,
+            { { A = uid.A, B = uid.B, C = uid.C, D = uid.D } })
+    end)
+    if ok then
+        log.say("told a client with an older Pal Work Priority to update (system chat)")
+    else
+        log.warn("could not tell an old client to update: " .. tostring(why))
+    end
+    return ok
+end
+
 -- Resolve without recording.
 --
 -- Echo needs a component to answer on and must NOT put it on the push list:
@@ -618,6 +662,7 @@ function M.begin_session(epoch)
     unavailable_reason=nil
     recovery_retry_at,recovery_retries=nil,0
     command_context = nil
+    told_old = {}
     stock = { open=false, serial=0, jobs={}, order={} }
     nonce_serial = nonce_serial + 1
     M.epoch = epoch
@@ -1030,6 +1075,7 @@ function M.receive_command(comp, command, value)
         if #p ~= 4 or tonumber(p[2]) ~= M.SCHEMA or tonumber(p[3]) ~= M.WORKS
             or not wire.token(p[4], 64) then
             M.to_client(comp, PREFIX .. "Incompatible|" .. M.SCHEMA .. "|" .. M.WORKS)
+            M.notify_old_client(comp)
             return false
         end
         local guild = M.guild_of_sender(comp)
@@ -1079,6 +1125,7 @@ function M.receive_command(comp, command, value)
         -- Old mutations never reach main, even if the component once negotiated.
         if command:sub(1, #PREFIX) == PREFIX then
             M.to_client(comp, PREFIX .. "Incompatible|" .. M.SCHEMA .. "|" .. M.WORKS)
+            M.notify_old_client(comp)
         end
         return false
     end

@@ -20,9 +20,8 @@ incompatible-version message and corrupts nothing.
    moved (not deleted) into the snapshot, tag v0.4.1's `Scripts` (23 files) and
    `Info.json` extracted in place (as in the 2026-10-11 upgrade test; 0.4.1's
    own pak was never available, the current pak stayed).
-2. Joined RAM (the macro picked the wrong row: "PWP Isolated save fixture" now
-   sits above RAM in Recent Servers; joined by hand with the game-stored
-   password). 17:50:24 `Pal Work Priority 0.4.1 loaded`, 17:54:37 world,
+2. Joined RAM by hand with the game-stored password after the macro's join
+   silently failed (cause below; first misread as a wrong row). 17:50:24 `Pal Work Priority 0.4.1 loaded`, 17:54:37 world,
    17:54:59 0.4.1 detects it is a client.
 3. `!pwp net`: transport hooks fine, 4 messages up, 4 down, echo round trip
    works. `!pwp limit`: "no stock limits set" although the server held the
@@ -45,6 +44,34 @@ for the server side: on an old-format Hello, also send the player a personal
 in-game announcement ("this server runs Pal Work Priority 0.5.0; update the
 mod to edit priorities") through the game's own announce path, which 0.4.1
 does not need to understand.
+
+## Fixes after A (2026-10-19 18:00-18:08)
+
+**Old-client notice.** `net.notify_old_client(comp)`: when the server answers a
+client with `PWP_Incompatible` (old Hello or old-format mutation), it also sends
+that player a system chat message through the game's own
+`UPalUtility::SendSystemToPlayerChat(world, text, {PlayerUId})`, reached via
+component -> transmitter (class walk) -> owning controller -> PlayerState. Once
+per client per session, authority only, names kept, failures logged and never
+blocking the reply. Text: "Pal Work Priority: this server runs a newer version
+of the mod (0.5.0). Your copy is older, so your priority and limit changes are
+not applied here. Please update Pal Work Priority." Tests:
+`tests/test_net_old_client_notice.lua` (sent once with the player's uid, not
+twice, again after a new session, never from a client, failure logged and not
+retried) and an assertion in `test_net_settings_gate.lua` that an old Hello
+triggers it; negative control: without the call that assertion fails. 219
+scripts pass. Engine call verified live in singleplayer (sent to the local
+player): the chat showed `[SYSTEM]: Pal Work Priority: this server runs a newer
+version ...`. The server-side path with a real 0.4.1 client is not yet
+verified live (needs the server on this build: next server update).
+
+**Server macro join.** The first diagnosis ("wrong row") was wrong: the macro
+clicks the second Recent Servers row, and RAM was second. The real fault: it
+clicked the row immediately after opening Recent Servers, before the list had
+loaded (about 3 s for players and ping), so the password and confirm clicks hit
+nothing. Now 4 s after Recent Servers, 3 s before the password OK, 2.5 s before
+confirm. Live: 18:06:11 start, 18:07:07 row, 18:07:51 SERVER_READY with the
+verified guild.
 
 ## B. rc1 client on a 0.4.1 server: not run yet
 

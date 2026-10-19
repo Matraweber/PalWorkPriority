@@ -173,5 +173,9 @@ discovers a new one, with the date and a link to the evidence.
   open, keys and pad buttons act on the selected row; one unexplained step
   (30000 to 50000) happened right after a focus click (2026-10-17). Diff the
   rules after every UI test.
+- **Check the macro's own calibration before blaming the UI.** A failed join
+  was blamed on a new Recent Servers entry above RAM; the macro clicks the
+  second row on purpose and RAM was second. The real fault was a missing wait
+  for the list to load (2026-10-19). Read the macro before diagnosing it.
 - **Long foreground waits drop the remote session.** Run restarts and waits
   over a minute with run_in_background.

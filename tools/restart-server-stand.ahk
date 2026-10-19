@@ -85,10 +85,14 @@ try {
     Point(639, 442) ; Join Multiplayer Game
     Sleep 7000
     Point(198, 269) ; Recent Servers
+    ; The list fetches players and ping before rows exist. Clicking at once
+    ; (as this did until 2026-10-19) hit an empty list, so the password and
+    ; confirm clicks landed on nothing and the join silently never happened.
+    Sleep 4000
     ClickServer()
-    Sleep 2500
+    Sleep 3000
     Point(640, 461) ; Accept game-stored password; no password in this macro
-    Sleep 1500
+    Sleep 2500
     Point(552, 477) ; Confirm connection
     deadline := A_TickCount + 150000
     ready := false

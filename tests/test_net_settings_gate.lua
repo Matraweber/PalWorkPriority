@@ -93,8 +93,12 @@ assert(gate.release(pending_token))
 handshake();down={}
 local token=assert(gate.acquire())
 local edits_before=edits
+local notified,real_notify=0,server.notify_old_client
+server.notify_old_client=function(c) assert(c==comp); notified=notified+1 end
 assert(not server.receive_command(comp,'PWP_Hello|2|14|old-client',0))
 assert(#down==1 and down[1]:find('PWP_Incompatible|'..wire.SCHEMA..'|14',1,true)==1)
+assert(notified==1,'an old Hello did not trigger the in-game update notice')
+server.notify_old_client=real_notify
 assert(edits==edits_before)
 down={}
 local nonce=client.local_nonce
