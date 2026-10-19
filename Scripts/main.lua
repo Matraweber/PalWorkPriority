@@ -2492,6 +2492,14 @@ local function decide_write_or_send()
     local role = authority and "authority" or "client"
     store.set_role(role, session.epoch)
     caps.set_role(role, session.epoch)
+    -- A new client role starts at "connecting", but net reports a status
+    -- only when it changes. Joining a 0.4.1 server (2026-10-19) set
+    -- "incompatible" before the role was decided, so the limits panel said
+    -- "Connecting to server..." for good. Final states are taken over here;
+    -- ready is not, it still needs this session's snapshots.
+    if role == "client" and (net.status == "incompatible" or net.status == "unavailable") then
+        caps.remote_state, caps.remote_error = net.status, net.status_reason
+    end
 
 
     -- Probed once here and remembered, which is the whole point of doing this

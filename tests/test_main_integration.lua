@@ -263,6 +263,24 @@ test("both settings stores receive the same current role epoch",function()
     end
 end)
 
+test("incompatible reported before the client role keeps the panel on incompatible",function()
+    -- 2026-10-19, rc1 client joining a 0.4.1 server: net went incompatible
+    -- before the role tick, caps.set_role reset the panel to "connecting", and
+    -- net never re-sent an unchanged status.
+    local s=boot(false)
+    local net=s.net
+    net.begin_session(s.session.epoch)
+    assert(not net.receive_state("PWP_Rule|Mining|Stone|100"))
+    assert(net.status=="incompatible" and net.status_reason=="server_requires_matching_mod")
+    s.timers.role.fn()
+    assert(s.caps.decided and s.caps.is_client)
+    local state,reason=s.caps.view_status()
+    assert(state=="incompatible" and reason=="server_requires_matching_mod",
+        'panel status was reset to '..tostring(state)..' after the role decision')
+    local label=require('panel_status').save(s.caps)
+    assert(label=="incompatible", 'panel save state '..tostring(label))
+end)
+
 test("synchronization status follows real client handshake and complete snapshots",function()
     local s=boot(false); s.timers.role.fn()
     local net,wire=s.net,require("protocol")

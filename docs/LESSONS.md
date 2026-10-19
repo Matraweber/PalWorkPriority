@@ -95,6 +95,11 @@ discovers a new one, with the date and a link to the evidence.
   Use an explicit `if`, or make sure the middle value is truthy.
 - **`math.tointeger(non-number)` returns nil** silently in Lua 5.4, which makes
   a bad value quietly vanish instead of failing loudly.
+- **A status sent only on change is lost if the receiver resets after it.**
+  net reported "incompatible" before the client role was decided, and
+  `caps.set_role` then reset the panel to "connecting" for good (2026-10-19,
+  rc1 client on a 0.4.1 server). Whoever resets state must re-read the
+  sender's current status, and tests must replay the real arrival order.
 
 ## Tooling traps
 

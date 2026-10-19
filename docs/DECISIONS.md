@@ -32,6 +32,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   is public. The working macro on the Desktop keeps it, and the repo copy reads
   `PWP_SERVER`. The Windows user name was NOT scrubbed: it is already in the
   public history and matches the public handle.
+- **2026-10-19 - Mixed versions are refused, and both sides say so in game.**
+  An rc1 server answers a 0.4.1 client with `PWP_Incompatible` and also sends
+  that player one system chat line per session through the game's own
+  `SendSystemToPlayerChat`, because 0.4.1 cannot read the new reply. An rc1
+  client on a 0.4.1 server shows "Server version incompatible" in the panel.
+  Neither side writes the other's data. *Rejected:* a compatibility layer for
+  0.4.1's wire format (it would carry 0.4.1's X-dropping saves along) and
+  silence for old clients (the first run of the test).
+  *Evidence:* [g6-version-mismatch-2026-10-19.md](g6-version-mismatch-2026-10-19.md).
 
 ## Saving and settings
 

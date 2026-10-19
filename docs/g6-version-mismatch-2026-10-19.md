@@ -94,7 +94,53 @@ local priorities.txt, caps.txt and config.lua byte-equal to the snapshot.
 **Verdict A: PASS.** Corrupts nothing, and the old client now gets a clear
 message in its own chat.
 
-## B. rc1 client on a 0.4.1 server: not run yet
+## B. rc1 client on a 0.4.1 server (2026-10-19 18:17-18:35): PASS after a fix
 
-Needs the server switched to 0.4.1 and back (server changes; the auto-mode
-classifier blocked Claude's restart click on 2026-10-19, so the user restarts).
+The user approved the server switch and the restart clicks for this step.
+
+**Setup.** 0.4.1 drops X rows when it saves, so `priorities.txt` was first
+archived on the server with the panel's Zip function
+(`priorities-before-g6-041-20261019.zip`, 18:18; the file itself was not
+touched). rc1 `28e41ca` was renamed to `Scripts-rc1-28e41ca-during-g6`, the
+0.4.1 Scripts were uploaded and unzipped (23 files, main.lua 118.14 KiB =
+120,972 bytes, matching the tag), restart 18:21:06, 0.4.1 loaded 18:21:13
+(0.4.1 writes no `PWP_READY`).
+
+**First join (rc1 28e41ca client).** The server macro joined on its own
+(18:22:57 RAM row). The client log was right:
+
+    18:23:16 synchronization: client; incompatible
+    18:23:16 sync: incompatible (server_requires_matching_mod)
+
+but the limits panel (Alt+F1, 18:24:06) said "Connecting to server..." and
+kept saying it. Cause: a client role starts at "connecting" in `caps.set_role`,
+and net reports a status only when it changes. On this join net had already
+reported "incompatible" before `decide_write_or_send` decided the client role,
+so set_role overwrote it and nothing ever sent it again. The client could not
+write either way (no Welcome, no snapshot); only the message was wrong.
+
+**Fix.** `decide_write_or_send` takes over net's final states (incompatible,
+unavailable) right after `caps.set_role` for a client. "ready" is not taken
+over, it still needs this session's snapshots. Test: "incompatible reported
+before the client role keeps the panel on incompatible" in
+`tests/test_main_integration.lua` replays exactly this order (old-format rule
+first, then the role tick) and checks the panel status and reason. Negative
+control: without the fix it fails at that assertion. 219 scripts pass.
+
+**Second join (with the fix).** Deployed locally 18:26:12, the server macro
+restarted the game and joined again: 18:27:49 connecting (awaiting_handshake),
+18:27:54 incompatible (server_requires_matching_mod). The panel now showed
+"Server version incompatible" with "Server and client need matching mod
+versions".
+
+**Server data.** `priorities.txt` on the server stayed 2.43 KiB, modified
+6:11 PM (before the 0.4.1 phase), so the 0.4.1 server rewrote nothing.
+
+**Restored.** 0.4.1 renamed to `Scripts-041-g6test`, rc1 back to `Scripts`
+(6:11 PM), restart, `PWP_READY version=0.5.0-rc1` at 18:34:42, no
+PalWorkPriority error or warning in the log, scheduling again. Local client
+back in the singleplayer world (macro, 18:37:14) with the fix deployed; local
+priorities.txt, caps.txt and config.lua byte-equal to the pre-G6 snapshot.
+
+**Verdict B: PASS** (after the panel fix). The new client refuses to edit an
+old server and now says why.
