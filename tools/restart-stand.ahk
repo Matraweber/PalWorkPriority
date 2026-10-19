@@ -6,6 +6,8 @@
 ; --open-only: already facing the stand in gameplay; hold V without restarting.
 ; --return-title-only: stand is open; normal return to title, no quit/relaunch.
 ; Append -select to --stand/--world/--title/--launch to stop at world selection.
+; Append -absent instead when PalWorkPriority is removed (G5 mod-absent frame
+; captures): no priority.log exists, so readiness is a fixed 60 s wait.
 ; Use this for multiple-world tests: list order changes with last-played time.
 ; Window-relative 16:9 calibration. Never kills the game or edits its saves.
 GAME := 'D:\Steam\steamapps\common\Palworld'
@@ -18,6 +20,9 @@ if RETURN_ONLY
     MODE := '--stand'
 SELECT_WORLD := RegExMatch(MODE, '^--(stand|world|title|launch)-select$') != 0
 if SELECT_WORLD
+    MODE := SubStr(MODE, 1, StrLen(MODE) - 7)
+MOD_ABSENT := RegExMatch(MODE, '^--(stand|world|title|launch)-absent$') != 0
+if MOD_ABSENT
     MODE := SubStr(MODE, 1, StrLen(MODE) - 7)
 HELD_VK := 0
 HELD_SC := 0
@@ -74,7 +79,7 @@ try {
     } else if ProcessExist('Palworld-Win64-Shipping.exe') {
         throw Error('--launch requires the game to be closed.')
     }
-    offset := FileGetSize(GAME_LOG)
+    offset := MOD_ABSENT ? 0 : FileGetSize(GAME_LOG)
     Run EXE, GAME
     if !WinWait('ahk_exe Palworld-Win64-Shipping.exe', , 90)
         throw Error('New game window did not appear.')
@@ -97,6 +102,15 @@ try {
     Point(971, 654) ; Start Game (never Delete World)
     deadline := A_TickCount + 150000
     ready := false
+    if MOD_ABSENT {
+        ; Without the mod there is no readiness marker. World loads took about
+        ; 30 s on 2026-10-19; the fixed wait only has to outlast that.
+        Sleep 60000
+        if !ProcessExist(newPid)
+            throw Error('Game exited during world loading.')
+        ready := true
+        deadline := 0
+    }
     while A_TickCount < deadline {
         if !ProcessExist(newPid)
             throw Error('Game exited during world loading.')
@@ -121,7 +135,7 @@ try {
     DllCall('keybd_event', 'UChar', 0x56, 'UChar', 0x2F, 'UInt', 2, 'UPtr', 0)
     HELD_VK := 0
     Sleep 3000
-    Note('World ready; stand-open key sent. Verify visible priority numbers.')
+    Note(MOD_ABSENT ? 'World presumed ready after the fixed wait (mod absent); stand-open key sent. Verify the stand.' : 'World ready; stand-open key sent. Verify visible priority numbers.')
 } catch as err {
     Note('STOPPED: ' err.Message)
     MsgBox err.Message, 'Palworld restart stopped'

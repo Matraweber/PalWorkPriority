@@ -956,12 +956,35 @@ local function name_text(param, fn)
     return nil
 end
 
+-- The nickname is the exception: a property read, not GetNickname. On game
+-- 1.0.5 GetNickname wants an out parameter, so calling it with none raised
+-- an error every time; pcall hid it, every name fell back to the species,
+-- and building that error cost about 0.5 ms per pal. That was 93% of every
+-- roster read, once per pass per camp and once a second per stand row
+-- (measured 2026-10-19, docs/g5-performance-2026-10-19.md). SaveParameter is
+-- the saved struct behind the parameter; NickName is "" for unnamed pals and
+-- reads in under the clock's resolution.
+local function nickname(param)
+    local out
+    pcall(function()
+        local v = param.SaveParameter.NickName
+        if v == nil then return end
+        if type(v) == "string" then
+            out = v
+        elseif v.ToString then
+            out = v:ToString()
+        end
+    end)
+    if type(out) == "string" and out ~= "" and out ~= "None" then return out end
+    return nil
+end
+
 function M.pal_species(param)
     return name_text(param, "GetCharacterID")
 end
 
 function M.pal_name(param)
-    return name_text(param, "GetNickname")
+    return nickname(param)
         or M.pal_species(param)
         or "<unnamed>"
 end
@@ -1009,7 +1032,7 @@ function M.camp_pals(camp)
 
             local key = M.instance_key(id) or M.guid_key(id)
             if type(key) ~= "string" or key == "" then return out, "occupied slot has no durable Pal identity" end
-            local name = name_text(param, "GetNickname")
+            local name = nickname(param)
             local species
             if not name then
                 species = name_text(param, "GetCharacterID")
@@ -1094,19 +1117,27 @@ function M.camp_works(camp)
         return out, "WorkCollection has no WorkIds"
     end
 
+    -- keys[i] is out[i]'s work id as a plain string (nil when unreadable), so
+    -- a caller can remember facts about a work across passes without keeping
+    -- the work itself.
+    local keys = {}
     local swept = pcall(function()
         ids:ForEach(function(_, entry)
             pcall(function()
-                local w = wpm:GetWork(unwrap(entry))
-                if valid(w) then out[#out + 1] = w end
+                local id = unwrap(entry)
+                local w = wpm:GetWork(id)
+                if valid(w) then
+                    out[#out + 1] = w
+                    keys[#out] = M.guid_key(id)
+                end
             end)
         end)
     end)
     if not swept then
-        return out, "WorkIds sweep threw"
+        return out, "WorkIds sweep threw", keys
     end
 
-    return out, nil
+    return out, nil, keys
 end
 
 -- The works this camp currently wants a worker for.

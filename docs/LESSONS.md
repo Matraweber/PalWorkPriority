@@ -89,6 +89,11 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Lua traps
 
+- **An error inside pcall is not free, and it hides a broken call.**
+  GetNickname failed on every call after a game update (wrong parameter
+  count); pcall swallowed it, so names quietly became species names and each
+  failure cost about 0.5 ms (93% of the roster read). When a timed region is
+  slow, time its pieces before optimising the obvious part (2026-10-19).
 - **`cond and false or x` never yields false.** The `and false` falls through
   to `or x`. This exact line in 0.4.1's store.lua dropped every X priority on
   save ([restart-persistence-2026-10-11.md](restart-persistence-2026-10-11.md)).

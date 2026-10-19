@@ -91,6 +91,19 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Performance
 
+- **2026-10-19 - Nicknames are read as the SaveParameter.NickName property,
+  not with GetNickname.** On game 1.0.5 GetNickname wants an out parameter;
+  the call raised every time inside a pcall (names silently fell back to the
+  species) and the raise cost about 0.5 ms per Pal, 93% of every roster read.
+  *Rejected:* passing a Lua out-table (that native boundary is unproven, see
+  camp_pals). *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md).
+- **2026-10-19 - Station counters share one typing of the camp's works, and a
+  work's type is remembered by work id.** Four counters each typed every
+  work (7.7 ms each with a large stock); now typing happens once per camp and
+  only for new works (0.09 ms). Only the id string and the type number are
+  kept, never the work; untyped works are asked again, the memo is rebuilt
+  every pass and cleared on world change. *Evidence:* same file.
+
 - **2026-09-29 - Edit pushes discover transmitters once and take components
   directly.** 110 to 83.5 ms per stand update. *Rejected:* reusing the roster
   across calls (stale data risk) until freshness can be proven.

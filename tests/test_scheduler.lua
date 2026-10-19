@@ -756,3 +756,60 @@ store.data.a, store.data.b = {[8] = 1}, {[8] = 1}
 rocks_needing = 3
 stats = scheduler.run_pass(config)
 assert(stats.station_vacancies == 1, "miners already on rocks were not subtracted")
+
+-- The works are typed once per camp, not once per station kind, and each
+-- counter sees only its own kind (2026-10-19: 1454 works after a load were
+-- typed four times per pass). An untypable work belongs to no kind.
+reset({ {key = "m", camp = "camp", ranks = {[8] = 1, [3] = 1}, off = {}, current = 3} })
+store.data.m = {[8] = 1, [3] = 2}
+required = {[3] = 1}
+works = { {value = 4}, {value = 11}, {value = 8}, {value = 8}, {value = 2}, {value = nil} }
+local typed_calls, seen = 0, {}
+local plain_typing = api.work_suitability
+api.work_suitability = function(work) typed_calls = typed_calls + 1; return work.value end
+local kinds = package.loaded.stations.KINDS
+local plain_needing = {}
+for i, kind in ipairs(kinds) do
+    plain_needing[i] = kind.needing
+    kind.needing = function(list)
+        seen[kind.value] = #list
+        for _, w in ipairs(list) do assert(w.value == kind.value, "a counter got another kind's work") end
+        return 0
+    end
+end
+stats = scheduler.run_pass(config)
+assert(typed_calls == #works, "works were typed " .. typed_calls .. " times for " .. #works .. " works")
+assert(seen[4] == 1 and seen[11] == 1 and seen[8] == 2, "counters did not get exactly their own works")
+-- With work ids, a typed work is remembered: the next pass types only new
+-- works and works that could not be typed; vanished works are forgotten;
+-- forget() (world change) starts over.
+local work_keys = {"w4", "w11", "w8a", "w8b", "w2", "wnil"}
+api.camp_works = function() return works, work_error, work_keys end
+scheduler.forget()
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 6, "first pass did not type every work")
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 1, "remembered works were typed again (" .. typed_calls .. " calls; only the untyped one should be)")
+assert(seen[4] == 1 and seen[11] == 1 and seen[8] == 2, "remembered types did not reach the counters")
+works[#works + 1], work_keys[#work_keys + 1] = {value = 4}, "w4b"
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 2 and seen[4] == 2, "a new work was not typed once")
+table.remove(works, 1); table.remove(work_keys, 1)
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(seen[4] == 1 and typed_calls == 1, "a vanished work was still counted")
+scheduler.forget()
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == #works, "forget() kept remembered work types")
+api.camp_works = function() return works, work_error end
+-- A throw while typing drops the station counts for the pass, nothing else.
+api.work_suitability = function() error("unreadable work") end
+seen = {}
+stats = scheduler.run_pass(config)
+assert(next(seen) == nil and stats.station_vacancies == nil, "a typing failure still reached the counters")
+api.work_suitability = plain_typing
+for i, kind in ipairs(kinds) do kind.needing = plain_needing[i] end

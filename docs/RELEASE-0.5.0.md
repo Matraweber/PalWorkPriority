@@ -82,9 +82,10 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## G5. Performance target
 
+- 2026-10-19: matched baseline on e073183 (mod present vs physically absent, 3 x 60 s each): UI closed 7-8 frames over 33 ms per minute with the mod vs 0-1 without; stand open 67-68 over 16.7 ms vs 2-5. Rounds 1-3 (nickname property read, one typing pass, type memo by work id) cut the scheduler pass from 34.6 (49.7 in the grown world) to 20.2 ms and frames over 33 ms to 2-3 per minute; frames over 16.7 ms unchanged. Remaining: stand refresh 12 ms/s, camp FindAllOf 10 ms/pass, storage refresh 31 ms/30 s, each needs a decision ([evidence](g5-performance-2026-10-19.md)).
 - [ ] **Best effort, no fixed number (user's decision 2026-10-11).** Optimise
   as far as is practical and report the measured result honestly in the
-  changelog. Starting point: the mod adds about 8 slow frames (over 33 ms) per
+  changelog. Starting point: the mod adds about 8 slow frames (over 16.7 ms) per
   minute over the mod-absent baseline (10-11 vs 2); scheduler pass about
   20 ms, stand refresh about 11 ms.
   Every measurement uses matched captures (same save, scene and settings;

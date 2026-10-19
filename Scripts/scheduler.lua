@@ -47,6 +47,11 @@ end
 -- over a large base, and whatever is skipped is picked up next tick.
 local MAX_TOGGLES_PER_PASS = 40
 
+-- Station typing memo: camp key -> {work id string -> work suitability}.
+-- Plain strings and numbers only, rebuilt by every pass (scheduler station
+-- block); never an engine object.
+local work_types = {}
+
 -- Only assignment identities and timestamps survive a pass; no wrappers.
 local hold_since = {}
 local permission_history = {}
@@ -120,6 +125,7 @@ local remote_stock_interest = {}
 
 function M.forget(keep_permissions)
     stock_prefetch.reset()
+    work_types = {}
     stock_interest = {}
     remote_stock_interest = {}
     api.last_storage_scan = nil
@@ -1185,16 +1191,56 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- slots) and only for types that are configured and not capped. Unknown
     -- reads add nothing.
     if cfg.station_demand ~= false and demandidx.live() then
-        local works
+        -- Each counter used to walk every work in the camp and type it, four
+        -- kinds over the same list. Typing a work can take two native string
+        -- calls, so a camp with many works (1454 right after a load,
+        -- 2026-10-19) paid for it four times per pass. The works are typed
+        -- once here and each counter gets only its own kind. A work that
+        -- cannot be typed belongs to no kind, as before; a throw while typing
+        -- drops every station count for this pass, as a throw inside a counter
+        -- did for its kind.
+        local by_value
         for _, kind in ipairs(stations.KINDS or {}) do
             local value = kind.value
             if value and not capped[value] and cfg.work_priority[workdefs.name(value)] ~= nil then
-                if works == nil then
-                    local ok, got = pcall(api.camp_works, camp)
-                    works = ok and type(got) == "table" and got or false
+                if by_value == nil then
+                    by_value = false
+                    local ok, got, _, keys = pcall(measured, "scheduler: camp works", api.camp_works, camp)
+                    if ok and type(got) == "table" then
+                        local wanted = {}
+                        for _, k in ipairs(stations.KINDS) do
+                            if k.value then wanted[k.value] = true end
+                        end
+                        -- A work's type never changes, so it is remembered by
+                        -- work id (a string; the work itself is never kept)
+                        -- and only new works are typed: 6.7 ms per camp per
+                        -- pass for typing everything again (2026-10-19).
+                        -- Rebuilt every pass, so vanished works drop out. An
+                        -- untyped work is not remembered and is asked again.
+                        local camp_key = api.guid_key(api.camp_id(camp))
+                        local known = camp_key and work_types[camp_key] or {}
+                        local fresh = {}
+                        local typed, sorted = pcall(measured, "scheduler: station typing", function()
+                            local out = {}
+                            for i, w in ipairs(got) do
+                                local key = type(keys) == "table" and keys[i] or nil
+                                local v = key and known[key] or nil
+                                if v == nil then v = api.work_suitability(w) end
+                                if key and v ~= nil then fresh[key] = v end
+                                if v ~= nil and wanted[v] then
+                                    local list = out[v]
+                                    if not list then list = {}; out[v] = list end
+                                    list[#list + 1] = w
+                                end
+                            end
+                            return out
+                        end)
+                        by_value = typed and type(sorted) == "table" and sorted or false
+                        if by_value and camp_key then work_types[camp_key] = fresh end
+                    end
                 end
-                if works then
-                    local read_ok, needing = pcall(measured, "scheduler: station read", kind.needing, works)
+                if by_value then
+                    local read_ok, needing = pcall(measured, "scheduler: station read", kind.needing, by_value[value] or {})
                     local on = 0
                     for _, pal in ipairs(pals) do
                         if pal.current == value then on = on + 1 end
