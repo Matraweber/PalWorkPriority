@@ -73,6 +73,27 @@ nothing. Now 4 s after Recent Servers, 3 s before the password OK, 2.5 s before
 confirm. Live: 18:06:11 start, 18:07:07 row, 18:07:51 SERVER_READY with the
 verified guild.
 
+## A, rerun with the notice (2026-10-19 18:09-18:16): PASS
+
+Server RAM updated to 28e41ca through the panel (backup `Scripts-before-28e41ca`,
+58 files, net.lua 93.6 KiB matches the commit); the user approved the restart
+click this time: restart 18:11:41, PWP_READY 18:11:54, no PalWorkPriority
+error. Local client switched to 0.4.1 again (rc1 28e41ca Scripts moved into the
+snapshot as `live-moved-28e41ca`). The fixed server macro joined on its own:
+18:12:42 0.4.1 loaded, 18:13:25 RAM row, 18:13:36 world. The 0.4.1 client's
+chat showed, in a freshly started game process:
+
+    [SYSTEM]: Pal Work Priority: this server runs a newer version of the mod
+    (0.5.0). Your copy is older, so your priority and limit changes are not
+    applied here. Please update Pal Work Priority.
+    [SYSTEM]: Matraweber joined the server.
+
+Restored: rc1 Scripts back (all 58 equal to the repo, Info.json equal);
+local priorities.txt, caps.txt and config.lua byte-equal to the snapshot.
+
+**Verdict A: PASS.** Corrupts nothing, and the old client now gets a clear
+message in its own chat.
+
 ## B. rc1 client on a 0.4.1 server: not run yet
 
 Needs the server switched to 0.4.1 and back (server changes; the auto-mode

@@ -69,7 +69,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   **Done when:** a staged base with two competing jobs at 1 and 5 shows the
   Pal on the priority-1 job in at least 8 of 10 observations, and that job's
   output rises.
-- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; generators: the game never announces generator work, so an empty generator did not pull an Electricity-1 Pal off other work; FIXED 2026-10-14 by reading build state and stored energy, verified live (back on the generator 16 s after its priority was restored) ([record](g4-scheduling-2026-10-14-stations.md)); coolers had the same gap (Cooling 1 stayed on Watering 2 about 2 min), FIXED 2026-10-16 by counting built coolers with spoilable food, verified live (on the fridge 18 s after the switch, 9 of 10 samples) ([record](g4-scheduling-2026-10-16-coolers.md)). Server RAM runs 3daac01 since 2026-10-19; stations there untested. Incineram Handiwork over Kindling,
+- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; generators: the game never announces generator work, so an empty generator did not pull an Electricity-1 Pal off other work; FIXED 2026-10-14 by reading build state and stored energy, verified live (back on the generator 16 s after its priority was restored) ([record](g4-scheduling-2026-10-14-stations.md)); coolers had the same gap (Cooling 1 stayed on Watering 2 about 2 min), FIXED 2026-10-16 by counting built coolers with spoilable food, verified live (on the fridge 18 s after the switch, 9 of 10 samples) ([record](g4-scheduling-2026-10-16-coolers.md)). Server RAM runs 28e41ca since 2026-10-19; stations there untested. Incineram Handiwork over Kindling,
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
 - [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).
@@ -99,7 +99,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - [x] **Priority edit survives a server restart** PASS 2026-10-11 on RAM ([evidence](restart-persistence-2026-10-11.md)). (limits already passed on
   2026-10-09). **Done when:** client edit, server restart, client reconnect,
   same value in the stand and in the server file.
-- [ ] **Old client and new server disagree politely.** 2026-10-19: 0.4.1 client on the rc1 server corrupts nothing (old-format limit change refused, server files unchanged) but gets no message; fix proposed; reverse direction not run yet ([evidence](g6-version-mismatch-2026-10-19.md)).
+- [ ] **Old client and new server disagree politely.** 2026-10-19: 0.4.1 client on the rc1 server corrupts nothing and, since 28e41ca, gets a system-chat update notice (verified live); reverse direction not run yet ([evidence](g6-version-mismatch-2026-10-19.md)).
   **Done when:** a 0.4.1 client joining a 0.5.0 server, and the reverse, shows
   a clear incompatible-version message and corrupts nothing.
 - [x] **Guild isolation still holds.** PASS 2026-10-19 on RAM: fabricated-guild Mining/Stone/1 plus real-guild control; the client saw only its own rule ([evidence](g6-guild-isolation-2026-10-19.md)). **Done when:** the August
