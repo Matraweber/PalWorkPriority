@@ -173,3 +173,25 @@ ms frames) makes about 60 a minute, and with the UI closed the 20 ms pass every
 3. Storage refresh, 31 ms every 30 s with this stock (FindAllOf 11 ms plus
    reading every slot). It cannot be sliced without a fresh FindAllOf per
    slice, because no engine object may be kept across callbacks.
+
+## Independent cross-check (agent, read-only, 2026-10-19)
+
+Recomputed from frames.csv: every count and mean above matches exactly; all
+18 windows validated; sha256 of raw.csv, frames.csv, attempt.json, stdout and
+stderr match the receipts; one PID, creation time and swapchain per condition
+(17504 baseline present, 22372 absent, 38040 round 3); every window 59.96 to
+59.99 s, recorder exit 0.
+
+Spacing in the closed windows: a clean 10.3 s chain in both sessions (the
+scheduler pass), 35-42 ms on the baseline and 24-30 ms after round 3, which is
+the robust result. Two chains about 30 s apart (28.8-28.9 s and 30.0 s
+spacing) remain at 34-38 ms after round 3: one is the storage refresh, the
+second is not identified yet. The mod-absent session has its own 10.0 s chain
+at 17-18 ms, so not every periodic spike is the mod's.
+
+Caveats it raised: each condition is a different session and round 3 has no
+new absent control (closed means went 4.9 to 5.4 ms while stand means went 7.6
+to 6.1 ms, a session difference); with three windows per condition a
+difference of 1-2 frames over 33 ms is within noise; Dropped presents vary
+(one round-3 stand window has 1645); these are present intervals, not display
+latency.
