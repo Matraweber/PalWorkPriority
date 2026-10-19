@@ -99,7 +99,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - [x] **Priority edit survives a server restart** PASS 2026-10-11 on RAM ([evidence](restart-persistence-2026-10-11.md)). (limits already passed on
   2026-10-09). **Done when:** client edit, server restart, client reconnect,
   same value in the stand and in the server file.
-- [ ] **Old client and new server disagree politely.**
+- [ ] **Old client and new server disagree politely.** 2026-10-19: 0.4.1 client on the rc1 server corrupts nothing (old-format limit change refused, server files unchanged) but gets no message; fix proposed; reverse direction not run yet ([evidence](g6-version-mismatch-2026-10-19.md)).
   **Done when:** a 0.4.1 client joining a 0.5.0 server, and the reverse, shows
   a clear incompatible-version message and corrupts nothing.
 - [x] **Guild isolation still holds.** PASS 2026-10-19 on RAM: fabricated-guild Mining/Stone/1 plus real-guild control; the client saw only its own rule ([evidence](g6-guild-isolation-2026-10-19.md)). **Done when:** the August
