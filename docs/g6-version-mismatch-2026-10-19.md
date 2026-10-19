@@ -144,3 +144,8 @@ priorities.txt, caps.txt and config.lua byte-equal to the pre-G6 snapshot.
 
 **Verdict B: PASS** (after the panel fix). The new client refuses to edit an
 old server and now says why.
+
+**Server update after B.** RAM updated to e073183 (the commit with the panel
+fix) so both sides run the same build: backup `Scripts-before-e073183`, 58
+files, main.lua 133.81 KiB (137,023 bytes, matching the commit), restart,
+`PWP_READY version=0.5.0-rc1` at 18:40:59, no error or warning.
