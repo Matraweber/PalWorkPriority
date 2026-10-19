@@ -157,3 +157,14 @@ Open question for 0.5.0: a raise or lower on Enter/A/arrow changes a saved
 limit with no confirmation, only an announcement.
 
 0 ERROR / WARN in priority.log 12:48-12:59.
+
+## Dedicated server updated (2026-10-19 17:24-17:28)
+
+GPortal "RAM" through the browser panel, 0 players online: `Scripts` renamed to
+`Scripts-before-3daac01` (backup of 34c95ad), `pwp-server-scripts-3daac01.zip`
+(git archive of 3daac01, 58 Lua files, sha256 6b04ae61...) uploaded (402.7 KiB)
+and unzipped in place. The new `Scripts` holds 58 files; deathwatch.lua,
+main.lua, stations.lua and scheduler.lua match the commit's sizes. Panel restart
+17:27:54; the server log shows PWP_READY at 17:28:06 (authority, settings
+available), no PalWorkPriority error or warning. deathwatch only acts where a
+viewport exists, so on the headless server it never runs.
