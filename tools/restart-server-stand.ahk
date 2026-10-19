@@ -145,9 +145,30 @@ GameWindow() {
 }
 Focus() {
     id := GameWindow()
-    WinActivate 'ahk_id ' id
-    if !WinWaitActive('ahk_id ' id, , 5)
+    wasActive := WinActive('ahk_id ' id)
+    loop 3 {
+        WinActivate 'ahk_id ' id
+        if WinWaitActive('ahk_id ' id, , 2)
+            break
+        ; Same fallback as restart-stand.ahk (2026-10-17): the foreground lock
+        ; refuses programmatic switches while the text input host holds the
+        ; foreground, but a click on the title bar is input and activates the
+        ; window. Screen coordinates for this one click only.
+        WinGetPos &wx, &wy, &ww, , 'ahk_id ' id
+        WinGetClientPos &cx, &cy, , , 'ahk_id ' id
+        if cy - wy >= 20 {
+            CoordMode 'Mouse', 'Screen'
+            MouseMove wx + ww // 2, wy + (cy - wy) // 2, 0
+            Click
+            CoordMode 'Mouse', 'Client'
+            if WinWaitActive('ahk_id ' id, , 2)
+                break
+        }
+    }
+    if !WinActive('ahk_id ' id)
         throw Error('Game did not receive focus.')
+    if !wasActive
+        Sleep 800
     WinGetClientPos , , &w, &h, 'ahk_id ' id
     if w < 800 || h < 450 || Abs(w / h - 16 / 9) > 0.035
         throw Error('This calibration needs a 16:9 game window, at least 800x450.')

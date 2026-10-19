@@ -102,7 +102,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - [ ] **Old client and new server disagree politely.**
   **Done when:** a 0.4.1 client joining a 0.5.0 server, and the reverse, shows
   a clear incompatible-version message and corrupts nothing.
-- [ ] **Guild isolation still holds.** **Done when:** the August
+- [x] **Guild isolation still holds.** PASS 2026-10-19 on RAM: fabricated-guild Mining/Stone/1 plus real-guild control; the client saw only its own rule ([evidence](g6-guild-isolation-2026-10-19.md)). **Done when:** the August
   fabricated-guild test (rule under a fake guild id plus the real-guild
   control) gives the same result on rc1.
 
