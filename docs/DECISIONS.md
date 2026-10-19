@@ -91,6 +91,13 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Performance
 
+- **2026-10-19 - The scheduler pass stays at 10 s and keeps its camp
+  FindAllOf (user's choice).** After rounds 1-3 the pass is 20 ms (worst 23):
+  one frame over 16.7 ms every 10 s, none over 33 ms. Half of it is
+  FindAllOf(PalBaseCampModel), the only proven way to find live camps (the
+  BaseCampManager probe crashed, see palapi.base_camps). *Rejected:* 15 s
+  (4 instead of 6 slow frames a minute, but Pals react up to 15 s late; 30 s
+  missed whole jobs in August). *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md).
 - **2026-10-19 - Nicknames are read as the SaveParameter.NickName property,
   not with GetNickname.** On game 1.0.5 GetNickname wants an out parameter;
   the call raised every time inside a pcall (names silently fell back to the

@@ -195,3 +195,13 @@ to 6.1 ms, a session difference); with three windows per condition a
 difference of 1-2 frames over 33 ms is within noise; Dropped presents vary
 (one round-3 stand window has 1645); these are present intervals, not display
 latency.
+
+## Decisions taken (user, 2026-10-19 evening)
+
+- Stand refresh: investigate a cheap "nothing changed" test that can skip the
+  full refresh; keep 1 s whenever something changed.
+- Scheduler pass: keep 10 s and the camp FindAllOf, recorded in DECISIONS.md.
+- 30 s events: identify the second one before deciding on the storage refresh.
+- Server RAM updated to 30ee360 (backup `Scripts-before-30ee360`, 58 files,
+  palapi.lua 74.27 KiB and scheduler.lua 75.84 KiB match the commit), restart,
+  `PWP_READY version=0.5.0-rc1` at 20:06:42, no error or warning.
