@@ -40,11 +40,12 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 ## G2. Saving backend decision
 
 - [ ] **0.5.0 ships the synchronous writer; the native async DLL is not in
-  the package** unless gate G2b closes before G1, G3-G7 do.
+  the package** (G2b moved to 0.5.x on 2026-10-20).
   **Done when:** the release archive contains no DLL, a clean install and a
   0.4.1 upgrade both run the synchronous writer, and no recovery fence or
   "restart to edit" lock appears.
-- [ ] **G2b (optional) async in 0.5.0, off by default.**
+- [-] **G2b (optional) async in 0.5.0, off by default.** MOVED to 0.5.x on
+  2026-10-20 (user's decision): 0.5.0 ships the synchronous writer only.
   **Done when:** the remaining async steps pass: rollback test of the staged
   write path, cutover on the real install with a verified backup, dedicated
   server priority edit, save and restart, and clean install, upgrade and
@@ -132,7 +133,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - Item-specific production limits (stone stops while ore continues). In 0.5
   only existing legacy limits work, each switches a whole work type; new ones
   cannot be created (locked, the UI says so before item selection).
-- Async saving on by default, and async on dedicated servers (open checklist:
+- Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column
   on the stand (needs injecting into vanilla header widgets), un-hiding the

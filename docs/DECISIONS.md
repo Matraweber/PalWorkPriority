@@ -16,6 +16,12 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-20 - Async saving moves to 0.5.x; 0.5.0 ships the synchronous
+  writer only (user's decision).** Gate G2b (staged-write rollback, real
+  cutover, server save and restart, DLL install/upgrade/removal) is not done
+  and would hold the release back. **Supersedes** the 2026-10-11 "unless its
+  gates pass first" clause below. *Evidence:* [RELEASE-0.5.0.md](RELEASE-0.5.0.md) G2,
+  [async-enablement-2026-10-04.md](async-enablement-2026-10-04.md).
 - **2026-10-19 - Mixed versions are refused, and both sides say so in game.**
   An rc1 server answers a 0.4.1 client with `PWP_Incompatible` and also sends
   that player one system chat line per session through the game's own
@@ -38,7 +44,8 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   two rounds in a row gain less than 1 slow frame per minute
   ([RELEASE-0.5.0.md](RELEASE-0.5.0.md) G5). *Rejected:* a hard limit of
   2 extra slow frames per minute (proposed, not chosen).
-- **2026-10-11 - Async saving does not block 0.5.0.** It stays off by default
+- **2026-10-11 - Async saving does not block 0.5.0.** (Superseded 2026-10-20:
+  moved to 0.5.x, entry above.) It stays off by default
   (as it already is) unless its gates in RELEASE-0.5.0.md pass first. The
   synchronous writer with checked saves and backups is the shipping path.
   *Evidence:* [async-enablement-2026-10-04.md](async-enablement-2026-10-04.md).

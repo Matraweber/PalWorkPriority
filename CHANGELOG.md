@@ -87,8 +87,7 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 ### Not in 0.5.0 (planned for 0.5.x / 0.6)
 
 - Limits per item (stop stone while ore continues).
-- Faster background saving as the default (built and tested separately; off
-  in 0.5.0).
+- Faster background saving (built and tested separately; planned for 0.5.x).
 - Marking a capped work column on the stand, showing the game's checkbox
   again when the mod turned a permission off, and a mouse and controller
   button legend.
