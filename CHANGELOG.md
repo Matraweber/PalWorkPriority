@@ -1,100 +1,111 @@
 # Changelog
 
-## 0.5.0-rc1 — reliability candidate, unreleased
+## 0.5.0 - DRAFT, not released yet
 
-Protects saved choices, reports incomplete edits and unavailable data accurately, and repairs permission, panel and session handling. **Not published; native acceptance remains open.**
+A reliability release. It fixes the problems reported most since 0.4.1:
+priorities and X lost after a restart, a second or stuck panel, and Pals that
+stopped mining and chopping. Every fix below was tested in the game
+(singleplayer, and on a dedicated server where it concerns multiplayer).
 
-- Refuse stale amount drafts when the current rule changed or was removed, preserving the newer value instead of overwriting or recreating it.
-- Ignore foreign or unidentified respawn callbacks when a local controller is available, so they cannot cancel local edits or reset local writer roles.
-- Reject incomplete panel trees when an advertised child or its name cannot be read, cancelling affected amount drafts instead of recreating controls from a partial view.
-- Selecting an item with an existing limit now opens its actual Rules page and selects its amount control; later navigation or a guild change cancels a pending jump.
-- Cancel amount drafts when their rule disappears, leaves the visible page, or changes guild; preserve drafts when the same rule moves within the page.
-- Bind removal confirmation to the current rule value and guild; closing or navigating away cancels it, and stale queued removals are refused.
+### Before you update
 
-### Bundled performance work — September 13
+- **Back up your mod folder first** (`priorities.txt`, `caps.txt`,
+  `config.lua`). The Workshop updater can replace the old Scripts folder before
+  0.5.0 gets to migrate your settings.
+- **X priorities that 0.4.1 already lost cannot be brought back.** 0.4.1
+  dropped every X row whenever it saved (fixed now). If you have an older copy
+  of `priorities.txt` that still has them, put it back before starting 0.5.0;
+  0.5.0 reads 0.4.1's files unchanged.
+- **Server and every player need 0.5.0.** Mixed versions are refused and
+  nothing is written: a 0.4.1 player on a 0.5.0 server gets a chat message
+  asking them to update, and a 0.5.0 player on a 0.4.1 server sees "Server
+  version incompatible" in the panel.
+- Your editable settings move to `config.lua` in the mod folder; the old file
+  is kept as `config.migration.bak`.
 
-- Separate periodic scheduling, stand maintenance and edit reconciliation across heartbeats; preserve prompt input and bounded background progress.
-- Keep rapid edits ordered while yielding between expensive actions. Reconcile the completed burst once.
-- Reduce current-tree accessor work and use verified scalar paths for injected labels, retaining fresh widget resolution and safe fallback.
-- Reuse local-controller evidence only within a callback; avoid unnecessary storage class reads without turning unknown scope into known data.
-- Budget icon loads between attempts, space picker-fill continuations and release temporary texture references after failed refreshes.
-- Remove automatic startup icon diagnostics. Native restart/frame-time acceptance remains required; menu/camp sweeps and individual native-call spikes remain.
+### Fixed
 
-See the [performance inventory, regression evidence and remaining limits](docs/g5-performance-2026-10-19.md).
+**Settings**
+- Priorities, including X, survive restarts in singleplayer and on dedicated
+  servers, and Pals follow them right after loading without another edit
+  (reports by Two Bob Games and johndujo).
+- X is no longer dropped when the file is saved.
+- Many quick edits are saved once, not once per click.
+- A settings file that cannot be read is never replaced with defaults.
 
-### October 9 follow-through
+**Scheduling**
+- Priority 1 work wins over priority 5 work (report by HelpImStupid0).
+- "Everything stops" / "only one miner" (report by Okami_sama): Pals mine and
+  chop again. The game announces rocks and trees only once at load, so the mod
+  now counts them as work while they can be worked; and limits met under the
+  "all bases" storage option no longer flicker to "stock unavailable" between
+  passes.
+- An empty generator and a cooler with food in it pull a Pal with a high
+  priority for that work back to it (the game never announces this work).
+- The staffing limit holds (a maximum of 3 keeps 3 working, not 4).
+- Handiwork 1 over Kindling 2 and Grizzbolt on the generator through sleep
+  and wake work as set (August reports).
 
-- Add bounded, session/guild-bound storage snapshots for clients, with selected-base scope, complete-map validation and source-data expiry. Initial local server counts match; remaining lifecycle and multi-guild acceptance is tracked in the release ledger.
-- Share one fresh transmitter census across a bounded packet batch. Live testing reduced five-packet replies from five censuses to two; this is not a frame-time or stutter-free claim.
-- Cycle priorities through 1–5/X in both directions, including wraparound.
-- Resolve Steam library installations instead of assuming the game is on C:. Preserve Unicode paths and reject ambiguous discovery.
-- Label diagnostic configuration as local; clients do not present local staffing settings as confirmed server policy.
-- Correct the empty-instance assignment diagnostic without treating unavailable Pal actors as idle or automatically assigned.
+**Production Limits panel and Monitoring Stand**
+- Alt+F1 never opens a second panel and the panel never gets stuck in front
+  of the pause menu, inventory or map (report by Extramrdo).
+- The lists keep their layout at every size; the amount editor stays on its
+  row and above the page buttons.
+- Escape cancels an unfinished amount; a second Escape closes only the panel.
+  Photo mode while editing is clean. Dying while editing closes the panel and
+  discards the unsaved amount instead of leaving the editor over the death
+  screen.
+- Clicks and keys on the stand always change the cell they were pressed on,
+  even when the list redraws in between.
+- Large limits are shown short: 9,999,999 reads as "10.0M".
 
-### Settings
+**Multiplayer**
+- An edit made by a player survives a server restart.
+- Rules stay inside their guild: one guild's limits never apply to another's
+  bases.
 
-- Preserve X through saving and unrelated edits. Validate durable Pal identities instead of saving temporary roster positions.
-- Check file operations and retain validated live/.tmp/.pending/.bak generations, including a recovered temporary save during another write attempt.
-- Migrate editable configuration to root `config.lua` with `config.migration.bak`. Reject malformed/nonfinite configuration as a whole before migration/reload/overrides, retaining prior accepted settings.
-- Package the default template as `Scripts/default_config.lua` so manual extraction does not overwrite legacy editable configuration before migration.
-- Keep 1 highest, 5 lowest and X disabled. Fresh defaults preserve checked→1/unchecked→X only when an unmanaged baseline can be established; upgrades do not reconstruct unknown original choices.
-- Keep server snapshots separate from durable local settings.
+### Limits in 0.5.0
 
-Keep pre-update backups. A Workshop updater may delete old Scripts before first migration; the new defaults cannot recover that edited file. The candidate save schema is forward-migrated; downgrading requires compatible earlier backups. Already-lost X values require a surviving copy.
+Limits you already have keep working as **legacy group limits**: each one
+switches its whole work type (a Stone limit also stops ore mining). **New
+limits cannot be created in 0.5.0**; limits per item come in 0.6. If you remove
+a legacy limit, it can only be added back through `work_caps` in `config.lua`.
 
-### Limits and command feedback
+### Performance (measured)
 
-- Preserve existing suitability-wide rules as labeled **legacy group limits**, with editing/removal retained.
-- Persist guild-local OFF masks when clearing inherited shared/configuration limits, without changing other guilds' rules.
-- Reject fractional limits instead of rounding them; report queued client edits as pending and failed clears as failures.
-- Show unavailable/unscoped stock as unavailable, not zero. Limit listings use verified current guild/base evidence and explain legacy semantics without blind rescans.
-- Refuse new item-specific limits when no verified output-control adapter supports the producer.
+Measured with PresentMon on the developer's test base, matched captures with
+the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
+- **Normal play:** the mod costs about one slow frame every 10 seconds (its
+  scheduling pass, now about 20 ms, was 35 ms). Only while you have limits
+  that need stock counts, it adds one frame over 33 ms every 30 seconds (the
+  storage count). All other stutter we measured comes from the game itself.
+- **With the Monitoring Stand open:** about one extra slow frame per second
+  while it is open, because the mod redraws the priority numbers once a second.
+- 0.5.0 also fixes a hidden cost: on game 1.0.5 a failing name lookup made
+  every roster read about ten times slower than needed.
 
-**No native item-specific adapter is available.** Stone-only control while ore continues, synthesizers and measured in-flight overshoot remain undelivered native requirements.
+### Not in 0.5.0 (planned for 0.5.x / 0.6)
 
-### Panel, stand and synchronization
+- Limits per item (stop stone while ore continues).
+- Faster background saving as the default (built and tested separately; off
+  in 0.5.0).
+- Marking a capped work column on the stand, showing the game's checkbox
+  again when the mod turned a permission off, and a mouse and controller
+  button legend.
+- Tests with several real players and guilds at once, Steam Deck and
+  ultrawide/UI-scale checks.
+- Requests: separate priority and limit mods, restricting high-quality stands,
+  limits for Pal-produced materials.
 
-- Cancel edits before closing, preserve vanilla focus handoff and invalidate stale queued actions.
-- Bind stand mouse edits to the cell receiving the native press, then revalidate that target before applying. Remove the delayed-hover raw mouse fallback; matching StandInput asset is required.
-- Cancel queued stand edits when a row rebinds, including the same Pal and reused names. Refuse ambiguous or unreadable visible stand trees and retry discovery without requiring another bind. See [lifecycle evidence](docs/stand-lifecycle-2026-09-24.md).
-- Invalidate stand-only input tokens at the native stand reconstruction event, preserving unrelated UI actions. Delayed destruction does not cancel new edits. Two same-process Escape/V reopen cycles confirmed native events and restored priorities; other lifecycle routes remain unverified. See [event evidence](docs/stand-close-events-2026-09-24.md).
-- Route 1-5/X and Enter through the focused stand widget, capture their targets at the native event and validate them before applying. A click or arrow selection establishes focus; hovering alone never steals it. Remove global number-key observers, prevent duplicate native/raw arrow movement, and order controller mutations with mouse/number edits. Initial native input and normal-restart checks pass; physical controller, rapid-reopen and multiplayer acceptance remain open. See [keyboard evidence](docs/stand-keyboard-2026-09-24.md).
-- Repair visibility/parent/cache behavior, page controls and amount-editor placement within the preferred panel position.
-- Show item-limit availability before selection, distinguish existing legacy groups, and preserve their amounts when opening them. Browse labels no longer promise unsupported creation.
-- Keep a fixed help/notice row on both Rules and Items so notices, errors and editing instructions do not move the controls under the pointer.
-- Reserve ordered row containers before pagination so incremental filling and list growth cannot insert page controls between item or rule rows.
-- Validate whole-number input; Escape cancels an unfinished edit.
-- Distinguish rendered/skipped/failed cells, including explicit failed writes, and separate pending edits from confirmed values.
-- Add direct stand priority input/navigation paths while retaining left/right clicks; native controller/focus acceptance remains required.
-- Strengthen session/schema/snapshot/edit handling and preserve sender/guild authorization.
+### Still being checked before release
 
-Escape crashes, photo-mode backdrops, duplicate panels, all required layouts and live multiplayer still require native verification.
+- [OPEN] Search/Add crash reported together with the Cosmetic Outfits mod
+  (DarkWyrmReaper).
+- [OPEN] Updating through the Steam Workshop (the manual Nexus route is
+  tested and keeps every saved row).
+- [OPEN] Vortex install, update and removal.
 
-### Scheduling and data availability
-
-- Reconcile X choices and stale restrictions even with no demand.
-- Repair incomplete demand identity and quarantine unknown camp scope.
-- Account for held/fallback workers and stable candidate ordering; explain balanced versus strict mode without reversing saved priorities.
-- Distinguish empty rosters from unavailable reads; partial off-lists and nil item IDs remain unknown.
-- Prefer current client Role 2 over stale GameMode evidence.
-- Confirm restoration by readback and preserve pending permission writes across policy edits.
-- Preserve saved numeric/X priorities when native checkbox bits change without an authenticated priority edit. Observed permission changes are no longer automatically saved as X or 1; a verified adapter for deliberate unmodded-client checkbox edits remains unavailable.
-
-Complete native assignment acceptance remains open, including missing Pal actors on an empty dedicated server. Actual fixed/manual assignments, occupied jobs, research, cooling, generation and production output are not established by permission models alone.
-
-### Diagnostics and packaging
-
-- Restrict stand-cell discovery to each verified row's priority controls, with complete-layout fallback and shared traversal budgets. Add inclusive subregion timings for label lookup, painting and the legend; native speedup awaits the next restart test.
-- Skip storage work for camps without applicable limits unless the panel requests totals. Back off repeated incomplete reads up to 30 seconds while retaining unknown status; explicit resets and shorter configured scan intervals remain honored.
-- Report unmeasured counts explicitly, label inclusive timings and retain bounded timing/log evidence.
-- Reuse the current traversal's full-name class token, read a controller once per pad sample, and defer unused storage scans until a prepared roster needs them. Native performance gains require the next restart measurement; existing complete-pass and frame captures still show spikes.
-- Stop probing child APIs on exact native Image/Spacer/TextBlock widgets; keep CheckBox content traversable. Preserve detailed storage ownership-read failures without interpreting empty/unreadable IDs as safe exclusions. September 13 restart observations show stand refresh around 27 ms versus 30 ms previously; recurring frame spikes remain. Rapid-click recovery is user-confirmed and supported by live priority-preservation events; broader input and performance acceptance remains open.
-- Add read-only identity fingerprinting and analysis of existing independent frame captures; neither tool records gameplay or proves compatibility.
-- Require useful, request-bound completed passes and fresh server readiness rather than treating a sent command or boot banner as success.
-- Build matching Workshop/manual archives from one reviewed source/asset contract and exclude user data/developer triggers.
-- Correct panel discovery to **Alt+F1** and explain command output in **priority.log**.
-
-The complete isolated Lua/UI and Python suites pass, including server process-ownership checks, final stress health checks and actual dry-run validation. Detailed results, exact baseline failures, hashes and remaining native gates are in the [reliability ledger](docs/RELEASE-0.5.0.md). No performance, installation or current-runtime acceptance is implied.
+Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
 
 ## 0.4.1 — published August 28, 2026
 

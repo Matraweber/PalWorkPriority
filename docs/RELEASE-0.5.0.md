@@ -76,7 +76,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   **Done when:** a staged base with two competing jobs at 1 and 5 shows the
   Pal on the priority-1 job in at least 8 of 10 observations, and that job's
   output rises.
-- [ ] **August repro cases still hold:** Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; generators: the game never announces generator work, so an empty generator did not pull an Electricity-1 Pal off other work; FIXED 2026-10-14 by reading build state and stored energy, verified live (back on the generator 16 s after its priority was restored) ([record](g4-scheduling-2026-10-14-stations.md)); coolers had the same gap (Cooling 1 stayed on Watering 2 about 2 min), FIXED 2026-10-16 by counting built coolers with spoilable food, verified live (on the fridge 18 s after the switch, 9 of 10 samples) ([record](g4-scheduling-2026-10-16-coolers.md)). Server RAM runs 30ee360 since 2026-10-19 20:06 (G5 rounds 1-3; backup Scripts-before-30ee360); stations there untested. Incineram Handiwork over Kindling,
+- [x] **August repro cases still hold:** CLOSED 2026-10-20 (user): all four observed locally (Incineram, Grizzbolt, generators, coolers); the done-when does not require the dedicated server, where stations remain untested. Incineram Handiwork over Kindling PASS 2026-10-14 ([evidence](g4-scheduling-2026-10-12.md)); Grizzbolt sleep/wake PASS 2026-10-14; generators: the game never announces generator work, so an empty generator did not pull an Electricity-1 Pal off other work; FIXED 2026-10-14 by reading build state and stored energy, verified live (back on the generator 16 s after its priority was restored) ([record](g4-scheduling-2026-10-14-stations.md)); coolers had the same gap (Cooling 1 stayed on Watering 2 about 2 min), FIXED 2026-10-16 by counting built coolers with spoilable food, verified live (on the fridge 18 s after the switch, 9 of 10 samples) ([record](g4-scheduling-2026-10-16-coolers.md)). Server RAM runs 30ee360 since 2026-10-19 20:06 (G5 rounds 1-3; backup Scripts-before-30ee360); stations there untested. Incineram Handiwork over Kindling,
   Grizzbolt stays on the generator after being moved, sleep and wake.
   **Done when:** one observed cycle each, same criteria.
 - [x] **Staffing limit:** max 3 on a type with 4 eligible Pals keeps 3 working. PASS 2026-10-12: never above 3, reached 3 under demand ([evidence](g4-scheduling-2026-10-12.md)).
@@ -120,7 +120,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
-- [ ] **Changelog and replies.** **Done when:** the changelog lists what is
+- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review, reply drafts against the final build. **Done when:** the changelog lists what is
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.
