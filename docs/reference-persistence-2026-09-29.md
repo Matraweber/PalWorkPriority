@@ -1,4 +1,11 @@
+---
+date: 2026-09-29
+tags: [saving, research]
+status: evidence
+---
 # Other mods: persistence comparison — September 29
+
+Related: [palpriority-comparison-2026-09-26](palpriority-comparison-2026-09-26.md) · [save-flush-2026-09-29](save-flush-2026-09-29.md) · [async-save-route-research-2026-10-04](async-save-route-research-2026-10-04.md)
 
 Read-only inspection. No reference mod executed, installed or changed; our runtime
 and the running game were not modified. Local package versions are evidence for

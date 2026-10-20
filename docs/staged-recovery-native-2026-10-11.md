@@ -1,4 +1,11 @@
+---
+date: 2026-10-11
+tags: [async-save, native, testing]
+status: evidence
+---
 # Native staged-reservation recovery acceptance — October 11
+
+Related: [staged-reservation-recovery-2026-10-11](staged-reservation-recovery-2026-10-11.md) · [async-enablement-2026-10-04](async-enablement-2026-10-04.md)
 
 The new staged-reservation path passed two isolated dedicated-server boots:
 interrupted startup remained fenced, and explicit recovery loaded the exported

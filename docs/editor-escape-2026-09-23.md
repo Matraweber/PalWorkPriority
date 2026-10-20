@@ -1,4 +1,11 @@
+---
+date: 2026-09-23
+tags: [input, panel]
+status: evidence
+---
 # Focused amount-editor Escape — September 23, 2026
+
+Related: [g3-escape-photo-death-2026-10-17](g3-escape-photo-death-2026-10-17.md) · [widget-spec](widget-spec.md) · [panel-cursor-2026-09-23](panel-cursor-2026-09-23.md)
 
 ## Change and scope
 
@@ -22,7 +29,7 @@ Receipts are in `test-results/editor-escape-*-20260923.*`; package manifest is `
 
 The game exited through Return to Title and Quit, without a forced termination. Checked Lua deployed at 22:12:31; previous code/configuration remains in `backups/deploy-20260923-221231-b3be00a02c8446c5bb91a59bdd074c1f`. The prior installed contract 2 pak is preserved at `test-results/editor-escape-backup-20260923/installed-contract2.pak`.
 
-Priorities, limits and user configuration matched their pre-test hashes before and after installation. The authorized restart helper was started in `--launch` mode at 22:12:41, avoiding its stand-start path while the separate [queued-target investigation](restart-input-investigation-2026-09-23.md) remains open.
+Priorities, limits and user configuration matched their pre-test hashes before and after installation. The authorized restart helper was started in `--launch` mode at 22:12:41, avoiding its stand-start path while the separate [queued-target investigation](DECISIONS.md) remains open.
 
 ### First native run and follow-up correction
 

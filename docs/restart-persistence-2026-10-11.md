@@ -1,4 +1,11 @@
+---
+date: 2026-10-11
+tags: [saving, release, testing]
+status: evidence
+---
 # G1 restart persistence: code review against the reports, 2026-10-11
+
+Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [upgrade-041-2026-10-11](upgrade-041-2026-10-11.md)
 
 Gate: [RELEASE-0.5.0.md](RELEASE-0.5.0.md) G1. Reports: Two Bob Games (Steam,
 Sep 23: "Transport X returns to 1 after restart; priorities appear ignored until

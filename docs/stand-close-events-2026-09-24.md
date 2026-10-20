@@ -1,4 +1,11 @@
+---
+date: 2026-09-24
+tags: [stand-ui, input]
+status: evidence
+---
 # Native stand reconstruction boundary — September 24, 2026
+
+Related: [stand-lifecycle-2026-09-24](stand-lifecycle-2026-09-24.md) · [stand-pointer-2026-09-24](stand-pointer-2026-09-24.md)
 
 ## Current implementation
 

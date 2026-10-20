@@ -1,4 +1,11 @@
+---
+date: 2026-10-09
+tags: [testing, tooling, performance]
+status: current
+---
 # PresentMon capture procedure and evidence boundaries
+
+Related: [testing](testing.md) · [g5-performance-2026-10-19](g5-performance-2026-10-19.md) · [frame-correlation-2026-09-13](frame-correlation-2026-09-13.md)
 
 Implementation passed offline and independent review, followed by main's bounded
 title-screen smoke below. Historical September 23 empty captures remain unresolved.
@@ -182,7 +189,6 @@ Acceptance is limited to this title-only acquisition/validation path. It supplie
 no base/stand workload, mod-on/off comparison, stutter-free claim, input latency,
 or mod-performance result. No further capture was run during this independent
 artifact check or documentation update.
-
 
 ## Raw-QPC gameplay correlation and scoped-proof comparison
 

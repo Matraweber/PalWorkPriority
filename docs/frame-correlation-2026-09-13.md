@@ -1,4 +1,11 @@
+---
+date: 2026-09-13
+tags: [performance, testing]
+status: evidence
+---
 # Frame correlation and physically absent-mod comparison, September 13
+
+Related: [g5-performance-2026-10-19](g5-performance-2026-10-19.md) · [frame-capture-procedure-2026-10-09](frame-capture-procedure-2026-10-09.md)
 
 Local **0.5.0-rc1**, unpublished. The experiment identifies recurring mod work associated with smaller pauses. It does not establish stutter-free gameplay or resolve the gameplay release gates.
 

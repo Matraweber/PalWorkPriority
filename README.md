@@ -2,7 +2,7 @@
 
 Work priorities for base Pals in Palworld, with an editor on the Monitoring Stand and a separate Production Limits panel.
 
-**0.5.0-rc1 is an unpublished reliability candidate.** It protects saved choices, reports incomplete edits and unavailable data, and repairs permission, panel and session handling. See the [current release gates](docs/release-gates-2026-10-09.md) for completed tests and outstanding work, and the [current comment census](docs/comment-update-2026-10-09.md) for all 70 Steam comments, 17 Nexus posts/replies and two Nexus bug reports reviewed October 9.
+**0.5.0-rc1 is an unpublished reliability candidate.** It protects saved choices, reports incomplete edits and unavailable data, and repairs permission, panel and session handling. See the [release plan](docs/RELEASE-0.5.0.md) for completed tests and outstanding work (the project notes form an Obsidian vault, start at [docs/Home.md](docs/Home.md)), and the [current comment census](docs/comment-ledger-2026-09-11.md) for all 70 Steam comments, 17 Nexus posts/replies and two Nexus bug reports reviewed October 9.
 
 **Native acceptance remains open.** Local dedicated-server legacy-limit save/restart and selected storage readback have evidence, but item-specific production, complete assignment coverage, frontend/lifecycle cases, multiple guilds and matched frame-time testing are not complete. Public/default and dedicated native asynchronous saving remain off; the development trial is not a normal-installation release. Passing isolated tests does not establish crash-free menus, correct production or multiplayer compatibility.
 
@@ -180,7 +180,7 @@ Read-only `tools/fingerprint.py` inventories source/package/install/process iden
 
 Both archives must come from one clean reviewed source set with matching versions, hashes and panel contract. `tools/release.py` requires a reviewed pak and full SHA-256; it does not cook the asset or prove native compatibility. The reviewed pak's integrity result and full hash are recorded in the reliability ledger. This is integrity evidence, not proof of native mounting, widget behavior or current-runtime compatibility. Hash equality is not widget-tree acceptance. Exclude saves, backups, logs, developer triggers and loose duplicate scripts.
 
-The [release checklist](docs/reliability-2026-09-11.md) and [reply drafts](docs/release-replies-0.5.0-draft.md) are separate from publication. Do not upload until applicable blockers pass.
+The [release checklist](docs/RELEASE-0.5.0.md) and [reply drafts](docs/release-replies-0.5.0-draft.md) are separate from publication. Do not upload until applicable blockers pass.
 
 ## Credits and license
 

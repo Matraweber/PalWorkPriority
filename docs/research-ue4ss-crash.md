@@ -1,4 +1,11 @@
+---
+date: 2026-08-21
+tags: [crash, scheduling, research]
+status: evidence
+---
 # Research: the crash is a known UE4SS class, and the cure ships in our build
+
+Related: [the-crash](the-crash.md) · [LESSONS](LESSONS.md)
 
 21 August 2026, evening. A pure research round, no code changed. Every claim
 below was checked against a primary source tonight; local evidence was read

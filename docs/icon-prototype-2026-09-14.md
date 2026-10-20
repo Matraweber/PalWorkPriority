@@ -1,4 +1,11 @@
+---
+date: 2026-09-14
+tags: [performance, panel]
+status: evidence
+---
 # Blueprint lazy-icon experiment — 2026-09-14
+
+Related: [viewport-and-icon-retest-2026-09-13](viewport-and-icon-retest-2026-09-13.md) · [widget-spec](widget-spec.md)
 
 ## Decision
 

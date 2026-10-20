@@ -20,3 +20,8 @@ test-results/
 
 # Local macro run logs; they record the private server address
 tools/*-last-run.log
+
+# Obsidian (docs/ is a vault): per-device state stays local
+docs/.obsidian/workspace*.json
+docs/.obsidian/cache
+docs/.trash/

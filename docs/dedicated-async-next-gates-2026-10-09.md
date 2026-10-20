@@ -1,4 +1,11 @@
+---
+date: 2026-10-09
+tags: [async-save, multiplayer]
+status: current
+---
 # Dedicated async: next evidence gates — October 9, 2026
+
+Related: [async-enablement-2026-10-04](async-enablement-2026-10-04.md) · [release-gates-2026-10-09](release-gates-2026-10-09.md)
 
 Status: proposed checklist only. No new native run, deployment, backend attachment,
 or write enablement is authorized by this document. Dedicated/public async defaults

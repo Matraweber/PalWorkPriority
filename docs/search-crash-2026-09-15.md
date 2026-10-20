@@ -1,4 +1,11 @@
+---
+date: 2026-09-15
+tags: [crash, reports, panel]
+status: evidence
+---
 # Search-crash sidecar — September 15, 2026
+
+Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md) · [icon-prototype-2026-09-14](icon-prototype-2026-09-14.md)
 
 Nexus bug **1133489 remains un-attributed and unreproduced**. The local evidence supports the already-deployed exclusion-before-localization change, but supplies no additional proven crash fix. Cosmetic Outfits (5049) is the reporter's suspected interaction, not an established cause.
 
@@ -8,11 +15,11 @@ Read-only investigation of repository sources, archived local crash XMLs, downlo
 
 - Public comparison: local Git `v0.4.1`, commit `aa66480ffa1ba0bda97ce41d348d02785d993210`. This identifies the compared source, not the reporter's installed files.
 - Candidate receipt: [picker-filter-hashes-20260915.json](../test-results/picker-filter-hashes-20260915.json). All 44 entries record equal source/installed hashes. This sidecar independently rehashed the current repository copies of items.lua, panel.lua, icons.lua and icon_prototype.lua; all four match that receipt. It did not re-read the installed payload or loaded process memory.
-- At investigation start, process **PID 4756** was supplied by the coordinating agent from its process check; this sidecar performed no process verification. The older PID 47304 acceptance in [performance-2026-09-15.md](performance-2026-09-15.md) belongs to a prior restart and is not silently relabeled as current evidence. The subsequent panel-storage retest uses PID 44368 and changes panel.lua independently; the hash comparison above describes this sidecar's earlier inspection time.
+- At investigation start, process **PID 4756** was supplied by the coordinating agent from its process check; this sidecar performed no process verification. The older PID 47304 acceptance in [performance-2026-09-15.md](g5-performance-2026-10-19.md) belongs to a prior restart and is not silently relabeled as current evidence. The subsequent panel-storage retest uses PID 44368 and changes panel.lua independently; the hash comparison above describes this sidecar's earlier inspection time.
 
 ## Available evidence and gaps
 
-The [local comment ledger](comment-update-2026-09-15.md) records DarkWyrmReaper's September 14 report: Add item/search all items aborts to desktop after recently adding Cosmetic Outfits. It does not contain a reporter crash attachment, exact exception text/stack, affected item ID, query, package version/hash, or installed runtime identity. Whether “search all” means selecting the show-all toggle or typing remains unresolved.
+The [local comment ledger](comment-ledger-2026-09-11.md) records DarkWyrmReaper's September 14 report: Add item/search all items aborts to desktop after recently adding Cosmetic Outfits. It does not contain a reporter crash attachment, exact exception text/stack, affected item ID, query, package version/hash, or installed runtime identity. Whether “search all” means selecting the show-all toggle or typing remains unresolved.
 
 Inspected all **29** `CrashContext.runtime-xml` files under `C:/Users/matra/AppData/Local/Pal/Saved/Crashes`. Their filesystem modification timestamps span August 21, 20:11:57 through September 11, 21:24:10, 2026; these are file timestamps, not independently validated event times. Every ErrorMessage reports `EXCEPTION_ACCESS_VIOLATION`. None of the XML text contains `abort`, `GetItemName`, `GetDataTableRowNames`, `LoadAsset`, `Cosmetic`, or `1133489`. These records belong to this local installation and cannot be substituted for the reporter's crash. The associated minidumps were located but not symbolized. Unsymbolized UE4SS/module offsets do not identify an item lookup or establish a shared cause. Historical narratives in the older crash documents include revised hypotheses and are not new proof for this report.
 

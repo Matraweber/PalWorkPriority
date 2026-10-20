@@ -1,4 +1,11 @@
+---
+date: 2026-10-16
+tags: [scheduling]
+status: evidence
+---
 # Coolers: same silent-station gap as generators, fixed, 2026-10-16
+
+Related: [g4-scheduling-2026-10-14-stations](g4-scheduling-2026-10-14-stations.md) · [g4-scheduling-2026-10-17-miners](g4-scheduling-2026-10-17-miners.md)
 
 Singleplayer, Palpagos Islands, build 0.5.0-rc1 on `reliability-0.5`. The user
 built a Cooler Box in camp 1 for this test. Raw data:

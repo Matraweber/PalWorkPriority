@@ -1,20 +1,25 @@
+---
+date: 2026-10-09
+tags: [async-save, native]
+status: evidence
+---
 # Asynchronous saving enablement — October 4, 2026
 
-Latest checkpoint (October 9): successful legacy-limit multiplayer edit,
-synchronous server save, normal server/client restart, and client readback now
-pass in a disposable local dedicated fixture. The panel shows35,001 and Synced
-with server after restart; server caps bytes survive unchanged. Client legacy
-settings remain unchanged. Manual UE4SS loading works; Workshop deployment
-remains unresolved. Original local server folders are restored, test processes
-closed, RAM untouched. The checked local combined async trial remains installed;
-both multiplayer sessions opted out without attaching a native writer.
-Public/default and dedicated native async remain OFF. Earlier sections are
-chronological evidence; see the final dated section for current limits.
+Related: [async-save-route-research-2026-10-04](async-save-route-research-2026-10-04.md) · [async-save-history](async-save-history.md) · [staged-recovery-native-2026-10-11](staged-recovery-native-2026-10-11.md) · [work-log-2026-10-09-to-11](work-log-2026-10-09-to-11.md)
+
+**Status 2026-10-20: async stays off; 0.5.0 ships the synchronous writer unless
+optional gate G2b closes first ([RELEASE-0.5.0.md](RELEASE-0.5.0.md) G2/G2b).**
+The checked local async trial was disarmed on 2026-10-11 and the client runs the
+shipping path ([DECISIONS](DECISIONS.md), Test installation). The sections below
+are chronological evidence from 2026-10-04 to 2026-10-09; the last dated
+sections hold the latest limits. The parked cutover tooling of 2026-10-04..11
+is summarised in the final section. The rejected Blueprint routes before this
+are in [async-save-history.md](async-save-history.md).
 
 User authorized implementation and testing through eventual enablement. That
 authorization does not waive the data-integrity gates. Public installations keep
-the synchronous default; the explicitly checked local trial described above is
-the exception, not public release acceptance.
+the synchronous default; the explicitly checked local trial (disarmed
+2026-10-11) was the exception, not public release acceptance.
 
 ## Evidence acceptance
 
@@ -345,7 +350,7 @@ The API audit and seven disposable Windows tests establish an initialization
 gap: missing leaf, missing parent, sharing denial and access denial cannot be
 reliably distinguished by the audited exposed Blueprint/Lua save APIs. Engine
 normal writes can overwrite a file created after an absence check. The review
-at `experiments/save-initialization-review-20261004.md` records the exact source
+at [save-initialization-review-2026-10-04.md](save-initialization-review-2026-10-04.md) records the exact source
 and tests. A typed native filesystem boundary and atomic initialization protocol
 remain necessary; failed native loads continue to mean unreadable, never empty.
 Supported version-matched C++ mod prerequisites are being recovered separately;
@@ -528,7 +533,7 @@ beats inside it and correct game-thread completion. Independent review confirmed
 the raw numbers. The first coarse-timer trial failed; its missing timestamps
 prevent assigning a definitive cause. It remains a failed trial.
 
-See `docs/native-handoff-2026-10-04.md` and its linked evidence. The passing test
+See "Parked cutover tooling" below and its evidence. The passing test
 ran before world load; warm gameplay, file IO, ownership and in-flight teardown
 are not proven. The game subsequently loaded, saved settings reported healthy,
 and stand numbers were visible. Both diagnostic mods are disarmed/disabled for
@@ -538,7 +543,7 @@ future starts. Production Scripts are unchanged and async saving remains off.
 
 Three post-world-ready synthetic handoffs passed with independent checksum,
 thread identity and overlapping game-thread heartbeat verification. Details and
-raw evidence are recorded in `docs/native-handoff-2026-10-04.md`. This closes the
+raw evidence are in "Parked cutover tooling" below. This closes the
 warm synthetic handoff gate only. A separately installed fixed-root file probe
 is next; no production save destination or production async setting is enabled.
 
@@ -547,7 +552,7 @@ is next; no production save destination or production async setting is enabled.
 The fixed-root native probe published 256 KiB on the UE4SS worker, then rejected
 a different payload for the same target. Independent whole-byte readback passed
 between operations and after the conflict. Game-thread completion and actual
-runtime/helper paths were captured. Details: `docs/native-file-2026-10-04.md`.
+runtime/helper paths were captured. Details: "Parked cutover tooling" below.
 The probe is disarmed/disabled; production Scripts remain unchanged. This
 establishes the native background-file route, not replacement/recovery, exclusive
 backend ownership, real storage binding or durable edit acknowledgements.
@@ -1068,7 +1073,6 @@ coverage is still needed for priorities; the earlier read-only plan deliberately
 preserved all41 unproven rows. Keep staged production changes separate from these
 isolated probes, and never reuse a disposable success as authority to migrate.
 
-
 ### Complete settings chain live: WRITE passed (20:23:51 UTC)
 
 The isolated `native_settings_chain_trial` now runs the actual production
@@ -1108,7 +1112,6 @@ alias, and lifecycle claim tracking adapted to explicit drain8/cleanup9. Existin
 settings_writer:drain only polls/closes and cannot substitute for session:drain.
 Priorities still require actual Pal membership coverage. No production async claim.
 
-
 ### Complete settings chain live: fresh recovery PASSED (20:26:52 UTC)
 
 After normal exit of intermediate PID44784, fresh PID33980 loaded the recovery
@@ -1128,7 +1131,6 @@ Current game is the original world. Both live stages passed; production async is
 still OFF pending the real backup/migration/activation contracts above. Final
 Lua suite:150 regression scripts,52 production modules compiled,0 failures.
 
-
 Independent observer confirmed both stages, exact typed bytes and all15 unchanged
 recovery hashes. Observation finished; no monitor remains running. Post-acceptance
 read-only `pwp status` at22:28:02local reports heartbeat alive, authority yes,
@@ -1137,7 +1139,6 @@ recorded read failures. That command updates remote.txt after the accepted file
 fingerprint snapshots; it is not a settings change. Structural checker also passes
 (`test-results/async-structural-20261004-chain.log`). No production deployment,
 version bump, commit or publication was made in this step.
-
 
 ### 2026-10-06: real legacy backup and guarded caps activation
 
@@ -1783,7 +1784,6 @@ stays held. Readiness providers are trusted synchronous reads; lifecycle changes
 must also fence/revoke, which remains a real-launcher integration gate. All173
 regressions passed again after this correction.
 
-
 ### 2026-10-07 — direct priority ownership reader, offline verification
 
 Replaced the preparatory live reader's per-key global parameter enumerations
@@ -1814,7 +1814,6 @@ writers, run a checked read-only native probe that specifically forwards guild
 Then verify coordinated startup, interrupted recovery, transitions and draining
 with both streams. The installed limits journal remains the current local trial;
 this source-only change does not replace or roll it back.
-
 
 ### 2026-10-07 — guild HandleId direct route passes native read-only test
 
@@ -2113,7 +2112,6 @@ remote-client lock presentation, general automatic rearm after travel, or frame
 performance. Local combined trial remains enabled; public/default async remains
 off. No commit, publication or Workshop/Nexus upload performed.
 
-
 ### 2026-10-07 — disposable native writer interruption: passed
 
 Added `native/save_core/draining_crash_test.cpp` and
@@ -2165,7 +2163,6 @@ Independent final review found no blocking false-pass or concurrency issue,
 confirmed both earlier test gaps closed, and matched recorded source/binary/header
 hashes. The six oracle mutants test the checking logic; they are not six rebuilt
 native implementation mutants.
-
 
 ### 2026-10-07 — session isolation and remote lock candidate: offline passed
 
@@ -2397,7 +2394,6 @@ passed; Python compile and touched tracked-file diff checks passed. Saved logs:
 Read-only preflight of the real INI now correctly refuses disabled REST. No live
 shutdown/API request, credential/config change or game/server launch occurred.
 
-
 ### October 9 live fixture follow-up (supersedes preflight-only state above)
 
 Original local Mods, Saved and LogicMods were preserved by rename under
@@ -2424,14 +2420,12 @@ requires explicit127.0.0.1, and rejects wildcard/LAN/IPv6-only destinations.
 Main reran32control+14server unit tests successfully. Runtime/source-loading
 and successful multiplayer save/recovery gates remain open. Async remains OFF.
 
-
 Fixture closed: explicit-workshopdir also did not produce ManagedMods or load
 UE4SS. A second REST normal shutdown succeeded. Original local Mods, Saved and
 LogicMods restored; failed fixture retained under the backup tested-fixture
 subdirectory. activation.json records restoration; live-result.json records
 both shutdowns and the unresolved runtime-loader gate. No forced termination,
 RAM changes, public enablement or multiplayer durability claim.
-
 
 Independent loader review: fixture matches the official documented package
 layout, activation names and server rules; shipping binary contains loader
@@ -2443,7 +2437,6 @@ and initialization gates remain hypotheses. Next investigation should capture
 the loader's actual config/filesystem path before another package change.
 Final validation:46server/control+23stress tests pass, Python compile passes,
 and touched tracked-file diff check has no whitespace errors.
-
 
 ## October 9: manual fixture and multiplayer limit recovery
 
@@ -2487,7 +2480,6 @@ and UI recovery. Still open: Workshop deployment, empty-server assignment
 verification, multiple clients/guilds, storage/producer behavior, dedicated
 native async prerequisites, and the other public-release gates.
 
-
 Independent review accepted the narrow synchronous legacy-save/restart/client
 recovery gate. Reviewer recalculated checksum42022037 over219payload bytes,
 confirmed generation1 and identical caps copies, inspected the recovered UI,
@@ -2497,7 +2489,6 @@ crash/power-loss durability, async, Workshop, priorities-edit persistence and
 actual ceiling enforcement. Normal exits/restoration are main-observed process
 and filesystem evidence, not inferred from mod logs. Main's final process check
 found no Palworld/PalServer process; active manual DLL/runtime paths absent.
-
 
 ## October 9 empty-server diagnostic follow-up
 
@@ -2520,7 +2511,6 @@ and proxy archived out of active paths. Evidence: test-results/server-assignment
 See [current consolidated gates](release-gates-2026-10-09.md); native async
 release status has not changed.
 
-
 ## October9 dedicated identity observation
 
 The isolated manual-runtime server returned a coherent current-world chain,
@@ -2533,3 +2523,175 @@ remained unavailable. Normal shutdown and full fixture-folder restoration passed
 See `test-results/server-identity-20261009/acceptance.json` and raw identity.log.
 This advances the read-only prerequisite only: integration, recovery, lifecycle,
 remote acknowledgement and actual async dedicated writes remain unaccepted.
+
+## Parked cutover tooling (2026-10-04..11)
+
+Merged on 2026-10-20 from seven notes (native-file and native-handoff of
+2026-10-04; dedicated-clock-probe, installation-fence, native-rollback,
+settings-cutover-fixture and settings-export of 2026-10-11). None of this runs
+in 0.5.0 except the startup fence in `Scripts/main.lua`. The tools stay in the
+repo because optional gate G2b would need them. The staged write path that
+replaced the v1 destination leases is in
+[staged-reservation-recovery-2026-10-11.md](staged-reservation-recovery-2026-10-11.md)
+and its native startup run in
+[staged-recovery-native-2026-10-11.md](staged-recovery-native-2026-10-11.md).
+
+### Native background file publication (2026-10-04)
+
+Code: `experiments/native-file-probe/` (`entry.cpp`, `probe.cpp`, `driver.lua`,
+`check_link.py`, `verify_readback.py`, `build/receipt.json`); acceptance
+`tools/accept_native_file_probe.py`. Evidence:
+`test-results/native-file-live-20261004/`.
+
+- The primitive is **first publication: it refuses an existing destination.**
+  The fixed scratch root is compiled in; Lua cannot choose a destination.
+  Input is validated hex copied into owned native bytes before IO.
+- Live (PID 42708, world-ready 11:41:16 UTC): 11:42:07 published 262,144 bytes
+  (256 KiB) in **17.6866 ms** native inclusive time on worker thread 25676
+  (game/completion thread 35196). 11:42:22 a different 35-byte payload was
+  **refused with Windows error 183** (already exists) in 30.6263 ms. External
+  whole-byte readback after each step: SHA256 `2312394b...a415e9` unchanged.
+- DLL SHA256 `7b6b2b23...2aae44`, runtime `21b691a6...ef92b8`. Review fixed a
+  directory-handle leak when vector allocation throws (16 native initialization
+  regressions pass).
+- Open: successive generations and recovery, ownership across duplicate
+  loads/reloads, queued/in-flight retirement, storage/session binding, and
+  acknowledgements only after validated persistence. A timed-out callback cannot
+  cancel an OS write; no power-loss or shutdown-latency bound exists.
+
+### Native background handoff (2026-10-04)
+
+Code: `experiments/native-lua-handoff-probe/` (`entry.cpp`, `driver.lua`,
+`warm.lua`, `README.md`, `warm-receipt.json`); acceptance
+`tools/accept_native_handoff_warm.py`. UE4SS `ExecuteAsync` runs a native
+copy/checksum, completion is queued to the game thread; passing needs correct
+data, different thread identities and a game-thread heartbeat strictly inside
+the native interval.
+
+- **Timer trap:** the first trial (`handoff-20261004T105421Z`) failed
+  "delay too short" with a strict 200 ms gate measured by GetTickCount64 around
+  Sleep(200). Microsoft documents 10-16 ms resolution for both. The log had no
+  raw timestamps, so the cause is not proven, but it stays a failed trial.
+  Measure elapsed time with QPC.
+- V2 with QPC (10 MHz, integer microseconds, the full 200,000 µs still required,
+  overlap must clear both edges by more than 3 µs), before world load:
+  200,268 µs, 4 game-thread beats inside, tightest margin 6,292 µs, checksum
+  2382238981 over 256 KiB (matches Python).
+- Warm (after world-ready 11:24:14 UTC), three trials at 11:25:05/15/25:
+  201,190 / 200,674 / 200,596 µs, **7 / 7 / 6 game-thread beats** inside about
+  200 ms of native work, worker 43944 vs game thread 34948.
+- Evidence: `test-results/native-lua-handoff-live-20261004/`,
+  `test-results/native-lua-handoff-warm-20261004/`.
+
+### Dedicated clock-only probe (2026-10-11)
+
+Code: `experiments/dedicated_parameter_clock.lua` (calls
+`GetAccurateRealTime` on `Default__GameplayStatics`),
+`experiments/dedicated_clock_probe.lua`, `experiments/dedicated_clock_entry.lua`,
+`experiments/dedicated-clock-probe/main.lua`; tools
+`tools/install_dedicated_clock_probe.py` (read-only preflight by default, arms
+`enabled.txt` last), `tools/prepare_dedicated_clock_fixture.py`,
+`tools/accept_dedicated_clock_probe.py`; tests
+`tests/test_dedicated_clock_probe.lua`, `tests/test_dedicated_parameter_clock.lua`.
+(The source note was not valid UTF-8; it was read bytewise for this merge.)
+
+- **Out-parameter trap:** pinned UE4SS 2281fa31 `LuaUObject.cpp:193` captures
+  scalar out-parameter references at Lua stack slot 1 and does not consume the
+  argument, so **consecutive scalar out-params all land in argument 1**. Pass
+  one fresh table twice and read `Seconds` and `PartialSeconds` from it. A
+  pinned-binding regression fails if the adapter goes back to separate tables.
+- Three disposable dedicated boots (no production mod, normal REST shutdown,
+  original-hash restoration each time; the launched image is
+  `PalServer-Win64-Shipping-Cmd.exe`):
+  1. `dedicated-clock-native-20261011` (nonce a09ea44f...): clock_unavailable.
+  2. `dedicated-clock-binding-20261011` (4aecd52a...): Seconds integer,
+     PartialSeconds nil, failure at stage `fraction`.
+  3. `dedicated-clock-shared-20261011` (0383ef29...): **passed on the third
+     boot**: 8 samples × 34 reads, all 7 between-sample intervals and all 8
+     within-sample spans advanced, timer cancelled. Spans about 0.162-0.218 ms.
+- Not validated: elapsed semantics and total callback cost. They need an
+  independent reference such as QPC; `os.clock` is not a fallback.
+  `server.py start` readiness cannot be reused (it waits for `PWP_READY`).
+  Installer constants point at the restored third trial; a new run needs fresh
+  backup and receipt paths.
+
+### Startup fence and interrupted cutover fixture (2026-10-11)
+
+**Live in the shipping code:** `Scripts/main.lua` opens `.settings-cutover`
+before loading `priorities.txt`/`caps.txt` or inspecting
+`async-trial/launch.lua`. If the marker exists, or the open fails with anything
+other than "not found", it acquires `settings_gate`, requires a restart and logs
+an error. It never reads, executes or removes the marker. Regression:
+`tests/test_main_integration.lua`, "cutover fence precedes settings recovery and
+launcher inspection". `tools/deploy.ps1` also refuses to deploy while the marker
+or trial launcher/receipt exists.
+
+`tools/settings_cutover_fixture.py` works only on a verified review bundle in
+its own `mkdtemp` directory (no game-root argument). Forward: stage and verify
+the marker, replace all four recovery paths of both streams with checked new
+generations, verify, retire the two copied trial markers, remove the marker
+LAST. Resume accepts only original or intended exact bytes. Its **rollback
+mode** (plan-bound rollback intent that outlives completion, restores eight
+legacy and two trial entries, fence removed last) has run only on bundle copies and the
+disposable native fixture, never on a real install: the 2026-10-11 switch back to the shipping path needed no cutover
+([DECISIONS](DECISIONS.md), Test installation).
+
+- Trap caught in review: an automatic `TemporaryDirectory` finalizer could
+  bypass the explicit cleanup refusal if the root was replaced; now `mkdtemp`
+  plus identity-checked cleanup.
+- 42 interruption boundaries, three fresh-process recoveries; 211 Lua scripts,
+  55 modules. Evidence: `test-results/cutover-recovery-20261011-*.log`
+  (`-python.log` is the pre-fix baseline, `-final-python.log` the acceptance),
+  `test-results/cutover-real-bundle-copy-20261011.json`,
+  `test-results/cutover-rollback-20261011/`.
+
+### Native rollback (2026-10-11)
+
+Tools: `tools/settings_cutover_lock.py` (share-mode-zero Windows lock, no PID
+guessing or stale-lock stealing), `tools/prepare_cutover_native_fixture.py`,
+`tools/run_cutover_rollback_native.py`. Evidence:
+`test-results/rollback-native-20261011/`.
+
+- Rollback interrupted right after replacing `caps.txt`: the first boot (nonce
+  2e1e0ca5...) reported **restart-required**/unavailable, zero settings opens,
+  bytes unchanged. A fresh Python process **resumed and restored the
+  originals** (eight legacy and two trial paths, including absence; marker
+  last). The second boot (ee15c050...) was ready/saved with the original
+  priority 3/X and Stone=100.
+- This fixture was **replacement-based**. G2b still needs a new rollback test
+  of the staged write path; this evidence must not be reused for it.
+- The lock excludes cooperating migration processes only, not every writer.
+
+### Installation fence and pins (2026-10-11)
+
+Tools: `tools/settings_installation_binding.py`,
+`tools/settings_installation_fence.py` (read-only preflight by default,
+`--rehearse`, `--recover`), `tools/settings_inventory_pins.py`. Evidence:
+`test-results/installation-fence-rehearsal-ee617305.../` (marker only) and
+`-0d44ee40.../` (with pins).
+
+- Marker-only rehearsal on the real D: client: a competing process was refused
+  the lock with sharing error 32. With pins: all 4,152 protected mod files plus
+  UE4SS.dll held, 8 of 8 write/delete requests refused (error 32), binding
+  digest `70c1fcb6...ef15d17` unchanged.
+- Only three root paths are excluded from the inventory: `priority.log`,
+  `.settings-cutover` and the empty `.settings-cutover.lock`.
+- **Limit:** the cooperative lock and the pins exclude only cooperating writers
+  and existing files. Steam updates and `tools/deploy.ps1` do not take the lock,
+  and new names are not excluded (existing-file exclusion, not namespace
+  exclusion).
+
+### Export bundle (2026-10-11)
+
+Code: `experiments/settings_export_reconcile.lua`,
+`tools/settings_export_bundle.py`; `tools/settings_migration_backup.py`
+`game_closed` now covers the whole Palworld/PalServer process family including
+`PalServer-Win64-Shipping-Cmd`.
+
+- Bundle `test-results/export-review-only-20261011-e5a32f93/bundle`:
+  **41 priority rows and 2 limit rows**, from **journal generations 8 and 11**;
+  the legacy files held the same 41/2. This is the bundle the 2026-10-11 switch
+  back was checked against.
+- Trap: the `.body` candidates must not be copied over `priorities.txt` or
+  `caps.txt`, because existing `.pending`, `.tmp` or `.bak` generations may
+  still win recovery. Membership claims came only from journal-listed keys.

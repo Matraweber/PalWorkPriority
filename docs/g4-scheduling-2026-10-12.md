@@ -1,4 +1,11 @@
+---
+date: 2026-10-12
+tags: [scheduling, testing]
+status: evidence
+---
 # G4: do Pals do what the stand says? 2026-10-12
+
+Related: [g4-scheduling-2026-10-14-stations](g4-scheduling-2026-10-14-stations.md) · [g4-scheduling-2026-10-17-miners](g4-scheduling-2026-10-17-miners.md) · [assignment-reader-2026-09-25](assignment-reader-2026-09-25.md)
 
 Gate: [RELEASE-0.5.0.md](RELEASE-0.5.0.md) G4. Singleplayer, local client on the
 branch build. Observation tool: `!pwp assignments`, the read-only census of each
@@ -57,7 +64,12 @@ Server log while nobody was connected (2026-10-11 21:19, RAM on rc1):
 measured in August, so there are no assignments to verify. **Closed as not
 applicable**; the scheduler makes no assumption to cover it.
 
-## Still open in G4
+## Still open in G4 (as of 2026-10-12)
+
+> Update 2026-10-20: all closed since. Incineram passed 2026-10-14 (below),
+> Grizzbolt sleep/wake 2026-10-14 ([stations](g4-scheduling-2026-10-14-stations.md)),
+> "everything stops" was reproduced and fixed 2026-10-17
+> ([miners](g4-scheduling-2026-10-17-miners.md)).
 
 - August repro cases under live demand: Incineram Handiwork over Kindling (needs
   queued crafting), Grizzbolt after being moved, sleep and wake. Today's census

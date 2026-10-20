@@ -81,7 +81,7 @@ Limits:
   dependency. A separate public-header Lua entry has passed a constant-only
   game test. A separately isolated Lua entry now connects this primitive for a
   fixed-root disposable background publication/conflict test; see
-  `docs/native-file-2026-10-04.md`. No production backend is enabled.
+  `docs/async-enablement-2026-10-04.md`. No production backend is enabled.
 
 Build the disposable CLI with `tools/build_save_initialization.ps1`. Its
 `PWP_INITIALIZATION_TESTING` hooks are absent when that define is omitted.

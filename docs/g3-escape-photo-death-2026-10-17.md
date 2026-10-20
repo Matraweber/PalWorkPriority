@@ -1,4 +1,11 @@
+---
+date: 2026-10-17
+tags: [panel, input, testing]
+status: evidence
+---
 # G3: Escape, photo mode, death while editing, 2026-10-17
+
+Related: [g3-panel-2026-10-17](g3-panel-2026-10-17.md) · [g3-layout-2026-10-17](g3-layout-2026-10-17.md) · [editor-escape-2026-09-23](editor-escape-2026-09-23.md)
 
 Singleplayer test world, build 34c95ad (0.5.0-rc1), Monitoring Stand +
 Production Limits panel, amount editor opened on the Wood rule (30,000). Keys
@@ -80,8 +87,6 @@ no lost input and no stale editor.
 
 ### Earlier attempts (kept for the record)
 
-
-
 With the editor open the character cannot move, so death needs an outside
 attacker. Tried the UE4SS console route (user-approved, test world): enabled
 `ConsoleEnablerMod` and `CheatManagerEnablerMod` (bundled, normally off) and
@@ -115,7 +120,8 @@ open and not after closing editor, panel and stand. The panel and editor stayed
 consistent and usable throughout (overlay rebuilt 14:00:44, no errors). HP set
 back to 1250000 at 14:01:29; helper file restored (cmp equal); rules unchanged.
 
-So death while editing is still not covered. A real death needs actual damage:
+So death while editing was still not covered at that point (it was at 14:13,
+see section C). A real death needs actual damage:
 an aggressive species provoked or naturally hostile near a stand, with the user
 steering, or a Summoning Altar boss.
 
@@ -133,7 +139,8 @@ hit. HP restored to 1250000 at 14:12; all predators dead; editor cancelled
 
 Conclusion: at a base defended by level 100 Pals, staged hostiles never reach
 the player, so death while editing needs a stand outside such a base (a
-fresh test base) or the user steering. Not covered for 0.5.0.
+fresh test base) or the user steering. (Superseded at 14:13: SelfKillPlayer
+gave a real death; see the top of section C.)
 
 Cleanup 14:06-14:08 (user asked): a read-only listing found three
 `BP_ElecPanda_BOSS_C` actors: level 50 with individual data and no controller

@@ -1,4 +1,11 @@
+---
+date: 2026-10-19
+tags: [multiplayer, network, upgrade]
+status: evidence
+---
 # G6: old client and new server disagree politely, 2026-10-19
+
+Related: [g6-guild-isolation-2026-10-19](g6-guild-isolation-2026-10-19.md) · [upgrade-041-2026-10-11](upgrade-041-2026-10-11.md)
 
 Gate: a 0.4.1 client joining a 0.5.0 server, and the reverse, shows a clear
 incompatible-version message and corrupts nothing.
@@ -62,7 +69,7 @@ retried) and an assertion in `test_net_settings_gate.lua` that an old Hello
 triggers it; negative control: without the call that assertion fails. 219
 scripts pass. Engine call verified live in singleplayer (sent to the local
 player): the chat showed `[SYSTEM]: Pal Work Priority: this server runs a newer
-version ...`. The server-side path with a real 0.4.1 client is not yet
+version ...`. (Verified live in the rerun below.) The server-side path with a real 0.4.1 client was not yet
 verified live (needs the server on this build: next server update).
 
 **Server macro join.** The first diagnosis ("wrong row") was wrong: the macro

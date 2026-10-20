@@ -1,4 +1,11 @@
+---
+date: 2026-09-13
+tags: [storage, performance, limits]
+status: evidence
+---
 # Storage scheduling and dropped loot — September 13
+
+Related: [storage-scope-2026-09-13](storage-scope-2026-09-13.md) · [g5-performance-2026-10-19](g5-performance-2026-10-19.md)
 
 Local **0.5.0-rc1**, unpublished. The repeated native test supports separating storage work from scheduler passes. It does **not** establish that remaining stutter is fixed.
 

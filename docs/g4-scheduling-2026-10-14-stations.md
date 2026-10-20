@@ -1,4 +1,17 @@
-# Continuous stations: a suspected defect, RETRACTED, 2026-10-14
+---
+date: 2026-10-14
+tags: [scheduling]
+status: evidence
+---
+# Continuous stations: generators count as demand, 2026-10-14
+
+Related: [g4-scheduling-2026-10-16-coolers](g4-scheduling-2026-10-16-coolers.md) · [g4-scheduling-2026-10-17-miners](g4-scheduling-2026-10-17-miners.md) · [g4-scheduling-2026-10-12](g4-scheduling-2026-10-12.md)
+
+> Read in order: the first sections are a suspected defect that was retracted
+> the same evening (21:15); the real gap and its fix follow from "The signal,
+> and the fix" (21:55). The "Proposed fix (not implemented yet)" section is
+> the retracted idea, not the shipped one. Coolers were added 2026-10-16
+> ([coolers](g4-scheduling-2026-10-16-coolers.md)).
 
 **Retracted the same evening.** The "reproduction" below was confounded. The
 user had replaced the base's generators: during 20:37-20:45 both were unbuilt
@@ -80,7 +93,6 @@ only does so once that other job ends. The proposed standing-demand fix still
 applies, and the live test should be "Grizzbolt pulled onto a long workbench
 queue returns to the generator within a few passes after its priorities are
 set back", not just "after a night".
-
 
 ## Retraction (21:15)
 

@@ -1,4 +1,11 @@
+---
+date: 2026-10-20
+tags: [performance, testing]
+status: current
+---
 # G5: performance, 2026-10-19
+
+Related: [frame-capture-procedure-2026-10-09](frame-capture-procedure-2026-10-09.md) · [frame-correlation-2026-09-13](frame-correlation-2026-09-13.md) · [storage-prefetch-2026-09-13](storage-prefetch-2026-09-13.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md)
 
 Gate (RELEASE-0.5.0.md G5): every recurring mod cost above 5 ms per call is
 reduced or recorded with its price, and the last two optimisation rounds each
@@ -162,17 +169,27 @@ ms frames) makes about 60 a minute, and with the UI closed the 20 ms pass every
 
 ## Open: what is left, and why it needs a decision
 
+The three remaining costs after round 3 (status updated 2026-10-20):
+
 1. Stand refresh, 12 ms once a second while the stand is open (about 60 slow
    frames a minute in that scene). Input already repaints its cells at once;
    the full refresh catches what the game redraws itself (scrolling, rows
    rebuilt, new Pals, server pushes). Less often means stale numbers for
-   longer after such a redraw.
+   longer after such a redraw. **Decided 2026-10-20: justified with that
+   price** (see Decisions taken).
 2. Camp enumeration, 10 ms per pass (FindAllOf, the only proven way to find
    live camps). It keeps the pass at 20 ms: a slow frame every 10 s, no frame
-   over 33 ms.
+   over 33 ms. **Decided 2026-10-19: kept** (DECISIONS.md).
 3. Storage refresh, 31 ms every 30 s with this stock (FindAllOf 11 ms plus
    reading every slot). It cannot be sliced without a fresh FindAllOf per
-   slice, because no engine object may be kept across callbacks.
+   slice, because no engine object may be kept across callbacks. **Open.**
+
+Still open for G5:
+
+- Identify the second ~30 s event (see the cross-check below), then decide on
+  the storage refresh.
+- Rerun the closed scene with the mod present and absent in the same light;
+  the >16.67 ms closed comparison above is confounded by night versus day.
 
 ## Independent cross-check (agent, read-only, 2026-10-19)
 
@@ -199,9 +216,101 @@ latency.
 ## Decisions taken (user, 2026-10-19 evening)
 
 - Stand refresh: investigate a cheap "nothing changed" test that can skip the
-  full refresh; keep 1 s whenever something changed.
+  full refresh; keep 1 s whenever something changed. **Dropped 2026-10-20**,
+  see below.
 - Scheduler pass: keep 10 s and the camp FindAllOf, recorded in DECISIONS.md.
 - 30 s events: identify the second one before deciding on the storage refresh.
 - Server RAM updated to 30ee360 (backup `Scripts-before-30ee360`, 58 files,
   palapi.lua 74.27 KiB and scheduler.lua 75.84 KiB match the commit), restart,
   `PWP_READY version=0.5.0-rc1` at 20:06:42, no error or warning.
+
+### 2026-10-20: stand refresh justified, "nothing changed" skip dropped (user)
+
+The skip chosen for investigation on 2026-10-19 is the "dirty-flag refresh
+gating" that DECISIONS.md (2026-08-27) already rejects with measurements: it
+reintroduced the repaint bug three times. It was proposed without reading that
+rejected list first. The user dropped it on 2026-10-20.
+
+The stand refresh is recorded as justified with its price: 12.2 ms (worst
+15 ms) once a second, only while the stand is open, about 60 frames over
+16.67 ms per minute in that scene (66-67 in the round-3 stand windows against
+9-10 with the UI closed). With the stand closed it costs nothing. It stays
+because the game redraws rows itself (scrolling, rebuilt rows, new Pals,
+server pushes) and only the full refresh repaints those.
+
+## History: September measurements (game 1.0.4/1.0.5, before the matched baseline)
+
+Condensed on 2026-10-20 from 17 notes of 2026-09-11 to 09-15 that were then
+deleted (git history keeps them; names in the last column). Game 1.0.4.102642
+until 09-13, 1.0.5.102999 from 09-15. Builds, scenes, session age and other
+mods differ between rows, most windows had profiling on and none had a
+mod-absent control, so this is a trend, not a baseline. The September
+mod-absent comparison is [frame-correlation-2026-09-13.md](frame-correlation-2026-09-13.md).
+Means in ms, inclusive; frames per 60 s clip.
+
+| Date | State | Stand refresh | Scheduler pass | Storage scan | >16.67 / >33.33 ms, worst | Source note |
+|---|---|---|---|---|---|---|
+| 09-11 | stand grid broken (every refresh "unavailable") | 39.3 | 42.2 | 22.6 | n/a / 60-63, 56-99 | stand-capture |
+| 09-12 19:19 | grid draws again (broken session before: 37.5) | 28.5 | 42.7 | 22.7 | n/a / 52-54, 81-84 | roster-native-retest, stand-retest |
+| 09-12 22:35 | input on the 100 ms beat, pad read once | 30.2 (menu 10.2, roster 12.4) | 43.8-43.9 | 24.2-24.3 | n/a / 56-57, 81.6-82.9 | jump-restart, stand-input-retest |
+| 09-13 12:09 | traversal trims | 27.2 (menu 10.1, roster 10.7) | 43.2-43.7 | 22.1-23.1 | n/a / 53-56, 80-83 | stand-cost-retest |
+| 09-13 12:50 | row-scoped roster, storage backoff | 24.0 (roster 6.9) | 27-29 (max 45-47) | 23-24, 8 scans per 24 passes (before 19/19) | 58-60 / 7-11, 74-77 | performance-investigation, deep-performance-retest |
+| 09-13 13:36 | background-job coordinator, label hints | 20.8 (labels 0.6-0.7, before 3.3-3.5) | 25-27 | 21-22 | 64-65 / 2-4, 48-160 | performance-bundle, performance-bundle-retest |
+| 09-13 15:32 | after the targeted menu query (menu 10 -> 0.6, [viewport-and-icon-retest](viewport-and-icon-retest-2026-09-13.md)) | grid 10.6-10.7 | 27-29 (peak 41-44) | 21 | 61-64 / 3-4, 47-50 | remaining-stutter |
+| 09-13 18:22 | stand closed, profiling off | - | 22.3 (camps 10.5, roster 8.3 for two camps) | 20 | 10-11 / 1-2, 45-78 | scheduler-read-reuse |
+| 09-13 19:21 | roster read reuse | grid 10.7-10.9 | 20.6 (roster 4.1-4.2 per camp) | 20 | open 60-65 / 2; closed 12 / 2 | roster-read-retest |
+| 09-15 22:16-22:30 | game 1.0.5, GetAllChildren trial (ABBA, 30 s clips) | 11.5 indexed, 11.6-11.9 bulk | 26 (max 38) | - | 32-34 / 0-2 per 30 s; one bulk clip 56 / 4 with a 1.63 s gap | performance-2026-09-15 |
+| 09-15 23:29 | panel opening keeps the storage plan | - | 20 / 22 steady; 26.7 / 38 on panel open before, 19.4-20 / 21-22 after | 17.5-19.5 (background) | not recorded | panel-storage-refresh |
+
+Findings that still hold:
+
+- Long frames recurred at median gaps of 1.065-1.069 s (>33 ms) and
+  10.69-10.72 s (>60 ms): the stand and scheduler cadence (09-13). With Lua
+  and QPC clocks aligned within 4.9 ms, 57 of 67 frames over 16.67 ms
+  overlapped a stand grid refresh (stand-name-retest); with the stand closed,
+  11 of 14 overlapped scheduler or storage events and the three largest
+  overlapped nothing recorded (scheduler-read-reuse). Correlation, not proof.
+- The pattern stayed with profiling off in every on/off comparison, so the
+  profiler is not the cause.
+- Roster lookup 7.0-7.1 ms: row-owner validation 3.4-3.5 ms of it, checkbox
+  contents 2.3 ms, menu ownership 0.8-0.9 ms (stand-tree-phases). Plain
+  `GetWidgetFromName` is rejected (unreflected C++ on this runtime).
+  Row-scoped search cut roster visits 909 -> 639.
+- Bulk traversal through `GetAllChildren` (`pwp standbulk`, 09-15) was
+  rejected: four ABBA PresentMon clips showed no frame benefit, and review
+  found a duplicate-child hole (a batch `{a,a}` could hide a target that
+  indexed reads return as `{a,b}`). Removed; archived in
+  `test-results/rejected-stand-bulk-20260915/`.
+- Menu lookup: `FindFirstOf` can select a hidden or wrong menu; stored
+  wrappers and name-only freshness are rejected. Label lookup with scalar edge
+  hints, re-checked each call, fell 3.3-3.5 -> 0.6-0.7 ms per grid. Text and
+  colour writes cost 0.34 ms per grid; name-only write caches were rejected
+  (blank or recycled cells).
+- Storage: incomplete reads retry after 5, 10, 20, then at most 30 s (capped
+  by the TTL; a verified read resets it), and only camps whose effective
+  numeric limits need storage are scanned. Unfiltered zero-GUID holders skip
+  class-name reads (534 -> 0) but stay unknown. Excluding no-base loot before
+  module discovery was rejected (it would hide module failures).
+- Opening the panel used to discard the storage plan (`forget_stock`), so the
+  next pass re-scanned inline: a 38 ms pass with 17 ms storage. Now it marks
+  the plan for an immediate background refresh: passes 19.4-20 ms mean, 21-22
+  worst, clock batch 22 instead of 38 ms. The work is moved, not removed:
+  background jobs still run on the game thread, on separate clock beats.
+- Background coordinator (09-13): input first, at most one background job per
+  beat, 8 ms soft budget, eligible after 300 ms lateness. Worst heartbeat
+  70-74 -> 42-45 ms. Not a hard bound on any single native call.
+- Input: the queue used to drain once a second, so a click could wait almost
+  1 s; it now drains on the 100 ms beat. Rapid-click "jumps" came from the
+  scheduler adopting a native checkbox change as a priority edit (saving X or
+  1); native observations no longer overwrite saved priorities. Rejected: a
+  mouse debounce (the runtime sends down edges, it would drop real rapid
+  clicks), collapsing saturating clicks into a net direction (left then right
+  at 1 must give 2), and the 150 ms draw-age click guard, removed because it
+  discarded real clicks (a regression fails if it comes back).
+- Pad polling reads the viewport and controller once per call for all eleven
+  buttons: 0.30 -> 0.14-0.15 ms per call.
+- Logging cost file 7 ms and console 2 ms per 170 s; a speculative buffering
+  rewrite was rejected. Scheduler permission-read reuse (70 -> 56 reads in a
+  14-Pal fixture) and roster read reuse gave no measurable pass saving.
+- Unexplained outliers kept in the evidence: one 160 ms interval (09-13 13:36)
+  and one 1.63 s gap (09-15, bulk clip).

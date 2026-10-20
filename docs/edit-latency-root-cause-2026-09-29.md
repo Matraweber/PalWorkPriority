@@ -1,4 +1,11 @@
+---
+date: 2026-09-29
+tags: [performance, network]
+status: evidence
+---
 # Stand edit latency: root-cause investigation, September 29
+
+Related: [transmitter-first-2026-09-29](transmitter-first-2026-09-29.md) · [push-lifetime-2026-09-29](push-lifetime-2026-09-29.md)
 
 Read-only runtime investigation. No new deployment, settings change, game input,
 or performance improvement is claimed. Candidate remains unpublished 0.5.0-rc1.
@@ -171,6 +178,71 @@ Separately capture client frames and click-to-ack latency. The current server
 data explains synchronization delay and server work, not every visible client
 stutter. September13 mod-absent recordings still had large spikes; newer
 paired recordings are required to attribute remaining frontend symptoms.
+
+## 2026-09-29 (15:41-15:56): duplicate edit broadcast removed
+
+Merged from edit-broadcast-2026-09-29 (deleted 2026-10-20, git history keeps it).
+
+Before the fix (RAM, 122 s profile from 15:41:50, instrument-only main): two
+priority edits took 441 and 444 ms in the incoming hook. Each made a full
+save-callback broadcast (about 108 ms) and then an explicit one-Pal delta
+(109 ms), so about 108 ms per edit was duplicate work. Roster validation
+averaged 55.5 ms.
+
+Fix: the store tracks whether a pending notification covers one Pal or
+several, keeps that scope across save failures and detaches it before
+callbacks. The network handler defers the notification and sends exactly one
+broadcast per edit: a delta when the commit touched only that Pal, one full
+snapshot when the flush also committed other Pals. A clean no-op clear still
+sends a fresh snapshot; a failed save keeps the `applied_unsaved` reply and
+the delta attempt. A successful save is not proof of delivery. The new tests
+failed before and pass after (73 scripts). The 16:32 profile below confirms
+four deltas for four edits and no full broadcast.
+
+Side observation, not caused by this patch: after both same-process
+reconnects the vanilla Escape menu had to be opened and closed once before the
+stand's interaction prompt appeared.
+
+## 2026-09-29 (16:27-16:33): sender reuse and stale-ACK guard
+
+Merged from edit-context-2026-09-29 (deleted 2026-10-20, git history keeps it).
+
+The transport already resolves the sender's guild to authenticate a request;
+main repeated that transmitter lookup. Now the transport hands main an opaque
+token for the same synchronous handler only. It holds plain data, never engine
+wrappers, and is checked for identity, session epoch, server nonce, peer
+identity, the peer's session/guild fields and sender name; reentry, session
+reset and handler exit invalidate it. Main's fresh authority, full roster
+authorization and recipient checks stay. One fewer sender lookup per edit,
+verified in tests; no milliseconds are claimed (not timed separately).
+
+**Stale-ACK guard.** A regression reproduced a real defect: a handler could
+replace its session or peer while authority stayed true, and the transport
+then recorded and sent an acknowledgement for the superseded request. The
+return path now checks the captured epoch, nonce, peer identity and the
+peer's session/guild fields before recording or sending any acknowledgement.
+The regression failed before the fix.
+
+Considered and not adopted (not justified by the measurements): sharing native
+camp reads across validation, save and broadcast (widens object lifetime), and
+stopping roster validation at the target Pal (risks skipping unknown
+ownership, partial rosters and duplicate identities).
+
+Native retest on RAM, 109 s profile ending 16:32:03, four edits (Vixy
+Gathering 1->2->1 twice):
+
+| Inclusive region | Samples | Mean | Worst |
+|---|---:|---:|---:|
+| Incoming network hook | 4 | 373.25 ms | 577 ms |
+| Stand delta | 4 | 108 ms | 110 ms |
+| Save (notification deferred) | 4 | 73 ms | 278 ms |
+| Roster validation | 4 | 55.5 ms | 57 ms |
+| Complete scheduler pass | 13 | 71.5 ms | 88 ms |
+
+Edits took 577, 304, 304 and 308 ms. The 577 ms edit contained the 278 ms
+save (the other three saves totalled 14 ms); that spike is followed in
+[save-flush-2026-09-29.md](save-flush-2026-09-29.md). The ordinary edit path of
+about 304 ms remained.
 
 ## Sources and preserved evidence
 

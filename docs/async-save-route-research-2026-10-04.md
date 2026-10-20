@@ -1,4 +1,11 @@
+---
+date: 2026-10-04
+tags: [async-save, native, research]
+status: evidence
+---
 # Async saving: SDK access and alternative entry route
+
+Related: [async-enablement-2026-10-04](async-enablement-2026-10-04.md) · [reference-persistence-2026-09-29](reference-persistence-2026-09-29.md) · [save-initialization-review-2026-10-04](save-initialization-review-2026-10-04.md)
 
 Research and live checkpoints, October 4. No reference mod executed or production
 save changes. Our separate constant-entry DLL passed two launches, as recorded

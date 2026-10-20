@@ -1,4 +1,11 @@
+---
+date: 2026-09-24
+tags: [stand-ui, input]
+status: evidence
+---
 # Stand rebind and discovery safety — September 24, 2026
+
+Related: [stand-close-events-2026-09-24](stand-close-events-2026-09-24.md) · [stand-pointer-2026-09-24](stand-pointer-2026-09-24.md) · [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md)
 
 ## Scope and defects
 

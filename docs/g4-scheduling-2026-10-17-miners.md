@@ -1,4 +1,11 @@
+---
+date: 2026-10-17
+tags: [scheduling, limits, storage]
+status: evidence
+---
 # "Everything stops" / "only one miner": reproduced, two causes, 2026-10-16/17
+
+Related: [g4-scheduling-2026-10-14-stations](g4-scheduling-2026-10-14-stations.md) · [storage-scope-2026-09-13](storage-scope-2026-09-13.md) · [g5-performance-2026-10-19](g5-performance-2026-10-19.md)
 
 Singleplayer test world (Palpagos Islands, the user's free-to-change test
 world), build 0.5.0-rc1 on `reliability-0.5`. Report: Okami_sama (Steam,

@@ -1,4 +1,11 @@
+---
+date: 2026-09-26
+tags: [performance, research, network]
+status: evidence
+---
 # PalPriority reference comparison and conditional transport lookup
+
+Related: [reference-persistence-2026-09-29](reference-persistence-2026-09-29.md) · [assignment-reader-2026-09-25](assignment-reader-2026-09-25.md)
 
 Compared the user's downloaded July26 Core/UI archives, not the newest online
 release. Sources were extracted read-only under ignored

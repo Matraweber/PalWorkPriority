@@ -21,6 +21,13 @@ synced between clients and a dedicated server.
 - **Write it down in the same change.** Every non-trivial decision gets a
   DECISIONS.md entry, every mistake a LESSONS.md entry, every live test a dated
   `docs/<topic>-YYYY-MM-DD.md` with the loaded build fingerprint.
+- **`docs/` is an Obsidian vault the user reads too.** Every note starts with
+  properties (`date`, `tags`, `status`: current, evidence, history), has a
+  `Related:` line of plain markdown links under its title, and is listed in
+  [docs/Home.md](docs/Home.md) (Latest plus its topic). When a later decision
+  makes a note stale, merge what still matters into the current note (or
+  DECISIONS/LESSONS) and delete it in the same change, repointing every link;
+  git keeps the history. Keep `docs/asset-contract.json` at its path.
 - **Commit at the end of every session**, on the working branch
   (`reliability-0.5` until 0.5.0 ships). Master equals what the stores serve.
   No `Co-Authored-By` trailers in this repository.
@@ -44,4 +51,4 @@ synced between clients and a dedicated server.
 (`python tools/test_lua.py`, `python tools/test_python.py`) · `tools/` deploy,
 release, remote control, capture and AHK rigs · `native/`, `experiments/` the
 async saving work (off by default) · `unreal/` widget generators for the pak ·
-`LogicMods/` the built pak · `docs/` evidence and the files above.
+`LogicMods/` the built pak · `docs/` the notes vault (start at Home.md).

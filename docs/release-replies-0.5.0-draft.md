@@ -1,6 +1,13 @@
+---
+date: 2026-09-15
+tags: [release, reports]
+status: current
+---
 # 0.5.0-rc1 reply drafts — not posted
 
-**Internal evidence note:** The complete Lua/UI and Python isolated suites pass. This candidate is unpublished and has no native acceptance. Use the [canonical reliability ledger](reliability-2026-09-11.md) for results, hashes and limitations. These drafts have not been posted; recheck the ledger and obtain separate posting authorization before use.
+Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md)
+
+**Internal evidence note:** The complete Lua/UI and Python isolated suites pass. This candidate is unpublished and has no native acceptance. Use [RELEASE-0.5.0](RELEASE-0.5.0.md) for gate results and the [comment ledger](comment-ledger-2026-09-11.md) for the finding IDs and reporters. These drafts have not been posted; recheck the ledger and obtain separate posting authorization before use.
 
 ## Settings and recovery — F01/F02/F03/F12
 

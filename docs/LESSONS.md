@@ -1,4 +1,11 @@
+---
+date: 2026-10-20
+tags: [records, testing]
+status: current
+---
 # Lessons: mistakes this project already paid for
+
+Related: [DECISIONS](DECISIONS.md) · [testing](testing.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md)
 
 Read this before changing code or claiming a result. Every rule below cost a
 crash, a wrong release note or days of work. Add to it in the same change that
@@ -40,6 +47,30 @@ discovers a new one, with the date and a link to the evidence.
 - **Any `RequestX_ToServer` must use the OWNED network component.** The wrong
   one drops the RPC silently while counters still count it. This one mistake
   caused both the August transport bug and the toggle churn.
+- **`FindFirstOf` can return a hidden or wrong instance** (stand menu,
+  2026-09-13). Query the current tree and verify the target.
+- **Image, Spacer and TextBlock are childless; CheckBox has one child and must
+  stay traversable** (2026-09-12). A failed child-count read on a CheckBox is
+  not "empty".
+- **A native checkbox change is not a user's edit.** Adopting one as a priority
+  edit overwrote saved numbers with X/1 (the 2026-09-12 rapid-click jumps).
+- **On UE4SS 2281fa31, consecutive scalar out-parameters all land in argument 1.**
+  LuaUObject.cpp:193 keeps the out-param reference at stack slot 1 without
+  consuming the argument, so `GetAccurateRealTime(seconds, partial)` filled only
+  the first table and PartialSeconds read nil. Pass one table for all outputs
+  and read each named field from it. Proven for numeric outputs on the dedicated
+  clock fixture (third boot, 2026-10-11); other output types and the server's
+  ba2efd55 build are untested. Bears on the 2026-10-19 GetNickname decision,
+  which rejected out-tables as unproven.
+- **A world-owned Actor can vanish with its world while IO is in flight.**
+  Actor absence or a cancelled timer is not proof the IO stopped (V4 moved to a
+  rooted transient UObject, 2026-10-03).
+- **Never pass a Blueprint delegate by value from Lua.** BreedingHelper's
+  attempt crashed natively; let the Blueprint construct and register it
+  (WorkRules contract 2/3, 2026-09-16).
+- **ScrollBox orders children by creation, not intended index.** A pager host
+  created during partial fill sat between item rows (2026-09-24); reserve row
+  containers first.
 
 ## Evidence: how we fooled ourselves
 
@@ -69,6 +100,16 @@ discovers a new one, with the date and a link to the evidence.
   multiplayer. Check the claim against the code and a live artifact.
 - **Read the checker output, not the word "deployed".** A luacheck-failing
   file was deployed once. A server deploy silently did not take once.
+- **GetTickCount64 and Sleep have 10-16 ms resolution; time native work with QPC.**
+  A strict 200 ms gate measured with them failed a handoff trial (2026-10-04;
+  the log lacked raw timestamps, so this is the likely cause, not a proven one).
+  The QPC rerun measured 200,268 us and passed. A printed `os.clock` 0 ms means
+  below resolution, not free.
+- **An advertised child that resolves nil, or an unreadable or empty name,
+  refuses the whole snapshot** (panel_runtime, 2026-09-25); an early return had
+  passed a partial tree as complete.
+- **The August empty-field test kept two camps loaded,** so the no-camp branch
+  was never exercised; one map's streaming is not every map's.
 
 ## Process: what slowed the project down
 
@@ -86,6 +127,10 @@ discovers a new one, with the date and a link to the evidence.
   an audit and reverted on request. Keep the preferred position.
 - **Re-proposing a measured-and-rejected idea wastes a session.** Check
   [DECISIONS.md](DECISIONS.md) for the rejected list first.
+- **Read the rejected list before proposing an optimisation.** On 2026-10-19
+  a stand "skip when nothing changed" was recommended and chosen, although
+  DECISIONS had rejected it on 2026-08-27 as dirty-flag refresh gating (it
+  brought the repaint bug back three times). Grep DECISIONS for the idea first.
 
 ## Lua traps
 
@@ -110,7 +155,8 @@ discovers a new one, with the date and a link to the evidence.
 
 - `luacheck.py` only balances blocks. Lua can still reject what it passes.
   Check the reload's own reply.
-- `panel.lua` sat at 198 of Lua's 200 top-level locals. Exceeding it breaks
+- `panel.lua` sat at 198 of Lua's 200 top-level locals (194 on 2026-10-20,
+  counted from its top-level `local` statements). Exceeding it breaks
   only the hot-reload path, almost silently. New state goes into an existing
   table.
 - A regex rename across Lua rewrites table-literal keys too.
@@ -189,3 +235,19 @@ discovers a new one, with the date and a link to the evidence.
   for the list to load (2026-10-19). Read the macro before diagnosing it.
 - **Long foreground waits drop the remote session.** Run restarts and waits
   over a minute with run_in_background.
+- **An AHK exit code does not prove the stand opened.** The fixed-time restart
+  macro reached the stand without opening it (2026-09-13); short V presses do
+  not open it, the 850 ms held-V helper does. Check a screenshot or the stand
+  diagnostic before calling a capture "stand open".
+- **The remote "panel is now open/closed" reply is not a rendered frame.**
+  Until 2026-09-23 it came before the queued actions ran (2026-09-13, 09-15);
+  since then `remote.lua` sends it after `panel.set_open_now` confirms the Lua
+  panel and overlay state, but a screenshot in the same command can still
+  predate the frame. Confirm with a delayed screenshot or status.
+- **There is no global `GetEngine` in our UE4SS;** use
+  `require('UEHelpers').GetEngine()`. The one-string `StaticFindObject`
+  overload rejects a package-only name such as `/Engine/Transient`; take the
+  engine's outer instead (2026-10-03).
+- **The equals-form UnrealPak extract overwrote the Workshop CreativeMenu pak
+  with an empty package** (2026-09-13; restored, SHA-256 b1507a64...). Use the
+  two-argument form on a separate copy.

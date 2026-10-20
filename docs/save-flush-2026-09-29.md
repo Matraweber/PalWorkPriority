@@ -1,4 +1,11 @@
+---
+date: 2026-09-29
+tags: [saving, performance]
+status: evidence
+---
 # Save flush/close investigation — September 29
+
+Related: [transmitter-first-2026-09-29](transmitter-first-2026-09-29.md) · [reference-persistence-2026-09-29](reference-persistence-2026-09-29.md) · [async-save-route-research-2026-10-04](async-save-route-research-2026-10-04.md)
 
 ## Reason and scope
 
@@ -81,6 +88,25 @@ and zero failures at the final report. Authority remained yes and priorities
 saved. Profiling off verified 20:01:48. No independent client frame capture.
 Evidence: .tmp/assignment-census/server-save-flush.log, client-save-flush.log,
 save-flush-server-running.png and tools/restart-server-last-run.log.
+
+## 2026-09-29 (17:05-17:09): per-phase save timers, ordinary saves
+
+Merged from save-phases-2026-09-29 (deleted 2026-10-20, git history keeps it).
+
+Trigger: a 577 ms edit with 278 ms in the deferred save (the other three saves
+14 ms). datafile.lua now times each checked open/read/write/close/remove/rename
+under fixed phase names (inspect temporary/recovery/live/backup, write/verify
+temporary, protect recovery, rotate backup, preserve live, install, restore).
+The timers run only with profiling on; they add no filesystem calls or
+per-operation logging, and the checked order, verification, backup and
+recovery stay the same.
+
+88 s RAM profile, four edits: deferred save 4.5 ms mean, 5 ms worst; edits
+274-282 ms; stand delta 108.75 ms; roster validation 55.5 ms. Live, backup and
+temporary-verification reads were 1 ms each per save. The 278 ms spike did not
+repeat: ordinary RAM saves are 4-5 ms, so removing recovery protections would
+not touch most of the edit delay. The flush diagnostic above is the next step
+on the same path.
 
 ## Independent verification and next boundary
 

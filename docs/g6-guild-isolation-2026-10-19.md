@@ -1,4 +1,11 @@
+---
+date: 2026-10-19
+tags: [multiplayer, testing]
+status: evidence
+---
 # G6: guild isolation on rc1, 2026-10-19
+
+Related: [g6-version-mismatch-2026-10-19](g6-version-mismatch-2026-10-19.md) · [restart-persistence-2026-10-11](restart-persistence-2026-10-11.md)
 
 Dedicated server "RAM" on 3daac01 (0.5.0-rc1), local client on the same build.
 Gate: the August fabricated-guild test (a rule under a fake guild id plus the

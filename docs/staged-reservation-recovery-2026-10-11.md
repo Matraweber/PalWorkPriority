@@ -1,9 +1,23 @@
+---
+date: 2026-10-11
+tags: [async-save, native]
+status: evidence
+---
 # Staged reservation recovery — October 11
+
+Related: [staged-recovery-native-2026-10-11](staged-recovery-native-2026-10-11.md) · [async-enablement-2026-10-04](async-enablement-2026-10-04.md)
+
+Status 2026-10-20: disposable-fixture tooling for the parked async cutover.
+Async stays off; 0.5.0 ships the synchronous writer unless optional gate G2b
+closes first ([RELEASE-0.5.0.md](RELEASE-0.5.0.md) G2/G2b). G2b's "rollback
+test of the staged write path" refers to the v2 path described here.
 
 The missing-destination ownership gap is closed for the tested disposable v2
 transaction: record a scratch object's identity before publishing it into a
 legacy recovery filename. No installed game files or settings were modified.
 Public/default async remains OFF; the checked local trial remains unchanged.
+The v1 direct-reservation experiment it replaces is kept below (merged from
+destination-leases-2026-10-11 on 2026-10-20).
 
 ## Change
 
@@ -78,10 +92,13 @@ power-loss durability, arbitrary partial-payload restoration, live cutover or
 trial retirement. Damaged/incomplete receipts and unknown contents still stop
 without deleting or overwriting them. The new write/recovery path needs its own
 native startup/rollback acceptance; the earlier native rollback evidence covers
-the older replacement-based fixture and must not be reused as proof of this path.
+the older replacement-based fixture and must not be reused as proof of this path
+(see [async-enablement-2026-10-04.md](async-enablement-2026-10-04.md), "Parked
+cutover tooling").
 
 Follow-up: native fenced startup and candidate recovery now pass on the isolated
-synthetic server fixture. See `docs/staged-recovery-native-2026-10-11.md`.
+synthetic server fixture. See
+[staged-recovery-native-2026-10-11.md](staged-recovery-native-2026-10-11.md).
 Rollback for the new same-handle path remains open.
 
 The real installation adapter also needs final transaction sequencing that
@@ -91,3 +108,83 @@ or deletion grant.
 
 API basis: [FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)
 and [SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle).
+
+## v1 direct reservation (2026-10-11, merged from destination-leases)
+
+Replaced by the staged v2 path above; still in the code for its regressions.
+A disposable experiment: installed game code, settings, trial launcher/receipt
+and journals were not modified, no game was launched.
+
+### What it did
+
+`tools/settings_destination_lease.py` is restricted to explicitly identified
+`pwp-cutover-fixture-*` temporary roots and an exact destination allowlist. It
+opens existing files without truncation and validates their opened identity,
+size and hash. Missing destinations use exclusive CREATE_NEW; a competing
+creator wins rather than having its file replaced. The handle is retained with
+read/write access and read sharing only, denying competing writes, deletion and
+replacement. Parent directories and the exact startup marker are also pinned.
+
+Overwrites use that same handle: rewind, bounded write loop, truncate at the new
+length, checked flush, rewind/readback and identity verification. Short writes
+are handled; write/truncate/flush/readback failures prevent another overwrite on
+that lease. Uncertain close retains handles until process exit. Reservation or
+write failures never automatically delete or restore a file.
+
+`tools/settings_destination_fixture.py` protects the immutable plan/trial files,
+records intent before creating the fence or reservations, records each acquired
+identity, and acquires all eight legacy recovery destinations before the first
+payload overwrite. It verifies all held contents against immutable originals.
+Success keeps the startup fence and trial files; no activation, no atomic
+multi-file commit claim, and no automatic resume.
+
+### Why v1 was replaced (still true, and the reason v2 exists)
+
+- **A CREATE_NEW reservation is already a mutation.** It reserves a name by
+  creating a file.
+- **A crash before the ownership receipt leaves an ambiguous file.** Between
+  creation and durable receipt publication, nobody can tell whose empty file it
+  is. v1 deliberately refuses automatic recovery of that case.
+- **Matching bytes must not grant recovery ownership.** An identical file can be
+  someone else's object (v2 records the object identity before publication).
+- **FlushFileBuffers success is not power-loss durability.** A checked flush is
+  API success, not proof that the storage device persisted the bytes.
+- The direct writes are not atomic replacement; the startup fence and preserved
+  original plan protect the experiment while partial bytes exist. Absent names
+  after deletion and unrelated new children are not universally excluded.
+- Native rollback evidence from the earlier replacement-based fixture does not
+  validate this same-handle write path either.
+
+### v1 evidence
+
+Independent review found a race between the pristine-state check and a second
+snapshot read: a newer edit could become the overwrite baseline. Fixed by
+comparing every captured snapshot with the immutable original before intent,
+and all held contents again before any payload write; the regression preserves
+the newer edit and refuses before intent/fence creation. A negative control
+removing both checks in memory fails as expected.
+
+Sixteen focused tests pass: eleven real Win32 lease tests and five multi-file
+integration tests (short/long/empty payloads, partial writes, failed
+truncation/flush/readback, identity/hash mismatch, hardlinks/redirects, existing
+writers, competing creators, uncertain release, lost receipt writes, abrupt exits
+after reservation/first write). Interrupted experiments remain fenced and refuse
+blind retry. Real Lua recovery/decoding verifies X, OFF and unrelated rows.
+
+Review-bundle **copy** run:
+`test-results/destination-leases-20261011-302dbe8ebfd149c4937ed7444963df2f/`.
+All eight candidate copies verified; five absent destinations were reserved.
+Sixteen direct Win32 access requests returned sharing error 32, and the matching
+sixteen Python write/delete attempts were refused. The real installation's eight
+legacy entries, four journal entries and two trial entries matched exact pre-run
+snapshots afterward. Independent post-run audit passed.
+
+The first copy attempt is kept separately under
+`test-results/destination-leases-20261011-67890ea4084c45ffb12a10abc533ddc5/`.
+Its checker wrongly required `OSError.winerror == 32` from Python writes, which
+report a permission error without that field. All operations were blocked, but
+the checker stopped before payload writes; it was not resumed or counted.
+
+API semantics:
+[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+and [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).

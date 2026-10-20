@@ -1,9 +1,16 @@
+---
+date: 2026-09-24
+tags: [input, stand-ui]
+status: evidence
+---
 # Event-targeted stand mouse input — September 24, 2026
+
+Related: [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md) · [stand-lifecycle-2026-09-24](stand-lifecycle-2026-09-24.md) · [stand-close-events-2026-09-24](stand-close-events-2026-09-24.md)
 
 ## Scope and implementation
 
 This candidate replaces the raw-keybind stand-edit path documented in
-[the September 23 reproduction](restart-input-investigation-2026-09-23.md).
+[the September 23 reproduction](DECISIONS.md).
 Raw mouse callbacks no longer choose a stand target at queue-drain time.
 
 Each eligible cell receives a transparent UMG UserWidget at its checkbox's

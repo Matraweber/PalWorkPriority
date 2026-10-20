@@ -1,4 +1,11 @@
+---
+date: 2026-09-24
+tags: [input, stand-ui]
+status: evidence
+---
 # Native stand keyboard input — September 24, 2026
+
+Related: [stand-pointer-2026-09-24](stand-pointer-2026-09-24.md) · [widget-spec](widget-spec.md) · [stand-lifecycle-2026-09-24](stand-lifecycle-2026-09-24.md)
 
 ## Change
 
@@ -90,7 +97,6 @@ A normal AHK save/restart is used for the next loaded-settings acceptance.
 This is not same-process rapid-reopen evidence. Physical key repeat/controllers,
 multiplayer chat, rapid native interleavings, recycling stress and independent
 frame times remain unaccepted.
-
 
 ## Normal save/restart acceptance (PID 32968)
 

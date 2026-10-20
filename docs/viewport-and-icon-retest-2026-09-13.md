@@ -1,6 +1,13 @@
+---
+date: 2026-09-13
+tags: [stand-ui, panel, performance]
+status: evidence
+---
 # Viewport and icon investigation — September 13, 2026
 
-Continuation of the [13:29 bundle retest](performance-bundle-retest-2026-09-13.md). This is an unreleased reliability candidate, not evidence of a stutter-free mod.
+Related: [icon-prototype-2026-09-14](icon-prototype-2026-09-14.md) · [widget-spec](widget-spec.md)
+
+Continuation of the [13:29 bundle retest](g5-performance-2026-10-19.md). This is an unreleased reliability candidate, not evidence of a stutter-free mod.
 
 ## Cause and verified improvement
 

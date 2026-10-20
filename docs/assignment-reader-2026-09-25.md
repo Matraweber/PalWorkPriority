@@ -1,6 +1,13 @@
+---
+date: 2026-09-25
+tags: [scheduling, research]
+status: evidence
+---
 # Assignment reader investigation — September 25, 2026
 
-The multiplayer observation in [Pal activity](pal-activity-2026-09-25.md)
+Related: [g4-scheduling-2026-10-12](g4-scheduling-2026-10-12.md) · [palpriority-comparison-2026-09-26](palpriority-comparison-2026-09-26.md)
+
+The multiplayer observation in [Pal activity](DECISIONS.md)
 confirmed nine unknown assignments and zero permission requests. Do not bypass
 this guard by interpreting current suitability as an automatic assignment.
 

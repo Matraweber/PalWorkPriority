@@ -1,20 +1,106 @@
-# Public comment ledger — 2026-09-11
+---
+date: 2026-10-09
+tags: [reports]
+status: current
+---
+# Public report census (comment ledger)
 
-September 15 update: [six new comments and one bug report](comment-update-2026-09-15.md), bringing the historical count to 71 comments plus one bug. The original 65-entry audit below remains unchanged.
+Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [release-replies-0.5.0-draft](release-replies-0.5.0-draft.md) · [search-crash-2026-09-15](search-crash-2026-09-15.md)
 
-**65 entries: 52 Steam comments across six pages, 13 Nexus comments/replies across two pages.** Includes author responses, requests, withdrawn reports and nested replies; 65 entries does not mean 65 distinct defects. This preserves the completed audit, without claiming a new browse or a new reproduction.
+The one census of public Steam and Nexus reports for Pal Work Priority. It
+started as the 2026-09-11 audit and now also holds the later deltas (2026-09-13,
+-09-15, -09-23, -10-09) and the finding IDs F01-F24 that the reply drafts key
+on. Gate status lives in [RELEASE-0.5.0.md](RELEASE-0.5.0.md); how to test is in
+[testing.md](testing.md); reply drafts are in
+[release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md).
 
-Target: **0.5.0-rc1 reliability candidate, unpublished**. Finding IDs map to [the reliability ledger](reliability-2026-09-11.md). Gate definitions and required evidence are in [testing](testing.md). All native acceptance is pending. No entry is marked fixed by this documentation task.
+**Status 2026-10-20** (open reports against the [0.5.0 gates](RELEASE-0.5.0.md)):
+G1 settings: restart persistence PASS 2026-10-11 (Two Bob Games, johndujo and
+the earlier reset reports), 0.4.1 upgrade still open on the Workshop route.
+G3 frontend: second/stuck panel PASS (Extramrdo, Okami_sama Sep 18 10:32,
+Calas Typhon, Drokz077), layout PASS (Hall9002), Escape/photo/death PASS
+(Gim1i, Zekrom144; the original crash was never reproduced); **open:**
+DarkWyrmReaper's Search/Add crash with Cosmetic Outfits 5049 (Nexus bug
+1133489, [search-crash-2026-09-15](search-crash-2026-09-15.md)). G4 scheduling:
+priority 1 over 5 PASS (HelpImStupid0), Incineram PASS (Glave), generators
+fixed 10-14 (CosmicWarbear, DSFddaaaa), coolers fixed 10-16 (poiman,
+GammaEuviex, srvtsonn), "only one miner / everything stops" fixed 2026-10-17
+(Okami_sama, SolidRhoé). G5 performance open (Plz, Ashura, luller, UltraJohn,
+Siberfox99). G6 multiplayer PASS on one machine (dedicated-server questions).
+G7 open: replies, Vortex (Saber57Draxus), install questions. Deferred to
+0.5.x/0.6: item-specific limits (SolidRhoé, BIG DADDY, Mithandil de Melkin),
+Steam Deck and controller (TheJoe, Erbse, tigerpow100), two-client tests,
+independent priority/limit mods (wikidnumb), high-quality stand
+(NoNickNeeded), deferred scheduling after UI close (Material Defender).
+Not individually re-run on rc1: KhanKeal's Pupperai/Flambella setups,
+Samurai9400's research, Rey's Lamball, poiman's fishing pools. No reply posted.
 
-Dates/times are as recorded in the audit. Relative newest timestamps were normalized to dates, not invented exact times. Authors are public display names, not identity conclusions. Paraphrases are brief and do not reproduce full comments.
+## Census totals
 
-Status: **A** = matching defect/path identified in code or visual evidence; native causality/full regression remains pending. **R** = symptom reported, reproduction pending. **Q** = request, planned/deferred as indicated. **C** = context, reply, praise or withdrawal; no independent bug asserted. Multiple symptoms in one entry need separate tests. Numeric resets must not all be attributed to the proven X serialization defect.
+| Date | Steam | Nexus | Added | Source |
+| --- | ---: | ---: | --- | --- |
+| 2026-09-11 | 52 | 13 | the audited 65 entries below | full read, both sites |
+| 2026-09-13 | 53 | (13, not re-read) | one author progress update | direct public fetch; Chrome did not attach, Nexus answered HTTP 403 |
+| 2026-09-15 | 56 | 15 + 1 bug | 6 comments, 1 bug (71 + 1) | logged-in Chrome, delta only |
+| 2026-09-23 | 62 | (not re-read) | 6 Steam comments | logged-in Chrome, Steam delta only |
+| 2026-10-09 | **70** | **17 + 2 bugs** | 8 Steam, 2 Nexus, 1 bug | logged-in Chrome, every page of both sites and both bugs expanded |
 
-## Current disposition
+The 2026-10-09 census is the current count: **87 comments plus 2 bug reports**.
+Nexus still showed 0.4.1 (updated August 28) then. The deltas were read in the
+browser because the web cache held fewer, older posts. No reply, moderation or
+publication was done by any census. Public reports name no loaded package hash,
+so none of them is evidence against an unpublished candidate unless it is
+reproduced with its identity recorded.
 
-The [canonical reliability ledger](reliability-2026-09-11.md) contains implementation status, before/after regressions, counts, hashes and all native gates. Public comments remain unresolved as native reports until their specific acceptance cases pass. F22–F24 are internal follow-up findings, not additional public comments; the total stays **65**. Reply drafts are [here](release-replies-0.5.0-draft.md).
+## How to read the rows
 
-## Steam — 52 entries
+Entries include author replies, requests, withdrawn reports and nested replies,
+so 87 entries are not 87 defects. Dates are as displayed; relative timestamps
+were normalized to dates, not invented times. Authors are public display names.
+Paraphrases are short and do not reproduce comments.
+
+Status (as of the 2026-09-11 audit): **A** = matching defect path identified in
+code or visual evidence, native cause pending; **R** = symptom reported,
+reproduction pending; **Q** = request; **C** = context, reply, praise or
+withdrawal. One entry with several symptoms needs several tests. Numeric resets
+must not all be attributed to the proven X serialization defect.
+
+## Finding IDs F01-F24
+
+Moved here from the 2026-09-11 reliability ledger. The IDs are stable; every
+row below and every reply draft keys on them. The last column is the
+2026-09-11 state; the current state is the matching gate in
+[RELEASE-0.5.0.md](RELEASE-0.5.0.md). F22-F24 are internal findings, not public
+comments.
+
+| ID / priority | Finding and evidence | Implementation area | Native gate / status (2026-09-11) |
+| --- | --- | --- | --- |
+| F01 P1 | X becomes nil during 0.4.1 serialization; directly explains loss of X rows. Other numeric resets are not fully explained. CODE-CONFIRMED | Explicit false handling, real Lua round-trips and unrelated-edit regression in store | PERSIST — X regression SIMULATED before/after; native PENDING |
+| F02 P1 | Writers ignore normal write/close failure and remove the old live file before replacement. CODE-CONFIRMED | Checked open/write/close/readback; recoverable generations; bounded dirty retries; accurate save/error state | PERSIST — PENDING |
+| F03 P1 | Editable config lives in replaced Scripts; transient Pal keys and unknown prior state risk incorrect migration | Root config, backed-up migration, durable identity validation; preserve data on update/reinstall | CONFIG — PENDING |
+| F04 P1 | Close permits vanilla handoff, later watchdog forces GameOnly. CODE-CONFIRMED; exact Escape crash cause unproved | Explicit lifecycle and game-thread actions, idempotent close/cancel, generation invalidation, focus ownership | UI — PENDING |
+| F05 P1 | Visibility caches survive hiding; widget reuse does not reparent. Nexus screenshot shows overlapping rules pager | Successful-write-only caches, parent/anchor repair, pagination/edit containers, current-tree resolution | UI — PENDING |
+| F06 P1 | Photo-mode grey box and duplicate/stuck panel REPORTED; native cause unproved | Single owned attachment, closed panel detached, safe reconstruction/teardown, duplicate-load detection | UI — PENDING |
+| F07 P1 | Thresholds gate whole suitability after all configured items reach limits. CODE-CONFIRMED | Label/preserve legacy groups; verified per-output adapter, unsupported creation refused, measured overshoot | PRODUCER — PENDING |
+| F08 P1 | Idle camp returns before permission reconciliation. CODE-CONFIRMED | Apply X edits and release stale restrictions even without demand/caps | SCHED — PENDING |
+| F09 P1 | Held workers/fallback permissions bypass staffing accounting; ranking is not consistently across candidates. CODE-CONFIRMED | Count occupied seats, cap all permission paths, rank candidates with stable ties; separate mode semantics | SCHED — PENDING |
+| F10 P1 | Initial unknown camp/type can remain unrepaired; unknown scope can reach all camps; holds use type-level proxies | Repair records, quarantine unknown scope; ready/occupied/completed/unknown state; assignment-specific retention | SCHED — PENDING |
+| F11 P1 | Manual, research, recycler, cooling/ranching and specialist failures REPORTED; allowed permission alone does not prove work | Verify native assignment/output; respect fixed work; expose conflicts; verify producer/work mappings | SCHED/PRODUCER — PENDING |
+| F12 P1 | Remote ceilings share local durable storage and survive role reset; world-name/session ambiguity. CODE-CONFIRMED | Separate snapshots, session/guild/camp scope, undecided writers at transition, session-bound evidence/callbacks | SESSION — PENDING |
+| F13 P1 | Non-throwing skipped cells count as painted; rapid clicks use old confirmed values; snapshot completion/version validation insufficient | Rendered/skipped/failed outcomes, rebind invalidation, pending edits/coalescing/ack, negotiated revisioned snapshots | SYNC/UI — PENDING |
+| F14 P1 | Multiple-owner/guild routing and unmodded clients' edits need actual verification; reported vanilla undo loop | Preserve authorization, prove write owner/scope, distinguish external vanilla edits from own writes | AUTH/SYNC — PENDING |
+| F15 P1 gate | Missing full timings, fake zero rows, nested sums and inert stress success invalidate earlier broad claims | Complete bounded profiling, measured clocks/windows, inclusive labels, both sinks; request-bound completed-pass harness | PERF/STRESS — PENDING |
+| F16 P1 gate | Continued one-second/periodic stutter REPORTED; collection does not establish another mod as cause | Matched absent/present and profiler off/on frame captures; cold/aged scenes; optimize proven spikes; local viewport gates | PERF — PENDING |
+| F17 P1 gate | Current runtime, clean installs, pak contract and Vortex route unverified; Alt+F2 was misleading panel instruction | Fingerprints, dual deterministic package, Alt+F1 docs, exact dependency, one installation; Vortex only after acceptance | PACKAGE — PENDING |
+| F18 P2 | Stand direct entry/controller requests; priority-order and balanced-mode confusion | Explain 1–5/X and modes; direct keys and controller focus/navigation without removing clicks | INPUT — PENDING |
+| F19 P1 | Guild-chest request and ambiguous broader stock scope; missing data may appear as zero | Visible camp/guild scope, shared storage counted once, known/unavailable stock states | STORAGE — PENDING |
+| F20 P2 | Chat output unclear, UE4SS lines concatenate, sink failures hidden; developer docs contradict evidence | Output to priority.log explained; newline framing and sink failures; replace unsupported claims; aggregate recurring errors | LOG/DOCS — PENDING |
+| F21 deferred | Optional high-quality-stand restriction requested | Keep current access; evaluate only after reliability gates. No implementation in this release scope yet | OPTIONAL — DEFERRED |
+| F22 P1 follow-up | Clearing a guild override exposed shared/configuration ceilings while reporting success. CODE-CONFIRMED during implementation | Guild-local OFF masks and scope/round-trip regression: SIMULATED PASS | Native multi-guild/restart PENDING |
+| F23 P1 follow-up | Actual main CLI rounded fractions, called queued limits set, called failed clear absent, and displayed unknown/unscoped stock as 0 | Four real-main-code regression cases fail before/pass after; verified panel_status scope and legacy labels | SIMULATED before/after; native CLI/sync/storage PENDING |
+| F24 P1 test gate | Final read-only audit found unsafe server wildcard stop, unchecked lifecycle success, missing final stress drain and ignored dry=true marker | Exact process ownership, checked lifecycle, final health drain and actual-mode checks | SIMULATED PASS — 39 focused / 102 full Python tests; native PENDING |
+
+## Steam, audited 2026-09-11 (52 entries)
 
 Source: [all Steam comments](https://steamcommunity.com/sharedfiles/filedetails/comments/3786408856). Individual links use the public comment ID.
 
@@ -73,7 +159,7 @@ Source: [all Steam comments](https://steamcommunity.com/sharedfiles/filedetails/
 | 51 | [583932464793166165](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_583932464793166165) | 2026-08-26 14:34 | Matraweber | Author announces dedicated-server update. | F17 | PACKAGE/AUTH: historical announcement not current proof | C |
 | 52 | [583932464793164785](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_583932464793164785) | 2026-08-26 14:09 | Vik Beilier | Asks about dedicated-server support. | F17/F14 | PACKAGE/AUTH: populated dedicated integration | Q |
 
-## Nexus — 13 entries
+## Nexus, audited 2026-09-11 (13 entries)
 
 Source: [Nexus posts](https://www.nexusmods.com/palworld/mods/5376?tab=posts). IDs identify the exact public posts/replies; the source link opens their thread listing.
 
@@ -93,6 +179,56 @@ Source: [Nexus posts](https://www.nexusmods.com/palworld/mods/5376?tab=posts). I
 | 64 | [174525705](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-08-27 19:22 | fardriel | Positive feedback. | F20 | DOCS: no regression requested | C |
 | 65 | [174491988](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-08-27 02:52 | Siberfox99 | Roughly twelve-second log/tick hitch; suspects runtime logging because other mods can trigger it. | F15/F16/F20 | PERF/LOG: both sinks and runtime controls; cause unproved | R |
 
+## Later entries, 2026-09-13 to 2026-10-09 (66-87, B1-B2)
+
+Numbered after the audited 65. Each delta read only the new entries and the
+boundary entry, not every older comment again; the 2026-10-09 census reread
+everything. The gate column is the current [RELEASE-0.5.0](RELEASE-0.5.0.md)
+gate or Deferred.
+
+| # | Source / ID | Displayed date | Author | Report | Finding | Disposition when read | 0.5.0 gate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 66 | [Steam 569297137117173393](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_569297137117173393) | 2026-09-12 22:27 | Matraweber | Author says repairs are underway. | F20 | Context, not defect evidence. The only new ID in the 2026-09-13 fetch (53 Steam). | G7 |
+| 67 | [Steam 569297443349502462](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_569297443349502462) | 2026-09-15 (7 h before read) | poiman | Icelyn ignores cooling 1 for priority-5 work; fishing pools ignored despite Handiwork 1. | F11 | Separate cooling and fishing cases; permissions or UI numbers do not show the job chosen. | G4 (coolers fixed 2026-10-16; fishing not tested) |
+| 68 | [Steam 569297443349488654](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_569297443349488654) | 2026-09-15 (12 h before read) | Erbse | Steam Deck needed mapped left/right clicks; asks about controller support. | F18 | Native Deck focus/navigation test; desktop keyboard success is not enough. | Deferred (Deck) |
+| 69 | [Steam 569297443349364937](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_569297443349364937) | 2026-09-13 20:21 | tigerpow100 | Cannot change priorities on Steam Deck. | F18 | Same input gate, not a separate confirmed cause. | Deferred (Deck) |
+| 70 | [Nexus post 175442289](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-12 10:35 | DreamFun | X alone resets after loading; other priorities persist. | F01 | Strongly matches the 0.4.1 X serialization defect. | G1 |
+| 71 | [Nexus post 175615590](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-15 07:29 | DSFddaaaa | Asks for Transport default 5; cooking, crafting and generation get interrupted. | F11/F18 | Keep the approved checked=1/unchecked=X default; investigate the scheduling instead. | G4 (generators fixed 2026-10-14) |
+| B1 | [Nexus bug 1133489](https://www.nexusmods.com/palworld/mods/5376?tab=bugs) "Crash To Desktop" | 2026-09-14 | DarkWyrmReaper | Add item / search all items aborts to desktop; suspects the newly added Cosmetic Outfits mod 5049. | F16/F17 | Compatibility reproduction; the interaction is a hypothesis. Still no replies on 2026-10-09. See [search-crash-2026-09-15](search-crash-2026-09-15.md). | **G3, open** |
+| 72 | [Steam comments](https://steamcommunity.com/sharedfiles/filedetails/comments/3786408856) | 2026-09-21 04:09 | Danodan | Clunky behaviour causes more frustration than benefit. | F18 | General usability, not a distinct cause. Prioritise mouse/keyboard workflows and measured latency. | G3/G5 |
+| 73 | Steam | 2026-09-20 19:49 | Erbse | Work settings do not survive restart; unsure when it began. | F01-F03 | Persistence blocker; values unspecified, so not assumed to be X only. | G1 |
+| 74 | Steam | 2026-09-19 10:10 | like | Priorities reset to defaults every login; otherwise fine. | F01-F03 | Same persistence gate, reproduced separately from X-only reports. | G1 |
+| 75 | Steam | 2026-09-19 09:44 | Mithandil de Melkin | Wants Flame Organs, Venom Glands and Pal-specific materials such as Gummos Leaf in limits. | F07 | Catalogue request plus producer-control gate; a visible item is not a safe output control. | Deferred (item-specific limits, Pal-produced materials) |
+| 76 | Steam | 2026-09-18 11:20 | Okami_sama | Adding tasks in the panel stopped other work across the base; mining allowed only one Pal. | F07/F09 | Reproduce with exact rules, mode, worker cap and assignments. | **G4, fixed 2026-10-17** ([evidence](g4-scheduling-2026-10-17-miners.md)) |
+| 77 | Steam | 2026-09-18 10:32 | Okami_sama | Open panel cannot be closed except by restarting the game. | F04/F06 | Corroborates the stuck-panel reports. | G3 (PASS 2026-10-17) |
+| 78 | [Steam 591816835949675692](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816835949675692) | 2026-09-29 | Material Defender | Rationale for running scheduling once after closing a UI. | F15/F16 | Performance suggestion, not proof that repeated passes crash. | Deferred (scheduling after UI close) |
+| 79 | [Steam 591816835949675621](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816835949675621) | 2026-09-29 | Material Defender | Apply deferred scheduling to stand edits too. | F13/F15 | Judge against latency, disconnects and UI teardown; never depend on a close event to persist edits. | Deferred |
+| 80 | [Steam 591816596100673992](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816596100673992) | 2026-09-28 | Material Defender | Wants 1 <-> X cycling wraparound. | F18 | Six-state cycling implemented with regression coverage; mixed-input/controller acceptance open. | done in rc1 (DECISIONS 2026-09-11) |
+| 81 | [Steam 591816596100673837](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816596100673837) | 2026-09-28 | Material Defender | Keep chat commands immediate, coalesce UI changes. | F15 | Same scheduling/latency gate. | Deferred |
+| 82 | [Steam 591816596100673758](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816596100673758) | 2026-09-28 | Material Defender | A changed flag and one pass at panel close. | F15 | Check the existing deferred/coalesced paths before adding a scheduler trigger. | Deferred |
+| 83 | [Steam 591816596100670438](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816596100670438) | 2026-09-28 | Extramrdo | Wants a left/right-click reminder. | F18 | Discoverability follow-up. | Deferred (mouse/pad legend) |
+| 84 | [Steam 591816596100670402](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816596100670402) | 2026-09-28 | Extramrdo | Wants Alt-F1/F2/F3 hints and a priority-order explanation; stuck panel blocks menus; Alt-F1 opens a second panel. | F04/F06/F18 | The candidate legend is source evidence only; duplicate/lifecycle reproduction is a gate. | G3 (PASS 2026-10-17) |
+| 85 | [Steam 591816302688012535](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_591816302688012535) | 2026-09-23 | Two Bob Games | Transport X returns to 1 after restart; priorities seem ignored until edited again. | F01-F03 | Separate serialization/recovery from applying at startup; both must pass. | G1 (PASS 2026-10-11) |
+| 86 | [Nexus 176018241](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-22 | wikidnumb | Wants priorities and production limits as independent components. | F21 | Optional design work; avoid conflicting double installs. | Deferred |
+| 87 | [Nexus 175824555](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-19 | HelpImStupid0 | Transport 5 still dominates primary work 1. | F09/F11 | Needs actual assignment/output; fence membership is not enough. | G4 (PASS 2026-10-12) |
+| B2 | [Nexus bug](https://www.nexusmods.com/palworld/mods/5376?tab=bugs) "Priority list not saving" | 2026-09-18 | johndujo | Previous selections disappear on reload. | F01-F03 | Values unspecified, not assumed X only. Persistence/startup gate. | G1 (PASS 2026-10-11) |
+
+The 2026-09-23 and 2026-10-09 deltas named no finding IDs; those of rows 72-87 were assigned in the 2026-10-20 merge.
+
+Notes from the deltas:
+
+- 2026-09-15: the game showed **1.0.5.102999**, newer than the 1.0.4.102642 of
+  the earlier tests; earlier timing and acceptance did not carry over.
+  [Cosmetic Outfits](https://www.nexusmods.com/palworld/mods/5049) adds
+  craftable NPC outfits for the Antique Wardrobe; it was not installed or
+  tested during the read.
+- 2026-09-23: the raw accessibility excerpt of the six entries is
+  `test-results/steam-comment-delta-20260923.txt` (local). Dates are the page's
+  CEST timestamps; the comment IDs were not recorded for that delta.
+- 2026-09-13: raw response and receipt in
+  `test-results/current-steam-public-20260913.html` and
+  `public-refresh-20260913.json` (local).
+
 ## Linked evidence and its limits
 
 - [Hall9002's screenshot](https://ibb.co/pvTLHFpV) was viewed during the audit: 2560×1600, 16 rules, pager overlapping list rows/amount controls. It corroborates the layout symptom; it does not identify every faulty cache/parent transition.
@@ -103,7 +239,10 @@ Source: [Nexus posts](https://www.nexusmods.com/palworld/mods/5376?tab=posts). I
 
 ## Consolidation and reply tracking
 
-| Report group | Findings | Current reproduction/evidence position | Reply draft |
+The evidence column is the 2026-09-11 position; current results are the gates
+named in the status line at the top.
+
+| Report group | Findings | Evidence position on 2026-09-11 | Reply draft |
 | --- | --- | --- | --- |
 | Lost X / numeric settings / update | F01–F03, F12 | X regression fails actual baseline/passes candidate in isolation; numeric resets, fixed-assignment loss and native migration require distinct tests | Settings and recovery |
 | Escape, stuck/duplicate/grey panels | F04–F06 | Handoff/cache paths identified; native crash and photo/duplicate causes unproved | Panel and input |
@@ -114,4 +253,7 @@ Source: [Nexus posts](https://www.nexusmods.com/palworld/mods/5376?tab=posts). I
 | Install/runtime/key discovery | F17/F20 | Correct Alt+F1 instruction and intended dependency documented; clean routes/current runtime/Vortex unaccepted | Installation |
 | High-quality stand restriction | F21 | Optional request intentionally deferred | Optional access restriction |
 
-Reply drafts are in [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md). **Posting status: none posted by this implementation task.** Update each group only after attaching evidence; do not imply every comment in a group shares a cause or is resolved together.
+Reply drafts are in [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md)
+and are rewritten against the final build under gate G7. **Posting status: none
+posted.** Update a group only after attaching evidence; do not imply that every
+comment in a group shares a cause or is resolved together.

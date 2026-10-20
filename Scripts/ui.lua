@@ -700,8 +700,8 @@ local COLOUR = {
     --
     -- Removed rather than left looking implemented. Marking a capped column is
     -- a design job with real risk - it means injecting into vanilla header
-    -- widgets - and it is recorded as an open item in docs/audit-2026-08-26.md
-    -- rather than half-present here.
+    -- widgets - and it is recorded as an open item in the Deferred list of
+    -- docs/RELEASE-0.5.0.md rather than half-present here.
 }
 
 local function colour_for(prio)

@@ -1,4 +1,11 @@
+---
+date: 2026-09-29
+tags: [network, multiplayer]
+status: evidence
+---
 # Broadcast lifetime safety — September 29
+
+Related: [transmitter-first-2026-09-29](transmitter-first-2026-09-29.md) · [edit-latency-root-cause-2026-09-29](edit-latency-root-cause-2026-09-29.md)
 
 Removing the second roster build was deferred: a plain row can become stale
 through membership/capability or effective-priority changes during native

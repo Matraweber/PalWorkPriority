@@ -20,7 +20,7 @@ Protects saved choices, reports incomplete edits and unavailable data accurately
 - Budget icon loads between attempts, space picker-fill continuations and release temporary texture references after failed refreshes.
 - Remove automatic startup icon diagnostics. Native restart/frame-time acceptance remains required; menu/camp sweeps and individual native-call spikes remain.
 
-See the [performance inventory, regression evidence and remaining limits](docs/performance-bundle-2026-09-13.md).
+See the [performance inventory, regression evidence and remaining limits](docs/g5-performance-2026-10-19.md).
 
 ### October 9 follow-through
 
@@ -94,7 +94,7 @@ Complete native assignment acceptance remains open, including missing Pal actors
 - Build matching Workshop/manual archives from one reviewed source/asset contract and exclude user data/developer triggers.
 - Correct panel discovery to **Alt+F1** and explain command output in **priority.log**.
 
-The complete isolated Lua/UI and Python suites pass, including server process-ownership checks, final stress health checks and actual dry-run validation. Detailed results, exact baseline failures, hashes and remaining native gates are in the [reliability ledger](docs/reliability-2026-09-11.md). No performance, installation or current-runtime acceptance is implied.
+The complete isolated Lua/UI and Python suites pass, including server process-ownership checks, final stress health checks and actual dry-run validation. Detailed results, exact baseline failures, hashes and remaining native gates are in the [reliability ledger](docs/RELEASE-0.5.0.md). No performance, installation or current-runtime acceptance is implied.
 
 ## 0.4.1 — published August 28, 2026
 

@@ -1,6 +1,21 @@
-# Current widget contract — September 23, 2026
+---
+date: 2026-09-23
+tags: [panel, stand-ui, tooling]
+status: current
+---
+# Widget contract and pak build
 
-The historical design notes below describe an obsolete 12-widget shell. They are retained as history, **not build instructions**. The current generator and `Scripts/overlay.lua` require 21 named widgets:
+Related: [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md) · [editor-escape-2026-09-23](editor-escape-2026-09-23.md) · [panel-cursor-2026-09-23](panel-cursor-2026-09-23.md)
+
+The current contract of the mod's own cooked widgets, how the stand roster is
+found in the game's own widgets, and the toolchain that builds the pak.
+`docs/asset-contract.json` names this file as its contract reference
+(WorkRules `PWP_InputContract` 3, StandInput `PWP_Contract` 2), and
+`tools/release.py` checks the shipped pak against that JSON.
+
+## Current widget contract (WorkRules contract 3, StandInput contract 2)
+
+The current generator and `Scripts/overlay.lua` require 21 named widgets:
 
 - Root (CanvasPanel), Backdrop (Border), Body (VerticalBox).
 - TabsRow, TitleRow, SubRow, NoticeRow, SearchRow, CaptionRow, HeadRow: SizeBox containers holding same-prefix CanvasPanels (Tabs, Title, Sub, Notice, Search, Caption, Head).
@@ -9,100 +24,146 @@ The historical design notes below describe an obsolete 12-widget shell. They are
 
 The row heights are 34, 34, 26, 22, 40, 24, 28, and 76 respectively. Backdrop defaults to centre anchors/alignment, a 1086 × 700 placeholder, RGBA (0.03, 0.05, 0.08, 0.92); Body padding is 18. Lua supplies the final preferred position, size and controls. Search is a container, not the editable control itself. All 21 widgets are exposed as generated-class properties; `GetWidgetFromName` is not the runtime lookup contract.
 
-The action-router candidate uses the shipped PalUserWidget parent, PWP_InputContract=3, PWP_CancelRequested=false and bIsFocusable=true. Blueprint registers the consuming RadialMenuCancel action with an engine-bound callback; no delegate is passed by value through Lua. The callback only sets the request. Lua verifies registration was attempted and the widget is active, acknowledges/cancels through the current callback's widget, and deactivates before detachment. Contract 3 adds the engine-owned PWP_AmountEditor reference and PWP_EditorEscapeHeld boolean for focused-editor Escape preview/release handling. Normal edit cancellation returns focus only when that editor owns it; teardown never requests refocus. The native Pal widget's GameMouseCaptureMode is set and verified as NoCapture before activation. See [editor Escape evidence](editor-escape-2026-09-23.md). Generic Slate-only handling (the rejected contract 1) did not isolate ordinary panel Escape; contract 3 retains CommonUI for that path. Physical held-key/controller acceptance remains separate.
+The action-router candidate uses the shipped PalUserWidget parent, PWP_InputContract=3, PWP_CancelRequested=false and bIsFocusable=true. Blueprint registers the consuming RadialMenuCancel action with an engine-bound callback; no delegate is passed by value through Lua. The callback only sets the request. Lua verifies registration was attempted and the widget is active, acknowledges/cancels through the current callback's widget, and deactivates before detachment. Contract 3 adds the engine-owned PWP_AmountEditor reference and PWP_EditorEscapeHeld boolean for focused-editor Escape preview/release handling. Normal edit cancellation returns focus only when that editor owns it; teardown never requests refocus. The native Pal widget's GameMouseCaptureMode is set and verified as NoCapture before activation ([panel-cursor-2026-09-23](panel-cursor-2026-09-23.md)). See [editor Escape evidence](editor-escape-2026-09-23.md). Generic Slate-only handling (the rejected contract 1, an OnPreviewKeyDown handler) did not isolate ordinary panel Escape; contract 3 retains CommonUI for that path.
 
-Back up editor assets and installed packages before rebuilding. Verify all 21 names/types, graph connections, compilation, defaults and compiled-event tests, followed by a fresh-process `-VerifyInputOnly` readback. Package only the intended widget plus the existing verified ModActor; exclude experimental assets. The editor module is a build tool, not a runtime dependency. Native acceptance (editing, closing, vanilla focus and text input after a restart) is recorded in `native-escape-2026-09-16.md` and remains required after a successful cook.
+Why the Blueprint owns the binding: BreedingHelper's earlier attempt to pass the action delegate by value from Lua crashed natively, and a raw UE4SS key observer that deactivates a widget before the game's router consumes the key leaks Escape to the menu underneath. The local Pal kit has stub implementations of these functions, so an editor run cannot prove Palworld's input consumption; only a native test can.
+
+StandInput (`WBP_StandInput_C`, `PWP_Contract` 2) is the per-cell receiver on the Monitoring Stand. It handles number keys in its own native OnKeyDown event and leaves Escape unhandled for the game's parent route. Details and acceptance: [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md), [stand-pointer-2026-09-24](stand-pointer-2026-09-24.md).
+
+Back up editor assets and installed packages before rebuilding. Verify all 21 names/types, graph connections, compilation, defaults and compiled-event tests, followed by a fresh-process `-VerifyInputOnly` readback. Package only the intended widgets plus the existing verified ModActor; exclude experimental assets. The editor module is a build tool, not a runtime dependency. Native acceptance (editing, closing, vanilla focus and text input after a restart) is recorded in [editor-escape-2026-09-23](editor-escape-2026-09-23.md) and, for the release candidate, [g3-escape-photo-death-2026-10-17](g3-escape-photo-death-2026-10-17.md) and [g3-panel-2026-10-17](g3-panel-2026-10-17.md); repeat it after every new cook.
+
+## Stand roster scope (the game's own widgets)
+
+The Monitoring Stand grid lives in the game's menu, not in our pak, so Lua has
+to find it. Two rules came out of the September 11-12 native failures:
+
+- **Search only the menu's own tree, down to its one named roster.** The
+  captured path is `CanvasPanel_18 → CanvasPanel_82 → CanvasPanel_PalList →
+  WBP_PalCommonScrollList_PalList` (class `WBP_PalCommonScrollList_C`), whose
+  tree holds `ScrollBox_0` and the Pal rows. `ui_tree.stand_cells` first finds
+  exactly one such roster by name and class in the current menu owner's
+  panel-child edges (512 visits), then walks only that roster (its own
+  4000-visit limit). Missing, unreadable or
+  ambiguous scopes refuse; nothing is guessed.
+- **Never walk another widget's private WidgetTree** during owner discovery,
+  whatever its class suffix. On 2026-09-12 the whole menu was refused because
+  the walk reached an input prompt (`Overlay_Guide_Change →
+  WBP_PalKeyGuideIcon_C`, class `PalUIActionWidgetBase`) outside the roster;
+  a bigger traversal budget could not have fixed that (1990 of 4000 visits).
+- **`BP_PalTextBlock_C` is a terminal leaf.** The reader's generic "`_C` is a
+  container" rule rejected it on 2026-09-11 and every stand refresh came back
+  unavailable (88 of 88). It is now recognised as a leaf before that rule;
+  CheckBox content is still traversed, and unknown classes such as
+  `PalUIActionWidgetBase` still refuse. Test fixtures had given every widget a
+  child-count method, which is what hid the mismatch.
+
+No engine wrapper survives the call; the roster is resolved fresh each time
+(see LESSONS, "A stored engine object is a use-after-free").
+
+## Build toolchain (pak)
+
+Moved from the former overlay plan. These versions are pinned: the Palworld
+modding kit will not compile against anything else, and letting Unreal upgrade
+the project breaks plugins and serialization.
+
+| | Version | Where |
+| --- | --- | --- |
+| Unreal Engine | 5.1, any 5.1.x (5.1.1 installed at `D:\Program Files (x86)\Epic Games\UE_5.1`) | Epic Games Launcher |
+| Visual Studio | 2022, workload "Desktop development with C++" | visualstudio.microsoft.com |
+| MSVC | v143 14.38.33130 (VS 2022 C++ x64/x86 build tools v14.38-17.8) | VS installer, Individual Components |
+| .NET | 6 runtime, x64 | dotnet.microsoft.com |
+| .NET Framework | 4.8.1 Developer Pack | `winget install Microsoft.DotNet.Framework.DeveloperPack_4` |
+| Wwise | 2021.1.x with SDK (C++); 2021.1.11.7933 installed | Audiokinetic Launcher, free account |
+| Modding kit | github.com/localcc/PalworldModdingKit, cloned to `Desktop\PalworldModdingKit` | `Pal.uproject` says `EngineAssociation: 5.1` |
+
+Palworld reports engine 5.1 in UE4SS's own boot log. The kit compiled here
+(`PalEditor Win64 Development`, 315 of 315 steps, under three minutes once the
+two traps below were fixed).
+
+**Pin the compiler.** UnrealBuildTool takes the newest toolchain it finds. With
+Visual Studio 2026 also installed it picked 14.50, which UE 5.1 predates, and
+failed with `ConcurrentLinearAllocator.h(29): error C4668: '__has_feature' is
+not defined as a preprocessor macro`. The pin lives in
+`%APPDATA%\Unreal Engine\UnrealBuildTool\BuildConfiguration.xml` (current
+content, checked 2026-10-20):
+
+    <?xml version="1.0" encoding="utf-8" ?>
+    <Configuration xmlns="https://www.unrealengine.com/BuildConfiguration">
+      <VCProjectFileGenerator>
+        <Version>VisualStudio2022</Version>
+      </VCProjectFileGenerator>
+      <WindowsPlatform>
+        <Compiler>VisualStudio2022</Compiler>
+        <CompilerVersion>14.38.33130</CompilerVersion>
+        <ToolchainVersion>14.38.33130</ToolchainVersion>
+      </WindowsPlatform>
+    </Configuration>
+
+**Install the .NET Framework Developer Pack, not only .NET 6.** Without
+`NETFXSDK` UnrealBuildTool stops before compiling anything: `Unable to
+instantiate module 'SwarmInterface': Could not find NetFxSDK install dir`.
+The standalone winget pack is easier than the VS installer component, which
+needs an elevated shell and otherwise refuses with exit 5007.
+
+**Wwise is required although the mod ships no audio.** `Wwise` is one of the
+46 plugins in `Pal.uproject` and `Source/Pal/Pal.Build.cs` depends on
+`AkAudio`; the kit ships no `Plugins/Wwise`. The launcher no longer lists old
+2021 patches; any 2021.1.x works (same major). Do not source a delisted build
+from a mirror (licence problem, unverifiable binary); ask Audiokinetic support.
+Install it before opening the project, then integrate by hand from offline
+files:
+
+1. Install Wwise 2021.1.x with **SDK (C++)** ticked.
+2. Launcher, **Unreal Engine** tab, **Download**, **Offline Integration
+   Files**. That gives `Unreal.5.0.tar.xz`; unpack it twice (`.xz`, then `.tar`).
+3. Copy the `Wwise` folder into `PalworldModdingKit/Plugins/`.
+4. Make `Plugins/Wwise/ThirdParty` and copy `Win32_vc170`, `x64_vc170` and
+   `include` from the SDK into it.
+5. Duplicate both `vc170` folders as `vc160` (the kit builds against the older
+   toolset name).
+6. In `Wwise.uplugin` change `EngineVersion` from `5.0.0` to `5.1`.
+
+**No Unreal MCP server supports UE 5.1** (checked: official Unreal MCP 5.8+,
+chongdashu/unreal-mcp 5.5+ and states 5.1 unsupported, UEBlueprintMCP 5.7+,
+unreal-blueprint-mcp 5.4), and the kit must not be upgraded, so the editor is
+driven by our own commandlets. UE 5.1 does not expose `WidgetTree` (nor
+`ParentClass`/`GeneratedClass`) to Python (probed in `tools/ue_probe2.py`), but
+C++ can, so `unreal/PalWidgetGen` builds the trees headless:
+
+    Build.bat PalEditor Win64 Development
+    UnrealEditor-Cmd.exe Pal.uproject -run=BuildWorkRulesWidget        (and -run=BuildStandInputWidget)
+    UnrealEditor-Cmd.exe Pal.uproject -run=... -VerifyInputOnly        fresh-process readback
+    UnrealEditor-Cmd.exe -run=Cook -TargetPlatform=Windows ...
+    python tools/pak_mod.py [--stage]                                  pak (and install)
+
+Cooking: assets under `Content/Mods/PalWorkPriority/` with a Blueprint Actor
+named `ModActor` (the name UE4SS matches; it exists only so the pak counts as
+a LogicMod), a Primary Asset Label with a unique **nonzero** chunk ID (zero is
+the base game's chunk and gives no separate pak), check the chunk holds only
+our assets, name the pak `PalWorkPriority.pak`, keep any `.ucas`/`.utoc`, and
+install it in `Pal/Content/Paks/LogicMods/`. In the in-pak paths
+`/Game/Mods/PalWorkPriority` appears as `../../../Pal/Content/Mods/PalWorkPriority`
+(see `tools/pak_mod.py`). UE4SS loads Blueprint mods only with
+`BPModLoaderMod : 1` and `BPML_GenericFunctions : 1` in `mods.txt`. Then
+update `docs/asset-contract.json` (hash, size, member hashes, contract
+versions) or `tools/release.py` refuses the pak.
 
 ---
 
-# Historical prototype notes (superseded)
+# History (superseded design notes)
 
-# The widget, exactly
-
-What to build in the editor. Names are load-bearing: Lua finds every one of
-these with `GetWidgetFromName`, so a typo is a silent nil rather than an
-error.
-
-## Why this is a shell and not a finished panel
-
-Unreal 5.1 does not expose `WidgetBlueprint`'s editor properties to Python.
-Not `WidgetTree`, and not `ParentClass` or `GeneratedClass` either, so a
-script can create the asset and nothing more. Probed rather than assumed, in
-`tools/ue_probe2.py`.
-
-That settles the division of labour, and in our favour:
-
-**The blueprint is a shell.** A backdrop, a title, a search box, and three
-empty containers. No blueprint graph at all, no variables, no functions, no
-events. It is a layout and nothing else, which is the one thing the editor is
-better at than code.
-
-**Lua fills it.** Rows are constructed and added at runtime, exactly as the
-current panel already does successfully. That code works and is keeping the
-mod usable today; it just needs a host it owns rather than one the game
-rebuilds underneath it.
-
-This also drops the earlier contract of `AddRule`, `OnItemChosen` and the
-rest. Those needed blueprint functions and custom events, which is graph work,
-and none of it is necessary if Lua owns the widgets directly.
-
-## What it fixes
-
-Both of the current panel's real problems, and only these two:
-
-- **Lifetime.** We create the widget and add it to the viewport, so nothing
-  destroys it under us. Two crashes came from injecting into the HUD, which
-  is rebuilt as its own state changes.
-- **Focus.** An `EditableTextBox` inside a widget we own can take keyboard
-  focus, so search can be typed. An injected one never could, which is why
-  the picker pages instead of filtering.
-
-## Assets
-
-    Content/Mods/PalWorkPriority/
-      ModActor                  Blueprint Actor, empty graph
-      UI/WBP_WorkRules          the shell below
-
-`ModActor` exists only so UE4SS recognises the pak as a LogicMod. It does
-nothing and needs nothing in it.
-
-## WBP_WorkRules
-
-Parent class `UserWidget`. Plain, not one of the Pal types: nothing here
-needs the game's HUD behaviour, and a plain widget is one less thing to be
-surprised by.
-
-    [CanvasPanel]  Root
-      [Border]  Backdrop
-          anchors: centre, size 900 x 700, alignment 0.5 / 0.5
-          Brush Color: 0.03, 0.05, 0.08, alpha 0.92
-        [VerticalBox]  Body
-            padding 18 on all sides
-          [TextBlock]      Title          "WORK RULES", size 24
-          [EditableTextBox] Search        hint "search items"
-          [ScrollBox]      RuleList       fill vertically
-          [ScrollBox]      ItemList       fill vertically, Visibility Collapsed
-          [HorizontalBox]  Actions
-            [Button] NewRuleButton    with a [TextBlock] "new rule" inside
-            [Button] CloseButton      with a [TextBlock] "close" inside
-
-Nine named widgets. `RuleList` and `ItemList` are separate so switching
-between the rules and the picker is a visibility flip rather than a rebuild,
-and `ItemList` starts collapsed because the panel opens on the rules.
-
-Set `Is Variable` on every named widget. Without it the name is not kept in
-the compiled class and `GetWidgetFromName` returns nothing.
+Not build instructions. The first design was a 9-widget shell, then 12; the
+21-widget contract above replaced both, and the overlay plan's Blueprint
+functions and events (`AddRule`, `OnItemChosen` and the rest) were never built.
+What is kept here is what code still relies on.
 
 ## Getting the class, which is not LoadAsset
 
-Proven, and worth writing down exactly, because four wrong answers came first.
-
-    2026-08-21  WBP_WorkRules_C  WidgetBlueprintGeneratedClass
-                /Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C
-
-`LoadAsset` does not reach anything in a mod pak, in any spelling. The route
-is the asset registry, which is what BPModLoaderMod uses on the ModActor in
-this very pak:
+Proven on 2026-08-21 (`WBP_WorkRules_C`, a WidgetBlueprintGeneratedClass at
+`/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C`) after four wrong
+answers. `LoadAsset` does not reach anything in a mod pak, in any spelling. The
+route is the asset registry, which is what BPModLoaderMod uses on the ModActor
+in this very pak:
 
     local data = {
         PackageName = UEHelpers.FindOrAddFName(
@@ -127,47 +188,27 @@ has never seen it, and a name out of a mod's own pak is exactly that.
 `ModActor_C` resolving instantly is not evidence any of this is unnecessary.
 It resolves instantly because BPModLoaderMod loaded it seconds earlier, which
 is why it makes such a good control and such a misleading example.
+(`Scripts/panel.lua` points at this paragraph.)
 
-## What Lua does with it
+## Why a widget we own
 
-Constructs one, adds it to the viewport, and from then on treats it as the
-current panel treats its own overlay.
+Every early panel problem came from injecting into widgets the game owns: two
+crashes from injecting into the HUD (rebuilt as its own state changes), a
+duplicate that drew itself twice, keys that never fired. A widget we create and
+add to the viewport is not destroyed under us, and an editable text box inside
+it can take keyboard focus, which is what search needs. Set `Is Variable` on
+every named widget, or the name is not kept in the compiled class.
 
-    -- overlay.mod_class(package, asset, function(class) ... end)
-    -- construct, AddToViewport
-    local list = panel:GetWidgetFromName(FName("RuleList"))
-    -- construct TextBlocks into `list`, exactly as panel.lua already does
+For a while the panel drew everything onto a runtime-constructed canvas and
+needed no pak (a UserWidget built at runtime with its own WidgetTree and
+CanvasPanel root does appear and is ours). That stopped being enough once the
+chrome moved into named rows: without the pak `use_row` fails for all seven
+rows and the header collapses onto one line. The README now treats a missing
+pak as a dependency failure, not a working fallback panel.
 
-Clicks keep working the way they already do, through `IsHovered` and the
-mouse binding in `ui.bind_mouse`. That path is proven and does not depend on
-the input mode switch that has never succeeded.
-
-Search is the one genuinely new thing, and the only part that needs the
-widget to exist: read `Search`'s text each tick and filter, which is what
-`items.search` has been waiting for.
-
-## Cooking
-
-1. Primary Asset Label in `Content/Mods/PalWorkPriority/`, unique nonzero
-   Chunk ID. Zero is the base game's chunk and produces no separate pak.
-2. Cook, confirm the chunk holds these two assets and nothing else.
-3. Rename the pak to `PalWorkPriority.pak`.
-4. `Pal/Content/Paks/LogicMods/`, alongside the five already there.
-
-## Building it, which is all in code
-
-No UMG designer at any point. Unreal 5.1 does not expose WidgetTree to Python,
-but C++ has no such restriction, so a commandlet builds the tree instead:
-
-    unreal/PalWidgetGen                       the module, see its README
-    Build.bat PalEditor Win64 Development     four seconds
-    UnrealEditor-Cmd.exe -run=BuildWorkRulesWidget
-    UnrealEditor-Cmd.exe -run=Cook -TargetPlatform=Windows -CookDir=...
-    python tools/pak_mod.py                   pak and install
-
-## Build it empty first
-
-Put the shell together, give it a coloured backdrop and a title, and cook it
-before anything else exists. If that pak loads and the panel appears on
-screen, the whole route is proven and everything after is ordinary work in
-Lua, which is where the mod already lives.
+Making Python able to fill a widget tree would take a small editor-only
+UBlueprintFunctionLibrary over `UWidgetTree::ConstructWidget`/`FindWidget` and
+`FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified` (Build.cs:
+`UMGEditor`, `UnrealEd`, editor targets only). No plugin offers it (the UMG
+Templates plugin is palette categories, GraphDeck a separate tool). It was not
+built because the C++ commandlets do the job.

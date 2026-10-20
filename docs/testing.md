@@ -1,24 +1,37 @@
+---
+date: 2026-10-20
+tags: [testing, tooling]
+status: current
+---
 # Reliability candidate testing
 
-Target: **0.5.0-rc1, unpublished**. This is the acceptance protocol, not a statement that it passed. The [reliability ledger](reliability-2026-09-11.md) owns gate status; the [comment ledger](comment-ledger-2026-09-11.md) links reports to those gates.
+Related: [frame-capture-procedure-2026-10-09](frame-capture-procedure-2026-10-09.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md) · [LESSONS](LESSONS.md)
+
+Target: **0.5.0-rc1, unpublished**. This is the acceptance protocol, not a statement that it passed. Gate status and the evidence for each closed gate are in [RELEASE-0.5.0.md](RELEASE-0.5.0.md); the backlog beyond 0.5.0 is in [release-gates-2026-10-09.md](release-gates-2026-10-09.md); the [comment ledger](comment-ledger-2026-09-11.md) maps public reports and finding IDs F01-F24 to those gates. What counts as evidence is also in [LESSONS.md](LESSONS.md).
 
 ## Current evidence
 
-The latest stand search breakdown is in [stand tree phases](stand-tree-phases-2026-09-13.md): two restarted native windows isolate row ownership and checkbox traversal. This is diagnostic evidence, not a stutter fix or completion of the reliability gates.
+One note per gate run, each with its build, steps and raw receipts:
 
-Use the [canonical reliability ledger](reliability-2026-09-11.md) for this task's completed runs, exact baseline failures, artifacts/hashes and pending gates. The full Lua/UI and Python suites pass, including explicit-false render handling and the server/stress safeguards. This document defines how to test; the [evidence record](implementation-evidence-2026-09-11.json) records the tested source and results.
+- G1 settings: [restart-persistence-2026-10-11](restart-persistence-2026-10-11.md) (singleplayer and server restarts, rapid edits), [upgrade-041-2026-10-11](upgrade-041-2026-10-11.md) (0.4.1 upgrade, manual route).
+- G3 frontend: [g3-panel-2026-10-17](g3-panel-2026-10-17.md), [g3-layout-2026-10-17](g3-layout-2026-10-17.md), [g3-escape-photo-death-2026-10-17](g3-escape-photo-death-2026-10-17.md); still open: [search-crash-2026-09-15](search-crash-2026-09-15.md).
+- G4 scheduling: [g4-scheduling-2026-10-12](g4-scheduling-2026-10-12.md), [-10-14-stations](g4-scheduling-2026-10-14-stations.md), [-10-16-coolers](g4-scheduling-2026-10-16-coolers.md), [-10-17-miners](g4-scheduling-2026-10-17-miners.md).
+- G5 performance: [g5-performance-2026-10-19](g5-performance-2026-10-19.md) (matched mod-present vs mod-absent baseline, rounds 1-3), capture method in [frame-capture-procedure-2026-10-09](frame-capture-procedure-2026-10-09.md).
+- G6 multiplayer: [g6-guild-isolation-2026-10-19](g6-guild-isolation-2026-10-19.md), [g6-version-mismatch-2026-10-19](g6-version-mismatch-2026-10-19.md); priority edit across a server restart in restart-persistence-2026-10-11.
+
+The full Lua/UI and Python suites are run before every deploy (below). They establish the tested model only.
 
 ## Evidence rules
 
 Record a regression failing on the relevant earlier code and passing on the candidate. Isolated Lua/Python tests establish behavior of the tested model and mocked engine contracts only. They cannot prove Unreal object lifetime, focus, native API safety, actual assignment, output or frame-time performance.
 
-The following are insufficient alone: a command sent, echo received, live process, route counter, displayed number, permission-set membership, steady tick cadence or no logged errors. A count-only row printed as `0 ms` in old reports is **unmeasured**. Do not derive speedups from it.
+The following are insufficient alone: a command sent, echo received, live process, route counter, displayed number, permission-set membership, steady tick cadence or no logged errors. A count-only row printed as `0 ms` in old reports is **unmeasured**. Do not derive speedups from it. For scheduling, judge by the Pal's Current Task and by output (RELEASE G4); `tools/sample_assignments.py` samples the census read-only.
 
-August evidence applies to that saved runtime and observed cases. It does not certify the September dependency or candidate. Earlier “stutter-free”, “zero-cost” and “a crash costs nothing” descriptions are withdrawn as acceptance claims.
+August evidence applies to that saved runtime and observed cases. It does not certify the September dependency or candidate. Earlier “stutter-free”, “zero-cost” and “a crash costs nothing” descriptions are withdrawn as acceptance claims. The August empty-field test kept two camps loaded, so its no-camp branch was never exercised; do not generalise it.
 
 ## Read-only identity and frame-analysis tools
 
-Identity observations and their local JSON artifacts are recorded only in the [ledger](reliability-2026-09-11.md#installed-identity-snapshot--not-a-native-test). A file installed on disk or an old log banner does not establish what is running. Ignored test artifacts must not ship.
+A file installed on disk or an old log banner does not establish what is running. Record the loaded build (fingerprint) for every gate run. Ignored test artifacts must not ship.
 
 ```powershell
 python tools/fingerprint.py --help
@@ -41,7 +54,7 @@ python tools/analyze_frames.py after.csv --metadata after.json --events events.c
 
 Compare by `mod_build` or `profiling` while other required metadata matches. Optional event CSV is `time_s,event` and requires explicit clock mapping: schema/capture ID, event and frame clock names, scale, offset_s, uncertainty_ms, valid_frame_interval_s and alignment_method. Mapping is `frame_time = event_time * scale + offset`, within the declared validity interval; Lua os.clock is never assumed equal to the capture clock. Temporal proximity is not causation.
 
-Missing primary capture or required baseline-frame input is refused; the baseline-missing refusal is fixture-tested. No capture input produces an explicit missing-capture result. Exit 2 denotes missing/invalid/unmatched requested input; exit 0 means analyzed, **not stutter-free**. Help/schema fixture tests in [test_fingerprint.py](../tests/test_fingerprint.py) and [test_analyze_frames.py](../tests/test_analyze_frames.py) were exercised. **Independent captures now exist:** see [the September 11 stand report](stand-capture-2026-09-11.md). They show recurring long frames with a broken stand; mod-absent and native acceptance comparisons remain pending. Consolidated automated test totals are recorded in the implementation evidence.
+Missing primary capture or required baseline-frame input is refused; the baseline-missing refusal is fixture-tested. No capture input produces an explicit missing-capture result. Exit 2 denotes missing/invalid/unmatched requested input; exit 0 means analyzed, **not stutter-free**. Help/schema fixture tests in [test_fingerprint.py](../tests/test_fingerprint.py) and [test_analyze_frames.py](../tests/test_analyze_frames.py) were exercised. Recording itself is covered under "Frame captures" below.
 
 ## Before any game run
 
@@ -53,8 +66,11 @@ Missing primary capture or required baseline-frame input is refused; the baselin
 - [ ] Compare the active Workshop package's Version/DebugMode against ManagedMods before manual staging. A pending official-loader update can overwrite checked Lua on launch. Preserve user configuration before any such update, and verify the final candidate again after the loader runs; a pre-launch hash alone is insufficient.
 - [ ] Keep `EnableAutoReloadingLuaMods = 0`; do not use Ctrl+R. Never deploy or hot reload during a measurement window. Record a deployment as pending restart, not as the running build.
 - [ ] Preserve logs/crash artifacts before another launch rotates them. A boot banner is not world readiness.
+- [ ] Read the in-game options (`Mods/shared/PalWorkPriority_user.lua`) and save a copy of priorities/caps/config; diff them after every UI test (see LESSONS).
 
-The August log identifies UE4SS `c838a8ac`; the September dependency advertised `2281fa31`. The intended distribution is [Experimental UE4SS for Palworld](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587). September 11 startup now observes `2281fa31` and the mapped runtime path; see the ledger's startup-isolation record. **Gameplay compatibility is not yet accepted.** Verify the loaded process, not merely the advertised dependency. A frontend PWP_READY/session 0 is not proof of gameplay-world readiness.
+The August log identifies UE4SS `c838a8ac`; the September dependency advertised `2281fa31`. The intended distribution is [Experimental UE4SS for Palworld](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587). On 2026-09-11 the first launch applied a pending official-loader update that recopied 0.4.1 over the candidate and updated UE4SS to 2281fa31 (on-disk SHA-256 `21b691a69a20c0801f465369d4fcbca7d7444764022fac2a7e8edc7709ef92b8`). **Gameplay compatibility is not yet accepted.** Verify the loaded process, not merely the advertised dependency. A frontend PWP_READY/session 0 is not proof of gameplay-world readiness.
+
+**MapCollectablesNative is disabled on the test client.** On 2026-09-11 the client crashed twice before world entry, both faults at `MapCollectablesNative/dlls/main.dll + 0x1232F` (reading `0x1C0`, matching stack hashes), once without the candidate loaded. That names the faulting module, not the bug. It was isolated by renaming only its activation marker `enabled.txt` to `enabled.txt.pwp-test-disabled-20260911`; it had started through that marker although it was not in ActiveModList. On 2026-10-20 the D: install still has the renamed marker (and no `dlls` folder). Restore it only with the game stopped and when deliberately testing that combination.
 
 ## Offline regressions
 
@@ -101,37 +117,81 @@ A passing script does not close every branch of a gate. Attach exact tests/outpu
 
 ## Developer channel and restarts
 
-User preference reaffirmed September 13: use the documented Desktop AHK restart workflow for checked changes and continue the native correctness/performance retest without asking again for each sample. Verify process replacement, gameplay readiness, installed hashes and visible stand state after playback; its fixed timing can miss the final opening. The existing checked restart derivative and held-V opening helper are recorded in [the roster retest](roster-read-retest-2026-09-13.md). Do not classify a closed-stand capture as an open-stand comparison. Keep repeated measurements and unresolved behavior in the evidence record rather than treating a successful launch as acceptance.
+Testing is automated and self-serve (DECISIONS "Testing"): the macros below restart the game and open the stand, `tools/remote.py` drives the running game, and nobody is asked to click. Verify process replacement, gameplay readiness, installed hashes and the visible stand after every restart. Do not classify a closed-stand capture as an open-stand comparison.
 
 User workflow preference (September 12): stage checked Lua changes while the game remains open, then let the user restart to activate them. Before staging, verify automatic reload was disabled for the running session, measurements are finished, and the changed modules are already loaded rather than read dynamically. Preserve previous code/configuration and verify deployed hashes. Do not trigger a reload. Runtime DLL/pak replacement, dynamic file readers, or an active automatic loader require a separate assessment; this preference is not evidence that every file can safely be replaced while running. After restart, verify the actual loaded generation before collecting acceptance evidence.
 
-`tools/remote.py` sends instructions through `<mod>/remote.txt`. The channel is opt-in at startup: that file must exist **before** the game starts. Creating it later does not enable polling in that process. Keep it out of releases.
+### Singleplayer macro: `tools/restart-stand.ahk`
 
-Use `--no-deploy` against an already checked build:
+Start in gameplay at the Monitoring Stand with its grid open (default `--stand`). The macro closes the stand, takes Return to Title (the normal save path) and Quit, waits up to 60 s for the old PID to exit, launches the game, clicks through Mods Detected / Start Game, picks the **first** world in the list and Start Game (never Delete World), waits up to 150 s for a fresh `PWP_READY ... session=N` (N ≥ 1) after its own log offset, waits 12 s more for the loading fade, then holds V for 850 ms to open the stand.
+
+| Mode | Use |
+| --- | --- |
+| `--stand` (default) | at the stand, grid open |
+| `--world` | in gameplay, stand grid closed |
+| `--title` | already on the title menu |
+| `--launch` | game closed (refuses if a Palworld process exists) |
+| `--open-only` | already facing the stand: only hold V, no restart, no checks |
+| `--return-title-only` | stand open: normal Return to Title, then stop (no quit or relaunch) |
+| `--check` | config/syntax only: exit 0 when the game exe and priority.log exist, else 2 |
+| `-select` suffix (`--stand-select`, `--world-select`, `--title-select`, `--launch-select`) | stop at world selection; pick the intended world by name. Needed for multi-world tests: the list order follows last-played time |
+| `-absent` suffix (same four) | PalWorkPriority removed for G5 mod-absent captures: no priority.log, so readiness is a fixed 60 s wait after Start Game |
+
+The two suffixes cannot be combined. Calibration is window-relative (1280x720 reference, `CoordMode Client`): the game must be **one** 16:9 window of at least 800x450, any monitor. The macro never force-kills the game and never edits saves; Pause or Scroll Lock aborts it, and on exit it releases only a key it is holding. Each run appends to `restart-stand-last-run.log` next to the script (ignored by git). Exit codes: 0 finished, 1 stopped (with a message box and a `STOPPED:` line), 2 bad mode or failed `--check`. A first world that is not the intended save, or a character not at the stand, makes it act on the wrong thing.
+
+### Dedicated-server macro: `tools/restart-server-stand.ahk`
+
+Same modes as the singleplayer macro except `--return-title-only`, `-select` and `-absent`; it adds `--self-test` (9 readiness-classification cases). Start at the stand with the grid open. After launch it clicks Join Multiplayer Game, Recent Servers and the calibrated **RAM row, which is the second Recent Servers entry** (recalibrate if that list changes; image matching was tried and did not find the label reliably). Since 2026-10-19 it waits 4 s after Recent Servers (the list loads players and ping before rows exist; clicking at once hit an empty list and the join silently never happened), 3 s after selecting the row and 2.5 s after accepting the game-stored password, then confirms. No password and no GPortal restart are in the macro; the repo copy reads the server address from `PWP_SERVER` only to log it, the real address stays in the Desktop copy (DECISIONS 2026-10-11).
+
+- **The developer channel must be on before launch**: `remote.txt` must exist when the game starts (`--check` also requires it). The macro uses it to send `pwp status` / `pwp net` after a fresh `world key: World` line.
+- Readiness needs `synchronization: client; ready`, `authority: client; server owns assignments` and the exact configured guild. The title screen can report authority, so it is not readiness. Unavailable guild data waits; a different confirmed guild stops without sending the stand key. A truncated log is refused.
+- After joining it opens and closes the vanilla pause menu once (900 ms each) before holding V. That round trip restores the missing interaction prompts seen after joining; it is a workaround, not a fix (release-gates §3).
+- It logs to `restart-server-last-run.log` next to the script. `SERVER_READY` there proves only the connection checks. The accepted run on 2026-09-25 took about two minutes; slow connections take longer. Keep other input idle.
+
+### Both macros
+
+- **The exit code does not prove the stand opened.** The macro only holds V for 850 ms after readiness; the stand, the visible numbers and the saved settings must be checked separately (screenshot, `pwp status`, settings diff).
+- Emergency Respawn moves the character to another base (2026-09-24: about 105 m to the five-Pal base). Afterwards the stand-facing macros fail or act on the wrong position; walk back to the stand or use `--title`/`--launch` and re-check the position.
+- When keys stop arriving while clicks still work, or a focus click fires the weapon, see LESSONS (2026-10-17): both macros now fall back to a title-bar click for focus and wait 800 ms after a focus change.
+- Run restarts and any wait over a minute with `run_in_background` (LESSONS).
+- **Use the repo copies.** On 2026-10-20 the Desktop shortcuts `Restart and open monitoring stand.ahk` (2026-09-24) and `Restart server and open monitoring stand.ahk` (2026-09-25) were older than `tools/`: no `-select`, `-absent` or `--return-title-only`, no focus fallback, and the server copy lacks the 2026-10-19 list waits.
+
+### `tools/remote.py`
+
+`tools/remote.py` sends instructions through `<mod>/remote.txt`. The channel is opt-in at startup: that file must exist **before** the game starts. Creating it later does not enable polling in that process. Keep it out of releases (a merge install that retains `remote.txt` keeps the channel enabled).
+
+It no longer deploys by default (`--deploy` opts in; `--no-deploy` is still accepted):
 
 ```powershell
-python tools/remote.py --no-deploy "pwp status"
-python tools/remote.py --no-deploy "pwp perf on"
-python tools/remote.py --no-deploy "pwp perf"
+python tools/remote.py "pwp status"
+python tools/remote.py "pwp perf on"
+python tools/remote.py "pwp perf"
+python tools/remote.py open
+python tools/remote.py "mode item,snap"
+python tools/remote.py close
 ```
 
-Replies go to `priority.log`; the tool tails new output. No output is a failed communication check, not success. One sender owns the channel at a time; concurrent writers can overwrite requests. Other observers read the same artifacts.
+Replies go to `priority.log`; the tool tails new output. No output is a failed communication check, not success. One sender owns the channel at a time; concurrent writers can overwrite requests. Other observers read the same artifacts. Read a command before using it to "just look": `!pwp cap` cycles the staffing maximum, status lives in `!pwp status` (LESSONS).
 
-Opening menus, edits, forced passes and profiling toggles are stateful; record them. Restart after runtime changes. Partial icons/overlay/panel reload is a developer convenience, not lifecycle acceptance.
+**Control requests are desired states, not toggles** (since 2026-09-23). `open` and `close` set one session-bound desired state, executed on the game-thread drain; requests in the same poll coalesce to the last one, and a world/session change cancels them. Repeated `open` does not close the panel, and repeated `close` retries incomplete native cleanup. Even a matching-state request invalidates older queued UI input. `open,mode item` applies the state and the screen together. A requested line is not completion.
+
+**The "panel is now open/closed" reply is not visual proof.** On 2026-09-11 and -13 it was logged before queued actions had run and reported the old state. Since 2026-09-23 it is logged only after `panel.set_open_now` reports that the Lua panel and overlay reached the state, and failure is logged as failure; it is still Lua state, not a rendered frame. A screenshot in the same command as a queued open or mode change can precede it, so verify with a **delayed screenshot**. `panel screen set` likewise reports Lua state. `cmd submitted` proves only that the reflected console call returned without an ordinary error, not that the console action succeeded.
+
+Opening menus, edits, forced passes and profiling toggles are stateful; record them. Restart after runtime changes. Partial icons/overlay/panel reload (`remote.py reload`) is a developer convenience, not lifecycle acceptance.
 
 Do not run broad `funcs`/class/parameter dumps as smoke tests. Previous dumps crashed in native reflection. Use narrow reviewed probes on a copied save when a specific API fact is missing. `pcall` cannot catch an access violation; do not call into a stale wrapper to validate it.
 
-Roster/off-list/authority/storage/readback changes are implemented and included in the passing code/UI run. Test fixtures must cover empty versus unavailable rosters, current Role 2 against stale GameMode, partial off-list reads, nil item IDs, confirmed restoration and preserving pending writes during policy edits. These cases require native follow-through too.
+Roster/off-list/authority/storage/readback changes need fixtures covering empty versus unavailable rosters, current Role 2 against stale GameMode, partial off-list reads, nil item IDs, confirmed restoration and preserving pending writes during policy edits. These cases require native follow-through too.
 
 ## Main CLI checks
 
-Exercise real command handlers with mocked boundaries before native testing: fractional limits must be rejected; queued client edits must remain pending; failed clears must report failure; unknown/unscoped stock must remain unavailable. Check that `show_limits` labels legacy semantics and obtains current guild/base names only from verified `panel_status` evidence, without blind rescans. Before/after results belong in the ledger.
+Exercise real command handlers with mocked boundaries before native testing: fractional limits must be rejected; queued client edits must remain pending; failed clears must report failure; unknown/unscoped stock must remain unavailable. Check that `show_limits` labels legacy semantics and obtains current guild/base names only from verified `panel_status` evidence, without blind rescans. Before/after results belong in the gate note.
 
 Repeat natively with delayed/rejected requests and actual storage/save failures. Successful mocks do not close those gates.
 
 ## Native acceptance matrix
 
-Every row starts **PENDING — not accepted on 0.5.0-rc1/current runtime**. Record every listed case; use BLOCKED with a concrete reason when unavailable.
+This is the full matrix; the 0.5.0 subset and which rows have passed are in [RELEASE-0.5.0.md](RELEASE-0.5.0.md), the rest is the backlog in [release-gates-2026-10-09.md](release-gates-2026-10-09.md). A row not covered by a linked gate note is **PENDING** on the current candidate. Record every listed case; use BLOCKED with a concrete reason when unavailable.
 
 ### PERSIST / CONFIG
 
@@ -162,7 +222,7 @@ For each case record Pal identity, priority, suitability, fixed assignment, avai
 
 **No native producer adapter is accepted.** Existing legacy group caps can be edited; new item-specific creation is refused. Simulated admission does not close PRODUCER. Document the actual control API, runtime and measured behavior before enabling one.
 
-**Manual/occupied assignment evidence is unavailable:** `scheduler.assignment_reader` is nil. This must remain unknown rather than being interpreted as no assignment. Supply and verify a native reader before claiming respect for manual assignments or assignment-specific retention from actual occupied jobs.
+**Assignment evidence comes from `Scripts/assignments.lua`** (`scheduler.assignment_reader`, see [assignment-reader-2026-09-25](assignment-reader-2026-09-25.md); `pwp assignments` prints the census). Until 2026-09-25 the reader was nil and every assignment was unverified. An unknown assignment still means "preserve existing permissions", never "grant" (DECISIONS 2026-09-25), and must not be read as no assignment.
 
 ### UI / INPUT
 
@@ -171,7 +231,7 @@ For each case record Pal identity, priority, suitability, fixed assignment, avai
 - Respawn, transition, duplicate load, missing pak and reconstructed same-name widgets; no stale action touches a new generation.
 - Rules at **0/1/13/14/26/27**, multiple picker pages, both paging directions, add/remove at boundaries and correctly aligned amount editor.
 - Stand row recycling/rebind, rapid clicks, direct 1–5/X and controller navigation; skipped cells do not count as painted; unavailable data remains visible.
-- Stand input retest: hovered number keys and mouse cycling must use plain glyphs; keyboard/controller navigation retains brackets until pointer-directed editing takes over. Check that the former selected cell loses its brackets immediately. Queue rapid left/right inputs near 1/X boundaries; compare saved/pending results with the exact ordered sequence. The `input: queued actions` profiler row measures inclusive execution, not time waiting for a beat or frame presentation. See [September 12 input correction](stand-input-retest-2026-09-12.md).
+- Stand input retest: hovered number keys and mouse cycling must use plain glyphs; keyboard/controller navigation retains brackets until pointer-directed editing takes over. Check that the former selected cell loses its brackets immediately. Queue rapid left/right inputs near 1/X boundaries; compare saved/pending results with the exact ordered sequence. The `input: queued actions` profiler row measures inclusive execution, not time waiting for a beat or frame presentation. Queued clicks and keys bind their target cell at press time ([stand-pointer-2026-09-24](stand-pointer-2026-09-24.md), [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md)).
 - Keep preferred position. Check **16:9, 16:10, 1280×800 Steam Deck, ultrawide and multiple UI scales** with labeled screenshots and input sequences.
 
 ### SESSION / SYNC / AUTH
@@ -185,7 +245,7 @@ For each case record Pal identity, priority, suitability, fixed assignment, avai
 
 ## Server/stress safeguard tests
 
-Before tool acceptance, require these regressions: stop targets only the exact intended server process rather than a wildcard; already-running and still-running paths cannot return unchecked success; stress performs a final liveness/error drain; an actual dry=true marker is honored. Use the current ledger result for these paths; an earlier test run without these assertions cannot establish them.
+Before tool acceptance, require these regressions: stop targets only the exact intended server process rather than a wildcard; already-running and still-running paths cannot return unchecked success; stress performs a final liveness/error drain; an actual dry=true marker is honored. Use the current test run for these paths; an earlier run without these assertions cannot establish them.
 
 `tools/server.py stop` now requests graceful shutdown through an already configured
 local REST endpoint. It never force-kills the process. It checks listener ownership
@@ -225,10 +285,19 @@ Include camp scans, authority/component resolution, storage, planning/applying, 
 
 Measure profiler overhead with off/on controls. A pass duration cannot explain an unrelated frame hitch without correlation. Acceptance requires a declared budget, repeated results and review of worst spikes. Do not claim “stutter-free” or percentage speedups with missing root spans/frame capture.
 
+### Frame captures
+
+Independent frames come from PresentMon 2.5.1 through `tools/capture_frames.py` (pinned binary `test-results/capture-tools/PresentMon-2.5.1-x64.exe`, SHA-256 `9bec3083069f58f911e6a512f4806db51a27bd096103087bc1d05ef54c80a191`). By default it is a read-only preflight; `--capture` is opt-in and needs `--pid` and `--game-exe` (`--duration`, `--delay`, `--output-root`). It never elevates, launches the game or force-terminates. The quantity is the interval between application Present calls, not physically displayed frames. Procedure, evidence boundaries and why the September 23 recordings came out empty: [frame-capture-procedure-2026-10-09](frame-capture-procedure-2026-10-09.md). Matched method and the current numbers: [g5-performance-2026-10-19](g5-performance-2026-10-19.md).
+
+- **PresentMon runs unelevated** because this Windows account is in the built-in Performance Log Users group (SID S-1-5-32-559). The user approved adding it on 2026-09-12; it took effect after sign-out/sign-in, and unelevated exact-PID captures have worked since. Its "limited process access" warning is normal and does not stop a capture. Without the group, a trace session exits 6 with access denied. Do not change privileges to work around a failed capture.
+- A capture that prints started/stopped can still be empty (the CSV is created lazily and a file-open failure is silent). Check the CSV rows, not the console.
+- No input, screenshots or remote commands during a window; profiling off for frame numbers; 60 s windows with a 5 s lead, three per condition.
+- Mod-absent baseline (G5): move the PalWorkPriority folder and `LogicMods/PalWorkPriority.pak` out with a SHA-256 manifest, set its `mods.txt` entry to 0, run `pwp off` first so permissions are given back, and restart with `tools/restart-stand.ahk --stand-absent` (or another `-absent` mode). Confirm the UE4SS log has no PalWorkPriority line, and restore against the manifest afterwards.
+
 ## Packaging and installation acceptance
 
 - [ ] One clean reviewed source commit/version and matching logical manifest in both archives.
-- [ ] Compare package pak against the full reviewed hash and integrity result in the ledger.
+- [ ] Compare the package pak against the hash, size and member hashes in `docs/asset-contract.json` (see [widget-spec](widget-spec.md) for the contract and build).
 - [ ] Native mounting/widget contract verified on recorded runtime; reject absent, truncated, mismatched assets.
 - [ ] No saves, logs, backups, remote triggers, dumps or loose duplicate scripts.
 - [ ] Clean install each archive: one active mod, correct paths, mounted pak and loaded identities.
@@ -241,18 +310,9 @@ Measure profiler overhead with off/on controls. A pass duration cannot explain a
 
 ## Evidence record template
 
-The [September 14 Blueprint icon experiment](icon-prototype-2026-09-14.md) records the optional picker prototype, valid warm-page comparison, excluded recordings and remaining cold-load/lifecycle gates. The original loader remains the default; these results do not establish a stutter-free build.
+One dated note per gate run (the g3-* to g6-* notes are the pattern), linked from its RELEASE-0.5.0 gate line. For every case record: gate/case ID; earlier failing build/evidence; candidate commit and loaded fingerprints; environment/mod list; exact steps/data; expected and actual behavior; raw artifacts and hashes; completed/timed sample counts; remaining unknowns; reviewer; verdict PASS/FAIL/BLOCKED/PENDING.
 
-For every case record: gate/case ID; earlier failing build/evidence; candidate commit and loaded fingerprints; environment/mod list; exact steps/data; expected and actual behavior; raw artifacts and hashes; completed/timed sample counts; remaining unknowns; reviewer; verdict PASS/FAIL/BLOCKED/PENDING.
-
-September 11–12 native observations and independent frame captures are linked from the [reliability ledger](reliability-2026-09-11.md) and [stand input retest](stand-input-retest-2026-09-12.md). Their results are limited to the recorded installation, scene and actions; passing isolated tests or a visible grid do not close the remaining native gates. August reports remain historical observations.
-
-
-## Control-channel receipts (September 23)
-
-Development `open`/`close` requests are desired states, not toggles. Requests in the same poll are coalesced to the last desired state and discarded across a world/session transition. A requested line is not completion: inspect the subsequent drain result and, for visual acceptance, the actual panel. `cmd submitted` proves only that the reflected console call returned without an ordinary error; it does not prove the console action succeeded. Mode changes share the bounded panel request, so `open,mode item` applies the desired state before the screen choice. `panel screen set` reports Lua state after execution; visual acceptance still requires observing the rendered screen. Explicit desired state supersedes older queued UI callbacks, and repeated close retries incomplete cleanup.
-
-The September 23 source changes had offline evidence only at that checkpoint. Live testing subsequently resumed; consult the dated evidence ledger for each current candidate. Historical restrictions and results do not establish the acceptance state of a later build.
+The [September 14 Blueprint icon experiment](icon-prototype-2026-09-14.md) records the optional picker prototype, which was reverted (DECISIONS 2026-09-14). Results are limited to the recorded installation, scene and actions; passing isolated tests or a visible grid do not close the remaining native gates. August reports remain historical observations.
 
 ## Async interruption tests (October 7)
 
@@ -276,7 +336,6 @@ These helper tests do not establish physical power-loss durability, an actual
 game-crash integration result, multiplayer lifecycle correctness, or frame-time
 performance. Keep those gates separate from orderly live travel/restart evidence
 in `docs/async-enablement-2026-10-04.md`.
-
 
 ### Release payload regression (2026-10-11)
 

@@ -1,4 +1,11 @@
+---
+date: 2026-08-22
+tags: [crash, research]
+status: evidence
+---
 # The recurring crash
+
+Related: [research-ue4ss-crash](research-ue4ss-crash.md) · [LESSONS](LESSONS.md)
 
 Four unexplained exits in one day, no Unreal dialog on most of them, nothing
 in the mod's log, and each time the game simply gone. This records what is
@@ -156,7 +163,6 @@ and both were argued from reading rather than from evidence. What actually
 found it was a log message that had been written into UE4SS.log every time this
 happened, in a file already open in front of me.
 
-
 ## The fix that was not enough, and the one that follows from evidence
 
 Hoisting the two recurring callbacks into named functions did not stop it. A
@@ -191,7 +197,6 @@ the other mods on disk for the shape. The mod's own source was the least
 useful thing to stare at, because the bug was never in what it did, only in how
 it asked to be called back.
 
-
 ## LoopAsync fixed the hook removal. Something else is still there.
 
 First clean run with the loops registered once: 21:33:20 to 21:39:07, five
@@ -220,7 +225,6 @@ It covered four calls: `GetNickname`, `GetCharacterID`, and the two identity
 key readers, which take their fields off the id struct rather than calling
 anything on the parameter. Naming a line instead of a call is the guessing this
 whole apparatus exists to stop. Split into four.
-
 
 ## The pass, proven rather than argued
 
@@ -261,7 +265,6 @@ Untested as of writing. It is one change, motivated by the one experiment that
 controlled for anything, and the previous four theories were each stated with
 more confidence than a single clean run could carry.
 
-
 ## Where it stands, 22:26
 
 Longest clean run of the investigation by a wide margin: ten minutes, sixty
@@ -291,7 +294,6 @@ wrong within the hour.
 The rate is reduced, not the fault. The real fix is to stop reading
 `ItemId.StaticId` field by field out of an array the game reallocates while
 pals deposit into it, and take each container's slots in one go instead.
-
 
 ## Not fixed, 22:41 (see below)
 
@@ -331,7 +333,6 @@ guess. Three things worked, and none of them involved staring at the mod:
   else out in eight minutes
 
 The controlled experiment should have been first. It was tenth.
-
 
 ## Correction: the sweep crashed at 22:41:55
 
@@ -373,7 +374,6 @@ Counts must be unchanged. `pwp stock` should still report Stone and BerrySeeds
 in the thousands. A guard that makes the crash go away by counting nothing
 would look identical in the crash log and be much worse than the bug.
 
-
 ## It counts passes, not seconds
 
 Three stress runs, and the number that stays put is not the clock:
@@ -410,7 +410,6 @@ nested.
 `pwp dry` computes the whole pass and skips only the assignment RPCs. Dry plus
 the stress runs everything except the re-entry. Sixty passes clean would be
 three times the threshold that has failed every time so far.
-
 
 ## The assignment RPCs are out, and the real accumulator
 

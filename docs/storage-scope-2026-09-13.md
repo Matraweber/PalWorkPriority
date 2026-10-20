@@ -1,4 +1,11 @@
+---
+date: 2026-09-13
+tags: [storage, limits]
+status: evidence
+---
 # Base storage scope: September 13
+
+Related: [storage-prefetch-2026-09-13](storage-prefetch-2026-09-13.md) · [g4-scheduling-2026-10-17-miners](g4-scheduling-2026-10-17-miners.md)
 
 Local 0.5.0-rc1 investigation, unpublished. This addresses world loot invalidating base-stock evidence. It does not establish item-specific stopping, shared guild-chest coverage, or a stutter-free release.
 

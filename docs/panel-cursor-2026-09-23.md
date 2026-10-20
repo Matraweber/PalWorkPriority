@@ -1,6 +1,13 @@
+---
+date: 2026-09-23
+tags: [panel, input]
+status: evidence
+---
 # Native panel cursor correction — September 23
 
-Unpublished candidate, following the [monitor retest](monitor-retest-2026-09-23.md) and [six new Steam reports](comment-update-2026-09-23.md). This does not establish the root cause of every stuck-panel report.
+Related: [widget-spec](widget-spec.md) · [editor-escape-2026-09-23](editor-escape-2026-09-23.md)
+
+Unpublished candidate, following the [monitor retest](DECISIONS.md) and [six new Steam reports](comment-ledger-2026-09-11.md). This does not establish the root cause of every stuck-panel report.
 
 ## Source evidence and narrow change
 

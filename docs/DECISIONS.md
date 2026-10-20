@@ -1,4 +1,11 @@
+---
+date: 2026-10-20
+tags: [records, release]
+status: current
+---
 # Decision log
+
+Related: [LESSONS](LESSONS.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md) · [testing](testing.md) · [Home](Home.md)
 
 What was decided, why, and what was rejected. Newest first within each
 section. One entry per decision; link the dated evidence file rather than
@@ -9,6 +16,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-19 - Mixed versions are refused, and both sides say so in game.**
+  An rc1 server answers a 0.4.1 client with `PWP_Incompatible` and also sends
+  that player one system chat line per session through the game's own
+  `SendSystemToPlayerChat`, because 0.4.1 cannot read the new reply. An rc1
+  client on a 0.4.1 server shows "Server version incompatible" in the panel.
+  Neither side writes the other's data. *Rejected:* a compatibility layer for
+  0.4.1's wire format (it would carry 0.4.1's X-dropping saves along) and
+  silence for old clients (the first run of the test).
+  *Evidence:* [g6-version-mismatch-2026-10-19.md](g6-version-mismatch-2026-10-19.md).
 - **2026-10-11 - 0.5.0 ships a defined scope, not the full plan.** The full
   plan was estimated at 2-6 more weeks with open-ended items, while users sit
   on 0.4.1's known P1 bugs. Scope and exit conditions are in
@@ -32,29 +48,44 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   is public. The working macro on the Desktop keeps it, and the repo copy reads
   `PWP_SERVER`. The Windows user name was NOT scrubbed: it is already in the
   public history and matches the public handle.
-- **2026-10-19 - Mixed versions are refused, and both sides say so in game.**
-  An rc1 server answers a 0.4.1 client with `PWP_Incompatible` and also sends
-  that player one system chat line per session through the game's own
-  `SendSystemToPlayerChat`, because 0.4.1 cannot read the new reply. An rc1
-  client on a 0.4.1 server shows "Server version incompatible" in the panel.
-  Neither side writes the other's data. *Rejected:* a compatibility layer for
-  0.4.1's wire format (it would carry 0.4.1's X-dropping saves along) and
-  silence for old clients (the first run of the test).
-  *Evidence:* [g6-version-mismatch-2026-10-19.md](g6-version-mismatch-2026-10-19.md).
 
 ## Saving and settings
 
+- **2026-10-11 - An interrupted settings cutover fences startup; the marker is
+  only checked for presence.** `Scripts/main.lua` opens `.settings-cutover` in
+  the mod folder before it loads priorities.txt/caps.txt or looks at
+  `async-trial/launch.lua`. If the marker exists, or the open fails for any
+  reason other than "not found", it acquires `settings_gate`, requires a restart
+  and logs "settings cutover marker exists or is unreadable". It never reads,
+  runs or removes the marker; only the cutover tooling that created it removes
+  it, last. `tools/deploy.ps1` also refuses to deploy while the marker or the
+  trial launcher/receipt exists. It ships in 0.5.0 and stays inert there,
+  because nothing in a release creates the marker. Same rule as 2026-09-11:
+  unknown is not "fresh". *Evidence:* [async-enablement-2026-10-04.md](async-enablement-2026-10-04.md)
+  "Parked cutover tooling"; `tests/test_main_integration.lua` "cutover fence
+  precedes settings recovery and launcher inspection".
 - **2026-10-04 - Native writer through UE4SS's public Lua module interface,
   not the private Unreal SDK.** The matching SDK dependency was not
   obtainable, and a minimal module compiled against the installed UE4SS
   loaded and passed 1,000 in-game calls. *Rejected:* waiting on SDK access.
   Unreal's async SaveGame was prototyped first (worked, but no reliable save
-  destination identity). *Evidence:* [async-save-route-research-2026-10-04.md](async-save-route-research-2026-10-04.md).
+  destination identity, and a long tail: median 69.6 ms but 4 of 24 saves over
+  500 ms, worst 1.5 s, on the server ([async-save-history.md](async-save-history.md))). *Evidence:* [async-save-route-research-2026-10-04.md](async-save-route-research-2026-10-04.md).
 - **2026-10-03 - Async saves bind to the GameState save-directory ID, never
   the menu's.** The menu keeps the old local ID after joining a server, so a
-  write could land in the wrong world. *Evidence:* [async-save-world-transition-2026-10-04.md](async-save-world-transition-2026-10-04.md).
-- **2026-10 - After travel, the writers stay closed and the stand says
-  "Restart the game to edit".** Same-process re-arming is not supported.
+  write could land in the wrong world. *Evidence:* [async-save-world-transition-2026-10-04.md](async-save-world-transition-2026-10-04.md) (with the 10-03 proofs merged in).
+- **2026-10-03 - Rejected as save-destination proof, do not re-propose without
+  new evidence:** the game's save-completion hooks
+  (OnFinishedWorldAsyncSaveGameInternal 0 callbacks in 5 min, PreInternal 0 in
+  7 min, while Level.sav changed), OnEndedWorldAutoSave (fires about every 30 s,
+  carries no destination), WorldSaveProcess.ProcessMap (empty in 234 samples),
+  AutoSaveWorldDefaultName (empty on host and client) and the menu's
+  SelectedWorldSaveDirectoryName (set on Title before load, survives joining a
+  server). *Evidence:* [async-save-history.md](async-save-history.md).
+- **2026-10 - (Async trial only) After travel, the writers stay closed and the
+  stand says "Restart the game to edit".** Same-process re-arming is not
+  supported. Does not apply to the shipping synchronous writer, which must
+  never show this lock (RELEASE G2).
   *Rejected:* auto re-arm (unproven ownership handover).
 - **2026-09-29 - Async save research started** because of 1.2-2.2 s flush
   stalls on the GPortal server. *Rejected then:* PalPriority's approach (save
@@ -72,6 +103,43 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-17 - A published stock reading stays valid for the reuse window
+  plus one pass interval** (max 60 s), because the scheduler acts on it until
+  the next pass. *Rejected:* the bare reuse window (the display said "stock
+  unavailable" between passes while Mining stayed stopped on that reading).
+  *Evidence:* same file.
+- **2026-10-17 - Rocks and trees count as demand while Workable.** The game
+  announces them only once at world load, so Mining and Lumbering never came
+  back once a Pal left them. Vacancies = Workable Mining/Lumbering works (built,
+  when a building owns them; a natural tree's owner reads as a null wrapper)
+  minus Pals already on them. *Rejected:* relying on pulses (2 rock
+  announcements in a whole session while Pals mined for minutes).
+  *Evidence:* [g4-scheduling-2026-10-17-miners.md](g4-scheduling-2026-10-17-miners.md).
+- **2026-10-16 - Coolers count as demand when built and holding spoilable food.**
+  Same gap as generators: Cooling never announces work, so a Cooling-1 Pal
+  stayed on Watering 2 for about 2 minutes. The game marks a cooler's work
+  Workable only while spoilable food is inside, verified live in both
+  directions, so vacancies = coolers with BuildProcess Completed and
+  CurrentState Workable, minus Pals already cooling. Both kinds go through one
+  list (`stations.KINDS`). *Rejected:* counting every built cooler (would park
+  a Pal at an empty one). *Evidence:* [g4-scheduling-2026-10-16-coolers.md](g4-scheduling-2026-10-16-coolers.md).
+- **2026-10-14 - Generators count as demand when built and not full.** The
+  game never announces generator work, so an empty generator could not pull a
+  Pal off other work. The scheduler now adds vacancies = generators with
+  BuildProcess Completed and StoredEnergyAmount < MaxEnergyStorage, minus Pals
+  already on Generating Electricity in that camp. *Rejected:* counting every
+  generator work object (parks Pals at full or unbuilt generators, the
+  retracted first proposal) and the work's CurrentState alone (Workable for
+  blueprints too). Coolers followed on 2026-10-16 (entry above).
+  *Evidence:* [g4-scheduling-2026-10-14-stations.md](g4-scheduling-2026-10-14-stations.md).
+- **2026-10-11 - New legacy group limits are locked in 0.5.** Only a limit
+  that already exists (in caps.txt or config.lua `work_caps`) counts as legacy
+  and stays editable; it switches its whole work type. Any new limit is an
+  item limit, refused with "Item-specific limits await a verified producer
+  adapter and scope" until 0.6 (`caps.rule_kind`, `caps.support`). Re-adding a
+  lost legacy limit for tests: temporary `work_caps` entry plus `!pwp limit`
+  (LESSONS). *Rejected:* letting new rules silently switch a whole work type.
+  *Evidence:* Scripts/caps.lua, [RELEASE-0.5.0.md](RELEASE-0.5.0.md) Deferred.
 - **2026-09-26 - Resolve the network component only when a pass has changes
   to send.** Learned from PalPriority. Pass dropped 85.6 to 66.2 ms on the
   server. *Rejected from the same comparison:* caching engine objects (our
@@ -91,6 +159,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Performance
 
+- **2026-10-20 - The stand refresh stays at once a second, recorded as
+  justified (user's choice).** 12.2 ms (worst 15) once a second, only while the
+  stand is open: about 60 frames over 16.67 ms per minute in that scene,
+  nothing with the stand closed. Input repaints its cells at once; only the
+  full refresh repaints rows the game redraws itself (scrolling, rebuilt rows,
+  new Pals, server pushes). *Rejected:* a "nothing changed" skip (proposed
+  2026-10-19 without reading this list; it is the dirty-flag refresh gating
+  rejected 2026-08-27, which reintroduced the repaint bug three times). *Not
+  chosen:* a slower cadence (stale numbers longer after such a redraw).
+  *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md).
 - **2026-10-19 - The scheduler pass stays at 10 s and keeps its camp
   FindAllOf (user's choice).** After rounds 1-3 the pass is 20 ms (worst 23):
   one frame over 16.7 ms every 10 s, none over 33 ms. Half of it is
@@ -110,7 +188,6 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   only for new works (0.09 ms). Only the id string and the type number are
   kept, never the work; untyped works are asked again, the memo is rebuilt
   every pass and cleared on world change. *Evidence:* same file.
-
 - **2026-09-29 - Edit pushes discover transmitters once and take components
   directly.** 110 to 83.5 ms per stand update. *Rejected:* reusing the roster
   across calls (stale data risk) until freshness can be proven.
@@ -120,6 +197,22 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   *Evidence:* [icon-prototype-2026-09-14.md](icon-prototype-2026-09-14.md).
 - **2026-09-13 - Widgets are found by targeted queries on the current tree,
   not global object walks.** Stand lookup 10 to 0.6 ms, rules refresh 13.8 to 2 ms.
+  *Evidence:* [viewport-and-icon-retest-2026-09-13.md](viewport-and-icon-retest-2026-09-13.md).
+- **2026-09-12..15 - Rejected with measurements (game 1.0.4/1.0.5), do not
+  re-propose without new numbers:** bulk stand traversal through
+  `GetAllChildren` (`pwp standbulk`, 09-15; four ABBA PresentMon clips showed
+  no frame benefit, refresh 11.5 ms indexed vs 11.6-11.9 bulk, and review found
+  a duplicate-child hole: a batch `{a,a}` could hide a target); plain
+  `GetWidgetFromName` for row ownership (unreflected C++); `FindFirstOf`,
+  stored wrappers or name-only freshness for the stand menu (can pick a hidden
+  or wrong menu); name-only write caches for cell text (writes cost 0.34 ms per
+  grid; risk blank or recycled cells); collapsing rapid saturating clicks into
+  a net direction (left then right at 1 must give 2); a mouse debounce (the
+  runtime sends down edges, it would drop real rapid clicks); re-adding the
+  150 ms draw-age click guard (it discarded real clicks; a regression fails if
+  it returns); a speculative log-buffering rewrite (file 7 ms + console 2 ms
+  per 170 s); excluding no-base loot before storage module discovery (hides
+  module failures). *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md) "History".
 - **2026-08-28 - Authority comes from a demand pulse newer than the current
   spawn; the owned component from the controller's `Children`.** Both may
   answer yes or nil, never no.
@@ -130,6 +223,29 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   caching, net-hook evidence as sole authority proof, scheduler rank memo
   (215 calls, under 1 ms), SFO name memo for the menu.
 
+## Multiplayer and network
+
+- **2026-09-23 - An edit timeout invalidates its stream and waits for that
+  stream's own full snapshot**; an unrelated snapshot or a late ack cannot
+  restore readiness. *Evidence:* tests/test_net_commit_errors.lua.
+- **2026-08-26 - Chat commands obey only this machine's player:**
+  SenderPlayerUId (guid_key) is compared with PlayerState.PlayerUId; unknown
+  means refuse while anyone else is connected. Verified live (`!pwp mode` from
+  chat on the dedicated server). *Evidence:* Scripts/main.lua OnReceivedChat
+  hook, commit fcb3fc3.
+- **2026-08-26 - Refuted audit claim R1 (server double-push per edit).** The
+  server log shows exactly one stand push per edit, because store.on_change
+  does not fire on the authority. The explicit `push_stand(nil, only_key)` in
+  the network edit handler (Scripts/main.lua) must stay; removing it once
+  pushed nothing.
+- **2026-08-23 - Rejected: rules keyed by base-camp id** (old multiplayer plan,
+  phase 4); guild scope from the server-side sender replaced it (Scheduling and
+  limits, 2026-08-23). The reason was not recorded.
+- **2026-08-19 - Rejected: PalPriority's two-mod server/UI split.** One mod
+  works out its role (authority? screen?); a listen host edits by function
+  call. (Its "no version skew" argument proved wrong: see 2026-10-19 mixed
+  versions under Release and scope.)
+
 ## UI and input
 
 - **2026-10-17 - Production Limits closes itself when the local player dies**,
@@ -138,12 +254,48 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   respawn. *Rejected:* waiting for ClientRestart (the editor sat on the death
   screen until then) and hooking an unknown death function by guessed name.
   *Evidence:* [g3-escape-photo-death-2026-10-17.md](g3-escape-photo-death-2026-10-17.md).
-
+- **2026-09-25 - ClientRestart resets the session only on positive local-owner
+  identification** (two nonempty string names, equal within the callback).
+  Foreign, throwing or unreadable contexts keep session, writers and queued
+  work; the old code reset on a throwing context. *Evidence:*
+  tests/test_main_integration.lua.
+- **2026-09-24/25 - Drafts and confirmations bind to the value and guild they
+  were made against.** Each rule-list draw builds a fresh layout map; a draft
+  whose work/item leaves the current page or whose guild changes is cancelled
+  at once with a notice, a still-visible target follows its row and keeps its
+  text, and the editor is placed only after the validated page is drawn.
+  Confirm compares the draft's original value with the current effective rule
+  and refuses a mismatch; Remove binds guild and amount and refuses a stale
+  queued removal; an existing-limit jump is a work/item/guild hint consumed
+  after redraw, cancelled by navigation or a guild change, and never saves.
+  Client-side only ([release-gates](release-gates-2026-10-09.md) section 3).
+  *Evidence:* tests/test_panel_edit_reflow.lua, test_panel_rule_reveal.lua,
+  test_panel_remove_conflict.lua, test_panel_edit_conflict.lua.
+- **2026-09-24 - A notice never moves controls.** One help/notice row stays
+  present on Rules and Items; row containers are reserved before pagination.
+  *Evidence:* tests/test_picker_notice_layout.lua, test_panel_host_order.lua.
+- **2026-09-23 - NoCapture is set and read back before activation; a refused
+  or unknown write aborts the open.** Palworld's widget default
+  CapturePermanently hid the cursor (bShowMouseCursor=false) and automated
+  clicks hit nothing. *Evidence:* [panel-cursor-2026-09-23.md](panel-cursor-2026-09-23.md).
+- **2026-09-23 - Rejected for queued stand clicks: a cached-hover sample.** It
+  cannot prove event-time intent for an unsampled A to B to A move or
+  foreground ownership, and an expiry fixes neither. Debounce and netting
+  opposite clicks are rejected too (Performance, 2026-09-12..15). Press-time
+  binding replaced it (entry below).
+- **2026-09-16 - Rejected: an OnPreviewKeyDown handler on the panel (input
+  contract 1).** Natively, Escape still closed the stand underneath. Replaced
+  by the Blueprint-owned consuming RadialMenuCancel binding (contracts 2/3,
+  [widget-spec](widget-spec.md)).
+- **2026-09-15 - Controller Cancel beats Confirm, Remove and navigation in the
+  same pad sample**, and cancels an edit before closing the panel. Buttons
+  observed down at cancel need proof of release (only boolean readings count;
+  unknown keeps the barrier; it survives a UI reset). *Evidence:* tests/test_pad.lua.
 - **The panel keeps its original position.** The user preferred it over the
   audit's move (Aug 2026, reverted). Layout fixes happen inside it.
 - **Queued clicks and keys bind their target cell at press time**, not when
   processed. Rebinding a row or rebuilding the stand discards stale input.
-  *Evidence:* [stand-pointer-2026-09-24.md](stand-pointer-2026-09-24.md), [stand-lifecycle-2026-09-24.md](stand-lifecycle-2026-09-24.md).
+  *Evidence:* [stand-pointer-2026-09-24.md](stand-pointer-2026-09-24.md), [stand-lifecycle-2026-09-24.md](stand-lifecycle-2026-09-24.md), [stand-close-events-2026-09-24.md](stand-close-events-2026-09-24.md).
 - **Escape in the amount editor cancels the draft; a second Escape closes
   only Production Limits.** *Evidence:* [editor-escape-2026-09-23.md](editor-escape-2026-09-23.md).
 - **Game-and-UI input with pawn suppression, never UI-only.** See LESSONS.
@@ -167,32 +319,3 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   *Rejected:* testing on the trial install (wrong code path, older build) and
   running the multi-step cutover tooling for data that did not differ.
   *Evidence:* [restart-persistence-2026-10-11.md](restart-persistence-2026-10-11.md).
-- **2026-10-14 - Generators count as demand when built and not full.** The
-  game never announces generator work, so an empty generator could not pull a
-  Pal off other work. The scheduler now adds vacancies = generators with
-  BuildProcess Completed and StoredEnergyAmount < MaxEnergyStorage, minus Pals
-  already on Generating Electricity in that camp. *Rejected:* counting every
-  generator work object (parks Pals at full or unbuilt generators, the
-  retracted first proposal) and the work's CurrentState alone (Workable for
-  blueprints too). Coolers are not included until a reliable signal is found.
-  *Evidence:* [g4-scheduling-2026-10-14-stations.md](g4-scheduling-2026-10-14-stations.md).
-- **2026-10-16 - Coolers count as demand when built and holding spoilable food.**
-  Same gap as generators: Cooling never announces work, so a Cooling-1 Pal
-  stayed on Watering 2 for about 2 minutes. The game marks a cooler's work
-  Workable only while spoilable food is inside, verified live in both
-  directions, so vacancies = coolers with BuildProcess Completed and
-  CurrentState Workable, minus Pals already cooling. Both kinds go through one
-  list (`stations.KINDS`). *Rejected:* counting every built cooler (would park
-  a Pal at an empty one). *Evidence:* [g4-scheduling-2026-10-16-coolers.md](g4-scheduling-2026-10-16-coolers.md).
-- **2026-10-17 - Rocks and trees count as demand while Workable.** The game
-  announces them only once at world load, so Mining and Lumbering never came
-  back once a Pal left them. Vacancies = Workable Mining/Lumbering works (built,
-  when a building owns them; a natural tree's owner reads as a null wrapper)
-  minus Pals already on them. *Rejected:* relying on pulses (2 rock
-  announcements in a whole session while Pals mined for minutes).
-  *Evidence:* [g4-scheduling-2026-10-17-miners.md](g4-scheduling-2026-10-17-miners.md).
-- **2026-10-17 - A published stock reading stays valid for the reuse window
-  plus one pass interval** (max 60 s), because the scheduler acts on it until
-  the next pass. *Rejected:* the bare reuse window (the display said "stock
-  unavailable" between passes while Mining stayed stopped on that reading).
-  *Evidence:* same file.

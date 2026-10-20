@@ -1,4 +1,11 @@
+---
+date: 2026-10-20
+tags: [release]
+status: current
+---
 # 0.5.0 release scope
+
+Related: [DECISIONS](DECISIONS.md) · [release-gates-2026-10-09](release-gates-2026-10-09.md) · [g5-performance-2026-10-19](g5-performance-2026-10-19.md) · [testing](testing.md)
 
 Decided 2026-10-11 (see [DECISIONS.md](DECISIONS.md)). This file is the ship
 list. A gate closes only when its **Done when** line is met on the current
@@ -52,7 +59,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 - [x] **Layout holds at every list size.** PASS 2026-10-17: 0/1/13/14/26/27 entries, picker pages 1-2 of 8, editor on a single row and above the pager ([evidence](g3-layout-2026-10-17.md)).
   **Done when:** screenshots of the rules list at 0/1/13/14/26/27 entries and
   two picker pages show no overlap, and the amount editor sits on its row.
-- [ ] **Search/Add crash** (Nexus, DarkWyrmReaper, with Cosmetic Outfits mod 5049).
+- [ ] **Search/Add crash** (Nexus, DarkWyrmReaper, with Cosmetic Outfits mod 5049). Investigation and next inputs: [search-crash-2026-09-15](search-crash-2026-09-15.md).
   **Done when:** with that mod installed, Search all and Add run 5 times
   without a crash, or the attempt is recorded as not reproducible and the
   reporter is asked for the crash log.
@@ -82,12 +89,12 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## G5. Performance target
 
-- 2026-10-19: matched baseline on e073183 (mod present vs physically absent, 3 x 60 s each): UI closed 7-8 frames over 33 ms per minute with the mod vs 0-1 without; stand open 67-68 over 16.7 ms vs 2-5. Rounds 1-3 (nickname property read, one typing pass, type memo by work id) cut the scheduler pass from 34.6 (49.7 in the grown world) to 20.2 ms and frames over 33 ms to 2-3 per minute; frames over 16.7 ms unchanged. Remaining: stand refresh 12 ms/s, camp FindAllOf 10 ms/pass, storage refresh 31 ms/30 s, each needs a decision ([evidence](g5-performance-2026-10-19.md)).
+- 2026-10-19: matched baseline on e073183 (mod present vs physically absent, 3 x 60 s each): UI closed 7-8 frames over 33 ms per minute with the mod vs 0-1 without; stand open 67-68 over 16.7 ms vs 2-5. Rounds 1-3 (nickname property read, one typing pass, type memo by work id) cut the scheduler pass from 34.6 (49.7 in the grown world) to 20.2 ms and frames over 33 ms to 2-3 per minute; frames over 16.7 ms unchanged. Decided 2026-10-19/20: the pass stays at 10 s with its camp FindAllOf (10 ms); the stand refresh (12 ms/s, stand open only) stays, recorded as justified because its "nothing changed" skip is the dirty-flag gating DECISIONS rejected on 2026-08-27. Open: identify the second ~30 s event, then decide the storage refresh (31 ms/30 s); a same-light closed-scene rerun ([evidence](g5-performance-2026-10-19.md)).
 - [ ] **Best effort, no fixed number (user's decision 2026-10-11).** Optimise
   as far as is practical and report the measured result honestly in the
-  changelog. Starting point: the mod adds about 8 slow frames (over 16.7 ms) per
-  minute over the mod-absent baseline (10-11 vs 2); scheduler pass about
-  20 ms, stand refresh about 11 ms.
+  changelog. Starting point (September, older code): the mod added about 8
+  slow frames (over 16.7 ms) per minute over the mod-absent baseline (10-11 vs
+  2); the matched baseline of 2026-10-19 above replaces those numbers.
   Every measurement uses matched captures (same save, scene and settings;
   3 windows each; profiling off; UI closed and stand open).
   **Done when:** every recurring mod cost above 5 ms per call has either been
@@ -122,9 +129,15 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
-- Item-specific production limits (stone stops while ore continues). Today a
-  limit switches a whole work type; the UI says so before item selection.
-- Async saving on by default, and async on dedicated servers.
+- Item-specific production limits (stone stops while ore continues). In 0.5
+  only existing legacy limits work, each switches a whole work type; new ones
+  cannot be created (locked, the UI says so before item selection).
+- Async saving on by default, and async on dedicated servers (open checklist:
+  [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
+- Design calls open since the 2026-08-26 audit: marking a capped work column
+  on the stand (needs injecting into vanilla header widgets), un-hiding the
+  vanilla checkbox when the mod switched a permission off, and a mouse-button
+  and pad legend (Extramrdo, Sep 28). The priority-order legend exists.
 - Live tests with two real clients and two real guilds (needs a second Steam
   account and machine), unmodded-client edit detection.
 - Physical Steam Deck, ultrawide and UI scaling matrix.
