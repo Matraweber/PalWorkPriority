@@ -110,6 +110,13 @@ discovers a new one, with the date and a link to the evidence.
   passed a partial tree as complete.
 - **The August empty-field test kept two camps loaded,** so the no-camp branch
   was never exercised; one map's streaming is not every map's.
+- **Matched captures need the same monitor and an idle desktop.** On
+  2026-10-20 the game had moved to the second monitor between runs and the
+  mod-absent relaunch opened on the first; a run started while the user played
+  Hearthstone was thrown away. Screenshot both monitors before every capture
+  set and keep present and absent back to back. Let a fresh session settle
+  (10 min or more): the absent run captured 2.7 min after load had a 5 s spike
+  chain and more GPU work, too noisy for a with/without figure.
 
 ## Process: what slowed the project down
 

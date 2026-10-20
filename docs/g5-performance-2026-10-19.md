@@ -189,9 +189,8 @@ Still open for G5:
 
 - ~~Identify the second ~30 s event~~: done 2026-10-20, it overlaps no mod
   event (aligned trace below).
-- The final capture for the changelog: mod present and absent back to back in
-  the same light; the >16.67 ms closed comparison above is confounded by night
-  versus day.
+- ~~The final capture for the changelog~~: done 2026-10-20 (Final matched
+  comparison below).
 
 ## Independent cross-check (agent, read-only, 2026-10-19)
 
@@ -272,6 +271,60 @@ change), UI closed, daytime, settled 60 s after load. Raw:
 So the storage refresh is the last mod cost that crosses 33 ms (about 2 frames
 a minute with this stock). Decided 2026-10-20 (user): it stays at 30 s,
 recorded as justified in DECISIONS (Performance).
+
+## Final matched comparison, 2026-10-20 (for the changelog)
+
+Build 30ee360 (installed = repo HEAD apart from comments and docs), local test
+world, profiling off, 3 x 60 s per condition, all four conditions between
+18:02 and 18:22 in daylight, game window on the same monitor (VG248, the
+absent run's window was moved there before capturing). The mod was removed and
+restored with `tools/mod_absent.py` (5,406 files plus pak, SHA-256 manifest,
+mods.txt changed byte-exactly; restore: 0 hash mismatches; priorities, limits
+and config byte-equal to the pre-G6 snapshot afterwards). `pwp off` gave the
+permissions back first (verified after 23 requests). Hearthstone Deck Tracker
+was running idle during all four. Raw: `test-results/g5-final-20261020/`.
+
+| Condition | >16.67 ms per min | >33.33 ms per min | Mean frame |
+|---|---|---|---|
+| Mod present, stand open | 67, 67, 66 | 3, 3, 3 | 6.9-7.2 ms |
+| Mod absent, stand open | 13, 16, 12 | 2, 3, 4 | 9.2-9.5 ms |
+| Mod present, UI closed | 10, 10, 10 | 3, 3, 4 | 5.1-5.4 ms |
+| Mod absent, UI closed | 7, 13, 10 | 2, 6, 4 | 6.5-8.0 ms |
+
+Independent cross-check (agent, read-only): all 12 windows validated, every
+count and mean recomputed exactly, all artifact hashes match, one PID,
+creation time and swapchain per session (present 43828, absent 37052), same
+240 Hz present grid in both. Its caveats change how the table may be read:
+
+- The absent session was only 2.7 min old at its first capture (present: about
+  37 min) and shows a 5.0 s spike chain of its own that the present session
+  never has (game settling after load); its GPU-active time was higher (median
+  5.1-5.3 vs 3.9-4.2 ms), so the scene or load differed. Means and the
+  closed-scene difference cannot be compared across the two sessions.
+- What the data does show robustly is attribution inside each session:
+  present-stand has a regular 1.05 s chain (the stand refresh) that
+  absent-stand lacks; present-closed has the 10.3 s chain (scheduler pass,
+  mostly 16-33 ms) and the 28.8 s pairs (storage refresh, all over 33 ms, 6 of
+  the 10 frames over 33 ms); 7 of its 30 spikes sit on neither chain (the
+  game). All present runs came before all absent runs (not interleaved).
+
+For the changelog (attribution, not a with/without difference):
+
+- **Normal play (UI closed):** the mod's recurring work costs about one frame
+  over 16.7 ms every 10 s (the scheduler pass, about 20 ms) and, only while
+  production limits that need stock exist, one frame over 33 ms every 30 s
+  (the storage refresh, about 31 ms). Everything else in the measured slow
+  frames is the game's own.
+- **Monitoring Stand open:** about one extra frame over 16.7 ms per second (the
+  stand refresh, about 12 ms), roughly 50 more per minute than without the
+  mod; no extra frames over 33 ms.
+- Against September (10-11 vs 2 frames over 16.7 ms per minute with the UI
+  closed) and the 2026-10-19 baseline (scheduler pass 34.6 ms, 7-8 frames over
+  33 ms per minute), the pass is down to 20 ms and the frames over 33 ms come
+  from the storage refresh alone.
+- A cleaner with/without figure would need an absent session left to settle
+  (10 min or more) and interleaved present/absent windows; not required by the
+  gate.
 
 ## History: September measurements (game 1.0.4/1.0.5, before the matched baseline)
 
