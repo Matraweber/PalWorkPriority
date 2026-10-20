@@ -5,7 +5,11 @@ status: evidence
 ---
 # Search-crash sidecar — September 15, 2026
 
-Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md) · [icon-prototype-2026-09-14](icon-prototype-2026-09-14.md)
+Related: [g3-search-crash-2026-10-20](g3-search-crash-2026-10-20.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md)
+
+> Update 2026-10-20: tested with Cosmetic Outfits and PalSchema 0.6.71; the
+> gate passed and an abort class was reproduced and fixed (GetItemName on an id
+> the item table does not have). See [g3-search-crash-2026-10-20](g3-search-crash-2026-10-20.md).
 
 Nexus bug **1133489 remains un-attributed and unreproduced**. The local evidence supports the already-deployed exclusion-before-localization change, but supplies no additional proven crash fix. Cosmetic Outfits (5049) is the reporter's suspected interaction, not an established cause.
 

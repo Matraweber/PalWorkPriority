@@ -24,6 +24,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
 - [Reliability candidate testing](testing.md) · 2026-10-20
 - [G5: performance, 2026-10-19](g5-performance-2026-10-19.md) · 2026-10-20
+- [G3: Search/Add crash with Cosmetic Outfits, 2026-10-20](g3-search-crash-2026-10-20.md) · 2026-10-20
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-20
 - [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-20
 - [Decision log](DECISIONS.md) · 2026-10-20
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - ["Everything stops" / "only one miner": reproduced, two causes, 2026-10-16/17](g4-scheduling-2026-10-17-miners.md) · 2026-10-17
 - [G3: no second or stuck panel, 2026-10-17](g3-panel-2026-10-17.md) · 2026-10-17
 - [G3: layout at every list size, 2026-10-17](g3-layout-2026-10-17.md) · 2026-10-17
-- [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-17
 
 ## Release and reports
 
@@ -100,6 +100,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Crashes and research
 
+- [G3: Search/Add crash with Cosmetic Outfits, 2026-10-20](g3-search-crash-2026-10-20.md)
 - [Search-crash sidecar — September 15, 2026](search-crash-2026-09-15.md)
 - [The recurring crash](the-crash.md)
 - [Research: the crash is a known UE4SS class, and the cure ships in our build](research-ue4ss-crash.md)

@@ -183,6 +183,21 @@ missing_util=true
 assert(step()==nil); assert(#step()==1)
 missing_util=false
 assert(items.real_name('LateName')=='Late localized name')
+-- GetItemName aborts the game for an id that is not a row of the item table
+-- (2026-10-20, COSM_Ninja01): only catalogue rows may reach it. An unknown id
+-- gets no native call; an unreadable catalogue is unknown, not permission.
+items.reset(); ids={'Wood','FreshRow'}; localized.FreshRow='Fresh row'
+local calls_before=name_calls
+assert(items.real_name('COSM_Ninja01')==nil and name_calls==calls_before,'unknown id reached GetItemName')
+assert(items.real_name('FreshRow')=='Fresh row' and name_calls==calls_before+1,'known row was not named')
+assert(items.display_name('COSM_Ninja01')=='COSM Ninja01','unknown id lost its readable fallback')
+assert(name_calls==calls_before+1,'display_name sent an unknown id to GetItemName')
+items.reset(); missing_table=true; ids={'Late'}
+calls_before=name_calls
+assert(items.real_name('Late')==nil and name_calls==calls_before,'named without a readable catalogue')
+missing_table=false; now=now+5.1
+localized.Late='Late item'
+assert(items.real_name('Late')=='Late item','unreadable catalogue was memoized as no name')
 assert(stale==0)
 os.clock=original_clock
 print('Catalogue: 2466 IDs preserved, atomic index, bounded name slices, fresh native wrappers')

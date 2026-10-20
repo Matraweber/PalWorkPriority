@@ -265,6 +265,14 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-10-20 - Only rows of the item table are ever named by the game.**
+  GetItemName aborts the game (pcall cannot catch it) for an id the item table
+  does not have, so `items.real_name` checks the captured catalogue's row names
+  first; unknown ids get the readable fallback, an unreadable catalogue names
+  nothing. *Rejected:* an id blacklist (cannot know other mods' ids) and
+  trusting the picker's job filter alone (it matches id substrings, so a
+  modded id containing "ore" or "egg" would pass it). *Evidence:*
+  [g3-search-crash-2026-10-20.md](g3-search-crash-2026-10-20.md).
 - **2026-10-17 - Production Limits closes itself when the local player dies**,
   dropping any unsaved draft. Detected by polling HP (property reads, every
   0.25 s, only while the panel is open) because ClientRestart only fires at

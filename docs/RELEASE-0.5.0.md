@@ -60,7 +60,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 - [x] **Layout holds at every list size.** PASS 2026-10-17: 0/1/13/14/26/27 entries, picker pages 1-2 of 8, editor on a single row and above the pager ([evidence](g3-layout-2026-10-17.md)).
   **Done when:** screenshots of the rules list at 0/1/13/14/26/27 entries and
   two picker pages show no overlap, and the amount editor sits on its row.
-- [ ] **Search/Add crash** (Nexus, DarkWyrmReaper, with Cosmetic Outfits mod 5049). Investigation and next inputs: [search-crash-2026-09-15](search-crash-2026-09-15.md).
+- [x] **Search/Add crash** (Nexus, DarkWyrmReaper, with Cosmetic Outfits mod 5049). PASS 2026-10-20: 5 rounds of Show all, search and Add with the mod and PalSchema 0.6.71 active, no crash; the crash class was reproduced (GetItemName on an id the item table does not have aborts the game) and fixed by naming only catalogue rows ([evidence](g3-search-crash-2026-10-20.md); earlier investigation [search-crash-2026-09-15](search-crash-2026-09-15.md)).
   **Done when:** with that mod installed, Search all and Add run 5 times
   without a crash, or the attempt is recorded as not reproducible and the
   reporter is asked for the crash log.

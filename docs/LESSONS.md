@@ -71,6 +71,10 @@ discovers a new one, with the date and a link to the evidence.
 - **ScrollBox orders children by creation, not intended index.** A pager host
   created during partial fill sat between item rows (2026-09-24); reserve row
   containers first.
+- **GetItemName aborts the game for an id the item table does not have.**
+  It does not return the "en Text" placeholder the 88 unnamed vanilla rows
+  give; the process dies with "Abort signal received" (2026-10-20,
+  COSM_Ninja01). Check the id against the table's row names first.
 
 ## Evidence: how we fooled ourselves
 

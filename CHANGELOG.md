@@ -58,6 +58,9 @@ stopped mining and chopping. Every fix below was tested in the game
 - Clicks and keys on the stand always change the cell they were pressed on,
   even when the list redraws in between.
 - Large limits are shown short: 9,999,999 reads as "10.0M".
+- The item search and "Show all" no longer crash the game with item mods
+  installed (report by DarkWyrmReaper, tested with Cosmetic Outfits and
+  PalSchema): the game is only asked for the names of items it actually has.
 
 **Multiplayer**
 - An edit made by a player survives a server restart.
@@ -98,8 +101,6 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 ### Still being checked before release
 
-- [OPEN] Search/Add crash reported together with the Cosmetic Outfits mod
-  (DarkWyrmReaper).
 - [OPEN] Updating through the Steam Workshop (the manual Nexus route is
   tested and keeps every saved row).
 - [OPEN] Vortex install, update and removal.

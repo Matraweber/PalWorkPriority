@@ -40,6 +40,9 @@ local building     -- private strings/indexes only; never native row wrappers
 local catalogue, attempts, retry_after = nil, 0, 0
 local picker_index, picker_building
 local picker_status = "pending"
+-- Row-name set of the captured catalogue (real_name's guard), rebuilt after
+-- every reset.
+local row_set
 
 local find_table = measurement.callback("items: table lookup", function()
     local tbl
@@ -237,6 +240,7 @@ end
 function M.reset()
     M.ids, M.lower, M.disp, building = nil, nil, nil, nil
     catalogue, attempts, retry_after = nil, 0, 0
+    row_set = nil
     picker_index, picker_building, picker_status = nil, nil, "pending"
 end
 
@@ -279,6 +283,27 @@ function M.real_name(id)
     if hit ~= nil then
         if hit == false then return nil end
         return hit
+    end
+
+    -- Only ids that are rows of the item table reach GetItemName.
+    --
+    -- Asked about an id the table does not have, GetItemName does not return
+    -- a placeholder: the game aborts ("Abort signal received"), and pcall
+    -- cannot catch that. Seen 2026-10-20 with COSM_Ninja01, an id the
+    -- Cosmetic Outfits mod does not define (docs/g3-search-crash-2026-10-20.md).
+    -- Such ids reach this function from limits on items a removed mod or a game
+    -- update took away, from rules a server with more mods sends a client, and
+    -- from typed commands. An unreadable catalogue is unknown, not "every id
+    -- is fine": nothing is asked and nothing is memoized.
+    if not row_set then
+        local ids = M.catalogue_ids()
+        if not ids then return nil end
+        row_set = {}
+        for _, row in ipairs(ids) do row_set[row] = true end
+    end
+    if not row_set[id] then
+        M.refused_unknown = (M.refused_unknown or 0) + 1
+        return nil
     end
 
     -- A missing utility or controller is NOT an answer.
