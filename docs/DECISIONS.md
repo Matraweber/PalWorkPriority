@@ -159,6 +159,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Performance
 
+- **2026-10-20 - The storage refresh stays at 30 s, recorded as justified
+  (user's choice).** 31-37 ms every ~29 s, the one mod cost left that crosses
+  33 ms (about 2 frames a minute in the test world), and only while limits that
+  need stock exist (the refresh lease follows the scheduler's interest). An
+  aligned trace showed it is the 28.7 s chain; the other ~30 s chain overlaps
+  no mod event. *Not chosen:* 60 s (half the spikes, but Pals overshoot a limit
+  up to ~30 s longer, and the 60 s validity cap in the protocol would have to
+  rise with it or the 2026-10-17 "stock unavailable" flicker returns); splitting
+  it in two callbacks (a fresh FindAllOf per part: ~4 frames over 16.7 ms
+  instead of 2 over 33, more CPU). *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md).
 - **2026-10-20 - The stand refresh stays at once a second, recorded as
   justified (user's choice).** 12.2 ms (worst 15) once a second, only while the
   stand is open: about 60 frames over 16.67 ms per minute in that scene,

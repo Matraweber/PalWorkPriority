@@ -167,7 +167,7 @@ unchanged: with the stand open the once-a-second stand refresh (12 ms on 6-7
 ms frames) makes about 60 a minute, and with the UI closed the 20 ms pass every
 10 s still makes one each time.
 
-## Open: what is left, and why it needs a decision
+## Remaining costs and their decisions
 
 The three remaining costs after round 3 (status updated 2026-10-20):
 
@@ -182,14 +182,16 @@ The three remaining costs after round 3 (status updated 2026-10-20):
    over 33 ms. **Decided 2026-10-19: kept** (DECISIONS.md).
 3. Storage refresh, 31 ms every 30 s with this stock (FindAllOf 11 ms plus
    reading every slot). It cannot be sliced without a fresh FindAllOf per
-   slice, because no engine object may be kept across callbacks. **Open.**
+   slice, because no engine object may be kept across callbacks. **Decided
+   2026-10-20: kept at 30 s, justified** (aligned trace below; DECISIONS.md).
 
 Still open for G5:
 
-- Identify the second ~30 s event (see the cross-check below), then decide on
-  the storage refresh.
-- Rerun the closed scene with the mod present and absent in the same light;
-  the >16.67 ms closed comparison above is confounded by night versus day.
+- ~~Identify the second ~30 s event~~: done 2026-10-20, it overlaps no mod
+  event (aligned trace below).
+- The final capture for the changelog: mod present and absent back to back in
+  the same light; the >16.67 ms closed comparison above is confounded by night
+  versus day.
 
 ## Independent cross-check (agent, read-only, 2026-10-19)
 
@@ -237,6 +239,39 @@ The stand refresh is recorded as justified with its price: 12.2 ms (worst
 9-10 with the UI closed). With the stand closed it costs nothing. It stays
 because the game redraws rows itself (scrolling, rebuilt rows, new Pals,
 server pushes) and only the full refresh repaints those.
+
+## Which events cause the frames over 33 ms (2026-10-20, aligned trace)
+
+Recorder `tools/g5_trace_record.py`, analysis `tools/g5_trace_analyse.py`
+(after the 2026-10-09 correlation tooling): profiling and the Lua frame-event
+trace (events of 4 ms or more) on, two nonce anchors before and two after a
+120 s PresentMon capture with raw QPC time; the four anchor brackets agree on a
+fixed-rate Lua-to-QPC offset to within 5.2 ms. Build 30ee360 (plus a comment
+change), UI closed, daytime, settled 60 s after load. Raw:
+`test-results/g5-trace-20261020/closed-1/` (private).
+
+| Frame over 33 ms (capture time) | Overlapping mod event |
+|---|---|
+| 14.6 s (37 ms), 43.4 s (36 ms), 72.1 s (38 ms), 100.4 s (50 ms) | storage refresh, 31-37 ms each, every 28.3-28.8 s |
+| 97.2 s (36 ms) | scheduler pass 23 ms |
+| 23.5 s (34 ms), 59.1 s (901 ms), 83.9 s (35 ms), 84.0 s (35 ms) | none of 4 ms or more |
+
+- The ~28.7 s chain the cross-check found is the storage refresh: every one of
+  them made a frame over 33 ms.
+- The second ~30 s chain is not the mod's: no mod event of 4 ms or more
+  overlaps those frames, and they are not evenly spaced (23.5, 59.1, 83.9 s).
+  Most likely the game itself (its world autosave also runs about every
+  30 s, see [async-save-history](async-save-history.md)); not proven. The
+  901 ms stall belongs to it too.
+- Over 16.67 ms the closed scene is mostly the game: 59 of 75 such frames
+  overlap no mod event. The mod's share is the scheduler pass (19-26 ms every
+  10.3 s) and the storage refresh.
+- Profiling was on for attribution, so durations include profiler overhead;
+  the frame numbers of record stay the profiling-off captures above.
+
+So the storage refresh is the last mod cost that crosses 33 ms (about 2 frames
+a minute with this stock). Decided 2026-10-20 (user): it stays at 30 s,
+recorded as justified in DECISIONS (Performance).
 
 ## History: September measurements (game 1.0.4/1.0.5, before the matched baseline)
 
