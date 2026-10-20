@@ -37,7 +37,7 @@ def tree(root):
 
 def closed():
     out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq Palworld-Win64-Shipping.exe'], capture_output=True, text=True).stdout
-    assert 'Palworld-Win64-Shipping.exe' not in out, 'close the game first'
+    assert 'Palworld-Win64-Shipping' not in out, 'close the game first'  # tasklist truncates the name
 
 
 def rows(path):

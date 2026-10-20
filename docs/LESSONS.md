@@ -267,3 +267,15 @@ discovers a new one, with the date and a link to the evidence.
   config.lua) are gone before the new version runs (2026-10-20). Keep user
   state outside the shipped folders; data files the loader did not install
   survive.
+- **The loader installs an active Workshop copy over a manual install without
+  asking.** With the Workshop 0.4.1 switched on but never installed, the next
+  start replaced a manual 0.5.0 with 0.4.1 (2026-10-20). The newer version
+  never runs, so it cannot warn; only documentation helps there.
+- **`tasklist` truncates image names to 25 characters.** A check for
+  `Palworld-Win64-Shipping.exe` never matched, so four "game closed" guards
+  always passed (2026-10-20, no harm because every earlier run followed a
+  verified exit). Match `Palworld-Win64-Shipping` without the extension.
+- **A system chat line to the local singleplayer player is not shown.**
+  `SendSystemToPlayerChat` returned without error three times and nothing
+  appeared (2026-10-20), while the same call from a server to a remote player
+  does show (G6). Use the panel or the log for local warnings.

@@ -26,6 +26,10 @@ stopped mining and chopping. Every fix below was tested in the game
   version incompatible" in the panel.
 - Your editable settings move to `config.lua` in the mod folder; with a
   manual install the old file is kept as `config.migration.bak`.
+- **Use one copy: Workshop or manual, not both.** If the Steam Workshop copy
+  is switched on in the game's mod list, the game installs it over a manual
+  install on the next start. Switch it off or unsubscribe before installing
+  by hand. 0.5.0 says so in the Production Limits panel when it finds both.
 
 ### Fixed
 
@@ -65,6 +69,12 @@ stopped mining and chopping. Every fix below was tested in the game
 - The item search and "Show all" no longer crash the game with item mods
   installed (report by DarkWyrmReaper, tested with Cosmetic Outfits and
   PalSchema): the game is only asked for the names of items it actually has.
+
+**Installation**
+- A manual install running next to a switched-on Steam Workshop copy of a
+  different version is named in the log and on the Production Limits panel
+  ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
+  replace or delete the manual files when that copy updates.
 
 **Multiplayer**
 - An edit made by a player survives a server restart.

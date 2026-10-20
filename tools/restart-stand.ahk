@@ -79,7 +79,8 @@ try {
     } else if ProcessExist('Palworld-Win64-Shipping.exe') {
         throw Error('--launch requires the game to be closed.')
     }
-    offset := MOD_ABSENT ? 0 : FileGetSize(GAME_LOG)
+    ; A clean install has no priority.log yet: start reading from its beginning.
+    offset := (MOD_ABSENT || !FileExist(GAME_LOG)) ? 0 : FileGetSize(GAME_LOG)
     Run EXE, GAME
     if !WinWait('ahk_exe Palworld-Win64-Shipping.exe', , 90)
         throw Error('New game window did not appear.')
@@ -114,6 +115,10 @@ try {
     while A_TickCount < deadline {
         if !ProcessExist(newPid)
             throw Error('Game exited during world loading.')
+        if !FileExist(GAME_LOG) {
+            Sleep 1000
+            continue
+        }
         f := FileOpen(GAME_LOG, 'r', 'UTF-8')
         f.Pos := offset
         fresh := f.Read()

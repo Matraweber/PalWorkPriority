@@ -23,6 +23,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
 - [Reliability candidate testing](testing.md) · 2026-10-20
+- [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md) · 2026-10-20
 - [G5: performance, 2026-10-19](g5-performance-2026-10-19.md) · 2026-10-20
 - [G3: Search/Add crash with Cosmetic Outfits, 2026-10-20](g3-search-crash-2026-10-20.md) · 2026-10-20
 - [G1 upgrade from 0.4.1 through the Workshop route, 2026-10-20](g1-workshop-2026-10-20.md) · 2026-10-20
@@ -32,10 +33,10 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [G6: old client and new server disagree politely, 2026-10-19](g6-version-mismatch-2026-10-19.md) · 2026-10-19
 - [G6: guild isolation on rc1, 2026-10-19](g6-guild-isolation-2026-10-19.md) · 2026-10-19
 - ["Everything stops" / "only one miner": reproduced, two causes, 2026-10-16/17](g4-scheduling-2026-10-17-miners.md) · 2026-10-17
-- [G3: no second or stuck panel, 2026-10-17](g3-panel-2026-10-17.md) · 2026-10-17
 
 ## Release and reports
 
+- [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md)
 - [Work log, 2026-10-09 to 2026-10-11](work-log-2026-10-09-to-11.md) (history)
 - [Remaining release gates - October 9, 2026](release-gates-2026-10-09.md)
 - [0.5.0-rc1 reply drafts — not posted](release-replies-0.5.0-draft.md)

@@ -40,7 +40,10 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 ## G2. Saving backend decision
 
 - [ ] **0.5.0 ships the synchronous writer; the native async DLL is not in
-  the package** (G2b moved to 0.5.x on 2026-10-20).
+  the package** (G2b moved to 0.5.x on 2026-10-20). 2026-10-20: the rc1
+  archives hold no DLL, and a clean manual install ran the synchronous writer
+  with no fence ([evidence](g7-install-2026-10-20.md)). Open: the G1 upgrade
+  notes do not say "no fence" explicitly; check that on the final build.
   **Done when:** the release archive contains no DLL, a clean install and a
   0.4.1 upgrade both run the synchronous writer, and no recovery fence or
   "restart to edit" lock appears.
@@ -117,7 +120,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## G7. Package and publish
 
-- [ ] **One clean build for both stores.** **Done when:** `tools/release.py`
+- [ ] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). Open: clean Workshop install (scenario C, needs the PC) and the tagged final build. **Done when:** `tools/release.py`
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.

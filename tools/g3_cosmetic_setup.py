@@ -28,7 +28,7 @@ def tree(root):
 
 def game_running():
     out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq Palworld-Win64-Shipping.exe'], capture_output=True, text=True).stdout
-    return 'Palworld-Win64-Shipping.exe' in out
+    return 'Palworld-Win64-Shipping' in out  # tasklist truncates the name
 
 
 def install(ps_src, co_src):

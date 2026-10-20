@@ -31,6 +31,7 @@ local pad = require("pad")
 local darnmenu = require("darnmenu")
 local session = require("session")
 local configuration = require("configuration")
+local install_check = require("install_check")
 local measurement = require("measurement")
 
 -- Each row covers a complete function; nested rows are explicitly inclusive.
@@ -2938,6 +2939,15 @@ log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
     cfg.enabled and "enabled" or "disabled",
     cfg.dry_run and "dry run" or "live",
     cfg.chat_prefix))
+
+-- Workshop/manual conflict (G7): said once in the log, shown on the panel.
+do
+    local found = install_check.check(DIR, VERSION)
+    if found then
+        install_check.current = { text = install_check.text(found, VERSION), short = install_check.short(found) }
+        log.warn(install_check.current.text)
+    end
+end
 
 -- Chat input is not reliably available in every singleplayer session, so the
 -- discovery dump gets its own key instead of living only behind a chat

@@ -16,6 +16,20 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-20 - A Workshop copy switched on next to a manual install is
+  reported in the log and on the Production Limits panel.** At load
+  `install_check.lua` reads PalModSettings.ini and the loader's Info.json; when
+  the Workshop copy is switched on and the loader manages a different version
+  than the one running, the log gets the full explanation and the panel's sub
+  line ends with "Steam Workshop copy X also on: use one copy." Plain file
+  reads, silent when anything is unreadable or outside the official layout.
+  The case where the loader installs 0.4.1 over a manual 0.5.0 cannot be
+  detected by 0.5.0 (it never runs), so the changelog and Nexus page say to
+  switch the Workshop copy off before installing by hand. *Rejected:* a system
+  chat line (accepted by the engine, never shown to the local singleplayer
+  player in three tries; the G6 server-to-client line does show), and editing
+  PalModSettings.ini or ManagedMods ourselves (the game's files, the user's
+  choice). *Evidence:* [g7-install-2026-10-20.md](g7-install-2026-10-20.md).
 - **2026-10-20 - Async saving moves to 0.5.x; 0.5.0 ships the synchronous
   writer only (user's decision).** Gate G2b (staged-write rollback, real
   cutover, server save and restart, DLL install/upgrade/removal) is not done

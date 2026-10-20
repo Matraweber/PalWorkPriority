@@ -2613,10 +2613,14 @@ local function draw_tabs(active)
     if RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp" then
         hit("stock_scope", { kind = "stock_scope" })
     end
+    -- A Workshop copy switched on next to a manual install (install_check)
+    -- takes the second sentence: the one line every open panel shows.
+    local conflict = require("install_check").current
     line("stock_scope", 0, PAD, "Storage: " .. (RB.stock and RB.stock.label or "unavailable")
         .. ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and " - change base" or "")
-        .. ". Legacy groups affect a whole work type.",
-        (RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and "action" or "dim", 14, RB.SUB_DROP)
+        .. (conflict and (". " .. conflict.short) or ". Legacy groups affect a whole work type."),
+        conflict and "over"
+            or ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and "action" or "dim"), 14, RB.SUB_DROP)
 
     RB.done_row()
 
