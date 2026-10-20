@@ -262,3 +262,8 @@ discovers a new one, with the date and a link to the evidence.
 - **The equals-form UnrealPak extract overwrote the Workshop CreativeMenu pak
   with an empty package** (2026-09-13; restored, SHA-256 b1507a64...). Use the
   two-argument form on a separate copy.
+- **The game's mod loader deletes every file it installed before an update,
+  and backs up nothing.** User edits inside the shipped `Scripts/` (0.4.1's
+  config.lua) are gone before the new version runs (2026-10-20). Keep user
+  state outside the shipped folders; data files the loader did not install
+  survive.

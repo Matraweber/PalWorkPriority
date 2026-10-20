@@ -10,8 +10,12 @@ stopped mining and chopping. Every fix below was tested in the game
 ### Before you update
 
 - **Back up your mod folder first** (`priorities.txt`, `caps.txt`,
-  `config.lua`). The Workshop updater can replace the old Scripts folder before
-  0.5.0 gets to migrate your settings.
+  `Scripts/config.lua`). Your priorities and limits carry over on both the
+  Workshop and the manual route.
+- **Steam Workshop: write down any changes you made in `Scripts/config.lua`.**
+  The game's mod loader deletes that file before 0.5.0 can carry it over, so
+  you need to enter them again in the new `config.lua` in the mod folder.
+  Settings changed in the in-game options menu are kept.
 - **X priorities that 0.4.1 already lost cannot be brought back.** 0.4.1
   dropped every X row whenever it saved (fixed now). If you have an older copy
   of `priorities.txt` that still has them, put it back before starting 0.5.0;
@@ -20,8 +24,8 @@ stopped mining and chopping. Every fix below was tested in the game
   nothing is written: a 0.4.1 player on a 0.5.0 server gets a chat message
   asking them to update, and a 0.5.0 player on a 0.4.1 server sees "Server
   version incompatible" in the panel.
-- Your editable settings move to `config.lua` in the mod folder; the old file
-  is kept as `config.migration.bak`.
+- Your editable settings move to `config.lua` in the mod folder; with a
+  manual install the old file is kept as `config.migration.bak`.
 
 ### Fixed
 
@@ -101,8 +105,6 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 ### Still being checked before release
 
-- [OPEN] Updating through the Steam Workshop (the manual Nexus route is
-  tested and keeps every saved row).
 - [OPEN] Vortex install, update and removal.
 
 Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
