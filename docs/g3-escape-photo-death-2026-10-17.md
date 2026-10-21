@@ -1,5 +1,5 @@
 ---
-date: 2026-10-17
+date: 2026-10-21
 tags: [panel, input, testing]
 status: evidence
 ---
@@ -36,7 +36,24 @@ Recorded as a single unexplained miss.
   with the HUD shown, hidden (F) and restored (F). Esc returned to play.
 - Stand and panel reopened normally afterwards, rules unchanged.
 
-Not covered: photo mode from a Pal bed (Zekrom144's report).
+Not covered here: photo mode from a Pal bed (Zekrom144's report). Covered on
+2026-10-21, see below.
+
+## C2. Photo mode from a Pal bed, 2026-10-21: PASS
+
+Reports: Zekrom144 (2026-09-10) and Roin (2026-10-19, ledger row 89): sleep in
+a Pal bed, photo mode, exit, and a grey rectangle blocks every click until
+Alt+F1 is pressed twice. Cause on 0.4.1: the panel shell was added to the
+viewport at world load and only collapsed; leaving photo mode makes viewport
+widgets visible again. rc1 adds the shell only while the panel is open and
+removes it on close (overlay.lua `hide`).
+
+Run on rc1 (dev install, 0996a36 code) at 15:03-15:05: the panel had been opened
+and closed in this session (10 state screenshots). A Straw Pal Bed was built
+next to the stand, the character lay down (F, "Sleep"), key 4 -> photo mode,
+Esc: no grey box, HUD normal. Again with the HUD hidden in photo mode (F) before
+Esc: no grey box. Got up (V), Esc opened the pause menu normally. Screenshots in
+the session scratchpad (bedphoto/).
 
 ## C. Death while editing: RUN 14:13, one finding
 
