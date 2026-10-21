@@ -266,7 +266,9 @@ discovers a new one, with the date and a link to the evidence.
   and backs up nothing.** User edits inside the shipped `Scripts/` (0.4.1's
   config.lua) are gone before the new version runs (2026-10-20). Keep user
   state outside the shipped folders; data files the loader did not install
-  survive.
+  survive. A file of another install in its way is renamed, not lost:
+  the manual pak became `PalWorkPriority-<time>.pak.bak` (2026-10-20, found
+  on 10-21), although the manifest says `"Backups": []`.
 - **The loader installs an active Workshop copy over a manual install without
   asking.** With the Workshop 0.4.1 switched on but never installed, the next
   start replaced a manual 0.5.0 with 0.4.1 (2026-10-20). The newer version

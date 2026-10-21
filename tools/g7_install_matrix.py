@@ -109,6 +109,11 @@ def status():
 def restore(b):
     state = json.loads((b / 'state.json').read_text())
     wipe()
+    # The loader renames a pak it did not install to <name>-<time>.pak.bak
+    # before writing its own (scenario B, 2026-10-20); keep those with the state.
+    for stray in PAK.parent.glob('PalWorkPriority-*.pak.bak'):
+        shutil.move(str(stray), str(b / stray.name))
+        print('moved loader backup', stray.name, 'into the state folder')
     shutil.move(str(b / 'dev-PalWorkPriority'), str(MOD))
     shutil.move(str(b / 'dev-LogicMods/PalWorkPriority.pak'), str(PAK))
     shutil.copy2(b / 'PalModSettings.ini', SETTINGS)
