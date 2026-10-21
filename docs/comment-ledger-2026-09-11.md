@@ -1,5 +1,5 @@
 ---
-date: 2026-10-09
+date: 2026-10-21
 tags: [reports]
 status: current
 ---
@@ -14,20 +14,24 @@ on. Gate status lives in [RELEASE-0.5.0.md](RELEASE-0.5.0.md); how to test is in
 [testing.md](testing.md); reply drafts are in
 [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md).
 
-**Status 2026-10-20** (open reports against the [0.5.0 gates](RELEASE-0.5.0.md)):
+**Status 2026-10-21** (open reports against the [0.5.0 gates](RELEASE-0.5.0.md)):
 G1 settings: restart persistence PASS 2026-10-11 (Two Bob Games, johndujo and
-the earlier reset reports), 0.4.1 upgrade still open on the Workshop route.
+the earlier reset reports; like's X diagnosis D1), 0.4.1 upgrade PASS on both
+routes (Workshop 2026-10-20).
 G3 frontend: second/stuck panel PASS (Extramrdo, Okami_sama Sep 18 10:32,
 Calas Typhon, Drokz077), layout PASS (Hall9002), Escape/photo/death PASS
-(Gim1i, Zekrom144; the original crash was never reproduced); **open:**
-DarkWyrmReaper's Search/Add crash with Cosmetic Outfits 5049 (Nexus bug
-1133489, [search-crash-2026-09-15](search-crash-2026-09-15.md)). G4 scheduling:
+(Gim1i; the original crash was never reproduced), Search/Add crash with item
+mods fixed 2026-10-20 (DarkWyrmReaper B1, NoMo/Omoface 88/B3,
+[g3-search-crash-2026-10-20](g3-search-crash-2026-10-20.md)); **open:** the
+Pal bed + photo mode grey box (Zekrom144, Roin 89) is fixed by design in rc1
+but not tested live. G4 scheduling:
 priority 1 over 5 PASS (HelpImStupid0), Incineram PASS (Glave), generators
 fixed 10-14 (CosmicWarbear, DSFddaaaa), coolers fixed 10-16 (poiman,
 GammaEuviex, srvtsonn), "only one miner / everything stops" fixed 2026-10-17
-(Okami_sama, SolidRhoé). G5 performance open (Plz, Ashura, luller, UltraJohn,
-Siberfox99). G6 multiplayer PASS on one machine (dedicated-server questions).
-G7 open: replies, Vortex (Saber57Draxus), install questions. Deferred to
+(Okami_sama, SolidRhoé). G5 performance closed 2026-10-20, best effort (Plz, Ashura, luller,
+UltraJohn, Siberfox99). G6 multiplayer PASS on one machine (dedicated-server questions).
+G7 open: replies (incl. Ceo of Toes D2), Vortex (Saber57Draxus); install
+checks done 2026-10-21. Deferred to
 0.5.x/0.6: item-specific limits (SolidRhoé, BIG DADDY, Mithandil de Melkin),
 Steam Deck and controller (TheJoe, Erbse, tigerpow100), two-client tests,
 independent priority/limit mods (wikidnumb), high-quality stand
@@ -43,9 +47,12 @@ Samurai9400's research, Rey's Lamball, poiman's fishing pools. No reply posted.
 | 2026-09-13 | 53 | (13, not re-read) | one author progress update | direct public fetch; Chrome did not attach, Nexus answered HTTP 403 |
 | 2026-09-15 | 56 | 15 + 1 bug | 6 comments, 1 bug (71 + 1) | logged-in Chrome, delta only |
 | 2026-09-23 | 62 | (not re-read) | 6 Steam comments | logged-in Chrome, Steam delta only |
-| 2026-10-09 | **70** | **17 + 2 bugs** | 8 Steam, 2 Nexus, 1 bug | logged-in Chrome, every page of both sites and both bugs expanded |
+| 2026-10-09 | 70 | 17 + 2 bugs | 8 Steam, 2 Nexus, 1 bug | logged-in Chrome, every page of both sites and both bugs expanded |
+| 2026-10-21 | **73 + 1 discussion (2 posts)** | **17 + 3 bugs** | 3 Steam, 1 Steam discussion, 1 Nexus bug | built-in browser, signed out; newest Steam page, the discussion, Nexus posts and bugs |
 
-The 2026-10-09 census is the current count: **87 comments plus 2 bug reports**.
+The 2026-10-09 census counted 87 comments plus 2 bug reports; the 2026-10-21
+delta (rows 88-90, B3, D1-D2) brings it to **90 comments, 3 bug reports and
+one Steam discussion with 2 posts**.
 Nexus still showed 0.4.1 (updated August 28) then. The deltas were read in the
 browser because the web cache held fewer, older posts. No reply, moderation or
 publication was done by any census. Public reports name no loaded package hash,
@@ -212,6 +219,17 @@ gate or Deferred.
 | 86 | [Nexus 176018241](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-22 | wikidnumb | Wants priorities and production limits as independent components. | F21 | Optional design work; avoid conflicting double installs. | Deferred |
 | 87 | [Nexus 175824555](https://www.nexusmods.com/palworld/mods/5376?tab=posts) | 2026-09-19 | HelpImStupid0 | Transport 5 still dominates primary work 1. | F09/F11 | Needs actual assignment/output; fence membership is not enough. | G4 (PASS 2026-10-12) |
 | B2 | [Nexus bug](https://www.nexusmods.com/palworld/mods/5376?tab=bugs) "Priority list not saving" | 2026-09-18 | johndujo | Previous selections disappear on reload. | F01-F03 | Values unspecified, not assumed X only. Persistence/startup gate. | G1 (PASS 2026-10-11) |
+
+## Later entries, 2026-10-09 to 2026-10-21 (88-90, B3, D1-D2)
+
+| # | Source / ID | Displayed date | Author | Report | Finding | Disposition when read | 0.5.0 gate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 88 | [Steam 590691913363940543](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_590691913363940543) | 2026-10-09 22:38 | NoMo | Typed "ingot" into the item search with item mods installed: UI laggy, then crash to desktop. UE4SS log tail on pastebin ends at "picking an item" (0.4.1). | F05 | Same report as B3. Same class as B1: naming an item ID that is not a table row aborts the game; fixed in 172eccf, 5 rounds with Cosmetic Outfits passed ([g3-search-crash-2026-10-20](g3-search-crash-2026-10-20.md)). | G3 (fixed 2026-10-20) |
+| 89 | [Steam 570426530135681694](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_570426530135681694) | 2026-10-19 14:02 | Roin | Sleep in a Pal bed, photo mode, exit: a big grey rectangle blocks clicks and quitting (only this mod and UE4SS). | F06 | Repeats Zekrom144 (row 2). Cause on 0.4.1: the panel shell sat collapsed on the viewport from world load, and leaving photo mode makes viewport widgets visible again. rc1 attaches only while open and detaches on close (overlay.lua `hide`). The Pal bed route is still untested live ([g3-escape-photo-death-2026-10-17](g3-escape-photo-death-2026-10-17.md) "Not covered"). | G3 edge case, test on rc1 |
+| 90 | [Steam 570426530135681758](https://steamcommunity.com/sharedfiles/filedetails/?id=3786408856#comment_570426530135681758) | 2026-10-19 14:03 | Extramrdo | Workaround for 89: Alt+F1 open and close removes the rectangle. | F06 | Fits the cause above (closing re-collapses the shell). | with 89 |
+| B3 | [Nexus bug 1147959](https://www.nexusmods.com/palworld/mods/5376?tab=bugs) "Crash To Desktop" | 2026-10-10 05:33 | Omoface | Same text and pastebin as row 88. | F05 | Duplicate of 88. | G3 (fixed 2026-10-20) |
+| D1 | [Steam discussion 586187435308941852](https://steamcommunity.com/workshop/filedetails/discussion/3786408856/586187435308941852/) | 2026-10-02 14:58 | like | "Setting a Pal to X does not save, fix included": `store.lua` `M.save` turns `false` into `nil` (`math.tointeger(false)`), so X rows are dropped; posts a one-line patch and asks for better drop warnings and logging in `M.load`. | F01 | Correct diagnosis of the 0.4.1 X loss; rc1 fixed it independently (G1). Credit them in the changelog/reply. | G1 (PASS 2026-10-11) |
+| D2 | same thread | 2026-10-17 01:57 | Ceo of Toes | Asks whether the patch is needed on the client too or only on the dedicated server. | F01/F17 | For 0.4.1: saving happens on the server, so the server copy matters; for 0.5.0 server and every player need 0.5.0. Reply draft. | G7 reply |
 
 The 2026-09-23 and 2026-10-09 deltas named no finding IDs; those of rows 72-87 were assigned in the 2026-10-20 merge.
 

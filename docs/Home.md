@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-21
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
 - [Reliability candidate testing](testing.md) · 2026-10-20
 - [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md) · 2026-10-20
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Decision log](DECISIONS.md) · 2026-10-20
 - [G6: old client and new server disagree politely, 2026-10-19](g6-version-mismatch-2026-10-19.md) · 2026-10-19
 - [G6: guild isolation on rc1, 2026-10-19](g6-guild-isolation-2026-10-19.md) · 2026-10-19
-- ["Everything stops" / "only one miner": reproduced, two causes, 2026-10-16/17](g4-scheduling-2026-10-17-miners.md) · 2026-10-17
 
 ## Release and reports
 
@@ -109,8 +109,8 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Testing and tooling
 
-- [PresentMon capture procedure and evidence boundaries](frame-capture-procedure-2026-10-09.md)
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md)
+- [PresentMon capture procedure and evidence boundaries](frame-capture-procedure-2026-10-09.md)
 
 ## Outside the vault (repo files, open on GitHub or in an editor)
 

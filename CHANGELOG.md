@@ -37,7 +37,8 @@ stopped mining and chopping. Every fix below was tested in the game
 - Priorities, including X, survive restarts in singleplayer and on dedicated
   servers, and Pals follow them right after loading without another edit
   (reports by Two Bob Games and johndujo).
-- X is no longer dropped when the file is saved.
+- X is no longer dropped when the file is saved (diagnosed with a working
+  patch by like in the Steam discussions).
 - Many quick edits are saved once, not once per click.
 - A settings file that cannot be read is never replaced with defaults.
 
@@ -67,8 +68,8 @@ stopped mining and chopping. Every fix below was tested in the game
   even when the list redraws in between.
 - Large limits are shown short: 9,999,999 reads as "10.0M".
 - The item search and "Show all" no longer crash the game with item mods
-  installed (report by DarkWyrmReaper, tested with Cosmetic Outfits and
-  PalSchema): the game is only asked for the names of items it actually has.
+  installed (reports by DarkWyrmReaper and NoMo, tested with Cosmetic Outfits
+  and PalSchema): the game is only asked for the names of items it actually has.
 
 **Installation**
 - A manual install running next to a switched-on Steam Workshop copy of a
