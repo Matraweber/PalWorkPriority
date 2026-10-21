@@ -10,7 +10,7 @@ local function near(a,b) assert(math.abs(a-b)<0.000001, tostring(a)..' ~= '..tos
 local function check_geometry()
  local jobs,labels=0,0
  for _,w in ipairs(registry) do
-  if not w.dead and w.text=='Legacy group' then
+  if not w.dead and w.text=='Whole work type' then
    labels=labels+1
    local job
    for _,other in ipairs(w.parent.children) do if other.text=='Mining' then job=other end end
@@ -24,7 +24,7 @@ local function check_geometry()
    local second_bottom=w.Slot.position.Y+w.Font.Size*1.35+w.shadow.Y
    assert(job.Slot.position.Y>=0 and first_bottom<=w.Slot.position.Y,
     'Job line including shadow overlaps subtitle')
-   assert(second_bottom<=height,'Legacy group including shadow overflows row')
+   assert(second_bottom<=height,'Whole work type including shadow overflows row')
    near(job.Slot.position.Y,1);near(job.Font.Size,13)
    near(w.Slot.position.Y,20);near(w.Font.Size,9)
    near(job.Slot.position.X,38);near(w.Slot.position.X,38)
@@ -37,7 +37,7 @@ local function check_geometry()
  local expected={Stone01={210,3.315},Stone02={210,3.315},
   ['37']={595.52,3.315},['0']={607.76,3.315},
   ['101']={725.28,3.315},['102']={725.28,3.315},
-  Unavailable={810,3.315},Remove={1002.67,3.315},
+  ['No count yet']={810,3.315},Remove={1002.67,3.315},
   JOB={38,4.34},ITEM={210,4.34},LIMIT={728.4,4.34},
   ['Production Limits']={18,4.29}}
  for text,xy in pairs(expected) do

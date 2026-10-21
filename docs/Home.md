@@ -23,6 +23,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-21
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-21
+- [Controller input on game 1.0.5, 2026-10-21: the mod reads no pad button](controller-2026-10-21.md) · 2026-10-21
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-21
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
 - [Reliability candidate testing](testing.md) · 2026-10-20
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [G1 upgrade from 0.4.1 through the Workshop route, 2026-10-20](g1-workshop-2026-10-20.md) · 2026-10-20
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-20
 - [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-20
-- [Decision log](DECISIONS.md) · 2026-10-20
 
 ## Release and reports
 
@@ -63,6 +63,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md)
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md)
+- [Controller input on game 1.0.5, 2026-10-21: the mod reads no pad button](controller-2026-10-21.md)
 - [G3: no second or stuck panel, 2026-10-17](g3-panel-2026-10-17.md)
 - [G3: layout at every list size, 2026-10-17](g3-layout-2026-10-17.md)
 - [Event-targeted stand mouse input — September 24, 2026](stand-pointer-2026-09-24.md)

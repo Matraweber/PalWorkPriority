@@ -66,7 +66,25 @@ stopped mining and chopping. Every fix below was tested in the game
   screen.
 - Clicks and keys on the stand always change the cell they were pressed on,
   even when the list redraws in between.
-- Large limits are shown short: 9,999,999 reads as "10.0M".
+- Limits are shown in full up to the 9,999,999 maximum; only storage counts
+  above a million are shortened (12.3M).
+- Clearer for new players: the panel says up front that 0.5.0 cannot create
+  new limits ("Browse items (view only in 0.5.0)", item tiles read "New limits
+  in 0.6" or "Group limit applies"), and that each limit switches its whole
+  work type. Status words are plain and fit their column (Below limit, Limit
+  reached, Reached 2/3, Others below, No count yet, Mod off, Test mode).
+- Remove warns that a removed limit cannot be added back in 0.5.0, and Escape
+  with an armed Remove ("Sure?") cancels it instead of closing the panel.
+- Raising a limit above the highest step (50,000) no longer sets it to 50,000;
+  it keeps the typed value and says so.
+- A version mismatch with the server is shown in amber with what to do, on
+  both screens. Server error codes are replaced by plain sentences.
+- Key hints: "ESC / ALT+F1" and, on the host, "ALT+F2 RECOUNT NOW" (as bound in
+  the options menu), plus a mouse line under the limits. Confirmations name the
+  item and say "Saved" or "Sent to the server", and warn when storage already
+  holds the new limit. A search with no results says so.
+- The Monitoring Stand legend is two lines: what left and right click do, the
+  number keys, the marks (* sending, ! not saved, ? unknown) and Alt+F1.
 - The item search and "Show all" no longer crash the game with item mods
   installed (reports by DarkWyrmReaper and NoMo, tested with Cosmetic Outfits
   and PalSchema): the game is only asked for the names of items it actually has.
@@ -106,9 +124,8 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 - Limits per item (stop stone while ore continues).
 - Faster background saving (built and tested separately; planned for 0.5.x).
-- Marking a capped work column on the stand, showing the game's checkbox
-  again when the mod turned a permission off, and a mouse and controller
-  button legend.
+- Marking a capped work column on the stand and showing the game's checkbox
+  again when the mod turned a permission off.
 - Tests with several real players and guilds at once, Steam Deck and
   ultrawide/UI-scale checks.
 - Requests: separate priority and limit mods, restricting high-quality stands,
@@ -117,6 +134,9 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 ### Still being checked before release
 
 - [OPEN] Vortex install, update and removal.
+- [OPEN] Controllers: on game 1.0.5 the mod's controller buttons on the
+  Monitoring Stand and in the panel did not respond in our tests. Use mouse and
+  keyboard until this is confirmed.
 
 Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
 

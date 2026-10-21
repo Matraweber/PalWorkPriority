@@ -7,12 +7,14 @@ local now=100
 os.clock=function() return now end
 overlay.fit_width=function() end
 rules(14)
+-- No scheduler verdict in this fixture, so the help explains "?" / "No count yet".
+local HELP='Each limit switches its whole work type. ? or No count yet: not counted yet, Alt+F2 counts now.'
 panel.refresh(cfg); panel.toggle(); panel.refresh(cfg)
 panel.page_step(cfg,1); panel.refresh(cfg)
 assert(rendered('page 2 of 2, 14 limits'), 'fixture did not reach second rules page')
 assert(overlay.parts.NoticeRow.visibility==0,
     'rules help row is collapsed before a notice or edit')
-local help=assert(rendered('Choose a limit to edit; Remove asks for confirmation.'))
+local help=assert(rendered(HELP))
 assert(help.parent==overlay.parts.Notice)
 local row,height=overlay.parts.NoticeRow,overlay.height
 local positions={}
@@ -36,9 +38,9 @@ local function stable()
 end
 assert(panel.apply(cfg,{kind='item',item='Stone14'},-1,true))
 panel.refresh(cfg); stable()
-assert(help.text:find('edit in RULES',1,true), 'existing-rule notice missing')
+assert(help.text:find('Click the limit to change it',1,true), 'existing-rule notice missing')
 now=108; panel.refresh(cfg); stable()
-assert(help.text=='Choose a limit to edit; Remove asks for confirmation.')
+assert(help.text==HELP)
 caps.state,caps.error='error','Disk write failed; retry pending'
 panel.refresh(cfg); stable()
 assert(rendered(caps.error)==help, 'save error did not reuse notice widget')
@@ -51,7 +53,7 @@ assert(not panel.confirm_edit(cfg,'1.5'))
 panel.refresh(cfg); stable()
 assert(help.text:find('Enter a whole number',1,true), 'editor validation message missing')
 panel.cancel_edit(); panel.refresh(cfg); stable()
-assert(help.text=='Choose a limit to edit; Remove asks for confirmation.')
+assert(help.text==HELP)
 assert(writes==0 and data.Stone14==114, 'notice transitions altered the rule')
 ]=], '@rules-notice-layout-fixture'))()
 print('PASS rules notice: permanent row, notices/errors/edit/cancel, expiry and fixed controls/page')

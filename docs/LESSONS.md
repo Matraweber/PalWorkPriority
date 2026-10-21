@@ -145,6 +145,12 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Lua traps
 
+- **A clamp at one end of a ladder is a jump from the other side.** The limit
+  ladder's `step` returned the top rung (50,000) for any value above it, so
+  "raise" on a typed 100,000 lowered it, and "lower" under 100 raised it to
+  100. Found by reading the code for the 2026-10-21 UX review, not by a test.
+  A step function must keep a value that is outside its range and say why.
+
 - **An error inside pcall is not free, and it hides a broken call.**
   GetNickname failed on every call after a game update (wrong parameter
   count); pcall swallowed it, so names quietly became species names and each

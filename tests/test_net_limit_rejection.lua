@@ -30,7 +30,7 @@ assert(#f.view==0 and caps.serialize()==before and #fs.operations==operations an
     'rejected unsupported limit mutated settings or wrote files')
 assert(f.client.status=='ready' and f.remote_status=='ready', 'rejection poisoned confirmed empty snapshot')
 local state,label,hint=require('panel_status').save{view_status=function()return f.remote_status,f.remote_error end}
-assert(state=='ready' and label=='Synced with server' and hint:find('no verified output control',1,true))
+assert(state=='ready' and label=='Synced with server' and hint:find('cannot create new limits',1,true) and not hint:find('output control',1,true))
 local events=#f.events
 assert(not f.client.receive_state(replies[#replies]),'completed request retained after rejection')
 f.advance(9)

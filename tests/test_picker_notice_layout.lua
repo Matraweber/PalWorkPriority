@@ -13,7 +13,7 @@ panel.apply(cfg,{kind='page',by=1},-1,true); panel.refresh(cfg)
 assert(rendered('page 2 of 4'), 'fixture did not reach a non-first picker page')
 assert(overlay.parts.NoticeRow.visibility==0,
     'picker help row is collapsed before an unsupported selection')
-local help=assert(rendered('Choose an item to review its limit options.'))
+local help=assert(rendered('0.5.0 cannot add new limits. Green items already have one: click to open it.'))
 assert(help.parent==overlay.parts.Notice, 'help is not in the reserved notice row')
 assert(rendered('Search items'), 'picker placeholder still promises item limits')
 local row, height, widgets=overlay.parts.NoticeRow,overlay.height,count
@@ -34,11 +34,11 @@ local function stable()
 end
 assert(not panel.apply(cfg,{kind='item',item='StoneAA'},-1,true))
 panel.refresh(cfg)
-assert(rendered('Unavailable: this item cannot have a separate production limit.')==help,
+assert(rendered('Version 0.5.0 cannot create new limits. Per-item limits are planned for 0.6.')==help,
     'rejection did not replace the existing help text')
 stable()
 now=108; panel.refresh(cfg)
-assert(rendered('Choose an item to review its limit options.')==help,
+assert(rendered('0.5.0 cannot add new limits. Green items already have one: click to open it.')==help,
     'notice expiry did not restore help in place')
 stable()
 assert(not panel.apply(cfg,{kind='item',item='StoneAB'},-1,true))

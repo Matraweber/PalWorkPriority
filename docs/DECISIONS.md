@@ -279,6 +279,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-10-21 - The limits panel gets the new-user fixes in 0.5.0 (user's
+  pick: P1, the requested key hints and stand legend, and P2 except Enter).**
+  From [ux-review-2026-10-21](ux-review-2026-10-21.md): say up front that 0.5.0
+  cannot create limits, warn that Remove cannot be undone, fix "raise" setting
+  a large limit to 50,000, plain status words that fit the column, show what a
+  legacy limit switches, a visible version-mismatch message, mouse and key
+  hints, and the P2 friction items. *Rejected for now:* Enter opening the type
+  box instead of raising one step (behaviour change, P2-11) and the P3 polish
+  list. Moves the "mouse-button and pad legend" out of the deferred list.
 - **2026-10-20 - Only rows of the item table are ever named by the game.**
   GetItemName aborts the game (pcall cannot catch it) for an id the item table
   does not have, so `items.real_name` checks the captured catalogue's row names

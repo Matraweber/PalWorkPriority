@@ -7,29 +7,65 @@ local labels = {saving='Saving...', saved='Saved', error='Save failed - changes 
     acknowledged='Server accepted - awaiting data', applied='Confirmed by server', accepted='Confirmed by server',
     applied_unsaved='Applied - not saved', ready='Synced with server',
     rejected='Server rejected changes', incompatible='Server version incompatible', unavailable='Settings unavailable'}
-local reasons = {awaiting_handshake='Waiting for the server handshake.',
-    unsupported_limit='Change rejected: no verified output control for this producer. Only existing legacy limits can be edited.',
-    no_active_legacy_rule='Change rejected: no existing legacy limit to remove for this guild.',
+-- Every reason code that can reach the panel's notice row, in plain words
+-- (2026-10-21 review, P2-5/P2-6). net.lua, protocol.lua, caps.lua and the
+-- settings writers each add their own codes; anything code-shaped that is
+-- not listed falls back to plain_fallback below, never the raw code.
+local MISMATCH='The server runs a different Pal Work Priority version. Install the same version as the server.'
+local RESYNC='Waiting for fresh data from the server.'
+local NO_NEW='Version 0.5.0 cannot create new limits. Only existing limits can be changed.'
+local NO_RULE='There is no such limit to remove for your guild.'
+local reasons = {awaiting_session='Connecting to the server...', awaiting_handshake='Waiting for the server handshake.',
+    handshake_timeout='The server did not answer. Check that it runs the same Pal Work Priority version.',
+    server_session_changed='The server restarted or changed. Reconnecting...',
+    unsupported_limit=NO_NEW,
+    no_active_legacy_rule=NO_RULE,
     rejected='The server rejected this change; confirmed settings are unchanged.',
     handler_error='The server could not process this change.',
     invalid_edit='The server rejected an invalid change.',
-    request_id_reused='The server rejected a reused request ID.',
-    stale_request='The server rejected an expired request.',
+    request_id_reused='The server rejected a repeated change. Try again.',
+    stale_request='The server rejected an expired change. Try again.',
+    not_authorized='The server did not allow this change.',
     awaiting_snapshots='Waiting for complete server data.', awaiting_snapshot='Waiting for confirmed server data.',
     transport_unavailable='Server connection unavailable; changes are not confirmed.',
     ack_timeout='Server did not acknowledge the change.', snapshot_timeout='Confirmed server data did not arrive.',
+    queue_timeout='The change waited too long and was not sent. Try again.',
+    timed_out='The change was not confirmed in time.',
     save_failed='The server applied this change but could not save it; it may be lost after a restart.',
-    schema_or_work_width='Server and client need matching mod versions.',
-    server_requires_matching_mod='Server and client need matching mod versions.',
+    schema_or_work_width=MISMATCH,
+    server_requires_matching_mod=MISMATCH,
     settings_restart_required='Server settings are locked. The host must restart the game or server before editing can resume.',
-    settings_recovering='The server is loading saved settings. Editing is temporarily locked.'}
+    settings_recovering='The server is loading saved settings. Editing is temporarily locked.',
+    activation_busy='Settings are being loaded. Try again in a moment.',
+    snapshot_apply_failed=RESYNC, snapshot_invalidated=RESYNC, invalid_packet=RESYNC, invalid_stream=RESYNC,
+    invalid_kind=RESYNC, invalid_row=RESYNC, invalid_begin=RESYNC, invalid_delta=RESYNC, missing_begin=RESYNC,
+    duplicate_row=RESYNC, delta_revision_gap=RESYNC, incomplete_snapshot=RESYNC, snapshot_too_large=RESYNC,
+    invalid_storage=RESYNC, storage_too_large=RESYNC, storage_unrequested=RESYNC, storage_expired=RESYNC,
+    wrong_storage_request=RESYNC, stale_revision=RESYNC, wrong_session=RESYNC,
+    snapshot_changed='Limits changed while saving. Check them and try again.',
+    ['scope unavailable']='Your guild could not be read. Try again in a moment.',
+    -- caps.lua's own sentences, which used internal terms.
+    ['Item-specific limits await a verified producer adapter and scope']=NO_NEW,
+    ['No active legacy rule for this guild']=NO_RULE,
+    ['ceiling out of range']='Enter a whole number from 1 to 9,999,999.',
+    ['invalid item id']='This item cannot have a limit.',
+    ['unknown work type']='This work type cannot have a limit.'}
+-- A code nobody listed is still not shown raw.
+local plain_fallback='Limits are not confirmed right now. Try again in a moment.'
+local function plain(err)
+    if err==nil then return nil end
+    if reasons[err] then return reasons[err] end
+    if type(err)=='string' and err:match('^[%l%d_]+$') then return plain_fallback end
+    return err
+end
+M.plain_reason=plain
 function M.save(caps)
     local state,err=caps.state,caps.error
     if caps.view_status then
         local ok,s,e=pcall(caps.view_status)
         if ok then state,err=s,e else state,err='unavailable','Save status unavailable' end
     end
-    return state,labels[state] or 'Save status unavailable',reasons[err] or err
+    return state,labels[state] or 'Save status unavailable',plain(err)
 end
 
 -- Presentation of the trusted caps return contract, never an authority grant.
@@ -119,7 +155,7 @@ function M.stock(cfg,scheduler,guild,selected,is_client,remote)
         index=index or (#view.choices>0 and 1 or nil)
         if index then
             view.camp=view.choices[index]; view.index=index
-            view.label='Base '..index..'/'..#view.choices..' ('..view.camp:sub(1,8)..')'
+            view.label='Base '..index..' of '..#view.choices
             evidence=(scheduler.last_storage_by_camp or {})[view.camp]
             totals=(scheduler.last_totals_by_camp or {})[view.camp]
         end
@@ -150,7 +186,8 @@ function M.verdict(scheduler,work,view)
         end
     end
     if count~=seen.camps then return nil end
+    -- Third value: how many bases the partial count is out of ("Reached 2/3").
     return seen.capped>=seen.camps,
-        seen.capped>0 and seen.capped<seen.camps and seen.capped or nil
+        seen.capped>0 and seen.capped<seen.camps and seen.capped or nil, seen.camps
 end
 return M

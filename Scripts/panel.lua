@@ -1879,19 +1879,18 @@ function RB.change_limit(clear,work,item,amount,guild)
     if accepted and not pending and not caps.is_client then M.wants_pass=true end
     return accepted,pending,false
 end
-local function set_and_say(work, item, amount, said)
+local function set_and_say(work, item, amount)
     local accepted,pending,stale=RB.change_limit(false,work,item,amount,mine())
     if stale then return false end
     if accepted then
-        announce(pending and "Saving change..." or caps.is_client and "Change requested; awaiting server confirmation." or said)
+        announce(RB.limit_said(work, item, amount, pending))
         return true
     end
 
-    announce(select(3, RB.status.save(caps)) or string.format(
-        "%s %s limit %d is not confirmed yet",
-        workdefs.label(work), tostring(item), amount))
+    announce(select(3, RB.status.save(caps)) or RB.not_confirmed(work, item, amount))
     return false
 end
+
 
 local function pretty_name(item)
     -- Delegates, but survives a session whose items module predates it.
@@ -1944,6 +1943,49 @@ local function fit_name(text, chars)
     local head = chars - tail - 2
     if head < 1 then return text:sub(1, chars) end
     return (text:sub(1, head):gsub("%s+$", "")) .. ".." .. text:sub(-tail)
+end
+
+-- A hotkey as the player bound it. main.lua records DarnMenu's labels in
+-- darnmenu.labels; main does not hot-reload, so an older main has none and
+-- the shipped Alt+Fn is named instead. Kept on RB: panel.lua is at Lua's
+-- top-level local ceiling.
+function RB.key_label(name, default)
+    local label
+    pcall(function()
+        local dm = package.loaded.darnmenu
+        label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels[name] or nil
+    end)
+    if type(label) ~= "string" or label == "" or #label > 24 then label = default end
+    return label:upper()
+end
+
+-- The same key for a sentence: "Alt+F2" rather than "ALT+F2".
+function RB.key_prose(name, default)
+    return (RB.key_label(name, default):gsub("(%a)(%w*)", function(a, b) return a:upper() .. b:lower() end))
+end
+
+-- What a saved or sent limit says (review P2-2/P2-3): the work type and the
+-- item's readable name, never the raw id, "Saved" on the host and "Sent to
+-- the server" on a client, and a warning when storage already holds at least
+-- the new amount, because that limit stops the work at once.
+function RB.limit_said(work, item, amount, pending)
+    if pending then return "Saving change..." end
+    local job, name = workdefs.label(work), pretty_name(item)
+    local head = caps.is_client and "Sent to the server" or "Saved"
+    local have = RB.stock and RB.stock.verified and RB.stock.totals and RB.stock.totals[item]
+    if type(have) == "number" and type(amount) == "number" and have >= amount then
+        -- Kept under the notice row's ~100 characters for the longest work
+        -- name, so the work type is left to the row it appears on.
+        return string.format("%s. Storage already holds %s %s, so this limit is reached.",
+            head, group_digits(have), fit_name(name, 20))
+    end
+    return string.format("%s: %s limit %s for %s.", head, job, group_digits(amount), fit_name(name, 24))
+end
+
+-- The fallback when neither the save status nor the server says why.
+function RB.not_confirmed(work, item, amount)
+    return string.format("The %s limit %s for %s is not confirmed yet.",
+        workdefs.label(work), group_digits(amount), fit_name(pretty_name(item), 24))
 end
 
 -- One item as a row: a left rail, its icon, its name, and how many are in
@@ -2395,7 +2437,7 @@ function M.confirm_edit(cfg, supplied)
     end
     local want = RB.logic.amount(text)
     if not want then
-        editing.error = "Enter a whole number from 1 to 9999999; the previous limit is unchanged."
+        editing.error = "Enter a whole number from 1 to 9,999,999. The limit is unchanged."
         return false
     end
     local job, item, was = editing.work, editing.item, editing.was
@@ -2403,11 +2445,11 @@ function M.confirm_edit(cfg, supplied)
     local accepted,pending,stale=RB.change_limit(false,job,item,want,mine())
     if stale then return false end
     if not accepted then
-        editing.error = select(3, RB.status.save(caps)) or "The change was not confirmed; check the current value and save status."
+        editing.error = select(3, RB.status.save(caps)) or "The change was not confirmed. Check the value and the save status."
         return false
     end
     M.cancel_edit()
-    announce(pending and "Saving change..." or string.format("%s %s limit requested: %d", workdefs.label(job), item, want))
+    announce(RB.limit_said(job, item, want, pending))
     return true
 end
 
@@ -2574,13 +2616,19 @@ local function draw_tabs(active)
     end
 
     hit("tab_close", { kind = "close" })
-    -- Wide enough to include ESC.
+    -- Both keys that close the panel, as bound (review 2026-10-21): the
+    -- panel key is rebindable in DarnMenu. Right-aligned ten pixels short of
+    -- CLOSE, so a longer binding grows leftward instead of into the word.
+    local esc_text = "ESC / " .. RB.key_label("key_panel", "ALT+F1")
+    local esc_x = right_x(W - 100, esc_text, 12, CAPS_W)
+    -- Wide enough to include the key label.
     --
     -- The hit box started at W-102 while the word ESC is drawn about 45px
     -- further left, so the panel printed a shortcut label that did nothing
     -- when clicked. Advertising a control and then refusing the click is
     -- worse than not advertising it.
-    slab("tabhit:close", W - 150, -6, 150, TAB_H, INVISIBLE, true)
+    local close_from = math.min(W - 150, math.floor(esc_x) - 8)
+    slab("tabhit:close", close_from, -6, W - close_from, TAB_H, INVISIBLE, true)
     tile_face["tab_close"] = stripes["tabhit:close"]
     -- The panel never said how to leave it. In a game that draws a keycap
     -- beside every action in the corner of the screen - Command Pal 4, Summon
@@ -2589,8 +2637,14 @@ local function draw_tabs(active)
     -- Drop 4, not 6: 12pt beside 20pt shares a top edge at the same drop, not a
     -- baseline. Measured off the drawn panel, 6 put ESC two pixels below
     -- CLOSE'''s baseline.
-    line("tab_esc", 0, W - 148, "ESC", "faint", 12, 4)
+    line("tab_esc", 0, esc_x, esc_text, "faint", 12, 4)
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
+    -- Host only: a client's Alt+F2 does not count anything (the server does).
+    -- A hint, not a button; the pass belongs to main.lua.
+    if not caps.is_client then
+        local pass_text = RB.key_label("key_pass", "ALT+F2") .. " RECOUNT NOW"
+        line("tab_pass", 0, right_x(esc_x - 28, pass_text, 12, CAPS_W), pass_text, "faint", 12, 4)
+    end
 
     -- What this is and what it does, which the panel never said. Opening it
     -- cold gave you two tabs, a caption about clicking things, and numbers
@@ -2606,7 +2660,10 @@ local function draw_tabs(active)
     line("title", 0, PAD, "Production Limits", "title", 22, TITLE_DROP)
     RB.save_state, RB.save_label, RB.save_error = RB.status.save(caps)
     line("save_state", 0, W - 460, RB.save_label,
-        (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "applied_unsaved")
+        -- Amber for a version mismatch too: in dim 12pt it was easy to miss,
+        -- and nothing can be changed until the versions match (review P1-6).
+        (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "applied_unsaved"
+            or RB.save_state == "incompatible")
             and "over" or "dim", 12, TITLE_DROP + 8)
 
     RB.use_row("Sub")
@@ -2616,9 +2673,11 @@ local function draw_tabs(active)
     -- A Workshop copy switched on next to a manual install (install_check)
     -- takes the second sentence: the one line every open panel shows.
     local conflict = require("install_check").current
+    -- The legacy clause moved to the rows and the notice (review P1-5), which
+    -- also keeps camp scope plus the install warning on one line (P2-8).
     line("stock_scope", 0, PAD, "Storage: " .. (RB.stock and RB.stock.label or "unavailable")
         .. ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and " - change base" or "")
-        .. (conflict and (". " .. conflict.short) or ". Legacy groups affect a whole work type."),
+        .. (conflict and (". " .. conflict.short) or ""),
         conflict and "over"
             or ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and "action" or "dim"), 14, RB.SUB_DROP)
 
@@ -2667,9 +2726,12 @@ local function short_amount(n)
     n = math.floor(tonumber(n) or 0)
 
     -- Past a million the separators stop earning their width and the column
-    -- would start pushing into the one beside it.
+    -- would start pushing into the one beside it. Storage counts only: a
+    -- limit is drawn in full (group_digits), because "10.0M" for a limit of
+    -- 9,999,999 showed a value above the allowed maximum (review P2-12).
+    -- Rounded down, so a count never reads as more than storage holds.
     if n >= 1000000 then
-        return string.format("%.1fM", n / 1000000)
+        return string.format("%.1fM", math.floor(n / 100000) / 10)
     end
     return group_digits(n)
 end
@@ -2733,13 +2795,25 @@ local function draw_list(cfg, totals)
     draw_tabs("list")
     local row = 3
 
+    -- Whether any visible row will show "?" or "No count yet", decided
+    -- before the rows are drawn because the help row above them explains it
+    -- (review P2-4). Plain Lua over the same evidence the rows read.
+    local uncounted = #rules > 0 and not (RB.stock and RB.stock.verified)
+    if not uncounted and cfg.enabled ~= false and not cfg.dry_run then
+        for _, rule in ipairs(rules) do
+            if RB.status.verdict(scheduler, rule.work, RB.stock) == nil then uncounted = true break end
+        end
+    end
+
     -- Keep one help row allocated. Editing, errors and transient notices
     -- replace its contents without moving the limits or Remove controls.
     RB.use_row("Notice")
     if editing ~= nil then
+        -- Only the item name is shortened, never the instruction (P2-1):
+        -- fit_name over the whole sentence cut it mid-word. 4 + 20 + 44 = 68.
         line("why", 0, PAD,
-            fit_name(editing.error or ("Set " .. pretty_name(editing.item)
-                .. ": whole number; confirm saves, Esc cancels"), 68), "action", 14)
+            editing.error and fit_name(editing.error, 68) or ("Set " .. fit_name(pretty_name(editing.item), 20)
+                .. ": whole number. Confirm saves, Esc cancels."), "action", 14)
         hit("edit_save", { kind = "edit_save" })
         hit("edit_cancel", { kind = "edit_cancel" })
         line("edit_save", 0, W - 215, "Confirm", "action", 14)
@@ -2753,8 +2827,17 @@ local function draw_list(cfg, totals)
         -- Below the editing caption on purpose: while a number is being typed
         -- the instruction for typing it is the more useful of the two.
         line("why", 0, PAD, notice, "action", 14)
+    elseif #all_rules == 0 then
+        -- Said before anyone goes looking for a way to add one (P1-1).
+        line("why", 0, PAD, "Version 0.5.0 cannot create new limits. Per-item limits are planned for 0.6.", "dim", 14)
+    elseif uncounted then
+        line("why", 0, PAD, "Each limit switches its whole work type. ? or No count yet: "
+            -- A client never receives the host's limit state (last_capped
+            -- is server-side), so its status column always reads No count yet.
+            .. (caps.is_client and "the host has not sent a count."
+                or ("not counted yet, " .. RB.key_prose("key_pass", "ALT+F2") .. " counts now.")), "dim", 14)
     else
-        line("why", 0, PAD, "Choose a limit to edit; Remove asks for confirmation.", "dim", 14)
+        line("why", 0, PAD, "Click a limit to type a new number. Each limit switches its whole work type.", "dim", 14)
     end
     RB.done_row()
 
@@ -2807,7 +2890,7 @@ local function draw_list(cfg, totals)
         local known = RB.save_state == "saved" or RB.save_state == "missing"
             or RB.save_state == "ready" or RB.save_state == "applied" or RB.save_state == "accepted"
         local in_row=RB.use_row("Head")
-        line("empty", in_row and 0 or row, PAD, known and "No production limits configured."
+        line("empty", in_row and 0 or row, PAD, known and "No production limits yet."
             or "Limits unavailable; check the status above.", "dim")
         RB.done_row()
         row = row + 2
@@ -2865,8 +2948,10 @@ local function draw_list(cfg, totals)
                 -- one-pixel shadow. Use row-local tops, not line() centering.
                 text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 1,
                     workdefs.label(rule.work), "item", 13)
+                -- What the limit actually switches (P1-5): the whole work
+                -- type, not only this item. "Legacy group" said neither.
                 text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 20,
-                    "Legacy group", "dim", 9, true)
+                    "Whole work type", "dim", 9, true)
             else
                 line(key, row, PAD + MARK_W, workdefs.label(rule.work),
                     choosable and "action" or "item", ROW_PT)
@@ -2924,29 +3009,36 @@ local function draw_list(cfg, totals)
                 tile_face["cap" .. i] = stripes["capbox" .. i]
             end
 
-            local cap_text = editing_this and "" or short_amount(rule.amount)
+            local cap_text = editing_this and "" or group_digits(rule.amount)
             line("cap" .. i, row, right_x(COL_CAP_R, cap_text, ROW_PT, DIGIT_W),
                 cap_text, "title", ROW_PT)
 
             -- A scoped scheduler cap decision is policy evidence. It does
             -- not establish actual assignment, production, or permission RPC
             -- success, so labels never say Working, Waiting, or Stopped.
-            local capped, partly = RB.status.verdict(scheduler, rule.work, RB.stock)
+            --
+            -- Short plain words that fit the 192px column (COL_DONE to the
+            -- Remove box) at ROW_PT, 13 characters at most (review P1-4).
+            -- "cap" also meant Pals per job elsewhere, and "Other limits
+            -- unmet" ran into Remove. The third verdict value is the base
+            -- count; a status module from before it says "Reached at N".
+            local capped, partly, bases = RB.status.verdict(scheduler, rule.work, RB.stock)
             local status, tone
             if cfg.enabled == false then
-                status, tone = "Rule off", "dim"
+                status, tone = "Mod off", "dim"
             elseif cfg.dry_run then
-                status, tone = "Testing", "dim"
+                status, tone = "Test mode", "dim"
             elseif capped == nil then
-                status, tone = "Unavailable", "dim"
+                status, tone = "No count yet", "dim"
             elseif capped then
-                status, tone = "Group cap met", "over"
+                status, tone = "Limit reached", "over"
             elseif partly then
-                status, tone = "Met at " .. partly .. " bases", "over"
+                status, tone = bases and ("Reached " .. partly .. "/" .. bases)
+                    or ("Reached at " .. partly), "over"
             elseif met then
-                status, tone = "Other limits unmet", "unmet"
+                status, tone = "Others below", "unmet"
             else
-                status, tone = "Group cap unmet", "working"
+                status, tone = "Below limit", "working"
             end
             line("done" .. i, row, COL_DONE, status, tone, ROW_PT)
 
@@ -3087,7 +3179,14 @@ local function draw_list(cfg, totals)
     -- ten and thirty pixels apart.
     line("mk_new", 0, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
     line("g_new", 0, PAD + MARK_W, ">", "primary", ROW_PT)
-    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Browse items", "primary")
+    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Browse items (view only in 0.5.0)", "primary")
+    -- The mouse, said once on the second line of the Foot row, which the
+    -- rules screen left empty (34 spare pixels; review key hints and P1-7).
+    -- Right click lowering a limit was otherwise silent. Host only for the
+    -- recount: a client's key does not count storage.
+    line("foot_hint", 1, PAD, "Left click a limit to type it, right click to lower it one step."
+        .. (caps.is_client and "" or (" " .. RB.key_prose("key_pass", "ALT+F2") .. " recounts storage now.")),
+        "dim", 13)
     RB.done_row()
 
     -- One row of breathing space, not two. The panel is sized from what it
@@ -3428,10 +3527,19 @@ local function draw_item_picker(cfg, totals)
     -- Reserve the same help row on every draw. Showing or expiring a refusal
     -- must never move another item under the pointer for the next click.
     RB.use_row("Notice")
-    if notice and (os.clock() - notice_at) < NOTICE_FOR then
+    -- A search that matched nothing said nothing: empty column headings and
+    -- no tiles (review P2-13). Only once the catalogue is ready, so a search
+    -- still being prepared is never reported as having no results.
+    local no_match = search_text ~= "" and #source == 0
+        and (catalogue_state == nil or catalogue_state == "ready")
+    if RB.save_state == "incompatible" and RB.save_error then
+        -- The version mismatch is why nothing here works; say it on this
+        -- screen too, not only on RULES (P1-6).
+        line("why", 0, PAD, fit_name(RB.save_error, 104), "over", 14)
+    elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
         line("why", 0, PAD, notice, "action", 14)
     else
-        line("why", 0, PAD, "Choose an item to review its limit options.", "dim", 14)
+        line("why", 0, PAD, "0.5.0 cannot add new limits. Green items already have one: click to open it.", "dim", 14)
     end
     RB.done_row()
 
@@ -3452,12 +3560,19 @@ local function draw_item_picker(cfg, totals)
     -- little table.
     RB.use_row("Head")
     RB.pf.chrome = os.clock()
-    for c = 0, LIST_COLS - 1 do
-        local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
-        line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12, RB.HEAD_DROP)
-        line("h_st" .. c,
-            0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
-            "IN STORAGE", "faint", 12, RB.HEAD_DROP)
+    if no_match then
+        -- In place of the headings, which head nothing. Keys not drawn this
+        -- frame are emptied by blank_unused, so the headings come back alone.
+        line("nomatch", 0, PAD, 'No item matches "' .. fit_name(search_text, 40)
+            .. '". Try a shorter name or clear the search.', "item", 14, RB.HEAD_DROP)
+    else
+        for c = 0, LIST_COLS - 1 do
+            local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
+            line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12, RB.HEAD_DROP)
+            line("h_st" .. c,
+                0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
+                "IN STORAGE", "faint", 12, RB.HEAD_DROP)
+        end
     end
     RB.done_row()
 
@@ -3635,9 +3750,11 @@ local function draw_item_picker(cfg, totals)
     line("g_all", r_all, PAD + MARK_W,
         everything and "[X]" or "[  ]",
         everything and "action" or "dim", ROW_PT)
+    -- "craftable" was wrong for Wood, Stone and Berries, which are gathered
+    -- (review P2-10). These are the items a base's Pals can produce.
     line("all", r_all, PAD + MARK_W + GLYPH_SLOT,
-        everything and "Showing all craftable items"
-            or "Show all craftable items",
+        everything and "Showing all items a base can make"
+            or "Show all items a base can make",
         everything and "action" or "item", ROW_PT)
 
     hit("back", { kind = "back" })
@@ -4227,6 +4344,14 @@ end
 
 function M.escape()
     if editing then return M.cancel_edit() end
+    -- An armed Remove ("Sure?") is disarmed first, like an unfinished amount:
+    -- Escape with it armed closed the whole panel (review P2-14, screenshot).
+    -- A second Escape closes.
+    if pending_drop ~= nil and (os.clock() - pending_at) <= 4.0 then
+        pending_drop = nil
+        announce("Remove cancelled. The limit is kept.")
+        return true
+    end
     return M.close()
 end
 
@@ -4349,19 +4474,33 @@ end
 -- Clicking
 -- ---------------------------------------------------------------------------
 
+-- One rung of the ladder up (dir < 0) or down, and a notice when there is
+-- no rung to go to. A value already past the end of the ladder is KEPT: the
+-- upward step used to return the top rung for anything above it, so "raise"
+-- on a typed 100,000 set 50,000 (review P1-3), and the downward step did the
+-- mirror image, "lower" on a typed 50 set 100. Typing is how to go further.
 local function step(current, dir)
     if dir < 0 then
         if current == nil then return LADDER[1] end
         for _, n in ipairs(LADDER) do
             if n > current then return n end
         end
-        return LADDER[#LADDER]
+        local top = LADDER[#LADDER]
+        return current, current > top
+            and string.format("This limit is above the highest step (%s). Left click it to type a number.",
+                group_digits(top))
+            or string.format("This limit is at the highest step (%s). Left click it to type a larger number.",
+                group_digits(top))
     end
 
     if current == nil then return nil end
     local below = nil
     for _, n in ipairs(LADDER) do
         if n < current then below = n end
+    end
+    if below == nil then
+        return current, string.format("This limit is at or below the lowest step (%s). Left click it to type a number.",
+            group_digits(LADDER[1]))
     end
 
     -- Clamped, like the top of the ladder already was.
@@ -4371,8 +4510,9 @@ local function step(current, dir)
     -- stopped and stepping down destroyed - and every rule the ADD tab
     -- creates starts on the lowest rung, so every new rule was one right
     -- click from gone, with no confirmation, while the Remove button next to
-    -- it asks twice. Deleting belongs to Remove.
-    return below or LADDER[1]
+    -- it asks twice. Deleting belongs to Remove. (Below the bottom rung the
+    -- value is now kept, above.)
+    return below
 end
 
 local function hovered()
@@ -5607,7 +5747,9 @@ function M.apply(cfg, what, dir, from_mouse)
         mode, page, show_all = "item", 0, false
         want_focus = false
         want_first_row = true
-        announce("picking an item, type to filter or click one")
+        -- Not "type to filter": the search box takes the keyboard only when
+        -- clicked, on purpose (arrow keys must keep moving the grid). P2-7.
+        announce("Click the search box to find an item by name. Click a green item to open its limit.")
         return true
     end
 
@@ -5669,7 +5811,8 @@ function M.apply(cfg, what, dir, from_mouse)
         local capability = RB.picker.describe(caps, caps.all(cfg, guild), work, what.item, guild)
         if capability.state == "existing" then
             announce(string.format(
-                "%s. Limit %d; edit in RULES.", capability.detail, capability.amount))
+                "%s, now %s. Click the limit to change it.",
+                capability.detail, group_digits(capability.amount)))
             mode = "list"
             RB.reveal_rule = { work = work, item = what.item, guild = guild }
             want_first_row = true
@@ -5696,8 +5839,7 @@ function M.apply(cfg, what, dir, from_mouse)
             seed = LADDER[#LADDER]
         end
 
-        if not set_and_say(work, what.item, seed, string.format(
-            "%s: %s limit %d requested", capability.detail, what.item, seed)) then
+        if not set_and_say(work, what.item, seed) then
             return false
         end
         mode = "list"
@@ -5709,7 +5851,7 @@ function M.apply(cfg, what, dir, from_mouse)
     -- producer is unsupported, persistence fails, or a network edit is
     -- rejected. Keep the source until a validated atomic migration exists.
     if what.kind == "job" then
-        announce("Changing work types is unavailable; the existing legacy group is kept.")
+        announce("The work type of a limit cannot be changed in 0.5.0. The limit is kept.")
         return false
     end
 
@@ -5735,8 +5877,11 @@ function M.apply(cfg, what, dir, from_mouse)
         then
             pending_drop = { work = rule.work, item = rule.item, guild = guild, amount = current }
             pending_at = os.clock()
-            announce("Click Remove again to delete the " ..
-                workdefs.label(rule.work) .. " limit on " .. rule.item)
+            -- Says what the second click costs (P1-2): 0.5.0 cannot create
+            -- limits, so a removed one cannot be added back from the panel.
+            -- Names the button by what it now reads.
+            announce("Click Sure? to delete this " .. workdefs.label(rule.work)
+                .. " limit. 0.5.0 cannot add it back.")
             return true
         end
 
@@ -5753,7 +5898,7 @@ function M.apply(cfg, what, dir, from_mouse)
         local accepted,pending,stale=RB.change_limit(true,what.rule.work,what.rule.item,nil,guild)
         if stale then return false end
         if not accepted then
-            announce(select(3, RB.status.save(caps)) or "Removal was not confirmed; check the current rule.")
+            announce(select(3, RB.status.save(caps)) or "The removal was not confirmed. Check the limit.")
             return false
         end
 
@@ -5766,12 +5911,12 @@ function M.apply(cfg, what, dir, from_mouse)
         if pending then
             announce("Saving removal...")
         elseif caps.submit then
-            announce("asked the server to remove the " ..
-                workdefs.label(what.rule.work) .. " limit on " ..
-                what.rule.item)
+            announce("Asked the server to remove the " ..
+                workdefs.label(what.rule.work) .. " limit for " ..
+                fit_name(pretty_name(what.rule.item), 24) .. ".")
         else
-            announce("rule removed: " .. workdefs.label(what.rule.work) ..
-                " " .. what.rule.item)
+            announce("Removed the " .. workdefs.label(what.rule.work) ..
+                " limit for " .. fit_name(pretty_name(what.rule.item), 24) .. ".")
         end
         return true
     end
@@ -5788,7 +5933,7 @@ function M.apply(cfg, what, dir, from_mouse)
             return true
         end
 
-        local next_amount = step(rule.amount, dir)
+        local next_amount, at_end = step(rule.amount, dir)
 
         -- A step can no longer delete. step() clamps at both ends now, so
         -- nil means the rule has no amount at all rather than "you have gone
@@ -5800,10 +5945,8 @@ function M.apply(cfg, what, dir, from_mouse)
         if next_amount == nil then
             return true
         elseif next_amount == rule.amount then
-            announce(string.format(
-                "%s %s is already at the %s limit the ladder offers",
-                workdefs.label(rule.work), rule.item,
-                dir < 0 and "highest" or "lowest"))
+            announce(at_end or string.format("The %s limit is already %s.",
+                workdefs.label(rule.work), group_digits(rule.amount)))
         else
             local stepped,pending,stale=RB.change_limit(false,rule.work,rule.item,next_amount,mine())
             if stale then return false end
@@ -5819,13 +5962,10 @@ function M.apply(cfg, what, dir, from_mouse)
             -- The answer decides the wording. A client whose step the host
             -- refuses used to be told the limit had moved.
             if stepped then
-                announce(pending and "Saving change..." or string.format("%s %s limit requested: %d",
-                    workdefs.label(rule.work), rule.item, next_amount))
+                announce(RB.limit_said(rule.work, rule.item, next_amount, pending))
             else
-                announce(select(3, RB.status.save(caps)) or string.format(
-                    "asked the server to step %s %s to %d, "
-                    .. "it has not confirmed",
-                    workdefs.label(rule.work), rule.item, next_amount))
+                announce(select(3, RB.status.save(caps))
+                    or RB.not_confirmed(rule.work, rule.item, next_amount))
             end
         end
         return true

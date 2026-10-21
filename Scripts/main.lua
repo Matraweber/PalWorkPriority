@@ -2908,6 +2908,14 @@ local function bind_action(name, default_key, what, fn)
         return
     end
 
+    -- The panel and the stand legend name these keys ("ESC / ALT+F1"). They
+    -- read darnmenu.labels and fall back to the shipped Alt+Fn when it is
+    -- absent, so a panel hot-reloaded under an older main still draws.
+    pcall(function()
+        darnmenu.labels = darnmenu.labels or {}
+        darnmenu.labels[name] = label
+    end)
+
     bind(key, label .. " (" .. what .. ")", fn, mods)
 end
 

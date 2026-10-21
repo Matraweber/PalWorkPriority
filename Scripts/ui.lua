@@ -108,7 +108,23 @@ local cell_last = {}            -- cell full name -> last style token written
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 local edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
 local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like cell_text
-M.EDIT_LEGEND = "1 highest - 5 lowest; X off | * sending/confirming | ! unsaved/rejected | ? unavailable"
+-- Two lines under the stand (review 2026-10-21): what each mouse button does,
+-- then what the marks mean and where the limits panel is. The text block is
+-- bottom-anchored, so the second line grows upward and nothing moves.
+M.EDIT_LEGEND = "Left click: toward 1   Right click: toward X   Or click a cell, then press 1-5 or X\n"
+    .. "1 highest, 5 lowest, X off   * sending   ! not saved   ? unknown   ALT+F1: Production Limits"
+-- The panel key as the player bound it in DarnMenu. main.lua records it in
+-- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
+function M.edit_legend()
+    local label
+    pcall(function()
+        local dm = package.loaded.darnmenu
+        label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels.key_panel or nil
+    end)
+    if type(label) ~= "string" or label == "" or #label > 24 then return M.EDIT_LEGEND end
+    label = label:upper()
+    return (M.EDIT_LEGEND:gsub("ALT%+F1", function() return label end))
+end
 
 local function warn_once(key, message)
     if warned[key] then return end
@@ -791,7 +807,7 @@ function M.settings_message()
         return 'Server settings are unavailable. Priority and limit editing is locked.'
     end
 end
-function M.legend_text() return M.settings_message() or M.EDIT_LEGEND end
+function M.legend_text() return M.settings_message() or M.edit_legend() end
 
 local function edit_presentation(key, work)
     local blocked=M.settings_message()
@@ -1043,7 +1059,7 @@ local function handle_cell(cfg, cell, known_name)
     glyph=glyph..marker
     colour=edit_colour or colour
     if M.settings_message() then detail=M.settings_message() end
-    local help=M.EDIT_LEGEND.."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
+    local help=M.edit_legend().."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
         .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
     if M.settings_message() then help=M.settings_message() end
     pcall(function() cell:SetToolTipText(make_ftext(help)) end)

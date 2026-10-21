@@ -139,9 +139,11 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column
-  on the stand (needs injecting into vanilla header widgets), un-hiding the
-  vanilla checkbox when the mod switched a permission off, and a mouse-button
-  and pad legend (Extramrdo, Sep 28). The priority-order legend exists.
+  on the stand (needs injecting into vanilla header widgets) and un-hiding the
+  vanilla checkbox when the mod switched a permission off. The mouse and key
+  legend (Extramrdo, Sep 28) ships in 0.5.0 as two lines under the stand
+  ([ux-review-2026-10-21](ux-review-2026-10-21.md)); it does not name pad
+  buttons.
 - Live tests with two real clients and two real guilds (needs a second Steam
   account and machine), unmodded-client edit detection.
 - Physical Steam Deck, ultrawide and UI scaling matrix.

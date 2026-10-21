@@ -789,7 +789,8 @@ function M.storage_view(guild, selected)
         if camp == view.camp then out.index = i end
     end
     out.label = view.scope == 'guild' and 'All loaded bases in your guild'
-        or (out.index and ('Base '..out.index..'/'..#out.choices..' ('..view.camp:sub(1,8)..')')
+        -- No camp id: "(a1b2c3d4)" meant nothing to a player (review P2-9).
+        or (out.index and ('Base '..out.index..' of '..#out.choices)
             or 'Storage unavailable')
     -- Count freshness does not revoke confirmed selector metadata. Otherwise
     -- every TTL gap removes the header action needed to choose another camp.

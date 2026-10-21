@@ -152,10 +152,10 @@ end
 rules(1)
 panel.refresh(cfg)
 panel.toggle()
-assert(panel.open and rendered("Legacy group"))
-assert(rendered("Unavailable"), "missing scheduler evidence claimed work was active")
+assert(panel.open and rendered("Whole work type"))
+assert(rendered("No count yet"), "missing scheduler evidence claimed work was active")
 rules(0)
-for _,entry in ipairs({{'ready','No production limits configured.'},
+for _,entry in ipairs({{'ready','No production limits yet.'},
     {'connecting','Limits unavailable; check the status above.'}})do
     caps.view_status=function()return entry[1] end
     panel.refresh(cfg)
@@ -191,28 +191,28 @@ assert(not rendered("Saved") and not rendered("Confirmed by server"),"unsaved ch
 caps.view_status=nil
 panel.refresh(cfg)
 assert(rendered("37"), "panel did not consume selected camp storage")
-assert(not rendered("9.9M"), "cross-guild aggregate leaked into storage column")
+assert(not rendered("9.8M") and not rendered("9.9M"), "cross-guild aggregate leaked into storage column")
 scheduler.last_capped.Mining={pass=1,camps=1,capped=1,unknown=1}
 panel.refresh(cfg)
-assert(rendered("Unavailable") and not rendered("Stopped"), "unknown verdict claimed Stopped")
+assert(rendered("No count yet") and not rendered("Stopped"), "unknown verdict claimed Stopped")
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 assert(rendered("?"), "unverified storage showed a known quantity")
 scheduler.last_storage_by_camp.base1.verified=true
 scheduler.last_capped.Mining={pass=1,camps=1,capped=1,unknown=0}
 panel.refresh(cfg)
-assert(rendered("Group cap met") and not rendered("Stopped"), "cap decision claimed actual work stopped")
+assert(rendered("Limit reached") and not rendered("Stopped"), "cap decision claimed actual work stopped")
 scheduler.last_capped.Mining={pass=1,camps=1,capped=0,unknown=0}
 panel.refresh(cfg)
-assert(rendered("Group cap unmet") and not rendered("Working"), "uncapped decision claimed actual work")
+assert(rendered("Below limit") and not rendered("Working"), "uncapped decision claimed actual work")
 scheduler.last_totals_by_camp.base1.Stone01=200
 panel.refresh(cfg)
-assert(rendered("Other limits unmet") and not rendered("Waiting"), "legacy rule claimed actual waiting")
+assert(rendered("Others below") and not rendered("Waiting"), "legacy rule claimed actual waiting")
 scheduler.last_totals_by_camp.base1.Stone01=37
 scheduler.last_capped.Mining={pass=1,camps=2,capped=2,unknown=0}
 scheduler.last_storage_by_camp.foreign={guild="other",scope="camp",verified=true,pass=1}
 panel.refresh(cfg)
-assert(rendered("Unavailable") and not rendered("Stopped"), "other guild's verdict leaked")
+assert(rendered("No count yet") and not rendered("Stopped"), "other guild's verdict leaked")
 scheduler.last_storage_by_camp.foreign=nil
 scheduler.last_storage_by_camp.base2={guild="guild",scope="camp",verified=true,pass=1,sampled_at=os.clock(),ttl=30}
 scheduler.last_totals_by_camp.base2={Stone01=18}
@@ -227,11 +227,11 @@ for _, n in ipairs({ 0, 1, 13, 14, 26, 27 }) do
     rules(n)
     panel.refresh(cfg)
     if n==0 then
-        assert(rendered("No production limits configured."))
+        assert(rendered("No production limits yet."))
         caps.view_status=function() return "connecting" end
         panel.refresh(cfg)
         assert(rendered("Limits unavailable; check the status above."))
-        assert(not rendered("No production limits configured."), "unknown snapshot presented as no rules")
+        assert(not rendered("No production limits yet."), "unknown snapshot presented as no rules")
         caps.view_status=nil
     end
     if n > 13 then
@@ -399,7 +399,7 @@ panel.refresh(cfg)
 assert(rendered("Storage unavailable - choose Show all to browse items   |   Availability shown below each item"))
 -- A click after the last draw is valid when dispatch reacquires this tree.
 -- The old 150ms draw-age gate rejected it despite successful current lookup.
-local toggle=assert(rendered("Show all craftable items"))
+local toggle=assert(rendered("Show all items a base can make"))
 toggle.IsHovered=function() return true end
 rb.validated=-100
 assert(panel.handle_click(cfg,-1), "freshly validated delayed click was dropped")

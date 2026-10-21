@@ -21,11 +21,13 @@ local storage={Stone01=4, StoneNew=5, StoneWrong=6, StoneBlocked=7, StoneOff=8}
 scheduler.last_totals_by_camp.base1=storage
 panel.refresh(cfg); panel.toggle(); panel.refresh(cfg)
 panel.set_screen('item'); panel.refresh(cfg)
-assert(rendered('No item limit support'),
-    'unsupported creation is not explained before item selection')
-assert(rendered('Edit legacy group'), 'legacy edit scope is hidden')
+-- Every unsupported Mining item here is covered by the Stone01 group limit.
+assert(rendered('Group limit applies'),
+    'an item stopped by a group limit is not explained before item selection')
+assert(not rendered('No item limit support'), 'old jargon label returned')
+assert(rendered('Edit group limit'), 'group limit edit scope is hidden')
 assert(rendered('Add item limit'), 'supported creation is not distinguished')
-assert(rendered('Restore legacy group'), 'masked legacy path claims item-only creation')
+assert(rendered('Restore group limit'), 'masked legacy path claims item-only creation')
 
 local function up(fn,name)
     for i=1,100 do local n,v=debug.getupvalue(fn,i); if n==name then return v end end
@@ -40,7 +42,7 @@ local n=count
 panel.refresh(cfg)
 assert(count==n, 'stable picker recreated widgets')
 for key,w in pairs(before) do assert(rb.runtime.objects[key]==w, 'stable picker replaced widget') end
-local unsupported=assert(rendered('No item limit support'))
+local unsupported=assert(rendered('Group limit applies'))
 local old_x,old_y=unsupported.Slot.position.X,unsupported.Slot.position.Y
 -- Storage ordering puts the existing masked group first, unsupported second.
 panel.nav(cfg,'right')
@@ -51,7 +53,14 @@ assert(unsupported.Slot.position.X==old_x and unsupported.Slot.position.Y==old_y
     'selecting an unavailable item moved its row')
 local classifier=assert(rb.picker, 'picker presentation unavailable')
 assert(classifier.describe(caps,{EmitFlame={Stone01=700}},'EmitFlame','Stone01','guild').detail==
-    'Legacy group affects all Kindling', 'picker exposed an internal work name')
+    'Group limit for all Kindling work', 'picker exposed an internal work name')
+-- Without a covering group the tile says when new limits come (review P1-1).
+local plain=classifier.describe(caps,{},'Mining','StoneBlocked','guild')
+assert(plain.state=='unavailable' and plain.label=='New limits in 0.6'
+    and plain.detail:find('0.5.0 cannot create new limits',1,true), 'unsupported item not explained')
+local covered=classifier.describe(caps,all,'Mining','StoneBlocked','guild')
+assert(covered.state=='unavailable' and covered.label=='Group limit applies' and covered.group=='Stone01'
+    and covered.detail:find('switches all Mining work',1,true), 'group-covered item not explained')
 assert(classifier.describe(caps,all,'Mining','StoneWrong','guild').state=='unavailable',
     'a rule for a different work type advertised an editable rule')
 assert(not panel.apply(cfg,{kind='item',item='StoneWrong'},-1,true) and writes==0,
@@ -81,6 +90,6 @@ local current=actual.all({},'guild')
 assert(classifier.describe(actual,current,'Mining','Stone01','guild').state=='existing')
 assert(classifier.describe(actual,current,'Mining','StoneWrong','guild').state=='unavailable')
 assert(classifier.describe(actual,current,'Mining','StoneOff','guild').label==
-    'Restore legacy group')
+    'Restore group limit')
 print('PASS picker capability: visible states, exact rule scope, fresh admission and widget reuse')
 ]=], '@picker-capability-fixture'))()

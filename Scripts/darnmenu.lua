@@ -18,6 +18,11 @@
 
 local M = {}
 
+-- Display labels of the bound hotkeys ("ALT+F1"), by binding name. main.lua
+-- fills it as it binds; the panel and the stand legend read it and fall back
+-- to the shipped Alt+Fn when a name is missing.
+M.labels = {}
+
 local log = require("log")
 
 local SCHEMA_NAME = "PalWorkPriority"
