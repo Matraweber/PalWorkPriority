@@ -69,7 +69,22 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   reporter is asked for the crash log.
 - [x] **Escape, photo mode, death while editing.** PASS 2026-10-17: Escape and photo mode clean; death (SelfKillPlayer) left the editor over the death screen, fixed by deathwatch.lua and retested with an unsaved 12345 draft (discarded, not saved); one unexplained limit step recorded ([evidence](g3-escape-photo-death-2026-10-17.md)).
   **Done when:** one recorded run each leaves no grey box, no lost input and no
-  stale editor.
+  stale editor. 2026-10-21: photo mode from a Pal bed (Zekrom144, Roin) PASS too.
+- [ ] **New-user panel texts checked in game** (3b7f4e2, user's pick from
+  [ux-review-2026-10-21](ux-review-2026-10-21.md)). Tests pass; not deployed yet.
+  **Done when:** on the deployed build the notice row, foot hint, tabs-row key
+  hints, status column ("Limit reached", "Reached N/M") and the two-line stand
+  legend are screenshotted without overlap or cut text, the raise above
+  50,000 keeps the value, and the first Escape disarms an armed Remove.
+- [ ] **Controller input** ([controller-2026-10-21](controller-2026-10-21.md)):
+  on game 1.0.5 the mod read no pad button from a virtual pad. **Done when:**
+  a real controller with the game launched through Steam either works on the
+  stand and panel, or the changelog keeps saying "use mouse and keyboard" and
+  controller support stays deferred.
+- [ ] **Old Pal reports rerun on rc1** (user's pick 2026-10-21): KhanKeal's
+  Flambelle/all-1 setups, Samurai9400's research, Rey's Lamball and ranch,
+  poiman's fishing pools. **Done when:** each is observed by Current Task and
+  output, or recorded as not reproducible.
 
 ## G4. Scheduling does what the stand shows
 
