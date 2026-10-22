@@ -79,11 +79,14 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   hints, status column ("Limit reached", "Reached N/M") and the two-line stand
   legend are screenshotted without overlap or cut text, the raise above
   50,000 keeps the value, and the first Escape disarms an armed Remove.
-- [ ] **Controller input** ([controller-2026-10-21](controller-2026-10-21.md)):
-  on game 1.0.5 the mod read no pad button from a virtual pad. **Done when:**
-  a real controller with the game launched through Steam either works on the
-  stand and panel, or the changelog keeps saying "use mouse and keyboard" and
-  controller support stays deferred.
+- [x] **Controller input** ([controller-2026-10-21](controller-2026-10-21.md)):
+  CLOSED 2026-10-22 as deferred. The mod reads the pad on 1.0.5 (stick and
+  buttons in the world, LB/X/Y in the panel), but the game keeps the D-pad
+  and A for its menus, the stand takes every button and RB + View opens the
+  map. The changelog says "use mouse and keyboard"; controller support is in
+  the 0.5.x list. **Done when:** a real controller with the game launched
+  through Steam either works on the stand and panel, or the changelog keeps
+  saying "use mouse and keyboard" and controller support stays deferred.
 - [ ] **Old Pal reports rerun on rc1** (user's pick 2026-10-21): KhanKeal's
   Flambelle/all-1 setups, Samurai9400's research, Rey's Lamball and ranch,
   poiman's fishing pools. **Done when:** each is observed by Current Task and
@@ -165,6 +168,9 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - Live tests with two real clients and two real guilds (needs a second Steam
   account and machine), unmodded-client edit detection.
 - Physical Steam Deck, ultrawide and UI scaling matrix.
+- Controller support ([controller-2026-10-21](controller-2026-10-21.md)): panel
+  navigation by left stick, an open chord that is not the map, and stand
+  editing through a widget-level key hook.
 - Requests: independent priority/limit mods, high-quality stand restriction,
   Pal-produced materials, deferred scheduling after UI close.
 

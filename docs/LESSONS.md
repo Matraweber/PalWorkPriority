@@ -145,6 +145,11 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Lua traps
 
+- **A controller plugged in after the game started is not the player's.** On
+  2026-10-21 a virtual pad connected mid-session moved menus but never reached
+  the player, and a whole controller test read "broken". Connect the pad, then
+  start the game, and probe in the open world before blaming the mod
+  (2026-10-22: the read worked all along; the menus take the D-pad and A).
 - **A new label can expose an old mapping bug.** "Group limit applies" put
   Mining on Pal souls because workdefs matches item ids by substring ("stone"
   in PalUpgradeStone). The list had shown them as mining products for months;

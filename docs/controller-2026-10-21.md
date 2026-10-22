@@ -1,9 +1,9 @@
 ---
-date: 2026-10-21
+date: 2026-10-22
 tags: [input, stand-ui, testing]
 status: evidence
 ---
-# Controller input on game 1.0.5, 2026-10-21: the mod reads no pad button
+# Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus
 
 Related: [ux-review-2026-10-21](ux-review-2026-10-21.md) · [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md) · [testing](testing.md)
 
@@ -43,7 +43,7 @@ through Steam, so Steam Input was not involved: that row says nothing about the
 mod. On 2026-08-25 (game 1.0.4) the same watch logged `pad: Gamepad_DPad_Down
 down`, so the read worked then.
 
-## Verdict
+## Verdict of 2026-10-21 (superseded on 2026-10-22, below)
 
 **Open, not a pass.** On game 1.0.5 the mod's controller path (pad.lua, stand
 raise/lower on LB/RB/A/X, panel navigation) saw no Gamepad_* key while the game
@@ -62,3 +62,37 @@ Not completed live: the game repeatedly lost focus to the desktop while the
 user was using the PC, and clicks did not reach the stand (priorities.txt
 unchanged, cmp equal to the backup taken 15:07). The wrap is covered by
 `store.cycle` regression tests; live check stays open.
+
+## 2026-10-22: rerun with the pad present from game start
+
+The user unplugged the DualSense; all XInput slots were empty. The virtual pad
+(stick support added to `pad_server.py`) was connected first, then the game
+restarted (world ready 17:39:43), so the game knew the pad from the start.
+Yesterday's runs had the pad plugged in mid-session or tested only while a menu
+held the input, which is why they saw nothing.
+
+| Where | Pad input the mod reads (probe while held) | Game's own reaction |
+|---|---|---|
+| Open world | left stick `LeftY 1.0`, LB, D-pad down | character walks, D-pad summons the Pal |
+| Production Limits panel open | stick, LB, X, Y | LB switched RULES -> ITEMS (the mod's tab action) |
+| Production Limits panel open | **D-pad and A: nothing** | used by the game's menu navigation |
+| Monitoring Stand open (game menu) | **nothing at all** (LB, X, D-pad) | stand's own focus moves with the D-pad |
+| World, RB + View (the mod's open chord) | n/a | **the game opens its map; RB throws a Pal Sphere**; panel not opened |
+
+Verdict: the mod's controller read works on game 1.0.5. What fails is the
+route: the game keeps the D-pad and A for its own menu navigation while a
+widget has focus, the Monitoring Stand (a game menu) takes every button, and
+the open chord collides with the map. So a controller player cannot open the
+panel, cannot move the selection in it (only switch tabs, Remove, Y), and
+cannot edit priorities on the stand. Keyboard arrows keep working because they
+come through UE4SS key binds, which see only the keyboard.
+
+Possible routes for 0.5.x (not built): left stick for panel navigation (it is
+read), a different open chord (for example hold both sticks), and for the stand
+a widget-level key hook like the panel's native key dispatch. Until then
+controller support stays deferred and the changelog says so.
+
+Side effects in the test world: one Pal Sphere thrown (368 -> 367), Lamball
+summoned. Priorities and limits unchanged (cmp equal, caps.txt Wood 30000 /
+Stone 35000). Game closed through the menu.
+

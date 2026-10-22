@@ -128,6 +128,9 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 - Faster background saving (built and tested separately; planned for 0.5.x).
 - Marking a capped work column on the stand and showing the game's checkbox
   again when the mod turned a permission off.
+- Controller support: the game keeps the D-pad and A for its own menus and
+  the Monitoring Stand takes every controller button, so the panel and the
+  stand cannot be used with a controller yet. Use mouse and keyboard.
 - Tests with several real players and guilds at once, Steam Deck and
   ultrawide/UI-scale checks.
 - Requests: separate priority and limit mods, restricting high-quality stands,
@@ -136,9 +139,6 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 ### Still being checked before release
 
 - [OPEN] Vortex install, update and removal.
-- [OPEN] Controllers: on game 1.0.5 the mod's controller buttons on the
-  Monitoring Stand and in the panel did not respond in our tests. Use mouse and
-  keyboard until this is confirmed.
 
 Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
 
