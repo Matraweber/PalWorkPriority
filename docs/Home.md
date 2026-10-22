@@ -21,7 +21,9 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
-- [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-21
+- [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-22
+- [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-22
+- [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-22
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-21
 - [Controller input on game 1.0.5, 2026-10-21: the mod reads no pad button](controller-2026-10-21.md) · 2026-10-21
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-21
@@ -31,8 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [G5: performance, 2026-10-19](g5-performance-2026-10-19.md) · 2026-10-20
 - [G3: Search/Add crash with Cosmetic Outfits, 2026-10-20](g3-search-crash-2026-10-20.md) · 2026-10-20
 - [G1 upgrade from 0.4.1 through the Workshop route, 2026-10-20](g1-workshop-2026-10-20.md) · 2026-10-20
-- [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-20
-- [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-20
 
 ## Release and reports
 

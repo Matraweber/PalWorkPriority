@@ -916,9 +916,10 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     end
     assert(#legends==1 and legends[1].visibility==3,'visible legend not attached to current menu')
     assert(legends[1].text:find('X off',1,true) and legends[1].text:find('! not saved',1,true))
-    -- Two lines: the mouse first, then the marks and the panel key.
+    -- One line: the mouse first, then the marks and the panel key. A second
+    -- line ran into the game's "unused Stat Points" bar (in game, 2026-10-22).
     assert(legends[1].text:find('Left click: toward 1',1,true) and legends[1].text:find('Right click: toward X',1,true))
-    assert(select(2,legends[1].text:gsub('\n',''))==1,'stand legend is not two lines')
+    assert(not legends[1].text:find('\n',1,true),'stand legend must stay one line')
     assert(legends[1].text:find('ALT+F1: Production Limits',1,true),'legend lost the panel key')
     -- A rebound panel key is named as bound; an absent label keeps the default.
     local dm=package.loaded.darnmenu

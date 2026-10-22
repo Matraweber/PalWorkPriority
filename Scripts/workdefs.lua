@@ -147,6 +147,25 @@ end
 -- obvious answer, and being wrong is visible on the rule itself and fixable
 -- by clicking it.
 --
+-- Ids that the patterns below would claim by accident: a plain substring
+-- match finds "stone" in the Pal souls (PalUpgradeStone*, PAL_Growth_Stone_*),
+-- "ore" in AIcore and the Manticore skill fruit, "fiber" in CarbonFiber,
+-- "crystal" in Ancient Civilization Parts (PalCrystal_Ex) and the Predator
+-- Core. No base work makes these. Checked first; a match means "nothing makes
+-- this". Seen in game 2026-10-22, when the picker started saying "Group limit
+-- applies" on them; ids read from the running game's item table.
+M.NOT_PRODUCED = {
+    "growth_stone", "upgradestone", "throwstone", "manticore", "aicore",
+    "carbonfiber", "predatorcrystal", "palcrystal_ex",
+}
+
+local function not_produced(hay)
+    for _, pattern in ipairs(M.NOT_PRODUCED) do
+        if hay:find(pattern, 1, true) then return true end
+    end
+    return false
+end
+
 -- Ordered, first match wins, so narrower patterns come before the ones that
 -- would swallow them. These are matched against the internal item id, which
 -- F12 prints.
@@ -283,6 +302,10 @@ function M.work_for_item(item_id)
     end
 
     local hay = item_id:lower()
+    if not_produced(hay) then
+        memo[item_id] = false
+        return nil
+    end
     for _, entry in ipairs(M.ITEM_WORK) do
         if hay:find(entry[1], 1, true) then
             memo[item_id] = entry[2]
@@ -311,6 +334,10 @@ function M.works_for_item(item_id)
 
     local hay = item_id:lower()
     local seen, out = {}, {}
+    if not_produced(hay) then
+        memo_all[item_id] = out
+        return out
+    end
     for _, entry in ipairs(M.ITEM_WORK) do
         if hay:find(entry[1], 1, true) and not seen[entry[2]] then
             seen[entry[2]] = true

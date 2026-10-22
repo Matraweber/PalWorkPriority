@@ -83,8 +83,10 @@ stopped mining and chopping. Every fix below was tested in the game
   the options menu), plus a mouse line under the limits. Confirmations name the
   item and say "Saved" or "Sent to the server", and warn when storage already
   holds the new limit. A search with no results says so.
-- The Monitoring Stand legend is two lines: what left and right click do, the
-  number keys, the marks (* sending, ! not saved, ? unknown) and Alt+F1.
+- The Monitoring Stand legend says what left and right click do, the number
+  keys, the marks (* sending, ! not saved, ? unknown) and Alt+F1.
+- The item list no longer counts Pal souls, Ancient Civilization Parts, AI
+  Core, Carbon Fiber and similar items as mining or logging products.
 - The item search and "Show all" no longer crash the game with item mods
   installed (reports by DarkWyrmReaper and NoMo, tested with Cosmetic Outfits
   and PalSchema): the game is only asked for the names of items it actually has.

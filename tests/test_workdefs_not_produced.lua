@@ -1,0 +1,22 @@
+-- workdefs: item ids that only look like base products by substring (seen in
+-- game 2026-10-22, the picker said "Group limit applies" on Pal souls).
+local workdefs = require('workdefs')
+
+-- Real products keep their work type.
+assert(workdefs.work_for_item('Stone') == 'Mining')
+assert(workdefs.work_for_item('IronOre') == 'Mining')
+assert(workdefs.work_for_item('CopperOre') == 'Mining')
+assert(workdefs.work_for_item('Pal_crystal_S') == 'Mining')
+assert(workdefs.work_for_item('Wood') == 'Deforest')
+assert(workdefs.work_for_item('Fiber') == 'Deforest')
+
+-- Look-alikes are made by no base work, and offer no work to cycle through.
+for _, id in ipairs({ 'PAL_Growth_Stone_L', 'PAL_Growth_Stone_XL', 'PalUpgradeStone',
+        'PalUpgradeStone3', 'ThrowStone', 'SkillUnlock_Manticore', 'SkillUnlock_Manticore_Dark',
+        'AIcore', 'CarbonFiber', 'PredatorCrystal', 'PalCrystal_Ex' }) do
+    assert(workdefs.work_for_item(id) == nil, id .. ' still claimed by ' .. tostring(workdefs.work_for_item(id)))
+    assert(#workdefs.works_for_item(id) == 0, id .. ' still offers a work type')
+end
+-- Asked twice: the memo keeps the answer.
+assert(workdefs.work_for_item('PAL_Growth_Stone_L') == nil)
+print('workdefs: look-alike ids are not base products; real ones keep their work')

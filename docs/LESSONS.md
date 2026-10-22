@@ -1,5 +1,5 @@
 ---
-date: 2026-10-20
+date: 2026-10-22
 tags: [records, testing]
 status: current
 ---
@@ -145,6 +145,14 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Lua traps
 
+- **A new label can expose an old mapping bug.** "Group limit applies" put
+  Mining on Pal souls because workdefs matches item ids by substring ("stone"
+  in PalUpgradeStone). The list had shown them as mining products for months;
+  nobody read it that closely until a sentence claimed it (2026-10-22). When a
+  UI starts asserting something from heuristic data, check the data.
+- **Bottom-anchored text grows upward into whatever sits above it.** The
+  two-line stand legend pushed its first line into the game's own bar. Check
+  new HUD text on screen, not only by width (2026-10-22).
 - **A clamp at one end of a ladder is a jump from the other side.** The limit
   ladder's `step` returned the top rung (50,000) for any value above it, so
   "raise" on a typed 100,000 lowered it, and "lower" under 100 raised it to

@@ -108,11 +108,12 @@ local cell_last = {}            -- cell full name -> last style token written
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 local edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
 local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like cell_text
--- Two lines under the stand (review 2026-10-21): what each mouse button does,
--- then what the marks mean and where the limits panel is. The text block is
--- bottom-anchored, so the second line grows upward and nothing moves.
-M.EDIT_LEGEND = "Left click: toward 1   Right click: toward X   Or click a cell, then press 1-5 or X\n"
-    .. "1 highest, 5 lowest, X off   * sending   ! not saved   ? unknown   ALT+F1: Production Limits"
+-- One line under the stand (review 2026-10-21): what each mouse button does,
+-- what the marks mean and where the limits panel is. Two lines were tried and
+-- the upper one ran into the game's own "unused Stat Points" bar, which sits
+-- just above the bottom-anchored text (in game, 2026-10-22).
+M.EDIT_LEGEND = "Left click: toward 1  Right click: toward X  Keys 1-5, X  |  "
+    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  ALT+F1: Production Limits"
 -- The panel key as the player bound it in DarnMenu. main.lua records it in
 -- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
 function M.edit_legend()
