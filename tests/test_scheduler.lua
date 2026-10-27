@@ -98,7 +98,7 @@ package.loaded.trace = { at = noop, done = noop }
 local scheduler = require("scheduler")
 assert(scheduler.assignment_reader == require("assignments").read,
     "production scheduler must use the verified native reader by default")
-local config = { work_priority = {}, max_pals_per_work_type = 3,
+local config = { work_priority = {}, max_pals_per_work_type = 3, leave_unordered_pals_to_game = false,
     min_suitability_rank = 1, assignment_mode = "fill", interval_seconds = 10,
     storage_scope = "camp", dry_run = false }
 for _, name in ipairs(workdefs.ORDER) do config.work_priority[name] = 1 end

@@ -124,6 +124,29 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-27 - A Pal with no order is left to the game (user's decision).**
+  When every job a Pal may do has the same number, the planner gives it every
+  allowed job (X and capped jobs are already out) and no seat; the game
+  picks. A Pal nobody edited reads 1 for every managed job instead of the
+  `config.work_priority` ranking, so untouched Pals are vanilla too.
+  `leave_unordered_pals_to_game = false` restores steering for everyone; the
+  older test suites set it to keep exercising steering on all-1 Pals.
+  *Rejected:* "only Pals never edited" (a fresh install's captured all-1
+  baseline looks like an edit, so it needed a new marker), keeping the
+  config ranking (it sent a Lamball hauling past an empty ranch). Untouched
+  Pals ignore `max_pals_per_work_type`, as vanilla has no such limit.
+  *Evidence:* [g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md).
+- **2026-10-27 - "Fishing" is Handiwork; built, Workable ponds and Handiwork
+  research labs count as one seat each.** The pond's work has no declared type
+  and the label "Fishing"; the game's tooltip names Handiwork. Pond and lab
+  were wanted only at world load (silent). Picked by class
+  (`PalWorkFishPond`, `PalWorkLabResearch`), because workbenches are
+  Handiwork too and do announce. Pals already on Handiwork are subtracted,
+  which can hide a pond vacancy while someone crafts; per-work occupancy
+  (`GetWorkAssignInfo` out-arrays) was unreadable through UE4SS. *Rejected:*
+  counting every Workable Handiwork work (six workbenches would become six
+  seats). Other research subjects are typed (keyword test) but not counted.
+  *Evidence:* [g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md).
 - **2026-10-27 - Ranches count as demand: one seat per built, Workable ranch.**
   The ranch never announces its work (0 times in a session), so Farming never
   reached "wanted" and a Lamball was fenced to Transporting while the ranch

@@ -71,7 +71,7 @@ local api = {
 package.loaded.palapi = api
 local scheduler = require("scheduler")
 local workdefs = require("workdefs")
-local cfg = {work_priority={}, interval_seconds=10, max_pals_per_work_type=3,
+local cfg = {work_priority={}, interval_seconds=10, max_pals_per_work_type=3, leave_unordered_pals_to_game=false,
     min_suitability_rank=1, assignment_mode="fill", dry_run=false}
 for _, name in ipairs(workdefs.ORDER) do cfg.work_priority[name]=1 end
 local function setup(mode)

@@ -26,6 +26,13 @@ stopped mining and chopping. Every fix below was tested in the game
   version incompatible" in the panel.
 - Your editable settings move to `config.lua` in the mod folder; with a
   manual install the old file is kept as `config.migration.bak`.
+- **Pals you never ranked are now left to the game.** A Pal whose jobs all
+  have the same number (for example everything at 1, which is what a fresh
+  install starts with) is no longer steered: the game picks its work, X and
+  production limits still apply. The 1-5 ranking in `config.lua`'s
+  `work_priority` no longer applies to Pals you never edited. Give a job a
+  different number to steer that Pal, or set
+  `leave_unordered_pals_to_game = false` to steer every Pal as 0.4.1 did.
 - **Use one copy: Workshop or manual, not both.** If the Steam Workshop copy
   is switched on in the game's mod list, the game installs it over a manual
   install on the next start. Switch it off or unsubscribe before installing
@@ -56,6 +63,10 @@ stopped mining and chopping. Every fix below was tested in the game
   insufficient ranch skill"). The mod counts one Pal per ranch; more Pals can
   graze when they have nothing higher to do.
 - Berry and crop harvests count as Gathering work, not ranch work.
+- Fishing ponds: a Pal with a high Handiwork priority is sent to a waiting
+  pond (report by poiman). The pond's job had no type the mod understood, so it never counted
+  as work; it is Handiwork, and an empty pond with bait counts as one free
+  seat, as does a research lab running Handiwork research.
 - The staffing limit holds (a maximum of 3 keeps 3 working, not 4).
 - Handiwork 1 over Kindling 2 and Grizzbolt on the generator through sleep
   and wake work as set (August reports).

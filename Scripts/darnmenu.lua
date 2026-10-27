@@ -57,6 +57,7 @@ return {
     assignment_mode = "spread",
     max_pals_per_work_type = 3,
     min_suitability_rank = 1,
+    leave_unordered_pals_to_game = true,
     storage_scope = "camp",
     log_level = "info",
     key_panel = { key = "F1", modifiers = { "ALT" } },
@@ -95,6 +96,8 @@ return {
         { path = "min_suitability_rank", label = "Lowest rank worth dedicating", kind = "number",
           integer = true, min = 1, max = 5, step = 1,
           help = "Stops the mod dedicating a rank 1 Pal to a job a specialist should have. It does not stop that Pal working." },
+        { path = "leave_unordered_pals_to_game", label = "Leave unranked Pals to the game", kind = "bool",
+          help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
       },
     },
     {
@@ -272,6 +275,7 @@ local KEYS = {
     assignment_mode = "string",
     max_pals_per_work_type = "number",
     min_suitability_rank = "number",
+    leave_unordered_pals_to_game = "boolean",
     storage_scope = "string",
     log_level = "string",
 }

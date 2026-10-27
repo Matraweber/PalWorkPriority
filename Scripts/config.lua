@@ -77,6 +77,13 @@ return {
     -- cap of 3 means one each, then seconds, then thirds, and no more.
     max_pals_per_work_type = 3,
 
+    -- A Pal whose allowed jobs all have the same number (a fresh install's
+    -- "all 1", or a Pal you never edited) is left to the game: it may do every
+    -- job that is not X or stopped by a production limit, and the game picks.
+    -- Give one job a different number and the mod steers that Pal. false
+    -- steers every Pal, as 0.4.1 did.
+    leave_unordered_pals_to_game = true,
+
     -- A pal needs at least this suitability rank to be considered. 1 means
     -- "has the skill at all"; raise it to stop rank-1 pals clogging jobs a
     -- rank-3 pal should be doing.

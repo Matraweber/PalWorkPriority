@@ -97,6 +97,12 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   planning test (no Flambelle in the world); research and fishing not
   reproducible (no lab or pond in the test world). Found on the way: berry
   harvests were typed as ranch work, fixed. Output (wool) not counted.
+  Second round the same day (user's request): lab and pond built and
+  measured, Flambelle caught and tested. Pond reproduced and fixed (untyped,
+  silent); lab typed correctly by research subject, silent, now counted;
+  Flambelle reproduced ranching while the pond was invisible, and with the
+  pond counted it stays on the ranch only while the Handiwork seats are
+  taken. Untouched Pals are now left to the game (user's decision).
 
 ## G4. Scheduling does what the stand shows
 

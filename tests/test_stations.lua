@@ -59,7 +59,7 @@ local c = stations.coolers_needing({
 })
 assert(c == 1, 'expected 1 cooler needing a worker, got ' .. tostring(c))
 assert(stations.coolers_needing(nil) == 0 and stations.coolers_needing({}) == 0)
-assert(#stations.KINDS == 5 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
+assert(#stations.KINDS == 6 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
     and stations.KINDS[2].needing == stations.coolers_needing)
 
 -- stations.resources_needing: Workable trees/rocks count; a node owned by a
@@ -117,3 +117,25 @@ local r = stations.ranches_needing({
 })
 assert(r == 2, 'expected 2 ranches needing a worker, got ' .. tostring(r))
 assert(stations.ranches_needing(nil) == 0)
+
+-- stations.ponds_and_labs_needing: a built, Workable fishing pond or Handiwork
+-- research lab is one seat (2026-10-27: both announced only at world load).
+-- A workbench is Handiwork work too but announces its orders: never counted.
+assert(stations.HANDIWORK == 5 and stations.KINDS[6].value == 5
+    and stations.KINDS[6].needing == stations.ponds_and_labs_needing)
+package.loaded.palapi.work_full_name = function(w) return w.class end
+local function silent(class, state, owner)
+    local m = {}
+    m.GetOuter = function() return manager end
+    return { value = 5, class = class .. ' /Game/Pal/Maps/Test.Work', CurrentState = state,
+        CachedOwnerMapObjectConcreteModel = m, OwnerMapObjectModelId = owner }
+end
+local p = stations.ponds_and_labs_needing({
+    silent('PalWorkFishPond', 1, 'built'),        -- bait and target set: needs
+    silent('PalWorkLabResearch', 1, 'built'),     -- research running: needs
+    silent('PalWorkFishPond', 2, 'built'),        -- no bait: no
+    silent('PalWorkFishPond', 1, 'blueprint'),    -- unbuilt: no
+    silent('PalWorkProgress', 1, 'built'),        -- a workbench: never
+    { value = 5, CurrentState = 1 },              -- no class: no
+})
+assert(p == 2, 'expected 2 silent Handiwork stations, got ' .. tostring(p))

@@ -619,7 +619,14 @@ function M.effective(cfg, pal, work_name, work_value)
     if entry == nil and pal.species then entry = overrides[pal.species] end
     if type(entry) == 'table' and entry[work_name] ~= nil then return entry[work_name] end
     if M.baseline then return nil end -- unknown baseline must not become permission.
-    return (cfg.work_priority or {})[work_name]
+    -- A Pal nobody edited reads as 1 for every managed job, so the scheduler
+    -- leaves it to the game (scheduler_plan.unordered; user's decision
+    -- 2026-10-27). config.work_priority only says which jobs are managed and
+    -- which are X for everyone; its 1-5 ranking no longer steers untouched
+    -- Pals (it sent a Lamball hauling past an empty ranch).
+    local default = (cfg.work_priority or {})[work_name]
+    if type(default) == 'number' then return 1 end
+    return default
 end
 
 function M.cycle(current, dir)

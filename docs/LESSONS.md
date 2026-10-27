@@ -82,6 +82,20 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Evidence: how we fooled ourselves
 
+- **The shipping game's cheat manager is a shell.** With UE4SS's cheat-manager
+  enabler on, `AddPlayerExp`, `SpawnMonster` and both debug add-item calls
+  ran without error and did nothing (2026-10-27). Real gameplay functions
+  work (`PalUtility.GiveExpToAroundPlayerCharacter`, `K2_TeleportTo`), and
+  the installed Creative Menu mod (F1) spawns Pals and items. Check the
+  installed tools before writing your own; the user already had one.
+- **`GiveExpToAroundPlayerCharacter` is not linear.** 5000 gave 4 XP, then
+  10 000 000 jumped the test character from 28 to 64. Player level cannot be
+  lowered: give experience in small steps and look after each one.
+- **Check a Pal's row before calling it untouched.** Anubis was picked as an
+  untouched test Pal; the snapshot showed it had Handiwork 3, Mining 4,
+  Transporting 2. Same mistake as the Lamball grep: look the key up in
+  `priorities.txt` first.
+
 - **`priorities.txt` holds keys, not species names.** Grepping it for
   "sheep" found nothing, and Lamball was first written down as having no
   stored priorities; it had Farming 5. Look a Pal up by its key from the

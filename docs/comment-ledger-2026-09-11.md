@@ -37,9 +37,11 @@ independent priority/limit mods (wikidnumb), high-quality stand
 (NoNickNeeded), deferred scheduling after UI close (Material Defender).
 Old reports rerun 2026-10-27 ([g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md)):
 KhanKeal's Pupperai PASS, Flambella covered by a planning test; Rey's Lamball
-reproduced and fixed (ranches never counted as work); Samurai9400's research
-and poiman's fishing pools not reproducible (no lab or pond in the test
-world). No reply posted.
+reproduced and fixed (ranches never counted as work). Second round the same
+day with a lab, a pond and a caught Flambelle: poiman's fishing pools
+reproduced and fixed (the pond's job was untyped and silent), Samurai9400's
+research not reproduced (typed by subject; silent, now counted), KhanKeal's
+Flambella reproduced while the pond was invisible. No reply posted.
 
 ## Census totals
 

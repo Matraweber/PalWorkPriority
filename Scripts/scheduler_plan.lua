@@ -14,6 +14,23 @@ local function rank(pal, value)
     return pal.ranks[value] or 0
 end
 
+-- A Pal whose allowed jobs all share one number has no order to follow: a
+-- fresh install's captured "all 1", an all-1 setup, or a Pal nobody edited.
+-- It is left to the game (user's decision 2026-10-27): every job it may do
+-- stays allowed, X and stock limits still apply (they are already out of
+-- pal.base), and it takes no seat from the Pals the mod steers.
+function M.unordered(pal)
+    local seen
+    for value in pairs(pal.base or {}) do
+        local p = pal.priorities and pal.priorities[value]
+        if type(p) == "number" then
+            if seen ~= nil and seen ~= p then return false end
+            seen = p
+        end
+    end
+    return true
+end
+
 local function sorted_pals(pals)
     local out = {}
     for _, pal in ipairs(pals) do out[#out + 1] = pal end
@@ -62,13 +79,26 @@ function M.plan(cfg, pals, demand, holds, now)
     local spread = cfg.assignment_mode ~= "fill"
     local minimum = tonumber(cfg.min_suitability_rank) or 1
     local interval = tonumber(cfg.interval_seconds) or 10
-    local roster = sorted_pals(pals)
     local plan, chosen, taken, active, holding = {}, {}, {}, {}, {}
     local report = {
         fenced = 0, free = 0, held = 0, staff_limited = 0,
         manual_conflicts = 0, manual_limit_conflicts = 0,
         assignment_unknown = 0, manual_unavailable = 0, unverified_limit_conflicts = 0,
+        unsteered = 0,
     }
+    local steered = {}
+    local leave = cfg.leave_unordered_pals_to_game ~= false
+    for _, pal in ipairs(pals) do
+        if leave and M.unordered(pal) then
+            local all = {}
+            for value in pairs(pal.base or {}) do all[value] = true end
+            plan[pal.key] = all
+            report.unsteered = report.unsteered + 1
+        else
+            steered[#steered + 1] = pal
+        end
+    end
+    local roster = sorted_pals(steered)
 
     for key, h in pairs(holds) do
         if now < h.seen or now - h.last > M.HOLD_SECONDS + 2 * interval then

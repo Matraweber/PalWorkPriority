@@ -61,6 +61,12 @@ end
 -- every berry harvest counted as ranch work (census 2026-10-17, found
 -- 2026-10-27): ranch Pals were sent to it, gathering demand was undercounted.
 M.BY_LABEL["harvest"] = "Collection"
+-- The fishing pond's job ("Fishing", FishingPond1_0, class PalWorkFishPond,
+-- no declared type) needs Handiwork: the game's build tooltip says "Requires
+-- Pals that can work with their hands" and shows the Handiwork icon
+-- (measured 2026-10-27). Untyped, it never counted as work, so a Pal with
+-- Handiwork 1 was fenced to other jobs and the pond stood idle (poiman).
+M.BY_LABEL["fishing"] = "Handcraft"
 
 function M.from_label(text)
     if type(text) ~= "string" then return nil end

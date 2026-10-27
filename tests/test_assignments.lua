@@ -79,7 +79,7 @@ local allocator=require('scheduler_plan')
 local function plan_read()
     local p={key=pal.key,assignment=read(),base={[8]=true,[5]=true},
         priorities={[8]=2,[5]=1},ranks={[8]=1,[5]=1},observed_on={[8]=true}}
-    return allocator.plan({assignment_mode='fill',max_pals_per_work_type=1}, {p}, {[5]=1}, {}, 100)
+    return allocator.plan({assignment_mode='fill',max_pals_per_work_type=1,leave_unordered_pals_to_game=false}, {p}, {[5]=1}, {}, 100)
 end
 test('native fixed leave protects assignment against higher-priority demand',function()
     assignment.bFixed=true;component.IsAssignedFixed=function() return true end
@@ -104,7 +104,7 @@ test('missing actor with no observed permissions does not acquire work',function
     pal.handle.TryGetIndividualActor=function() return nil end
     local p={key=pal.key,assignment=read(),base={[5]=true},
         priorities={[5]=1},ranks={[5]=1},observed_on={}}
-    local plan=allocator.plan({assignment_mode='fill',max_pals_per_work_type=1}, {p}, {[5]=1}, {}, 100)
+    local plan=allocator.plan({assignment_mode='fill',max_pals_per_work_type=1,leave_unordered_pals_to_game=false}, {p}, {[5]=1}, {}, 100)
     assert(next(plan.pal)==nil)
 end)
 print(count..' direct assignment reader cases passed')

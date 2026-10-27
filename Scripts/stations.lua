@@ -41,6 +41,14 @@
 -- work is Workable. One seat per ranch, the rule the other stations use: the
 -- ranch's real capacity is not read anywhere (guides say four Pals, one says
 -- five), and unknown must not become demand.
+-- Fishing ponds and research labs are silent too (2026-10-27): Handiwork was
+-- wanted twice at world load (one pond, one lab) and never again in three
+-- minutes, while the pond's Pal came and went. Both need a worker while built
+-- and Workable (a pond is Workable only with bait and a fish target set, a
+-- lab only while a research runs). They are picked out by class, not by type:
+-- a workbench is Handiwork work too, but it does announce its orders. Only
+-- Handiwork research was seen live; labs researching other subjects are not
+-- counted yet.
 -- Nothing is stored. Any failed or odd read means "does not need a worker":
 -- unknown must never become demand (a full or unbuilt generator counted as a
 -- vacancy would park Pals beside it). Authority only; callers run on it.
@@ -118,6 +126,27 @@ function M.ranches_needing(works)
     return n
 end
 
+M.HANDIWORK = workdefs.value('Handcraft')
+M.SILENT_HANDIWORK_CLASSES = { PalWorkFishPond = true, PalWorkLabResearch = true }
+
+-- Number of fishing ponds and Handiwork research labs in `works` that are
+-- built and Workable. One seat each.
+function M.ponds_and_labs_needing(works)
+    local n = 0
+    for _, w in ipairs(works or {}) do
+        local class = (api.work_full_name(w) or ''):match('^(%S+)')
+        if class and M.SILENT_HANDIWORK_CLASSES[class]
+            and api.work_suitability(w) == M.HANDIWORK
+            and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then
+            local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
+            if model ~= nil and api.valid(model) and completed(w, model) then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
 M.LUMBERING = workdefs.value('Deforest')
 M.MINING = workdefs.value('Mining')
 
@@ -148,6 +177,7 @@ M.KINDS = {
     { value = M.LUMBERING, needing = function(works) return M.resources_needing(works, M.LUMBERING) end },
     { value = M.MINING, needing = function(works) return M.resources_needing(works, M.MINING) end },
     { value = M.RANCH, needing = M.ranches_needing },
+    { value = M.HANDIWORK, needing = M.ponds_and_labs_needing },
 }
 
 return M

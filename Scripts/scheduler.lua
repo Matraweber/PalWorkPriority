@@ -1606,6 +1606,7 @@ function M.format_stats(cfg, stats)
         stats.fenced .. " fenced" .. (stats.held > 0 and (" (" .. stats.held .. " holding)") or ""),
         stats.free .. " free",
     }
+    if (stats.unsteered or 0) > 0 then parts[#parts + 1] = stats.unsteered .. " left to the game" end
 
     local moved = cfg.dry_run and stats.would_toggle or stats.toggles
     parts[#parts + 1] = moved .. (cfg.dry_run and " would request" or " permission request(s) sent")

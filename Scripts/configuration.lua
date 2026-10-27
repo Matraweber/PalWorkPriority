@@ -8,7 +8,7 @@ function M.validate(c)
         local value = math.tointeger(tonumber(n))
         return value and value >= low and value <= high
     end
-    for _, key in ipairs({'enabled','dry_run','run_on_world_load'}) do
+    for _, key in ipairs({'enabled','dry_run','run_on_world_load','leave_unordered_pals_to_game'}) do
         if c[key] ~= nil and type(c[key]) ~= 'boolean' then return nil, key .. ' must be true or false' end
     end
     for _, key in ipairs({'work_priority','pal_overrides','work_caps','uncounted_containers','counted_containers'}) do

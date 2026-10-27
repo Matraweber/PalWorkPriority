@@ -13,6 +13,7 @@ Pal Work Priority changes which work types each Pal may perform. Palworld's AI c
 - **1 is highest priority, 5 is lowest, and X disables that work.** Existing saved values keep their meaning.
 - A dash means the Pal cannot perform that work; it is not another priority.
 - The candidate's fresh-install policy preserves vanilla selections: checked work starts at equal priority 1 and unchecked work stays X. Import requires evidence that an older mod has not already altered those flags.
+- **A Pal with no order is left to the game.** When every job a Pal may do has the same number (a fresh install's "all 1", an all-1 setup, or a Pal nobody edited), the mod does not steer it: the game picks its work, and only X and production limits still apply. Give one job a different number and the mod steers that Pal. `leave_unordered_pals_to_game = false` in `config.lua` steers every Pal, as 0.4.1 did. A Pal nobody edited reads as 1 for every job; the 1-5 ranking in `config.work_priority` no longer applies to it.
 - Upgrade migration is designed to preserve existing mod settings when their files are available. Keep pre-update backups: preservation through the actual Workshop updater remains unverified. Previously modified permissions cannot safely reveal the player's original choices. X values lost by older saves cannot be reconstructed without an earlier copy.
 - Missing job, authority, storage or synchronization information must remain unavailable; it must not become a confident permission decision or “Working”/“Stopped” status.
 

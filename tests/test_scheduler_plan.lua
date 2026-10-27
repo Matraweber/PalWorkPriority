@@ -1,6 +1,6 @@
 local planner = require("scheduler_plan")
 local function cfg(cap, mode)
-    return { max_pals_per_work_type = cap, assignment_mode = mode or "fill",
+    return { max_pals_per_work_type = cap, assignment_mode = mode or "fill", leave_unordered_pals_to_game = false,
         min_suitability_rank = 1, interval_seconds = 10 }
 end
 local function pal(key, entries, assignment)

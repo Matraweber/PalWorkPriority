@@ -21,10 +21,10 @@ The assignment census (`pwp assignments`) was sampled every 20 s by
 | --- | --- | --- |
 | KhanKeal: Pupperai ignores Lumbering 1 | Verdash, Lumbering 1, Gathering 2, Transporting 3, Planting X | **PASS.** 9 samples over 3 min: occupied on Lumbering (7) every time, fence Lumbering. |
 | Rey: Lamball "insufficient ranch skill" | Lamball swapped into the base (Anubis out), camp 1 has a ranch | **Reproduced, fixed.** Before: the ranch never counted as work, Lamball was fenced to Transporting only, the ranch stood empty. After: with Farming 1 Lamball moved to the ranch within 25 s and stayed (17 samples over two game starts). |
-| KhanKeal: Flambelle (Handiwork 1, Kindling 2, Transporting 3, Ranching 4) stays ranching | No Flambelle in this world | **Planning test**, `tests/test_plan_flambelle_ranch.lua`: on the ranch, Handiwork or Kindling work pulls it off; it keeps the ranch only when nothing above Ranching is wanted. |
-| KhanKeal: all-1 setup, "random" priorities | not rerun separately | Part of it explained: berry harvests were counted as ranch work (below), so the "farm" demand the scheduler acted on was wrong. |
-| Samurai9400: research greyed out | No research lab in either camp | **Not reproducible here.** LabResearch maps to Handiwork. Whether the lab announces its work (or is a silent station like the ranch) is unmeasured. |
-| poiman: fishing pools ignored with Handiwork 1 | No fishing pond in either camp | **Not reproducible here.** The game has no fishing suitability (the enum ends at Farming); FishPond (work type 41) stays unmapped until a pond can be measured. |
+| KhanKeal: Flambelle (Handiwork 1, Kindling 2, Transporting 3, Ranching 4) stays ranching | Round 1: none in the world. Round 2: caught one (Creative Menu), swapped in for Braloha | **Reproduced, explained, partly fixed.** Round 1 planning test (`tests/test_plan_flambelle_ranch.lua`). Round 2: grazing in 9 of 9 samples while the pond waited untyped. After the pond fix she still grazes while the Handiwork seats are taken (Incineram, Anubis or Grizzbolt on Handiwork); "Handiwork 1" appeared and was filled by another Pal within a pass. |
+| KhanKeal: all-1 setup, "random" priorities | not rerun separately | Part of it explained: berry harvests were counted as ranch work (below), so the "farm" demand the scheduler acted on was wrong. Changed by the user's decision: an all-1 Pal is now left to the game. |
+| Samurai9400: research greyed out | Round 2: lab built, Handiwork research started | **Not reproduced.** Typed correctly by subject (`Lab_Handcraft_1` -> Handiwork); Incineram, fenced to Handiwork, was on Handiwork (suitability 5) while the research ran; its job id was not matched to the lab. The lab is silent; now counted. |
+| poiman: fishing pools ignored with Handiwork 1 | Round 2: pond built, bait and target set; Anubis Handiwork 1, Mining 2, Transporting 3 | **Reproduced, fixed.** The pond's work was untyped (never work). Before: Anubis on Handiwork in 2 of 9 samples. After typing it: 6 of 9. Pond is silent; now counted. |
 
 ## Found on the way: berry harvests counted as ranch work
 
@@ -79,3 +79,70 @@ Verdash's priorities and the Wood limit (30000) match the snapshots taken
 before the test (`priorities-before.txt`, `caps-before.txt`); Lamball's
 Farming back to 5; Anubis back in the base, Lamball back in the party. The
 temporary probe file was restored and checked with `cmp` after each use.
+
+## Round 2: lab, pond and Flambelle (same day, user's request)
+
+How the world got there, all in the test world:
+
+- Tech: Pal Labor Research Lab (level 19), Cement, Cryogenic Coolant,
+  Production Assembly Line and Fishing Pond (level 31) unlocked with
+  technology points. The character needed level 31; experience was given with
+  `PalUtility.GiveExpToAroundPlayerCharacter` and overshot to **level 64**
+  (cannot be undone, see LESSONS).
+- The cheat manager (UE4SS enablers switched on for the session, switched off
+  again after) turned out to be stubbed: `AddPlayerExp`, `SpawnMonster` and the
+  debug add-item calls did nothing. The installed Creative Menu mod (F1) gave
+  60 Cement, 5 Cryogenic Coolant, 20 Wooden Board and 50 Simple Bait, and
+  placed a level 1 Flambelle, caught with a sphere.
+- Built in camp 1: the lab, a High-Quality Workbench, a fishing pond.
+  Movement by `K2_TeleportTo` and `SetControlRotation` through the temporary
+  probe file (restored and checked with `cmp` after each use).
+
+### Measured
+
+| Work | AssignDefineDataId / GetWorkName / class | Declared type | State |
+| --- | --- | --- | --- |
+| Fishing pond | `FishingPond1_0` / "Fishing" / `PalWorkFishPond` | 0 | 2 while it has no bait and fish target, 1 with them |
+| Research | `Lab_Handcraft_1` / "Research" / `PalWorkLabResearch` | 0 | 1 while a research runs; no work at all otherwise |
+| Construction | `BuildWork_0` / "Construction" / `PalWorkProgress` | 0 | 1 while a blueprint stands (untyped, not changed) |
+
+The pond's build tooltip: "Requires Pals that can work with their hands",
+Handiwork icon. The first research must be the subject's root node; the
+other nodes' Begin button does nothing until it is done. Discovery after the
+pond typing: Handiwork wanted 2 at world load (pond and lab), never again in
+the next three minutes while the pond's Pal came and went: silent, like the
+ranch. `GetWorkAssignInfo` and `GetAssignedCharacters` return arrays that
+UE4SS cannot read, so per-work occupancy is not available.
+
+### Fixes
+
+- `workdefs.BY_LABEL["fishing"] = "Handcraft"`.
+- `stations.ponds_and_labs_needing`: one seat per built, Workable pond or
+  Handiwork research lab, picked by class.
+- Untouched Pals left to the game (user's decision, see DECISIONS). After the
+  restart: "8 left to the game" in the tick line.
+
+### Samples (20 s, 9 each)
+
+| Run | Anubis (Handiwork 1, Mining 2, Transporting 3) | Flambelle (Handiwork 1, Kindling 2, Transporting 3, Ranching 4) |
+| --- | --- | --- |
+| Before (pond untyped) | Handiwork 2/9, Transporting 5/9, unavailable 2/9 | Grazing 9/9 |
+| Pond typed | Handiwork 6/9, unavailable 3/9 | Grazing 9/9; Handiwork wanted only at load |
+| Pond counted, Anubis Handiwork X | (not sampled) | Grazing 9/9; Grizzbolt (untouched, left to the game) was on Handiwork with the research finished, so at the pond or a workbench; Handiwork wanted 1 once, filled within a pass |
+
+Flambelle's case is therefore not "the mod sends her to the ranch": the mod
+allows Farming only while it is her held job and nothing at Handiwork,
+Kindling or Transporting has a free seat for her in that spread lap. When the
+pond stood invisible, that was always the case; now it is the case only while
+another Pal holds the Handiwork seat. The pass that would withdraw Farming is covered by the
+planning test; it was not caught live because untouched Pals take the Handiwork seat
+first.
+
+### Round 2 restore
+
+Anubis back to Handiwork 3, Mining 4, Transporting 2 and Flambelle's rows
+cleared: `priorities.txt` and `caps.txt` match the morning snapshots. Braloha
+back in the base, Flambelle kept in the party (not released). UE4SS
+`mods.txt`/`mods.json` restored from the copies taken before (cheat and
+console enablers off again). The lab, workbench and pond stay built; the
+unlocked technologies, level 64 and the given items stay.
