@@ -26,6 +26,9 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "CommonInputSettings.h"
+#include "ICommonInputModule.h"
 #include "UObject/UnrealType.h"
 
 // Editor-only graph construction. The generated asset calls shipped Pal/CommonUI
@@ -40,7 +43,39 @@ static const FName Callback(TEXT("PWP_RequestCancel"));
 static const FName Lifecycle(TEXT("PWP_InputLifecycle"));
 static const FName Editor(TEXT("PWP_AmountEditor"));
 static const FName Held(TEXT("PWP_EditorEscapeHeld"));
+// Contract 4 (2026-10-22): controller buttons. The game's CommonUI takes the
+// D-pad and A for its own navigation before the player controller sees them,
+// so the panel's preview handler hands them to Lua through this dispatch.
+static const FName PadKey(TEXT("PWP_PadKey"));
+static const FName PadSequence(TEXT("PWP_PadSequence"));
+static const FName PadDispatch(TEXT("PWP_PadDispatch"));
+// A never reaches the preview handler: CommonUI's own confirm takes it first.
+// The action bound to A in the game's input settings is "Jump" (read from the
+// running game, 2026-10-22), so the panel registers it like RadialMenuCancel
+// (B) and its callback dispatches code 5. Bindings are live only while the
+// panel is the active widget, so nothing jumps and nothing else loses A.
+static const FName AcceptCallback(TEXT("PWP_RequestAccept"));
+static const FName AcceptHandle(TEXT("PWP_AcceptBinding"));
+static const FName Released(TEXT("PWP_CancelReleased"));
+static const FName ReleaseCallback(TEXT("PWP_RequestCancelRelease"));
+static const FName ReleaseHandle(TEXT("PWP_ReleaseBinding"));
+// Ownership marker on generated nodes, not the contract number: it stays as
+// written so a rebuild recognizes the graphs it made. PWP_InputContract is 4.
 static const FString Owner(TEXT("PWP generated action input contract 3"));
+
+// 1..4 = up/down/left/right (repeats dispatch, a held direction keeps moving),
+// 5 = A, 6 = X, 7 = Y, 8/9 = LB/RB, 10/11 = LT/RT (repeats are consumed).
+// B is absent on purpose: it stays CommonUI's Back, which closes the panel.
+struct FPadKey { FKey Key; int32 Code; bool Directional; };
+static const FPadKey PadKeys[] = {
+    {EKeys::Gamepad_DPad_Up, 1, true}, {EKeys::Gamepad_DPad_Down, 2, true},
+    {EKeys::Gamepad_DPad_Left, 3, true}, {EKeys::Gamepad_DPad_Right, 4, true},
+    {EKeys::Gamepad_LeftStick_Up, 1, true}, {EKeys::Gamepad_LeftStick_Down, 2, true},
+    {EKeys::Gamepad_LeftStick_Left, 3, true}, {EKeys::Gamepad_LeftStick_Right, 4, true},
+    {EKeys::Gamepad_FaceButton_Bottom, 5, false}, {EKeys::Gamepad_FaceButton_Left, 6, false},
+    {EKeys::Gamepad_FaceButton_Top, 7, false}, {EKeys::Gamepad_LeftShoulder, 8, false},
+    {EKeys::Gamepad_RightShoulder, 9, false}, {EKeys::Gamepad_LeftTrigger, 10, false},
+    {EKeys::Gamepad_RightTrigger, 11, false}};
 
 static void Log(const FString& Message) { UE_LOG(LogTemp, Display, TEXT("PWP input: %s"), *Message); }
 static UClass* Parent() { return LoadObject<UClass>(nullptr, TEXT("/Script/Pal.PalUserWidget")); }
@@ -100,6 +135,13 @@ struct FGraph
     {
         auto* N = Node<UK2Node_CallFunction>(); N->SetFromFunction(Function); N->AllocateDefaultPins(); return N;
     }
+    UK2Node_CallFunction* CallSelf(UClass* Class, FName Name)
+    {
+        UFunction* Fn = Class ? Class->FindFunctionByName(Name) : nullptr;
+        if (!Fn) { Good = false; Log(TEXT("FAILED missing own function ") + Name.ToString()); return nullptr; }
+        auto* N = Node<UK2Node_CallFunction>(); N->SetFromFunction(Fn);
+        N->FunctionReference.SetSelfMember(Name); N->AllocateDefaultPins(); return N;
+    }
     UK2Node_Event* Event(FName Name)
     {
         auto* N = Node<UK2Node_Event>(); N->EventReference.SetExternalMember(Name, UUserWidget::StaticClass());
@@ -118,6 +160,34 @@ struct FGraph
 };
 static UEdGraphPin* Exec(UEdGraphNode* N) { return N->FindPin(UEdGraphSchema_K2::PN_Execute); }
 static UEdGraphPin* Then(UEdGraphNode* N) { return N->FindPin(UEdGraphSchema_K2::PN_Then); }
+
+// A parameterless own function Lua hooks (like StandInput's PWP_KeyDispatch):
+// the key handler sets PWP_PadKey first, the hook reads it from the widget.
+// The body only counts, so a missing hook costs nothing.
+static bool BuildPadDispatch(UWidgetBlueprint* BP)
+{
+    UEdGraph* Graph = FBlueprintEditorUtils::CreateNewGraph(BP, PadDispatch, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+    FBlueprintEditorUtils::AddFunctionGraph(BP, Graph, true, static_cast<UFunction*>(nullptr));
+    FGraph G(Graph);
+    UK2Node_FunctionEntry* Entry = nullptr;
+    UK2Node_FunctionResult* Result = nullptr;
+    for (UEdGraphNode* N : Graph->Nodes)
+    {
+        N->NodeComment = Owner;
+        if (auto* E = Cast<UK2Node_FunctionEntry>(N)) Entry = E;
+        if (auto* R = Cast<UK2Node_FunctionResult>(N)) Result = R;
+    }
+    if (!Entry) return false;
+    Then(Entry)->BreakAllPinLinks();
+    UFunction* AddFn = UKismetMathLibrary::StaticClass()->FindFunctionByName(TEXT("Add_IntInt"));
+    if (!AddFn) return false;
+    auto* Before = G.Get(PadSequence); auto* Add = G.Call(AddFn); auto* After = G.Set(PadSequence);
+    G.Link(Before->FindPin(PadSequence), Add->FindPin(TEXT("A"))); G.Default(Add->FindPin(TEXT("B")), TEXT("1"));
+    G.Link(Add->GetReturnValuePin(), After->FindPin(PadSequence)); G.Link(Then(Entry), Exec(After));
+    if (Result) G.Link(Then(After), Exec(Result));
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+    return G.Check() && Compile(BP); // The key handler calls the compiled own function.
+}
 
 // Slate preview runs before EditableTextBox clears its own focus on Escape.
 // The native reference belongs to this widget and is cleared by Lua on cancel;
@@ -158,7 +228,46 @@ static bool BuildEditorKeys(UWidgetBlueprint* BP, bool KeyUp)
     G.Link(Key->GetReturnValuePin(), Equal->FindPin(TEXT("A")));
     G.Default(Equal->FindPin(TEXT("B")), EKeys::Escape.ToString());
     G.Link(Equal->GetReturnValuePin(), Escape->GetConditionPin());
-    G.Link(Escape->GetElsePin(), Exec(No));
+    if (KeyUp) G.Link(Escape->GetElsePin(), Exec(No));
+    else
+    {
+        // Controller buttons, only while the panel is the active widget.
+        auto* PadEvent = Call(UWidgetBlueprintLibrary::StaticClass(), TEXT("GetInputEventFromKeyEvent"));
+        auto* PadRepeat = Call(UKismetInputLibrary::StaticClass(), TEXT("InputEvent_IsRepeat"));
+        auto* PadActive = Call(Parent(), TEXT("IsActivated"));
+        if (!PadEvent || !PadRepeat || !PadActive) return false;
+        G.Link(Entry->FindPin(TEXT("InKeyEvent")), PadEvent->FindPin(TEXT("Event")));
+        G.Link(PadEvent->GetReturnValuePin(), PadRepeat->FindPin(TEXT("Input")));
+        auto* ActiveGuard = G.Branch();
+        G.Link(Escape->GetElsePin(), Exec(ActiveGuard));
+        G.Link(PadActive->GetReturnValuePin(), ActiveGuard->GetConditionPin());
+        G.Link(ActiveGuard->GetElsePin(), Exec(No));
+        UEdGraphPin* Next = ActiveGuard->GetThenPin();
+        for (const FPadKey& Pad : PadKeys)
+        {
+            auto* Same = Call(UKismetInputLibrary::StaticClass(), TEXT("EqualEqual_KeyKey"));
+            auto* Send = G.CallSelf(BP->SkeletonGeneratedClass, PadDispatch);
+            if (!Same || !Send) return false;
+            auto* Match = G.Branch();
+            G.Link(Key->GetReturnValuePin(), Same->FindPin(TEXT("A")));
+            G.Default(Same->FindPin(TEXT("B")), Pad.Key.ToString());
+            G.Link(Same->GetReturnValuePin(), Match->GetConditionPin());
+            G.Link(Next, Exec(Match));
+            UEdGraphPin* Fire = Match->GetThenPin();
+            if (!Pad.Directional)
+            {
+                auto* Repeated = G.Branch();
+                G.Link(Fire, Exec(Repeated));
+                G.Link(PadRepeat->GetReturnValuePin(), Repeated->GetConditionPin());
+                G.Link(Repeated->GetThenPin(), Exec(Yes));
+                Fire = Repeated->GetElsePin();
+            }
+            auto* Code = G.Set(PadKey, *FString::FromInt(Pad.Code));
+            G.Link(Fire, Exec(Code)); G.Link(Then(Code), Exec(Send)); G.Link(Then(Send), Exec(Yes));
+            Next = Match->GetElsePin();
+        }
+        G.Link(Next, Exec(No));
+    }
     auto* WasHeld = G.Get(Held); auto* HeldBranch = G.Branch();
     G.Link(Escape->GetThenPin(), Exec(HeldBranch));
     G.Link(WasHeld->FindPin(Held), HeldBranch->GetConditionPin());
@@ -239,7 +348,9 @@ static bool Build(UWidgetBlueprint* BP)
     for (UEdGraph* Graph : Graphs)
     {
         const bool Legacy = Graph->GetFName() == TEXT("OnPreviewKeyDown") || Graph->GetFName() == TEXT("OnKeyUp");
-        const bool Ours = Graph->GetFName() == Callback || Graph->GetFName() == Lifecycle;
+        const bool Ours = Graph->GetFName() == Callback || Graph->GetFName() == Lifecycle
+            || Graph->GetFName() == PadDispatch || Graph->GetFName() == AcceptCallback
+            || Graph->GetFName() == ReleaseCallback;
         if (!Legacy && !Ours) continue;
         bool Marked = false;
         for (UEdGraphNode* N : Graph->Nodes)
@@ -272,11 +383,14 @@ static bool Build(UWidgetBlueprint* BP)
     FEdGraphPinType EditorType; EditorType.PinCategory = UEdGraphSchema_K2::PC_Object;
     EditorType.PinSubCategoryObject = UEditableTextBox::StaticClass();
     FEdGraphPinType HandleType; HandleType.PinCategory = UEdGraphSchema_K2::PC_Struct; HandleType.PinSubCategoryObject = Result->Struct;
-    if (!Member(BP, Request, Bool, TEXT("false")) || !Member(BP, Contract, Int, TEXT("3"))
+    if (!Member(BP, Request, Bool, TEXT("false")) || !Member(BP, Contract, Int, TEXT("4"))
+        || !Member(BP, PadKey, Int, TEXT("0")) || !Member(BP, PadSequence, Int, TEXT("0"))
         || !Member(BP, Editor, EditorType, TEXT("None")) || !Member(BP, Held, Bool, TEXT("false"))
-        || !Member(BP, Attempted, Bool, TEXT("false")) || !Member(BP, Handle, HandleType, TEXT(""))) return false;
+        || !Member(BP, Attempted, Bool, TEXT("false")) || !Member(BP, Handle, HandleType, TEXT(""))
+        || !Member(BP, AcceptHandle, HandleType, TEXT("")) || !Member(BP, ReleaseHandle, HandleType, TEXT(""))
+        || !Member(BP, Released, Bool, TEXT("false"))) return false;
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
-    if (!Compile(BP)) return false;
+    if (!Compile(BP) || !BuildPadDispatch(BP)) return false;
 
     UEdGraph* CallbackGraph = FBlueprintEditorUtils::CreateNewGraph(BP, Callback, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
     FBlueprintEditorUtils::AddFunctionGraph(BP, CallbackGraph, true, Delegate->SignatureFunction);
@@ -287,8 +401,29 @@ static bool Build(UWidgetBlueprint* BP)
     Entry->NodeComment = Owner;
     auto* Pending = CB.Set(Request, TEXT("true"));
     CB.Link(Then(Entry), Exec(Pending));
+    UEdGraph* AcceptGraph = FBlueprintEditorUtils::CreateNewGraph(BP, AcceptCallback, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+    FBlueprintEditorUtils::AddFunctionGraph(BP, AcceptGraph, true, Delegate->SignatureFunction);
+    FGraph AC(AcceptGraph);
+    UK2Node_FunctionEntry* AcceptEntry = nullptr;
+    for (UEdGraphNode* N : AcceptGraph->Nodes) if (auto* E = Cast<UK2Node_FunctionEntry>(N)) AcceptEntry = E;
+    if (!AcceptEntry) return false;
+    AcceptEntry->NodeComment = Owner;
+    auto* AcceptCode = AC.Set(PadKey, TEXT("5"));
+    auto* AcceptSend = AC.CallSelf(BP->SkeletonGeneratedClass, PadDispatch);
+    if (!AcceptSend) return false;
+    AC.Link(Then(AcceptEntry), Exec(AcceptCode)); AC.Link(Then(AcceptCode), Exec(AcceptSend));
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
-    if (!CB.Check() || !Compile(BP)) return false; // Delegate resolves against the compiled skeleton.
+    UEdGraph* ReleaseGraph = FBlueprintEditorUtils::CreateNewGraph(BP, ReleaseCallback, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+    FBlueprintEditorUtils::AddFunctionGraph(BP, ReleaseGraph, true, Delegate->SignatureFunction);
+    FGraph RC(ReleaseGraph);
+    UK2Node_FunctionEntry* ReleaseEntry = nullptr;
+    for (UEdGraphNode* N : ReleaseGraph->Nodes) if (auto* E = Cast<UK2Node_FunctionEntry>(N)) ReleaseEntry = E;
+    if (!ReleaseEntry) return false;
+    ReleaseEntry->NodeComment = Owner;
+    auto* MarkReleased = RC.Set(Released, TEXT("true"));
+    RC.Link(Then(ReleaseEntry), Exec(MarkReleased));
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+    if (!CB.Check() || !AC.Check() || !RC.Check() || !Compile(BP)) return false; // Delegates resolve against the compiled skeleton.
 
     UEdGraph* EventGraph = FBlueprintEditorUtils::CreateNewGraph(BP, Lifecycle, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
     FBlueprintEditorUtils::AddUbergraphPage(BP, EventGraph);
@@ -311,16 +446,50 @@ static bool Build(UWidgetBlueprint* BP)
     G.Link(CreateDelegate->GetDelegateOutPin(), Bind->FindPin(TEXT("Callback")));
     CreateDelegate->SetFunction(Callback); CreateDelegate->HandleAnyChange();
     auto* Store = G.Set(Handle); auto* Mark = G.Set(Attempted, TEXT("true"));
+    auto* OldAccept = G.Get(AcceptHandle); auto* ReplaceAccept = G.Call(Unregister); auto* BindAccept = G.Call(Register);
+    auto* AcceptName = G.Call(LiteralFunction);
+    G.Default(AcceptName->FindPin(TEXT("Value")), TEXT("Jump"));
+    G.Link(AcceptName->GetReturnValuePin(), BindAccept->FindPin(TEXT("ActionName")));
+    G.Default(BindAccept->FindPin(TEXT("IsDisplayActionBar")), TEXT("false"));
+    G.Default(BindAccept->FindPin(TEXT("InputType")), TEXT("IE_Pressed"));
+    auto* AcceptDelegate = G.Node<UK2Node_CreateDelegate>(); AcceptDelegate->AllocateDefaultPins();
+    auto* AcceptSelf = G.Node<UK2Node_Self>(); AcceptSelf->AllocateDefaultPins();
+    G.Link(AcceptSelf->FindPin(UEdGraphSchema_K2::PN_Self), AcceptDelegate->GetObjectInPin());
+    G.Link(AcceptDelegate->GetDelegateOutPin(), BindAccept->FindPin(TEXT("Callback")));
+    AcceptDelegate->SetFunction(AcceptCallback); AcceptDelegate->HandleAnyChange();
+    auto* StoreAccept = G.Set(AcceptHandle);
+    auto* OldRelease = G.Get(ReleaseHandle); auto* ReplaceRelease = G.Call(Unregister); auto* BindRelease = G.Call(Register);
+    auto* ReleaseName = G.Call(LiteralFunction);
+    G.Default(ReleaseName->FindPin(TEXT("Value")), TEXT("RadialMenuCancel"));
+    G.Link(ReleaseName->GetReturnValuePin(), BindRelease->FindPin(TEXT("ActionName")));
+    G.Default(BindRelease->FindPin(TEXT("IsDisplayActionBar")), TEXT("false"));
+    G.Default(BindRelease->FindPin(TEXT("InputType")), TEXT("IE_Released"));
+    auto* ReleaseDelegate = G.Node<UK2Node_CreateDelegate>(); ReleaseDelegate->AllocateDefaultPins();
+    auto* ReleaseSelf = G.Node<UK2Node_Self>(); ReleaseSelf->AllocateDefaultPins();
+    G.Link(ReleaseSelf->FindPin(UEdGraphSchema_K2::PN_Self), ReleaseDelegate->GetObjectInPin());
+    G.Link(ReleaseDelegate->GetDelegateOutPin(), BindRelease->FindPin(TEXT("Callback")));
+    ReleaseDelegate->SetFunction(ReleaseCallback); ReleaseDelegate->HandleAnyChange();
+    auto* StoreRelease = G.Set(ReleaseHandle);
     G.Link(Then(Construct), Exec(Guard)); G.Link(Already->FindPin(Attempted), Guard->GetConditionPin());
     G.Link(Guard->GetThenPin(), Exec(Replace)); G.Link(OldHandle->FindPin(Handle), Replace->FindPin(TEXT("BindingData")));
-    G.Link(Then(Replace), Exec(Bind)); G.Link(Guard->GetElsePin(), Exec(Bind));
-    G.Link(Then(Bind), Exec(Store)); G.Link(Bind->GetReturnValuePin(), Store->FindPin(Handle)); G.Link(Then(Store), Exec(Mark));
+    G.Link(Then(Replace), Exec(ReplaceAccept)); G.Link(OldAccept->FindPin(AcceptHandle), ReplaceAccept->FindPin(TEXT("BindingData")));
+    G.Link(Then(ReplaceAccept), Exec(ReplaceRelease)); G.Link(OldRelease->FindPin(ReleaseHandle), ReplaceRelease->FindPin(TEXT("BindingData")));
+    G.Link(Then(ReplaceRelease), Exec(Bind)); G.Link(Guard->GetElsePin(), Exec(Bind));
+    G.Link(Then(Bind), Exec(Store)); G.Link(Bind->GetReturnValuePin(), Store->FindPin(Handle));
+    G.Link(Then(Store), Exec(BindAccept)); G.Link(Then(BindAccept), Exec(StoreAccept));
+    G.Link(BindAccept->GetReturnValuePin(), StoreAccept->FindPin(AcceptHandle)); G.Link(Then(StoreAccept), Exec(BindRelease));
+    G.Link(Then(BindRelease), Exec(StoreRelease)); G.Link(BindRelease->GetReturnValuePin(), StoreRelease->FindPin(ReleaseHandle));
+    G.Link(Then(StoreRelease), Exec(Mark));
 
     auto* Destruct = G.Event(TEXT("Destruct")); auto* HasBinding = G.Get(Attempted); auto* CleanupGuard = G.Branch();
     auto* SavedHandle = G.Get(Handle); auto* Cleanup = G.Call(Unregister); auto* Clear = G.Set(Attempted, TEXT("false"));
+    auto* SavedAccept = G.Get(AcceptHandle); auto* CleanupAccept = G.Call(Unregister);
+    auto* SavedRelease = G.Get(ReleaseHandle); auto* CleanupRelease = G.Call(Unregister);
     G.Link(Then(Destruct), Exec(CleanupGuard)); G.Link(HasBinding->FindPin(Attempted), CleanupGuard->GetConditionPin());
     G.Link(CleanupGuard->GetThenPin(), Exec(Cleanup)); G.Link(SavedHandle->FindPin(Handle), Cleanup->FindPin(TEXT("BindingData")));
-    G.Link(Then(Cleanup), Exec(Clear));
+    G.Link(Then(Cleanup), Exec(CleanupAccept)); G.Link(SavedAccept->FindPin(AcceptHandle), CleanupAccept->FindPin(TEXT("BindingData")));
+    G.Link(Then(CleanupAccept), Exec(CleanupRelease)); G.Link(SavedRelease->FindPin(ReleaseHandle), CleanupRelease->FindPin(TEXT("BindingData")));
+    G.Link(Then(CleanupRelease), Exec(Clear));
     if (!G.Check() || !BuildEditorKeys(BP, false) || !BuildEditorKeys(BP, true)) return false;
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
     return Compile(BP);
@@ -339,8 +508,12 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
     auto* EditorRef = FindFProperty<FObjectPropertyBase>(Class, Editor);
     auto* KeyHeld = FindFProperty<FBoolProperty>(Class, Held);
     auto* IsActive = FindFProperty<FBoolProperty>(Class, TEXT("bIsActive"));
+    auto* PadCode = FindFProperty<FIntProperty>(Class, PadKey);
+    auto* PadSeq = FindFProperty<FIntProperty>(Class, PadSequence);
     UFunction* Fn = Class->FindFunctionByName(Callback);
+    UFunction* PadFn = Class->FindFunctionByName(PadDispatch);
     if (!Pending || !Version || !Tried || !Focus || !Auto || !Back || !EditorRef || !KeyHeld || !IsActive
+        || !PadCode || !PadSeq || !PadFn || PadFn->GetOuter() != Class || PadFn->NumParms || PadFn->Script.IsEmpty()
         || !Fn || Fn->GetOuter() != Class || Fn->NumParms || Fn->Script.Num() == 0) return false;
     for (FName Name : {FName(TEXT("OnPreviewKeyDown")), FName(TEXT("OnKeyUp"))})
     {
@@ -350,7 +523,8 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
     UObject* CDO = Class->GetDefaultObject();
     if (SetDefaults)
     {
-        Pending->SetPropertyValue_InContainer(CDO, false); Version->SetPropertyValue_InContainer(CDO, 3);
+        Pending->SetPropertyValue_InContainer(CDO, false); Version->SetPropertyValue_InContainer(CDO, 4);
+        PadCode->SetPropertyValue_InContainer(CDO, 0); PadSeq->SetPropertyValue_InContainer(CDO, 0);
         Tried->SetPropertyValue_InContainer(CDO, false); Focus->SetPropertyValue_InContainer(CDO, true);
         Auto->SetPropertyValue_InContainer(CDO, false); Back->SetPropertyValue_InContainer(CDO, false);
         EditorRef->SetObjectPropertyValue_InContainer(CDO, nullptr); KeyHeld->SetPropertyValue_InContainer(CDO, false);
@@ -358,7 +532,9 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
     Log(FString::Printf(TEXT("CDO parent=%s contract=%d pending=%d attempted=%d focusable=%d autoactivate=%d backhandler=%d callback-bytes=%d"),
         *BP->ParentClass->GetPathName(), Version->GetPropertyValue_InContainer(CDO), Pending->GetPropertyValue_InContainer(CDO),
         Tried->GetPropertyValue_InContainer(CDO), Focus->GetPropertyValue_InContainer(CDO), Auto->GetPropertyValue_InContainer(CDO), Back->GetPropertyValue_InContainer(CDO), Fn->Script.Num()));
-    if (Version->GetPropertyValue_InContainer(CDO) != 3 || Pending->GetPropertyValue_InContainer(CDO) || Tried->GetPropertyValue_InContainer(CDO)
+    if (Version->GetPropertyValue_InContainer(CDO) != 4 || PadCode->GetPropertyValue_InContainer(CDO) != 0
+        || PadSeq->GetPropertyValue_InContainer(CDO) != 0
+        || Pending->GetPropertyValue_InContainer(CDO) || Tried->GetPropertyValue_InContainer(CDO)
         || EditorRef->GetObjectPropertyValue_InContainer(CDO) || KeyHeld->GetPropertyValue_InContainer(CDO)
         || !Focus->GetPropertyValue_InContainer(CDO) || Auto->GetPropertyValue_InContainer(CDO) || Back->GetPropertyValue_InContainer(CDO)) return false;
     int32 Widgets = 0; bool NamedProperties = true;
@@ -390,6 +566,33 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
         if (Tried->GetPropertyValue_InContainer(Widget) != Construct || !Pending->GetPropertyValue_InContainer(Widget)) return false;
         Log(FString::Printf(TEXT("compiled lifecycle %s attempted=%d pending unchanged PASS (kit stubs)"), Construct ? TEXT("Construct") : TEXT("Destruct"), Construct));
     }
+    UFunction* AcceptFn = Class->FindFunctionByName(AcceptCallback);
+    if (!AcceptFn || AcceptFn->GetOuter() != Class || AcceptFn->NumParms || AcceptFn->Script.IsEmpty()) return false;
+    {
+        const int32 Before = PadSeq->GetPropertyValue_InContainer(Widget);
+        PadCode->SetPropertyValue_InContainer(Widget, -1);
+        FOnInputAction Accept; Accept.BindUFunction(Widget, AcceptCallback);
+        Accept.Execute();
+        const bool AcceptPass = PadCode->GetPropertyValue_InContainer(Widget) == 5
+            && PadSeq->GetPropertyValue_InContainer(Widget) == Before + 1
+            && PadCode->GetPropertyValue_InContainer(CDO) == 0 && PadSeq->GetPropertyValue_InContainer(CDO) == 0;
+        Log(FString::Printf(TEXT("engine delegate accept code=%d sequence=%d %s"), PadCode->GetPropertyValue_InContainer(Widget),
+            PadSeq->GetPropertyValue_InContainer(Widget), AcceptPass ? TEXT("PASS") : TEXT("FAILED")));
+        if (!AcceptPass) return false;
+    }
+    {
+        auto* ReleasedProp = FindFProperty<FBoolProperty>(Class, Released);
+        UFunction* ReleaseFn = Class->FindFunctionByName(ReleaseCallback);
+        if (!ReleasedProp || !ReleaseFn || ReleaseFn->GetOuter() != Class || ReleaseFn->NumParms || ReleaseFn->Script.IsEmpty()) return false;
+        ReleasedProp->SetPropertyValue_InContainer(Widget, false);
+        FOnInputAction Release; Release.BindUFunction(Widget, ReleaseCallback);
+        Release.Execute();
+        const bool ReleasePass = ReleasedProp->GetPropertyValue_InContainer(Widget) && !ReleasedProp->GetPropertyValue_InContainer(CDO);
+        Log(FString::Printf(TEXT("engine delegate release marked=%d %s"), ReleasedProp->GetPropertyValue_InContainer(Widget),
+            ReleasePass ? TEXT("PASS") : TEXT("FAILED")));
+        if (!ReleasePass) return false;
+        ReleasedProp->SetPropertyValue_InContainer(Widget, false);
+    }
     Log(TEXT("routing unverified: Pal kit RegisterActionBinding/UnregisterActionBinding implementations are stubs"));
     const bool CreatedSlate = !FSlateApplication::IsInitialized();
     if (CreatedSlate)
@@ -404,6 +607,10 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
     auto* Root = Cast<UCanvasPanel>(Widget->WidgetTree->RootWidget);
     if (!Root || !Amount) return false;
     Root->AddChild(Amount);
+    // A back handler registers with CommonUI when it is shown; a fresh editor
+    // process has not loaded CommonUI's input data yet (handled ensure,
+    // bInputDataLoaded). The game always has; load it here for the fixture.
+    ICommonInputModule::GetSettings().LoadData(); // the module's own instance, not the CDO
     const TSharedRef<SWindow> Window = SNew(SWindow).ClientSize(FVector2D(640, 480))[Widget->TakeWidget()];
     FSlateApplication::Get().AddWindow(Window, false);
     FSlateApplication::Get().SetKeyboardFocus(Amount->TakeWidget());
@@ -440,6 +647,38 @@ static bool Verify(UWidgetBlueprint* BP, bool SetDefaults)
     EditorRef->SetObjectPropertyValue_InContainer(Widget, nullptr);
     Down(EKeys::Escape, false, false, false); // Lost Up cannot eat a new press.
     Good &= !KeyHeld->GetPropertyValue_InContainer(Widget);
+
+    // Controller buttons (contract 4): each mapped key sets its code and runs
+    // the compiled dispatch once; a held direction repeats, other repeats are
+    // consumed silently; B and unmapped keys stay with CommonUI; nothing is
+    // dispatched while the panel is not the active widget.
+    int32 ExpectedPadSequence = PadSeq->GetPropertyValue_InContainer(Widget);
+    auto Pad = [&](FKey Key, bool Repeat, bool ExpectedHandled, int32 ExpectedCode)
+    {
+        PadCode->SetPropertyValue_InContainer(Widget, -1);
+        const FEventReply Reply = Widget->OnPreviewKeyDown(FGeometry(), FKeyEvent(Key, FModifierKeysState(), 0, Repeat, 0, 0));
+        if (ExpectedCode > 0) ++ExpectedPadSequence;
+        const int32 Code = PadCode->GetPropertyValue_InContainer(Widget);
+        const bool Pass = Reply.NativeReply.IsEventHandled() == ExpectedHandled
+            && Code == (ExpectedCode > 0 ? ExpectedCode : -1)
+            && PadSeq->GetPropertyValue_InContainer(Widget) == ExpectedPadSequence
+            && !Pending->GetPropertyValue_InContainer(Widget);
+        Log(FString::Printf(TEXT("pad compiled key=%s repeat=%d handled=%d code=%d sequence=%d %s"), *Key.ToString(), Repeat,
+            Reply.NativeReply.IsEventHandled(), Code, PadSeq->GetPropertyValue_InContainer(Widget), Pass ? TEXT("PASS") : TEXT("FAILED")));
+        Good &= Pass;
+    };
+    IsActive->SetPropertyValue_InContainer(Widget, true);
+    EditorRef->SetObjectPropertyValue_InContainer(Widget, nullptr);
+    for (const FPadKey& Test : PadKeys)
+    {
+        Pad(Test.Key, false, true, Test.Code);
+        Pad(Test.Key, true, true, Test.Directional ? Test.Code : 0);
+    }
+    for (FKey Key : {EKeys::Gamepad_FaceButton_Right, EKeys::Enter, EKeys::Up, EKeys::BackSpace, EKeys::Gamepad_Special_Left})
+        Pad(Key, false, false, 0);
+    IsActive->SetPropertyValue_InContainer(Widget, false);
+    for (const FPadKey& Test : PadKeys) Pad(Test.Key, false, false, 0);
+    IsActive->SetPropertyValue_InContainer(Widget, true);
     FSlateApplication::Get().RequestDestroyWindow(Window);
     if (!Good) return false;
     return true;

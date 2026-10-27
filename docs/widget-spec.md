@@ -10,10 +10,19 @@ Related: [stand-keyboard-2026-09-24](stand-keyboard-2026-09-24.md) · [editor-es
 The current contract of the mod's own cooked widgets, how the stand roster is
 found in the game's own widgets, and the toolchain that builds the pak.
 `docs/asset-contract.json` names this file as its contract reference
-(WorkRules `PWP_InputContract` 3, StandInput `PWP_Contract` 2), and
+(WorkRules `PWP_InputContract` 4, StandInput `PWP_Contract` 3), and
 `tools/release.py` checks the shipped pak against that JSON.
 
-## Current widget contract (WorkRules contract 3, StandInput contract 2)
+## Current widget contract (WorkRules contract 4, StandInput contract 3)
+
+Contract 4 / 3 (2026-10-22) add controller buttons on top of what follows:
+WorkRules gains `PWP_PadKey`, `PWP_PadSequence`, `PWP_PadDispatch` (codes 1-11
+from `OnPreviewKeyDown` while active), `PWP_CancelReleased` with a second
+`RadialMenuCancel` binding on release, and a `Jump` binding (A; registered, does
+not fire in game). StandInput dispatches D-pad 6-9, A 10, X 0, LB 11, RB 12 and
+View 13 and reports `OnFocusLost` through `PWP_FocusDispatch`. Built and
+self-tested by `tools/build_widgets.py`; acceptance in
+[controller-routes-2026-10-22](controller-routes-2026-10-22.md).
 
 The current generator and `Scripts/overlay.lua` require 21 named widgets:
 

@@ -293,8 +293,23 @@ end)
 check('rapid native numbers preserve order including X and reject invalid values',function()
     local f=fixture(); assert(f.ui.refresh(f.cfg)); f.ui.bind_mouse(function() return f.cfg end)
     f.focus_cell(f.cells[1]); f.key(f.cells[1],5); f.key(f.cells[1],false); f.key(f.cells[1],1)
-    f.key(f.cells[1],11); f.key(f.cells[1],1.5); f.session.drain(error)
+    f.key(f.cells[1],14); f.key(f.cells[1],1.5); f.session.drain(error)
     assert(#f.writes==3 and f.writes[1].value==5 and f.writes[2].value==false and f.writes[3].value==1)
+end)
+
+check('controller codes on the stand: LB steps toward 1, RB toward X, View opens the panel',function()
+    -- StandInput contract 3 (2026-10-22): 11 = LB, 12 = RB, 13 = View. Steps
+    -- cycle from the pending value, like Enter and the mouse buttons.
+    local f=fixture(); assert(f.ui.refresh(f.cfg)); f.ui.bind_mouse(function() return f.cfg end)
+    local opened=0
+    f.ui.open_panel=function() opened=opened+1 end
+    f.focus_cell(f.cells[1]); f.key(f.cells[1],5); f.key(f.cells[1],11); f.key(f.cells[1],11)
+    f.key(f.cells[1],12); f.key(f.cells[1],13); f.session.drain(error)
+    assert(#f.writes==4,'expected four writes, got '..#f.writes)
+    assert(f.writes[1].value==5 and f.writes[2].value==4 and f.writes[3].value==3 and f.writes[4].value==4,
+        'LB/RB did not step from the pending value')
+    assert(opened==1,'View did not ask for the panel exactly once')
+    f.ui.open_panel=false
 end)
 
 check('navigation cannot take focus from another menu or an unknown focus owner',function()

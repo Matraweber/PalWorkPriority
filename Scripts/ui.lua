@@ -114,9 +114,14 @@ local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like 
 -- just above the bottom-anchored text (in game, 2026-10-22).
 M.EDIT_LEGEND = "Left click: toward 1  Right click: toward X  Keys 1-5, X  |  "
     .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  ALT+F1: Production Limits"
+-- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
+-- view switch, so the panel opens with View.
+M.PAD_LEGEND = "LB / A: toward 1  RB: toward X  X: off  |  "
+    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  View: Production Limits"
 -- The panel key as the player bound it in DarnMenu. main.lua records it in
 -- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
 function M.edit_legend()
+    if api.last_input_type == 1 then return M.PAD_LEGEND end
     local label
     pcall(function()
         local dm = package.loaded.darnmenu
@@ -1707,8 +1712,28 @@ function M.direct(cfg,priority,intent)
     return true
 end
 
+M.open_panel = false -- set by main.lua: opens the limits panel (View on the stand)
+
 function M.pad_tick(cfg)
     if not menu_likely_open or not api.has_viewport() then return end
+    -- A controller press can only reach our receiver while it has the focus,
+    -- and the game's stand gives the focus to its own cell. On a controller
+    -- (asked at most four times a second) put it on the current selection,
+    -- the same as the first arrow key does on a keyboard.
+    local now=os.clock()
+    if (M.pad_focus_at or 0)<=now then
+        M.pad_focus_at=now+0.25
+        local gamepad=api.input_is_gamepad and api.input_is_gamepad()==true
+        if gamepad and not stand_pointer.keyboard_active() then
+            local handed=M.nav(cfg,"here")
+            -- One line per stand session and outcome, for the controller tests.
+            local note=tostring(session.ui_epoch)..(handed and ":yes" or ":no")
+            if M.pad_handover_note~=note then
+                M.pad_handover_note=note
+                log.say("controller: focus handover "..(handed and "done" or "refused").." (stand session "..tostring(session.ui_epoch)..")")
+            end
+        end
+    end
     if not M.pad_handlers then
         M.pad_handlers={
             nav=function(verb) M.nav(M.pad_cfg,verb) end,
@@ -1746,9 +1771,18 @@ function M.bind_mouse(cfg_ref, before, blocked)
             if direction then M.nav(cfg_ref(),direction,{key=key,work=work}) end
             return
         end
-        local intent=M.capture_direct(cell,key,work,token,priority==10)
+        -- Controller (StandInput contract 3): 11 = LB toward 1, 12 = RB toward
+        -- X, 13 = View opens the Production Limits panel (Y is the stand's own view
+        -- switch and never reaches us). A arrives as 10, X as 0
+        -- and the D-pad as 6-9, the same codes as Enter, X and the arrows.
+        if priority==13 then
+            if M.open_panel then session.enqueue(function() M.open_panel() end,true) end
+            return
+        end
+        local step=priority==10 or priority==11 or priority==12
+        local intent=M.capture_direct(cell,key,work,token,step)
         if not intent then return end
-        if priority==10 then intent.cycle=-1; priority=false end
+        if step then intent.cycle=priority==12 and 1 or -1; priority=false end
         session.enqueue(function()
             if blocked and blocked() then return end
             M.direct(cfg_ref(),priority,intent)

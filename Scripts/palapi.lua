@@ -385,6 +385,24 @@ end
 -- chain and validity checks as has_viewport. Positive results may be reused
 -- only inside the caller's synchronous begin/end scope; misses stay fresh.
 -- Never substitute pc_memo here: its FindFirstOf route is not local evidence.
+-- Is the player on a controller right now? PalUtility:GetCurrentInputType is
+-- reflected in this build (Functions.txt; Perfect Placement reads it too). Its
+-- enum is CommonUI's ECommonInputType: 0 mouse and keyboard, 1 gamepad, 2
+-- touch. The raw value is kept for diagnostics. nil means "could not ask",
+-- which callers treat as "not a controller" (they only add help, never block).
+function M.input_is_gamepad()
+    local ok, value = pcall(function()
+        local util = M.cdo("/Script/Pal.Default__PalUtility")
+        local pc = M.local_player_controller()
+        if util == nil or pc == nil then return nil end
+        return util:GetCurrentInputType(pc)
+    end)
+    if not ok then return nil end
+    M.last_input_type = value
+    if type(value) ~= "number" then return nil end
+    return value == 1
+end
+
 function M.local_player_controller()
     if local_pc_memo ~= nil then return local_pc_memo end
     local pc

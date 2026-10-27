@@ -279,6 +279,22 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-10-22 - Controller support ships in 0.5.0, all parts (user's
+  decision).** Open the panel through a DarnMenu tile and a chord the game does
+  not use, navigate the panel, and edit priorities on the stand, by handing
+  controller keys from our own widgets' key handlers to Lua
+  ([controller-routes-2026-10-22](controller-routes-2026-10-22.md)). The
+  release waits for it. *Rejected:* shipping 0.5.0 with "use mouse and
+  keyboard" and building it in 0.5.x (offered, not chosen); polling the player
+  controller in menus (measured: the game's menus take the buttons first).
+  Supersedes the 2026-10-22 "deferred" closing of the RELEASE controller item.
+  Built the same day: our own widgets hand the buttons to Lua (StandInput
+  OnKeyDown, WorkRules OnPreviewKeyDown); View on the stand opens the panel
+  because the game keeps Y (view switch); Y confirms in the panel because the
+  game's UI confirm takes A; the panel closes on B's release so the release
+  cannot close the stand. *Rejected on measurement:* a new chord (RB + View
+  opens the map), a `Jump` binding for A (never fires), `UIINputGuardCancel`
+  and a CommonUI back handler for the stand closing (no difference).
 - **2026-10-21 - The limits panel gets the new-user fixes in 0.5.0 (user's
   pick: P1, the requested key hints and stand legend, and P2 except Enter).**
   From [ux-review-2026-10-21](ux-review-2026-10-21.md): say up front that 0.5.0

@@ -16,6 +16,7 @@
 #include "Input/Events.h"
 #include "InputCoreTypes.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_Event.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
 #include "K2Node_IfThenElse.h"
@@ -38,6 +39,8 @@ namespace StandInput
 static const TCHAR* PackagePath = TEXT("/Game/Mods/PalWorkPriority/UI/WBP_StandInput");
 static const TCHAR* AssetName = TEXT("WBP_StandInput");
 static const FString LegacyOwner(TEXT("PWP generated stand input contract 1"));
+// Ownership marker on generated nodes, not the contract number: it stays as
+// written so a rebuild recognizes the graphs it made. PWP_Contract is 3.
 static const FString Owner(TEXT("PWP generated stand input contract 2"));
 static const FName Target(TEXT("PWP_Target")), Epoch(TEXT("PWP_Epoch")), UiEpoch(TEXT("PWP_UiEpoch"));
 static const FName Direction(TEXT("PWP_Direction")), Contract(TEXT("PWP_Contract"));
@@ -45,6 +48,10 @@ static const FName Sequence(TEXT("PWP_Sequence")), Dispatch(TEXT("PWP_Dispatch")
 static const FName Down(TEXT("OnMouseButtonDown")), Double(TEXT("OnMouseButtonDoubleClick"));
 static const FName Priority(TEXT("PWP_Priority")), KeySequence(TEXT("PWP_KeySequence"));
 static const FName KeyDispatch(TEXT("PWP_KeyDispatch")), KeyDown(TEXT("OnKeyDown"));
+// When the game moves the focus away (its own stand cursor, the Y view switch)
+// the receiver reports it, so Lua can hand the focus back on a controller.
+static const FName FocusDispatch(TEXT("PWP_FocusDispatch")), FocusSequence(TEXT("PWP_FocusSequence"));
+static const FName FocusEvents(TEXT("PWP_FocusEvents"));
 
 static bool Check(bool Good, const FString& What)
 {
@@ -239,17 +246,29 @@ static bool BuildKeys(UWidgetBlueprint* BP)
         G.Link(Guard->GetThenPin(), Exec(G.Result)); Next = Guard->GetElsePin();
     }
     // 0=X, 1..5=priority, 6..9=synchronous Lua navigation, 10=queued source
-    // cell raise. Lua owns edits/focus; never also request Slate navigation.
-    const FKey Keys[] = {EKeys::X, EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five,
-        EKeys::Up, EKeys::Down, EKeys::Left, EKeys::Right, EKeys::Enter};
-    for (int32 Value = 0; Value < UE_ARRAY_COUNT(Keys); ++Value)
+    // cell raise, 11=step toward 1, 12=step toward X, 13=open the limits panel
+    // (the View button: Y is the stand's own view switch and is taken first).
+    // Lua owns edits/focus; never also request Slate navigation. Controller
+    // buttons share the keyboard codes (contract 3, 2026-10-22): the game's
+    // menus keep them from the player controller, so this receiver is the only
+    // place a pad press on the stand can reach the mod.
+    struct FKeyCode { FKey Key; int32 Code; };
+    const FKeyCode Keys[] = {{EKeys::X, 0}, {EKeys::One, 1}, {EKeys::Two, 2}, {EKeys::Three, 3},
+        {EKeys::Four, 4}, {EKeys::Five, 5}, {EKeys::Up, 6}, {EKeys::Down, 7}, {EKeys::Left, 8},
+        {EKeys::Right, 9}, {EKeys::Enter, 10},
+        {EKeys::Gamepad_DPad_Up, 6}, {EKeys::Gamepad_DPad_Down, 7}, {EKeys::Gamepad_DPad_Left, 8},
+        {EKeys::Gamepad_DPad_Right, 9}, {EKeys::Gamepad_FaceButton_Bottom, 10},
+        {EKeys::Gamepad_FaceButton_Left, 0}, {EKeys::Gamepad_LeftShoulder, 11},
+        {EKeys::Gamepad_RightShoulder, 12}, {EKeys::Gamepad_Special_Left, 13}};
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(Keys); ++Index)
     {
+        const int32 Value = Keys[Index].Code;
         auto* Equal = G.Call(UKismetInputLibrary::StaticClass(), TEXT("EqualEqual_KeyKey"));
         auto* Repeat = G.Call(UKismetInputLibrary::StaticClass(), TEXT("InputEvent_IsRepeat"));
         if (!Equal || !Repeat) return false;
         auto* Match = G.Branch(); auto* Repeated = G.Branch();
         auto* SetPriority = G.Set(Priority); G.Default(SetPriority->FindPin(Priority), FString::FromInt(Value));
-        G.Link(Key->GetReturnValuePin(), Equal->FindPin(TEXT("A"))); G.Default(Equal->FindPin(TEXT("B")), Keys[Value].ToString());
+        G.Link(Key->GetReturnValuePin(), Equal->FindPin(TEXT("A"))); G.Default(Equal->FindPin(TEXT("B")), Keys[Index].Key.ToString());
         G.Link(Equal->GetReturnValuePin(), Match->GetConditionPin()); G.Link(Next, Exec(Match));
         G.Link(Match->GetThenPin(), Exec(Repeated));
         G.Link(Event->GetReturnValuePin(), Repeat->FindPin(TEXT("Input")));
@@ -258,13 +277,9 @@ static bool BuildKeys(UWidgetBlueprint* BP)
         G.Link(Repeated->GetElsePin(), Exec(SetPriority)); G.Link(Then(SetPriority), Exec(Send));
         Next = Match->GetElsePin();
     }
-    // The polled Lua pad driver owns these edits/directions.
     // Left-stick keys are suppressed only to prevent default focus drift.
     // Consume presses/repeats without dispatch; right-face Back still bubbles.
-    for (FKey SuppressedKey : {EKeys::Gamepad_FaceButton_Bottom,
-        EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder, EKeys::Gamepad_FaceButton_Left,
-        EKeys::Gamepad_DPad_Up, EKeys::Gamepad_DPad_Down,
-        EKeys::Gamepad_DPad_Left, EKeys::Gamepad_DPad_Right, EKeys::Gamepad_LeftStick_Up,
+    for (FKey SuppressedKey : {EKeys::Gamepad_LeftStick_Up,
         EKeys::Gamepad_LeftStick_Down, EKeys::Gamepad_LeftStick_Left, EKeys::Gamepad_LeftStick_Right})
     {
         auto* Equal = G.Call(UKismetInputLibrary::StaticClass(), TEXT("EqualEqual_KeyKey"));
@@ -278,6 +293,24 @@ static bool BuildKeys(UWidgetBlueprint* BP)
     return G.Finish();
 }
 
+static bool BuildFocusLost(UWidgetBlueprint* BP)
+{
+    UEdGraph* Graph = FBlueprintEditorUtils::CreateNewGraph(BP, FocusEvents, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+    FBlueprintEditorUtils::AddUbergraphPage(BP, Graph);
+    const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+    auto* Event = NewObject<UK2Node_Event>(Graph); Graph->AddNode(Event); Event->CreateNewGuid(); Event->NodeComment = Owner;
+    Event->EventReference.SetExternalMember(TEXT("OnFocusLost"), UUserWidget::StaticClass());
+    Event->bOverrideFunction = true; Event->AllocateDefaultPins();
+    UFunction* Fn = BP->SkeletonGeneratedClass ? BP->SkeletonGeneratedClass->FindFunctionByName(FocusDispatch) : nullptr;
+    if (!Check(Fn != nullptr, TEXT("own function PWP_FocusDispatch for the focus event"))) return false;
+    auto* Send = NewObject<UK2Node_CallFunction>(Graph); Graph->AddNode(Send); Send->CreateNewGuid(); Send->NodeComment = Owner;
+    Send->SetFromFunction(Fn); Send->FunctionReference.SetSelfMember(FocusDispatch); Send->AllocateDefaultPins();
+    Send->NodePosX = 300;
+    UEdGraphPin* A = Then(Event); UEdGraphPin* B = Exec(Send);
+    const bool Linked = A && B && Schema->TryCreateConnection(A, B) && A->LinkedTo.Contains(B);
+    return Check(Linked, TEXT("graph PWP_FocusEvents OnFocusLost -> PWP_FocusDispatch"));
+}
+
 static bool Build(UWidgetBlueprint* BP)
 {
     if (!BP || BP->ParentClass != UUserWidget::StaticClass() || !BP->WidgetTree) return false;
@@ -286,7 +319,8 @@ static bool Build(UWidgetBlueprint* BP)
     for (UEdGraph* Graph : Graphs)
     {
         if (Graph->GetFName() != Dispatch && Graph->GetFName() != Down && Graph->GetFName() != Double
-            && Graph->GetFName() != KeyDispatch && Graph->GetFName() != KeyDown) continue;
+            && Graph->GetFName() != KeyDispatch && Graph->GetFName() != KeyDown
+            && Graph->GetFName() != FocusDispatch && Graph->GetFName() != FocusEvents) continue;
         bool Ours = !Graph->Nodes.IsEmpty();
         const bool LegacyGraph = Graph->GetFName() == Dispatch || Graph->GetFName() == Down || Graph->GetFName() == Double;
         for (UEdGraphNode* N : Graph->Nodes) Ours &= N->NodeComment == Owner || (LegacyGraph && N->NodeComment == LegacyOwner);
@@ -302,11 +336,12 @@ static bool Build(UWidgetBlueprint* BP)
     Root->bIsVariable = true; BP->WidgetTree->RootWidget = Root;
     Root->SetVisibility(ESlateVisibility::Visible); Root->SetBrushColor(FLinearColor(1, 1, 1, 0)); Root->SetPadding(FMargin(0));
     if (!Member(BP, Target, UEdGraphSchema_K2::PC_String, TEXT(""))) return false;
-    for (FName Name : {Epoch, UiEpoch, Direction, Contract, Sequence, Priority, KeySequence})
+    for (FName Name : {Epoch, UiEpoch, Direction, Contract, Sequence, Priority, KeySequence, FocusSequence})
         if (!Member(BP, Name, UEdGraphSchema_K2::PC_Int,
-            Name == Contract ? TEXT("2") : Name == Priority ? TEXT("-1") : TEXT("0"))) return false;
+            Name == Contract ? TEXT("3") : Name == Priority ? TEXT("-1") : TEXT("0"))) return false;
     if (!Compile(BP) || !BuildDispatch(BP, Dispatch, Sequence) || !BuildDispatch(BP, KeyDispatch, KeySequence)
-        || !BuildMouse(BP, Down) || !BuildMouse(BP, Double) || !BuildKeys(BP) || !Compile(BP)) return false;
+        || !BuildDispatch(BP, FocusDispatch, FocusSequence)
+        || !BuildMouse(BP, Down) || !BuildMouse(BP, Double) || !BuildKeys(BP) || !BuildFocusLost(BP) || !Compile(BP)) return false;
     auto* Defaults = Cast<UUserWidget>(BP->GeneratedClass->GetDefaultObject());
     auto* Focus = FindFProperty<FBoolProperty>(BP->GeneratedClass, TEXT("bIsFocusable"));
     if (!Defaults || !Focus) return false;
@@ -341,7 +376,7 @@ static bool Verify(UWidgetBlueprint* BP)
     {
         return TargetProp->GetPropertyValue_InContainer(Object).IsEmpty()
             && EpochProp->GetPropertyValue_InContainer(Object) == 0 && UiProp->GetPropertyValue_InContainer(Object) == 0
-            && DirProp->GetPropertyValue_InContainer(Object) == 0 && Version->GetPropertyValue_InContainer(Object) == 2
+            && DirProp->GetPropertyValue_InContainer(Object) == 0 && Version->GetPropertyValue_InContainer(Object) == 3
             && Seq->GetPropertyValue_InContainer(Object) == 0 && Focus->GetPropertyValue_InContainer(Object)
             && Prio->GetPropertyValue_InContainer(Object) == -1 && KeySeq->GetPropertyValue_InContainer(Object) == 0;
     };
@@ -363,7 +398,7 @@ static bool Verify(UWidgetBlueprint* BP)
         const FString TargetValue = TargetProp->GetPropertyValue_InContainer(Object);
         Check(TargetValue.IsEmpty(), FString::Printf(TEXT("%s PWP_Target actual='%s' length=%d expected=empty"),
             Stage, *TargetValue, TargetValue.Len()));
-        Int(EpochProp, 0); Int(UiProp, 0); Int(DirProp, 0); Int(Version, 2);
+        Int(EpochProp, 0); Int(UiProp, 0); Int(DirProp, 0); Int(Version, 3);
         Int(Seq, 0); Int(Prio, -1); Int(KeySeq, 0);
         const bool CanFocus = Focus->GetPropertyValue_InContainer(Object);
         Check(CanFocus, FString::Printf(TEXT("%s bIsFocusable actual=%d expected=1"), Stage, CanFocus));
@@ -374,12 +409,15 @@ static bool Verify(UWidgetBlueprint* BP)
     auto* CDO = Cast<UUserWidget>(Class->GetDefaultObject());
     DescribeDefaults(CDO, TEXT("CDO"));
     if (!Check(CDO && DefaultsOK(CDO) && CDO->GetVisibility() == ESlateVisibility::Visible, TEXT("scalar and visibility defaults"))) return false;
-    for (FName Name : {Dispatch, KeyDispatch, Down, Double, KeyDown})
+    for (FName Name : {Dispatch, KeyDispatch, Down, Double, KeyDown, FocusDispatch})
     {
         UFunction* Fn = Class->FindFunctionByName(Name);
         if (!Check(Fn && Fn->GetOuter() == Class && !Fn->Script.IsEmpty() && !Fn->HasAnyFunctionFlags(FUNC_Native)
-            && ((Name != Dispatch && Name != KeyDispatch) || Fn->NumParms == 0), TEXT("own compiled function ") + Name.ToString())) return false;
+            && ((Name != Dispatch && Name != KeyDispatch && Name != FocusDispatch) || Fn->NumParms == 0),
+            TEXT("own compiled function ") + Name.ToString())) return false;
     }
+    auto* FocusSeq = FindFProperty<FIntProperty>(Class, FocusSequence);
+    if (!Check(FocusSeq != nullptr, TEXT("PWP_FocusSequence member"))) return false;
     const bool CreatedSlate = !FSlateApplication::IsInitialized();
     if (CreatedSlate)
     {
@@ -434,7 +472,7 @@ static bool Verify(UWidgetBlueprint* BP)
     TargetProp->SetPropertyValue_InContainer(Widget, TEXT("")); // Disarming also resets stale direction.
     Good &= Run(true, EKeys::RightMouseButton, false, 0);
     Good &= EpochProp->GetPropertyValue_InContainer(Widget) == 7 && UiProp->GetPropertyValue_InContainer(Widget) == 11;
-    Good &= Version->GetPropertyValue_InContainer(Widget) == 2 && DefaultsOK(CDO);
+    Good &= Version->GetPropertyValue_InContainer(Widget) == 3 && DefaultsOK(CDO);
 
     int32 ExpectedKeySequence = 0;
     auto RunKey = [&](FKey Key, const FModifierKeysState& Modifiers, bool Repeat, bool Handled, int32 ExpectedPriority)
@@ -450,7 +488,7 @@ static bool Verify(UWidgetBlueprint* BP)
             && DirProp->GetPropertyValue_InContainer(Widget) == BeforeDirection
             && TargetProp->GetPropertyValue_InContainer(Widget) == BeforeTarget
             && EpochProp->GetPropertyValue_InContainer(Widget) == 7 && UiProp->GetPropertyValue_InContainer(Widget) == 11
-            && Version->GetPropertyValue_InContainer(Widget) == 2
+            && Version->GetPropertyValue_InContainer(Widget) == 3
             && Reply.NativeReply.GetNavigationType() == EUINavigation::Invalid
             && !Reply.NativeReply.GetNavigationDestination().IsValid()
             && !Reply.NativeReply.GetUserFocusRecepient().IsValid(),
@@ -466,10 +504,11 @@ static bool Verify(UWidgetBlueprint* BP)
     const FKeyCase Cases[] = {{EKeys::X, 0}, {EKeys::One, 1}, {EKeys::Two, 2},
         {EKeys::Three, 3}, {EKeys::Four, 4}, {EKeys::Five, 5},
         {EKeys::Up, 6}, {EKeys::Down, 7}, {EKeys::Left, 8}, {EKeys::Right, 9},
-        {EKeys::Enter, 10}, {EKeys::Gamepad_FaceButton_Bottom, -1},
-        {EKeys::Gamepad_LeftShoulder, -1}, {EKeys::Gamepad_RightShoulder, -1}, {EKeys::Gamepad_FaceButton_Left, -1},
-        {EKeys::Gamepad_DPad_Up, -1}, {EKeys::Gamepad_DPad_Down, -1},
-        {EKeys::Gamepad_DPad_Left, -1}, {EKeys::Gamepad_DPad_Right, -1},
+        {EKeys::Enter, 10}, {EKeys::Gamepad_FaceButton_Bottom, 10},
+        {EKeys::Gamepad_LeftShoulder, 11}, {EKeys::Gamepad_RightShoulder, 12}, {EKeys::Gamepad_FaceButton_Left, 0},
+        {EKeys::Gamepad_Special_Left, 13},
+        {EKeys::Gamepad_DPad_Up, 6}, {EKeys::Gamepad_DPad_Down, 7},
+        {EKeys::Gamepad_DPad_Left, 8}, {EKeys::Gamepad_DPad_Right, 9},
         {EKeys::Gamepad_LeftStick_Up, -1}, {EKeys::Gamepad_LeftStick_Down, -1},
         {EKeys::Gamepad_LeftStick_Left, -1}, {EKeys::Gamepad_LeftStick_Right, -1}};
     for (const FKeyCase& Test : Cases)
@@ -493,13 +532,16 @@ static bool Verify(UWidgetBlueprint* BP)
             Good &= RunKey(Test.Key, Mods, true, false, -1);
         }
     }
-    for (FKey Key : {EKeys::Escape, EKeys::Gamepad_FaceButton_Right, EKeys::A, EKeys::Zero, EKeys::Six, EKeys::NumPadOne})
+    for (FKey Key : {EKeys::Escape, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Top, EKeys::A, EKeys::Zero, EKeys::Six, EKeys::NumPadOne})
     {
         Good &= RunKey(Key, FModifierKeysState(), false, false, -1);
         Good &= RunKey(Key, FModifierKeysState(), true, false, -1);
     }
+    const int32 FocusBefore = FocusSeq->GetPropertyValue_InContainer(Widget);
     FSlateApplication::Get().ClearKeyboardFocus(EFocusCause::SetDirectly);
     if (!Check(!Widget->HasAnyUserFocus(), TEXT("fixture receiver focus released"))) return false;
+    Good &= Check(FocusSeq->GetPropertyValue_InContainer(Widget) > FocusBefore,
+        FString::Printf(TEXT("focus lost dispatched before=%d after=%d"), FocusBefore, FocusSeq->GetPropertyValue_InContainer(Widget)));
     for (const FKeyCase& Test : Cases)
     {
         Good &= RunKey(Test.Key, FModifierKeysState(), false, false, -1);

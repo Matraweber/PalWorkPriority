@@ -21,7 +21,7 @@ local function input_contract(fresh)
     local ok, version, pending, bound = pcall(function()
         return fresh.PWP_InputContract, fresh.PWP_CancelRequested, fresh.PWP_CancelBindingAttempted
     end)
-    if not ok or (version ~= 2 and version ~= 3) or type(pending) ~= "boolean" or bound ~= true then return false end
+    if not ok or (version ~= 2 and version ~= 3 and version ~= 4) or type(pending) ~= "boolean" or bound ~= true then return false end
     local active_ok, active = pcall(function() return fresh:IsActivated() end)
     return active_ok and active == true, pending
 end
@@ -31,7 +31,7 @@ end
 -- binding and its callback live entirely in the generated Blueprint.
 local function native_active(fresh, on)
     local known, version = pcall(function() return fresh.PWP_InputContract end)
-    if not known or (version ~= 2 and version ~= 3) then return true end
+    if not known or (version ~= 2 and version ~= 3 and version ~= 4) then return true end
     local ok, active = pcall(function()
         if fresh:IsActivated() ~= on then
             if on then
@@ -67,13 +67,24 @@ function M.take_cancel(fresh)
     return true, still_supported and after == false
 end
 
+-- Contract 4: a second RadialMenuCancel binding on release sets
+-- PWP_CancelReleased. Returns true once per release (and clears it), false
+-- when not released yet, nil when the shell cannot tell (older pak).
+function M.take_release(fresh)
+    local ok, contract, released = pcall(function() return fresh.PWP_InputContract, fresh.PWP_CancelReleased end)
+    if not ok or contract ~= 4 or type(released) ~= "boolean" then return nil end
+    if not released then return false end
+    pcall(function() fresh.PWP_CancelReleased = false end)
+    return true
+end
+
 -- This is an engine-owned reference on the current shell, not a retained Lua
 -- wrapper. Only the amount editor participates in the native Escape preview.
 function M.set_amount_editor(editor, return_focus)
     local _, _, fresh = M.resolve_owned()
     if not fresh then return editor == nil end
     local known, version = pcall(function() return fresh.PWP_InputContract end)
-    if not known or version ~= 3 then return true end -- Legacy/missing-pak shell.
+    if not known or (version ~= 3 and version ~= 4) then return true end -- Legacy/missing-pak shell.
     local ok, result = pcall(function()
         local restore_focus = false
         if editor == nil and return_focus == true and M.open then
@@ -130,6 +141,33 @@ end
 -- panel at all.
 local BP_PACKAGE = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules"
 local BP_ASSET = "WBP_WorkRules_C"
+
+-- Controller buttons (contract 4, 2026-10-22). The game's CommonUI keeps the
+-- D-pad and A from the player controller while the panel has focus, so the
+-- shell's preview key handler sets PWP_PadKey and calls PWP_PadDispatch; this
+-- hook reads the code from that same widget and hands it to the panel
+-- (M.on_pad, set by panel.lua) on the next game-thread beat. Registered once,
+-- after the class is loaded; a shell without the function just never fires.
+M.on_pad = false -- set by panel.lua: function(code)
+
+function M.hook_pad()
+    if M.pad_hooked then return true end
+    local ok = pcall(RegisterHook, BP_PACKAGE .. "." .. BP_ASSET .. ":PWP_PadDispatch", function(context)
+        local read, code = pcall(function()
+            local widget = context:get()
+            if widget.PWP_InputContract ~= 4 then return nil end
+            return widget.PWP_PadKey
+        end)
+        if not read or type(code) ~= "number" or code % 1 ~= 0 or code < 1 or code > 11 then return end
+        M.pad_events = (M.pad_events or 0) + 1
+        session.enqueue(function()
+            if M.open and M.on_pad then M.on_pad(code) end
+        end, true)
+    end)
+    M.pad_hooked = ok
+    if not ok then warn_once("padhook", "controller buttons could not be hooked; use mouse and keyboard") end
+    return ok
+end
 
 -- No stored class. The first version kept the wrapper GetAsset handed the
 -- callback and used it from host() a second later - and a Lua wrapper is not
@@ -503,6 +541,8 @@ function M.prepare()
         -- until the panel wants it.
         if build_blueprint(class) then
             bp_state = "hosted"
+            -- The class is loaded now, so the hook path resolves.
+            M.hook_pad()
         else
             bp_state = "absent"
         end
@@ -1272,7 +1312,7 @@ function M.hide()
         local detached, result = pcall(function()
             if not native_active(fresh, false) then return false end
             local known, version = pcall(function() return fresh.PWP_InputContract end)
-            if known and version == 3 then
+            if known and (version == 3 or version == 4) then
                 local cleared = pcall(function() fresh.PWP_AmountEditor = nil end)
                 if not cleared then warn_once("editorclear", "editor reference could not clear; detaching its inactive panel") end
             end

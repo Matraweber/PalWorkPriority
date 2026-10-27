@@ -3008,6 +3008,13 @@ bind_action("key_panel", "F1", "work rules", function()
     panel.toggle()
 end)
 
+-- View on the Monitoring Stand (StandInput contract 3) opens the limits panel:
+-- a controller has no Alt+F1, and every free chord collides with a game
+-- binding (RB + View opens the map). Opening only; B closes it again.
+ui.open_panel = function()
+    if not panel.open then panel.toggle() end
+end
+
 -- The transport test needs a key of its own, because the machine most worth
 -- running it on is a client in single player, where there is no chat box to
 -- type a command into. F9 rather than F8: Alt+F8 is FreeCam's toggle, and the

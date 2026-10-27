@@ -27,6 +27,7 @@ public class PalWidgetGen : ModuleRules {
             "Slate",
             "SlateCore",
             "InputCore",        // FKey and native key-event regression fixtures
+            "CommonInput",      // load CommonUI input data before a back-handler fixture is shown
             "SlateNullRenderer", // hidden commandlet focus tests, no rendered window
             "Projects",
         });

@@ -145,6 +145,20 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Lua traps
 
+- **A button's release can land on the menu underneath.** The panel closed on
+  B's press; the release then reached the Monitoring Stand, which closes on
+  release. A short press hid it, a 0.8 s hold showed it (2026-10-22). Close
+  an overlay on the release when a game menu sits below it.
+- **The game's menu actions run before any widget key handler.** Y on the
+  stand (view switch) and A in our panel (UI confirm) never reached
+  OnKeyDown/OnPreviewKeyDown or a registered binding; only buttons the menu
+  does not bind arrive. Read the game's input mappings first
+  (`Default__InputSettings.ActionMappings`, a property read) and pick free
+  buttons.
+- **Editor commandlets need CommonUI's input data loaded by hand.** A widget
+  that registers with CommonUI when shown hits the `bInputDataLoaded` ensure
+  in a fresh editor process; load `ICommonInputModule::GetSettings()` (the
+  module's own instance, not the CDO) before the fixture window.
 - **A controller plugged in after the game started is not the player's.** On
   2026-10-21 a virtual pad connected mid-session moved menus but never reached
   the player, and a whole controller test read "broken". Connect the pad, then

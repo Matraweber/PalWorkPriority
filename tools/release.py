@@ -27,10 +27,11 @@ PAK_LOGICAL = f"LogicMods/{MOD}.pak"
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 ASSET_CLASS = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C"
 ASSET_CONTRACT = "docs/asset-contract.json"
+# WorkRules 4 / StandInput 3: controller buttons (docs/controller-routes-2026-10-22.md).
 REQUIRED_WIDGETS = {
-    ASSET_CLASS: {"field": "PWP_InputContract", "version": 3},
+    ASSET_CLASS: {"field": "PWP_InputContract", "version": 4},
     "/Game/Mods/PalWorkPriority/UI/WBP_StandInput.WBP_StandInput_C":
-        {"field": "PWP_Contract", "version": 2},
+        {"field": "PWP_Contract", "version": 3},
 }
 
 

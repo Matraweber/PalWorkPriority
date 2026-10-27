@@ -60,7 +60,7 @@ local function receive_key(context)
             widget.PWP_Priority,widget:GetFullName(),widget:HasAnyUserFocus()
     end)
     if not ok or focused~=true or world~=session.epoch or ui~=session.ui_epoch
-        or type(priority)~='number' or priority%1~=0 or priority<0 or priority>10 then return end
+        or type(priority)~='number' or priority%1~=0 or priority<0 or priority>13 then return end
     local record=owned[token]
     if not record or record.generation~=lifecycle.generation or record.world~=world or record.ui~=ui or record.name~=name then return end
     if priority==0 then priority=false end
@@ -106,6 +106,15 @@ local function ready()
         if not ok then M.last_error='key hook: '..tostring(why) end
         key_hooked=ok
     end
+    -- A receiver that loses the focus (the game's own stand cursor, the Y view
+    -- switch) says so; forgetting the handed-over focus lets ui.pad_tick give
+    -- it back on a controller. Optional: an older pak has no such function.
+    if not M.focus_hooked then
+        M.focus_hooked=pcall(RegisterHook,M.path..':PWP_FocusDispatch',function()
+            M.focus_lost=(M.focus_lost or 0)+1
+            keyboard_world=nil
+        end)
+    end
     return hooked and key_hooked
 end
 
@@ -145,7 +154,10 @@ function M.ensure(cell, cell_name, key, work, attach)
         M.created=M.created+1
     end
     local ok, why = pcall(function()
-        if surface.PWP_Contract~=2 then error('stand input contract mismatch') end
+        -- 3 adds controller buttons (codes 11-13, 2026-10-22); 2 is the older
+        -- pak, still accepted so a Lua update never strands keyboard editing.
+        local contract=surface.PWP_Contract
+        if contract~=2 and contract~=3 then error('stand input contract mismatch') end
         local same = previous and previous.key==key and previous.work==work
             and previous.generation==lifecycle.generation
             and previous.world==session.epoch and previous.ui==session.ui_epoch

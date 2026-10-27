@@ -22,7 +22,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Latest
 
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-22
-- [Controller support: routes that can work, 2026-10-22](controller-routes-2026-10-22.md) · 2026-10-22
+- [Controller support: routes, build and in-game acceptance, 2026-10-22](controller-routes-2026-10-22.md) · 2026-10-22
 - [Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus](controller-2026-10-21.md) · 2026-10-22
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-22
 - [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-22
@@ -62,7 +62,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Stand and panel
 
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md)
-- [Controller support: routes that can work, 2026-10-22](controller-routes-2026-10-22.md)
+- [Controller support: routes, build and in-game acceptance, 2026-10-22](controller-routes-2026-10-22.md)
 - [Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus](controller-2026-10-21.md)
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md)
 - [G3: no second or stuck panel, 2026-10-17](g3-panel-2026-10-17.md)

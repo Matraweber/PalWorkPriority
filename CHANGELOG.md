@@ -97,6 +97,15 @@ stopped mining and chopping. Every fix below was tested in the game
   ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
   replace or delete the manual files when that copy updates.
 
+**Controller**
+- The Monitoring Stand and the Production Limits panel work with a
+  controller. On the stand: D-pad moves, LB or A toward 1, RB toward X, X
+  sets X, View opens Production Limits (Y stays the game's view switch). In
+  the panel: D-pad moves, Y opens or raises, X removes, LB/RB switch tabs,
+  LT/RT turn pages, B closes only the panel. The hints on screen switch to
+  the controller version while you play with one. A in the panel is taken by
+  the game itself, so use Y there.
+
 **Multiplayer**
 - An edit made by a player survives a server restart.
 - Rules stay inside their guild: one guild's limits never apply to another's
@@ -128,9 +137,6 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 - Faster background saving (built and tested separately; planned for 0.5.x).
 - Marking a capped work column on the stand and showing the game's checkbox
   again when the mod turned a permission off.
-- Controller support: the game keeps the D-pad and A for its own menus and
-  the Monitoring Stand takes every controller button, so the panel and the
-  stand cannot be used with a controller yet. Use mouse and keyboard.
 - Tests with several real players and guilds at once, Steam Deck and
   ultrawide/UI-scale checks.
 - Requests: separate priority and limit mods, restricting high-quality stands,

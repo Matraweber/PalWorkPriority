@@ -138,7 +138,7 @@ The mod does not promise to create crafting queues. A cap is not an automatic re
 | Arrows / Enter | Navigate/activate panel controls |
 | Escape | Cancel amount editing; otherwise close |
 
-The existing panel gamepad scheme uses RB+View to open, D-pad to navigate, A to confirm, X to remove, B to back out, and LB/RB for tabs. These are intended bindings, **not Steam Deck/controller acceptance**. Check the current runtime, device and other input mods.
+**Controller** (tested with an XInput pad, 2026-10-22; plug it in before starting the game). On the Monitoring Stand: D-pad moves, LB or A steps toward 1, RB toward X, X sets X, View opens Production Limits (Y stays the game's view switch). In the panel: D-pad moves, Y opens or raises, X removes, LB/RB switch tabs, LT/RT turn pages, B closes the panel. A in the panel is the game's own confirm and does nothing there. Steam Deck hardware has not been tested.
 
 Chat replies go to **`priority.log` in the mod root**, and to UE4SS's log. They do not necessarily appear in game chat. Singleplayer may lack chat; the opt-in developer channel is described in [testing](docs/testing.md).
 

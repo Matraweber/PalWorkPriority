@@ -1,22 +1,22 @@
 {
   "schema": 2,
   "path": "LogicMods/PalWorkPriority.pak",
-  "sha256": "4eddf38bcf859ec27df2424aa9bda2ea9ded735e56ab7178b5c97d0b10bf4a9d",
-  "bytes": 12040,
-  "source": "Combined WorkRules and StandInput package; test-results/stand-keyboard-package-20260924.json. Matches installed client asset on 2026-10-11.",
-  "native_acceptance": "Stand keyboard and reopen accepted 2026-09-24; full current release candidate acceptance remains pending.",
+  "sha256": "73a312d495dd33088e0a4c7dc7e3bd5acd12d1a52aee81a6d78f70f5a56befd6",
+  "bytes": 13822,
+  "source": "WorkRules contract 4 and StandInput contract 3 (controller buttons), built by tools/build_widgets.py; test-results/widgets-20261022-183813/receipt.json.",
+  "native_acceptance": "Controller route accepted in game 2026-10-22 (docs/controller-routes-2026-10-22.md); keyboard and mouse rechecked the same day.",
   "widgets": {
     "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C": {
       "field": "PWP_InputContract",
-      "version": 3
+      "version": 4
     },
     "/Game/Mods/PalWorkPriority/UI/WBP_StandInput.WBP_StandInput_C": {
       "field": "PWP_Contract",
-      "version": 2
+      "version": 3
     }
   },
   "contract_reference": "docs/widget-spec.md",
-  "provenance_reference": "docs/stand-keyboard-2026-09-24.md",
+  "provenance_reference": "docs/controller-routes-2026-10-22.md",
   "members": [
     {
       "path": "ModActor.uasset",
@@ -28,19 +28,19 @@
     },
     {
       "path": "UI/WBP_WorkRules.uasset",
-      "sha256": "07c972c2b80abbbd172715346cc7eaa589186a92faf2a9aef43e8182cf495650"
+      "sha256": "9a7708cd2f8b03dced208fd9f42faf2a16b7492e04b2e2baddfc92a11f0de6e5"
     },
     {
       "path": "UI/WBP_WorkRules.uexp",
-      "sha256": "17c8841c00bf63352a2517911513235b59ba845e84667d77a8d936e8555f7ccd"
+      "sha256": "9f7bad8fea7d5b357e99ad7028960d4065d3af85c357612159eec9fac87bd434"
     },
     {
       "path": "UI/WBP_StandInput.uasset",
-      "sha256": "7286d0e67b82a873120f54fc01815e392283c2d05c6076d980ba4c46cb5e822f"
+      "sha256": "3cf9ac2d8f8ec8274fa7571dbd08fd81e0975e1f700606148c916b04fcc81e05"
     },
     {
       "path": "UI/WBP_StandInput.uexp",
-      "sha256": "84711e9afc5ad7d16e3e868d302bf5e3a883698404eae025dcddcbd2b387911e"
+      "sha256": "3edb8b2bd385adf5c62b4df4a68718e002e76d1decdd5127386c3b2aad38da3b"
     }
   ]
 }

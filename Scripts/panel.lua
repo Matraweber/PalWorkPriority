@@ -772,8 +772,13 @@ local function ensure_root()
     end
     if host_widget and overlay.take_cancel then
         local pending, acknowledged = overlay.take_cancel(host_widget)
-        if pending then RB.cancel_requested, RB.cancel_ack = true, acknowledged ~= false
+        local released = overlay.take_release and overlay.take_release(host_widget)
+        RB.cancel_release_known = released ~= nil
+        if pending then
+            RB.cancel_requested, RB.cancel_ack = true, acknowledged ~= false
+            RB.cancel_released, RB.cancel_at = released == true, os.clock()
         elseif RB.cancel_requested and acknowledged == true then RB.cancel_ack = true end
+        if released == true then RB.cancel_released = true end
     end
     root_checked = frame_id
     return root
@@ -3184,8 +3189,10 @@ local function draw_list(cfg, totals)
     -- rules screen left empty (34 spare pixels; review key hints and P1-7).
     -- Right click lowering a limit was otherwise silent. Host only for the
     -- recount: a client's key does not count storage.
-    line("foot_hint", 1, PAD, "Left click a limit to type it, right click to lower it one step."
-        .. (caps.is_client and "" or (" " .. RB.key_prose("key_pass", "ALT+F2") .. " recounts storage now.")),
+    line("foot_hint", 1, PAD, api.last_input_type == 1
+        and "Controller: D-pad moves, Y opens or raises, X removes, LB/RB tabs, LT/RT pages, B closes."
+        or ("Left click a limit to type it, right click to lower it one step."
+        .. (caps.is_client and "" or (" " .. RB.key_prose("key_pass", "ALT+F2") .. " recounts storage now."))),
         "dim", 13)
     RB.done_row()
 
@@ -3945,6 +3952,28 @@ function M.pad_tick()
     pcall(function() RB.pad.drive(RB.pad_actions) end)
 end
 
+-- Controller buttons from the shell's own key handler (overlay.hook_pad,
+-- contract 4): 1-4 up/down/left/right, 5 A, 6 X, 7 Y (confirm), 8/9 LB/RB,
+-- 10/11 LT/RT.
+-- The same verbs as the polled pad driver above, which cannot see these keys
+-- while the game's CommonUI holds them for navigation. B is CommonUI's Back.
+function M.native_pad(code)
+    if not M.open then return false end
+    local cfg = RB.pad_cfg or RB.cfg
+    if cfg == nil then return false end
+    if code >= 1 and code <= 5 then
+        return M.nav(cfg, ({ "up", "down", "left", "right", "enter" })[code])
+    end
+    -- Y confirms as well: in the panel the game's own UI confirm takes A
+    -- before any binding (measured 2026-10-22, the "Jump" binding never fired).
+    if code == 7 then return M.nav(cfg, "enter") end
+    if code == 6 then return M.row_action(cfg, "drop") end
+    if code == 8 or code == 9 then return M.tab_step(cfg, code == 8 and -1 or 1) end
+    if code == 10 or code == 11 then return M.page_step(cfg, code == 10 and -1 or 1) end
+    return false
+end
+overlay.on_pad = function(code) return M.native_pad(code) end
+
 function M.hover_tick()
     if not M.open then return false end
     pcall(M.pad_tick)
@@ -4361,6 +4390,14 @@ end
 RB.finish_cancel = function()
     if not RB.cancel_requested then return false end
     if RB.cancel_ack == false then return true end
+    -- On a controller, close only once B is released (at most 1.5 s): closing
+    -- on the press handed the release to the Monitoring Stand underneath,
+    -- which closes on release (2026-10-22). The keyboard closes at once.
+    if RB.cancel_release_known and api.last_input_type == 1 and not RB.cancel_released
+        and os.clock() - (RB.cancel_at or 0) < 1.5 then
+        return true
+    end
+    RB.cancel_released, RB.cancel_at = nil, nil
     RB.cancel_requested, RB.cancel_ack = false, nil
     RB.session.invalidate_ui()
     RB.runtime.epoch, RB.runtime.pending = RB.runtime.epoch + 1, 0
