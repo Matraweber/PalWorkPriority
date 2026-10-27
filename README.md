@@ -108,19 +108,19 @@ A client sends edits for server validation. Pending choices must be distinguisha
 
 An amount must be a valid whole number in the supported range, including when entered through the limit command. Fractional input is rejected rather than rounded. Invalid text leaves the previous value intact. Stripping punctuation from `-100` or `1.5` to produce a different number is not valid confirmation.
 
-### Existing legacy group limits
+### Group limits
 
-Older rules control an entire work suitability. A stone-only Mining limit can stop ore mining too. With several Mining thresholds, the group keeps running until every threshold is reached, so individual outputs can exceed their number while another remains short.
+Every limit controls an entire work suitability, both older rules and ones added in the panel (adding them works again since 2026-10-27, as in 0.4.1). A stone-only Mining limit can stop ore mining too. With several Mining thresholds, the group keeps running until every threshold is reached, so individual outputs can exceed their number while another remains short.
 
 Existing rules retain that behavior under an explicit **legacy group limit** label. They remain reviewable, editable and removable; an upgrade must not silently reinterpret them as item-specific rules. Older wildcard rules retain their scope until deliberately migrated. Do not adopt shared rules merely because only one guild's camps happen to be loaded.
 
 Clearing a guild override previously exposed its inherited shared/configuration ceiling again while reporting success. The candidate persists a **guild-local OFF mask** to keep the cleared inherited rule disabled across save/load. Other guilds keep their rules. A scope/round-trip regression was added; native multiplayer verification remains pending.
 
-### New item-specific limits
+### Item-specific limits (not available yet)
 
-The output-control adapter contract requires a supported producer to stop admitting capped output while unrelated production of the same suitability continues. It must identify producer/storage scope, preserve already-started work and specify a measured in-flight overshoot allowance.
+Limits that stop one product while another of the same work type continues (stone stops, ore continues) are planned. Until then, adding a limit for the other product too keeps the work type running until both are reached. The output-control adapter contract requires a supported producer to stop admitting capped output while unrelated production of the same suitability continues. It must identify producer/storage scope, preserve already-started work and specify a measured in-flight overshoot allowance.
 
-**No native producer adapter is currently accepted.** New item-specific rules must be refused with an unsupported explanation until safe producer control is implemented and verified. An item-name heuristic, suitability toggle or simulated adapter is insufficient. The candidate does not yet provide verified stone-only, synthesizer or other item-specific production control.
+**No native producer adapter is currently accepted.** New limits are therefore group limits, and the panel says so before and after one is added. An item-name heuristic, suitability toggle or simulated adapter is insufficient. The candidate does not yet provide verified stone-only, synthesizer or other item-specific production control.
 
 Storage scope must be visible: selected base, guild and local versus intended broader scope. Player inventory is not base storage. Shared guild storage must be counted once. Incomplete storage reads must display unavailable data rather than measured zero. Native container coverage and guild-chest accounting remain gates.
 

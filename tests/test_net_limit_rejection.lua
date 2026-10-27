@@ -21,23 +21,21 @@ f.server.on_command=function(command,_,comp)
     end
     return normal(command,0,comp)
 end
-local before=caps.serialize();local operations=#fs.operations
+-- 2026-10-27: a client's new limit is a group rule the server accepts and saves.
 assert(f.client.request('set','Mining','Stone',35001))
 f.to_server();local replies=f.to_client()
-assert(f.events[#f.events].status=='rejected' and f.events[#f.events].reason=='unsupported_limit',
-    'unsupported limit lost its bounded rejection reason')
-assert(#f.view==0 and caps.serialize()==before and #fs.operations==operations and next(fs.files)==nil,
-    'rejected unsupported limit mutated settings or wrote files')
-assert(f.client.status=='ready' and f.remote_status=='ready', 'rejection poisoned confirmed empty snapshot')
-local state,label,hint=require('panel_status').save{view_status=function()return f.remote_status,f.remote_error end}
-assert(state=='ready' and label=='Synced with server' and hint:find('cannot create new limits',1,true) and not hint:find('output control',1,true))
+assert(f.events[#f.events].status=='accepted' and f.view[1] and f.view[1].amount==35001,
+    'new limit from a client was not accepted')
+assert(caps.data['guild-A'].Mining.Stone==35001 and fs.files['server-caps'], 'accepted limit not saved')
+assert(f.client.status=='ready' and f.remote_status=='accepted',
+    'after acceptance: '..tostring(f.client.status)..' / '..tostring(f.remote_status))
 local events=#f.events
-assert(not f.client.receive_state(replies[#replies]),'completed request retained after rejection')
+assert(not f.client.receive_state(replies[#replies]),'completed request retained after acceptance')
 f.advance(9)
-assert(#f.events==events and f.client.status=='ready','rejected request later timed out')
+assert(#f.events==events and f.client.status=='ready','accepted request later timed out')
 assert(f.client.request_prio('PAL-A',1,4));f.advance(.2);f.to_server();f.to_client()
 assert(f.client.pals['PAL-A'].prios[1]==4 and f.client.status=='ready' and not f.remote_error)
--- Once a legitimate legacy rule exists, a subsequent limit edit also works.
+-- A later edit of that limit also works.
 caps.configure{work_caps={Mining={Stone=100}}}
 assert(f.client.request('set','Mining','Stone',200));f.to_server();f.to_client()
 assert(f.view[1].amount==200 and caps.data['guild-A'].Mining.Stone==200 and fs.files['server-caps'])

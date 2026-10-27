@@ -2,12 +2,13 @@
 --
 -- Labels sit on the tile's second line and stay at 21 characters or fewer
 -- (test_picker_label_bounds). Details go to the notice row in full. Wording
--- from the 2026-10-21 new-user review: say that 0.5.0 cannot create limits,
--- and say "group limit" / "whole work type" instead of "legacy group".
+-- from the 2026-10-21 new-user review: say "group limit" / "whole work type"
+-- instead of "legacy group". New limits can be created again (2026-10-27);
+-- the detail says what one switches before the click that adds it.
 local M = {}
 local workdefs = require('workdefs')
 
-local NO_NEW = 'Version 0.5.0 cannot create new limits. Per-item limits are planned for 0.6.'
+local NO_LIMIT = 'This item cannot have a limit.'
 
 -- A group (legacy) limit on this work type that covers the item without
 -- being its own rule: a Stone limit stops ore mining too. Only rules the
@@ -33,21 +34,24 @@ function M.describe(caps, rules, work, item, guild)
     end
     local ok, supported = false, false
     if caps.support then ok, supported = pcall(caps.support, work, item, guild) end
-    if ok and supported == true then
-        return {state='create', label=kind=='legacy' and 'Restore group limit' or 'Add item limit',
-            detail=kind=='legacy' and ('Group limit for all '..workdefs.label(work)..' work') or 'Item limit'}
-    end
-    -- Still unavailable (nothing to create or open here), but no longer
-    -- "No item limit support" while another item's limit stops this work.
+    local job = workdefs.label(work)
     local group = covering_group(caps, rules, work, guild)
+    if ok and supported == true then
+        -- A second item joins the type's group: the work stops only once
+        -- every one of them is reached (scheduler.cap_state).
+        local detail = group ~= nil
+            and ('Joins the '..job..' limits: '..job..' stops once every one is reached.')
+            or ('Stops all '..job..' work once reached, not only this item.')
+        return {state='create', group=group,
+            label=kind=='legacy' and 'Restore group limit' or 'Add group limit', detail=detail}
+    end
     if group ~= nil then
-        local job = workdefs.label(work)
         return {state='unavailable', group=group, label='Group limit applies',
             detail='Covered by the '..job..' limit, which switches all '..job..' work.'}
     end
     local unsupported = ok and supported == false
-    return {state='unavailable', label=unsupported and 'New limits in 0.6' or 'Support unknown',
-        detail=unsupported and NO_NEW
+    return {state='unavailable', label=unsupported and 'Cannot be limited' or 'Support unknown',
+        detail=unsupported and NO_LIMIT
             or 'Unavailable: item limit support could not be checked.'}
 end
 

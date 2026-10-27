@@ -5,7 +5,7 @@ local function read(path)
 end
 local ui_source=read('/Scripts/ui.lua')
 local main_fixture=read('/tests/test_main_integration.lua')
-local cut=assert(main_fixture:find('\ntest%("unsupported network'))
+local cut=assert(main_fixture:find('\ntest%("new network limit'))
 local checks=[=[
 local s=boot(true);s.timers.role.fn();s.viewport=true
 local ui=assert(load(real_ui_source,'@real-ui'))()

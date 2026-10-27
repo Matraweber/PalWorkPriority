@@ -193,7 +193,22 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   retracted first proposal) and the work's CurrentState alone (Workable for
   blueprints too). Coolers followed on 2026-10-16 (entry above).
   *Evidence:* [g4-scheduling-2026-10-14-stations.md](g4-scheduling-2026-10-14-stations.md).
-- **2026-10-11 - New legacy group limits are locked in 0.5.** Only a limit
+- **2026-10-27 - New limits can be created again, as group limits (user's
+  decision).** Any valid work and item can get a limit from the panel or the
+  command; it is stored and enforced like an existing one (the whole work type
+  stops once every limit on it is reached). The panel says so on the empty
+  list, on the item tiles ("Add group limit", "Joins the Mining limits") and
+  in the rule rows ("Whole work type"). Why: none of the 8 limit comments
+  asked for the lock, all of them were written on 0.4.1 where adding works, so
+  the lock would have taken a working feature from every user; the one real
+  demand (SolidRhoé: stone without ore) is per-item control, which the lock did
+  not deliver either. Second step, also the user's pick: research per-item
+  limits for 0.5.x/0.6 and measure BIG DADDY's overshoot. *Rejected:* keeping
+  the lock (a regression against 0.4.1), per-item limits before 0.5.0 (no
+  producer control known; would hold the release). Supersedes the 2026-10-11
+  entry below. *Evidence:* [limits-unlock-2026-10-27](limits-unlock-2026-10-27.md).
+- **2026-10-11 - New legacy group limits are locked in 0.5.** **Superseded
+  2026-10-27** (entry above). Only a limit
   that already exists (in caps.txt or config.lua `work_caps`) counts as legacy
   and stays editable; it switches its whole work type. Any new limit is an
   item limit, refused with "Item-specific limits await a verified producer

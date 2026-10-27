@@ -41,7 +41,7 @@ reproduced and fixed (ranches never counted as work). Second round the same
 day with a lab, a pond and a caught Flambelle: poiman's fishing pools
 reproduced and fixed (the pond's job was untyped and silent), Samurai9400's
 research not reproduced (typed by subject; silent, now counted), KhanKeal's
-Flambella reproduced while the pond was invisible. No reply posted. Reply drafts rewritten 2026-10-27 against 252c0e3 ([release-replies-0.5.0-draft](release-replies-0.5.0-draft.md)).
+Flambella reproduced while the pond was invisible. No reply posted. Reply drafts rewritten 2026-10-27 against 252c0e3 ([release-replies-0.5.0-draft](release-replies-0.5.0-draft.md)). Replies are not needed (user's decision 2026-10-27). Limits: none of the 8 limit comments asked for the 0.5 lock on new limits; adding limits works again as group limits ([limits-unlock-2026-10-27](limits-unlock-2026-10-27.md)); per-item limits (SolidRhoé) and overshoot (BIG DADDY) are the next step.
 
 ## Census totals
 

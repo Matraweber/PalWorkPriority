@@ -152,6 +152,13 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Process: what slowed the project down
 
+- **Read what users asked before taking a feature away.** 0.5 locked new
+  limits on 2026-10-11 because a limit switches its whole work type. None of
+  the 8 limit comments asked for that, and all of them came from 0.4.1, where
+  adding limits works, so the lock would have shipped as a regression. It was
+  undone on 2026-10-27 ([limits-unlock-2026-10-27](limits-unlock-2026-10-27.md)).
+  Before removing or locking something users have, check the ledger for what
+  they actually reported.
 - **Six weeks of work were never committed** (Sep 11 to Oct 11, about 95k
   lines on one disk). Commit at the end of every working session, to a branch
   if it is not release-ready. Untracked docs are not protected either.

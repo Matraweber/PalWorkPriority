@@ -13,7 +13,7 @@ local labels = {saving='Saving...', saved='Saved', error='Save failed - changes 
 -- not listed falls back to plain_fallback below, never the raw code.
 local MISMATCH='The server runs a different Pal Work Priority version. Install the same version as the server.'
 local RESYNC='Waiting for fresh data from the server.'
-local NO_NEW='Version 0.5.0 cannot create new limits. Only existing limits can be changed.'
+local NO_NEW='This item cannot have a limit.'
 local NO_RULE='There is no such limit to remove for your guild.'
 local reasons = {awaiting_session='Connecting to the server...', awaiting_handshake='Waiting for the server handshake.',
     handshake_timeout='The server did not answer. Check that it runs the same Pal Work Priority version.',

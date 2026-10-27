@@ -153,11 +153,18 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## G7. Package and publish
 
+- [x] **Limits can be added again** (user's decision 2026-10-27). PASS
+  2026-10-27 in singleplayer ([evidence](limits-unlock-2026-10-27.md)):
+  added from the panel, reached at once switched the work type off, raised
+  switched it back on, a second item joined the Mining group and Mining
+  resumed, both survived a restart, removed again from the panel. Open: a
+  client adding one on the dedicated server.
+
 - [ ] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
-- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review, reply drafts against the final build. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
+- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review. Replies: not needed (user's decision 2026-10-27); the drafts stay as a record. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.
@@ -166,9 +173,11 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
-- Item-specific production limits (stone stops while ore continues). In 0.5
-  only existing legacy limits work, each switches a whole work type; new ones
-  cannot be created (locked, the UI says so before item selection).
+- Item-specific production limits (stone stops while ore continues). 0.5.0
+  has group limits as 0.4.1 did: new ones can be created again since
+  2026-10-27 (user's decision, [DECISIONS](DECISIONS.md)), each switches its
+  whole work type. Next step (user's pick): research per-item control and
+  measure the overshoot BIG DADDY reported.
 - Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column

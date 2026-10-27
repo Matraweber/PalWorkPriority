@@ -1,4 +1,7 @@
--- Legacy group limits and a strictly separate session view for clients.
+-- Group limits and a strictly separate session view for clients. A limit
+-- switches its whole work type off once every limit on that type is reached
+-- (scheduler.cap_state); new ones can be created again since 2026-10-27
+-- (user's decision, DECISIONS). Item-specific control waits for producers.lua.
 local log = require("log")
 local file = require("datafile")
 local settings_gate = require('settings_gate')
@@ -546,13 +549,14 @@ function M.rule_kind(work, item, guild)
     return "item"
 end
 
+-- Any valid work and item can have a group limit (locked 2026-10-11, open
+-- again 2026-10-27: 0.4.1 users could add them and nobody asked for the lock).
+-- rule_kind still tells an existing rule ("legacy") from a new one ("item");
+-- both are stored and enforced the same way, as a group.
 function M.support(work,item,guild)
-    if M.rule_kind(work,item,guild) == "legacy" then
-        return true, "Legacy group: affects the entire work type"
-    end
-    -- Registry capability is not an implemented item-rule persistence/admission
-    -- path. Keep presentation aligned with apply_set until that path exists.
-    return false, "Item-specific limits await a verified producer adapter and scope"
+    local ok, why = M.valid_rule(work, item, 1)
+    if not ok then return false, why end
+    return true, "Group limit: affects the entire work type"
 end
 
 function M.set(work,item,ceiling,guild)
@@ -580,12 +584,6 @@ function M.apply_set(work,item,ceiling,guild)
     if M.state == "error" and not dirty then return false end
     local supported, reason = M.support(work,item,guild)
     if not supported then M.error=reason; log.say(reason); return false,'unsupported_limit' end
-    -- Item controllers have their own admission state. Never write an item
-    -- rule into this legacy table, even when an adapter has been registered.
-    if M.rule_kind(work,item,guild) ~= "legacy" then
-        M.error="Item-specific limits await a verified producer adapter and scope"
-        return false,'unsupported_limit'
-    end
     if persistence then local data=candidate_data();put(data,guild,work,item,clean);return async_candidate(data,guild) end
     if persistence_blocked then return false,'detached' end
     put(M.data,guild,work,item,clean)

@@ -84,13 +84,12 @@ stopped mining and chopping. Every fix below was tested in the game
   even when the list redraws in between.
 - Limits are shown in full up to the 9,999,999 maximum; only storage counts
   above a million are shortened (12.3M).
-- Clearer for new players: the panel says up front that 0.5.0 cannot create
-  new limits ("Browse items (view only in 0.5.0)", item tiles read "New limits
-  in 0.6" or "Group limit applies"), and that each limit switches its whole
-  work type. Status words are plain and fit their column (Below limit, Limit
+- Clearer for new players: the panel says that each limit switches its whole
+  work type, before and after you add one ("Add group limit" on the item
+  tiles; a second item in the same work type says it joins that group). Status words are plain and fit their column (Below limit, Limit
   reached, Reached 2/3, Others below, No count yet, Mod off, Test mode).
-- Remove warns that a removed limit cannot be added back in 0.5.0, and Escape
-  with an armed Remove ("Sure?") cancels it instead of closing the panel.
+- Escape with an armed Remove ("Sure?") cancels it instead of closing the
+  panel.
 - Raising a limit above the highest step (50,000) no longer sets it to 50,000;
   it keeps the typed value and says so.
 - A version mismatch with the server is shown in amber with what to do, on
@@ -129,10 +128,12 @@ stopped mining and chopping. Every fix below was tested in the game
 
 ### Limits in 0.5.0
 
-Limits you already have keep working as **legacy group limits**: each one
-switches its whole work type (a Stone limit also stops ore mining). **New
-limits cannot be created in 0.5.0**; limits per item come in 0.6. If you remove
-a legacy limit, it can only be added back through `work_caps` in `config.lua`.
+Limits work as in 0.4.1: you can add, change and remove them, and the ones you
+already have carry over. Each limit is a **group limit**: it switches its whole
+work type, so a Stone limit also stops ore mining. With several limits in one
+work type (Stone and Ore), the work stops only once every one of them is
+reached, so adding an Ore limit keeps your miners going while ore is short.
+Limits per item (stone stops, ore continues) are still planned.
 
 ### Performance (measured)
 
@@ -149,7 +150,8 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 ### Not in 0.5.0 (planned for 0.5.x / 0.6)
 
-- Limits per item (stop stone while ore continues).
+- Limits per item (stop stone while ore continues). 0.5.0 has group limits
+  only, as 0.4.1 did.
 - Faster background saving (built and tested separately; planned for 0.5.x).
 - Marking a capped work column on the stand and showing the game's checkbox
   again when the mod turned a permission off.

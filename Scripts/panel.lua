@@ -2833,8 +2833,8 @@ local function draw_list(cfg, totals)
         -- the instruction for typing it is the more useful of the two.
         line("why", 0, PAD, notice, "action", 14)
     elseif #all_rules == 0 then
-        -- Said before anyone goes looking for a way to add one (P1-1).
-        line("why", 0, PAD, "Version 0.5.0 cannot create new limits. Per-item limits are planned for 0.6.", "dim", 14)
+        -- Said before anyone adds one (P1-1): what a limit switches.
+        line("why", 0, PAD, "No limits yet. A limit switches its whole work type off once reached.", "dim", 14)
     elseif uncounted then
         line("why", 0, PAD, "Each limit switches its whole work type. ? or No count yet: "
             -- A client never receives the host's limit state (last_capped
@@ -3184,7 +3184,7 @@ local function draw_list(cfg, totals)
     -- ten and thirty pixels apart.
     line("mk_new", 0, PAD, row_is_current("new") and ">" or "", "hover", ROW_PT)
     line("g_new", 0, PAD + MARK_W, ">", "primary", ROW_PT)
-    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Browse items (view only in 0.5.0)", "primary")
+    line("new", 0, PAD + MARK_W + GLYPH_SLOT, "Add a limit (browse items)", "primary")
     -- The mouse, said once on the second line of the Foot row, which the
     -- rules screen left empty (34 spare pixels; review key hints and P1-7).
     -- Right click lowering a limit was otherwise silent. Host only for the
@@ -3546,7 +3546,7 @@ local function draw_item_picker(cfg, totals)
     elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
         line("why", 0, PAD, notice, "action", 14)
     else
-        line("why", 0, PAD, "0.5.0 cannot add new limits. Green items already have one: click to open it.", "dim", 14)
+        line("why", 0, PAD, "Click an item to add a limit. Green items have one already: click to open it.", "dim", 14)
     end
     RB.done_row()
 
@@ -5786,7 +5786,7 @@ function M.apply(cfg, what, dir, from_mouse)
         want_first_row = true
         -- Not "type to filter": the search box takes the keyboard only when
         -- clicked, on purpose (arrow keys must keep moving the grid). P2-7.
-        announce("Click the search box to find an item by name. Click a green item to open its limit.")
+        announce("Click an item to add a limit (green ones have one). Click the search box to search by name.")
         return true
     end
 
@@ -5914,11 +5914,9 @@ function M.apply(cfg, what, dir, from_mouse)
         then
             pending_drop = { work = rule.work, item = rule.item, guild = guild, amount = current }
             pending_at = os.clock()
-            -- Says what the second click costs (P1-2): 0.5.0 cannot create
-            -- limits, so a removed one cannot be added back from the panel.
-            -- Names the button by what it now reads.
-            announce("Click Sure? to delete this " .. workdefs.label(rule.work)
-                .. " limit. 0.5.0 cannot add it back.")
+            -- Names the button by what it now reads. (It also said "0.5.0
+            -- cannot add it back" while new limits were locked.)
+            announce("Click Sure? to delete this " .. workdefs.label(rule.work) .. " limit.")
             return true
         end
 

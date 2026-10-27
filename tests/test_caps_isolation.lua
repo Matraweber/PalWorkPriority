@@ -20,5 +20,9 @@ caps.set_role('authority',3)
 assert(caps.all({},'guild-A').Mining.Stone==200)
 assert(caps.all({},'server-guild').Mining==nil)
 assert(fs.files.caps==durable, 'remote snapshot touched durable local rules')
-assert(not caps.apply_set('Mining','Ore',100,'guild-A'), 'unverified item limit became a group rule')
+-- New limits are group rules again (2026-10-27), filed under the guild only.
+assert(caps.apply_set('Mining','Ore',100,'guild-A'), 'new group limit refused')
+assert(caps.all({},'guild-A').Mining.Ore==100 and caps.all({},'guild-B').Mining==nil,
+    'new limit leaked into another guild')
+assert(caps.apply_clear('Mining','Ore','guild-A'))
 assert(caps.apply_clear('Mining','Stone','guild-A'))

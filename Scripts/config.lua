@@ -134,9 +134,9 @@ return {
     -- LEGACY GROUP LIMITS. These stop an entire work suitability only after
     -- EVERY listed item reaches its threshold. A stone-only Mining group can
     -- stop ore too; multiple items can overshoot their individual thresholds.
-    -- This is intentionally preserved for existing configurations, not an
-    -- item-specific producer control. New UI item limits remain unsupported
-    -- until a verified native producer adapter exists.
+    -- Limits added in the Production Limits panel work the same way. Limits
+    -- per item (stone stops, ore continues) need a verified producer control
+    -- and are not available yet.
     --
     -- Per-guild edits override these inherited groups. Clearing an inherited
     -- group item stores an OFF mask for that guild without changing others.

@@ -26,7 +26,7 @@ assert(rendered('Group limit applies'),
     'an item stopped by a group limit is not explained before item selection')
 assert(not rendered('No item limit support'), 'old jargon label returned')
 assert(rendered('Edit group limit'), 'group limit edit scope is hidden')
-assert(rendered('Add item limit'), 'supported creation is not distinguished')
+assert(rendered('Add group limit'), 'supported creation is not distinguished')
 assert(rendered('Restore group limit'), 'masked legacy path claims item-only creation')
 
 local function up(fn,name)
@@ -56,8 +56,8 @@ assert(classifier.describe(caps,{EmitFlame={Stone01=700}},'EmitFlame','Stone01',
     'Group limit for all Kindling work', 'picker exposed an internal work name')
 -- Without a covering group the tile says when new limits come (review P1-1).
 local plain=classifier.describe(caps,{},'Mining','StoneBlocked','guild')
-assert(plain.state=='unavailable' and plain.label=='New limits in 0.6'
-    and plain.detail:find('0.5.0 cannot create new limits',1,true), 'unsupported item not explained')
+assert(plain.state=='unavailable' and plain.label=='Cannot be limited'
+    and plain.detail=='This item cannot have a limit.', 'unsupported item not explained')
 local covered=classifier.describe(caps,all,'Mining','StoneBlocked','guild')
 assert(covered.state=='unavailable' and covered.label=='Group limit applies' and covered.group=='Stone01'
     and covered.detail:find('switches all Mining work',1,true), 'group-covered item not explained')
@@ -72,10 +72,10 @@ supports.StoneNew=false
 assert(not panel.apply(cfg,{kind='item',item='StoneNew'},-1,true) and writes==0,
     'stale supported presentation authorized creation')
 panel.refresh(cfg)
-assert(not rendered('Add item limit'), 'capability change retained Add label')
+assert(not rendered('Add group limit'), 'capability change retained Add label')
 supports.StoneNew=true
 panel.refresh(cfg)
-assert(rendered('Add item limit'), 'capability recovery was cached away')
+assert(rendered('Add group limit'), 'capability recovery was cached away')
 assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true) and writes==1,
     'supported creation path stopped working')
 caps.support=nil
@@ -88,7 +88,9 @@ local actual=dofile(TEST_ROOT..'/Scripts/caps.lua')
 actual.data={guild={Mining={Stone01=700,StoneOff=false},EmitFlame={StoneWrong=900}}}
 local current=actual.all({},'guild')
 assert(classifier.describe(actual,current,'Mining','Stone01','guild').state=='existing')
-assert(classifier.describe(actual,current,'Mining','StoneWrong','guild').state=='unavailable')
+-- Real caps (2026-10-27): a new Mining item joins the Mining group.
+local joins=classifier.describe(actual,current,'Mining','StoneWrong','guild')
+assert(joins.state=='create' and joins.label=='Add group limit' and joins.group=='Stone01')
 assert(classifier.describe(actual,current,'Mining','StoneOff','guild').label==
     'Restore group limit')
 print('PASS picker capability: visible states, exact rule scope, fresh admission and widget reuse')

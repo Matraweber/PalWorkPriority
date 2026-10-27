@@ -165,16 +165,19 @@ local function test(name,fn)
     if not ok then failures[#failures+1]=name..": "..tostring(why) end
 end
 
-test("unsupported network limit returns bounded reason without mutation",function()
+test("new network limit is a saved group rule; absent clear returns bounded reason",function()
     local s=boot(true,true);s.timers.role.fn()
     s.net.guild_of_sender=function()return 'guild-local' end
-    local before=s.caps.serialize()
     local ok,reason=s.net.on_command('PWP_Set|Mining|Stone|35001',0,{})
-    assert(ok==false and reason=='unsupported_limit','main discarded unsupported limit reason')
-    assert(s.caps.serialize()==before and s.fs.files[ROOT..'caps.txt']==nil)
+    assert(ok==true,'new network limit refused: '..tostring(reason))
+    assert(s.caps.all({},'guild-local').Mining.Stone==35001 and s.fs.files[ROOT..'caps.txt'])
+    assert(s.net.on_command('PWP_Clear|Mining|Stone',0,{}))
+    local before=s.caps.serialize()
+    ok,reason=s.net.on_command('PWP_Set|NotAWork|Stone|35001',0,{})
+    assert(ok==false and s.caps.serialize()==before,'invalid network limit written')
     ok,reason=s.net.on_command('PWP_Clear|Mining|Stone',0,{})
     assert(ok==false and reason=='no_active_legacy_rule','main discarded absent rule reason')
-    assert(s.caps.serialize()==before and s.fs.files[ROOT..'caps.txt']==nil)
+    assert(s.caps.serialize()==before)
 end)
 
 test("unidentified and foreign restarts preserve the local session",function()

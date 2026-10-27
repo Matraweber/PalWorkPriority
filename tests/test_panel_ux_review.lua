@@ -67,7 +67,7 @@ local remove={kind='drop',rule={work='Mining',item='Stone01',amount=101}}
 assert(panel.apply(cfg,remove,-1,true))
 panel.refresh(cfg)
 assert(rendered('Sure?'), 'Remove did not arm')
-assert(notice()=='Click Sure? to delete this Mining limit. 0.5.0 cannot add it back.',
+assert(notice()=='Click Sure? to delete this Mining limit.',
     'armed Remove notice: '..tostring(notice()))
 panel.escape()
 assert(panel.open, 'Escape with an armed Remove closed the panel')

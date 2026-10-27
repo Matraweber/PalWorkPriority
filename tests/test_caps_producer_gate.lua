@@ -11,19 +11,23 @@ assert(producers.register('mock', {supports=function() return true end,
     admit=function() error('capability check invoked control') end,
     evidence='offline mock only',max_inflight=0}))
 assert(producers.support('Mining','Ore')==true)
-assert(caps.support('Mining','Ore','guild-A')==false,
-    'adapter registration advertised an unavailable item-rule path')
-assert(picker.describe(caps,caps.all({},'guild-A'),'Mining','Ore','guild-A').state=='unavailable')
+-- 2026-10-27: new limits are group limits again; Ore joins the Mining group.
+assert(caps.support('Mining','Ore','guild-A')==true, 'new group limit refused')
+local offer=picker.describe(caps,caps.all({},'guild-A'),'Mining','Ore','guild-A')
+assert(offer.state=='create' and offer.label=='Add group limit' and offer.group=='Stone'
+    and offer.detail:find('stops once every one is reached',1,true), 'joining a group not explained')
 local before=fs.files.caps
-local ok,why=caps.apply_set('Mining','Ore',200,'guild-A')
-assert(not ok and why=='unsupported_limit' and fs.files.caps==before)
+assert(caps.support('NotAWork','Ore','guild-A')==false and caps.support('Mining','bad id!','guild-A')==false)
+assert(not caps.apply_set('NotAWork','Ore',200,'guild-A') and fs.files.caps==before, 'invalid rule written')
+assert(caps.apply_set('Mining','Ore',200,'guild-A') and caps.all({},'guild-A').Mining.Ore==200)
+assert(caps.apply_clear('Mining','Ore','guild-A'))
 assert(caps.support('Mining','Stone','guild-A')==true)
 assert(caps.apply_set('Mining','Stone',200,'guild-A'))
 assert(caps.all({},'guild-A').Mining.Stone==200)
-assert(caps.support('Mining','Stone','guild-B')==false, 'another guild inherited capability')
+assert(caps.all({},'guild-B').Mining==nil, 'another guild inherited the rule')
 assert(caps.apply_clear('Mining','Stone','guild-A'))
 caps.set_role('client',2)
 assert(caps.replace_all({{work='Mining',item='Stone',amount=200}},2,'guild-A')==1)
-assert(caps.support('Mining','Ore','guild-A')==false)
+assert(caps.support('Mining','Ore','guild-A')==true)
 assert(caps.support('Mining','Stone','guild-A')==true)
 assert(picker.describe(caps,caps.all({},'guild-A'),'Mining','Stone','guild-A').state=='existing')

@@ -22,6 +22,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Latest
 
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
+- [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md) · 2026-10-27
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-27
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-27
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus](controller-2026-10-21.md) · 2026-10-22
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-21
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
-- [Reliability candidate testing](testing.md) · 2026-10-20
 
 ## Release and reports
 
@@ -43,6 +43,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Scheduling and limits
 
+- [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md)
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md)
 - ["Everything stops" / "only one miner": reproduced, two causes, 2026-10-16/17](g4-scheduling-2026-10-17-miners.md)
 - [Coolers: same silent-station gap as generators, fixed, 2026-10-16](g4-scheduling-2026-10-16-coolers.md)
