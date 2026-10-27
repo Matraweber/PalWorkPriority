@@ -1,5 +1,5 @@
 ---
-date: 2026-10-22
+date: 2026-10-27
 tags: [records, testing]
 status: current
 ---
@@ -27,6 +27,10 @@ discovers a new one, with the date and a link to the evidence.
 - **Never enumerate unknown class members.** Full class or function dumps
   (`!pwp funcs`, supers walks past `/Script/CoreUObject.Object`) killed the
   process twice. Use narrow, reviewed probes on a copied save.
+  2026-10-27: the ranch probe walked the properties (not functions) of
+  `PalWorkMonsterFarm` and its model, stopping at `PalWorkBase` and
+  `PalMapObjectConcreteModelBase`, on the live test world. It did not crash,
+  but it broke the copied-save rule; the next one goes on a copy.
 - **Never call an unreflected C++ method through UE4SS**
   (`GetWidgetFromName` is not a UFUNCTION). Read the property or walk the tree.
 - **Never take `SetInputMode_UIOnly`.** The controller goes deaf to keys and
@@ -77,6 +81,16 @@ discovers a new one, with the date and a link to the evidence.
   COSM_Ninja01). Check the id against the table's row names first.
 
 ## Evidence: how we fooled ourselves
+
+- **`priorities.txt` holds keys, not species names.** Grepping it for
+  "sheep" found nothing, and Lamball was first written down as having no
+  stored priorities; it had Farming 5. Look a Pal up by its key from the
+  census (2026-10-27).
+- **A keyword fallback can type work confidently and wrongly.** "Harvest" was
+  not a label, so the berry plantation's id reached the "farm" keyword and
+  every crop harvest counted as ranch work for weeks. Read Discovery's
+  per-type counts after any typing change; more works of a type than the
+  stations built for it is a mistyping (2026-10-27).
 
 - **"Not known yet" must never be read as a definite answer.** nil guild,
   unpainted menu, empty push, missing property (`AuthorityGameMode` read nil on

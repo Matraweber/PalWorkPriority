@@ -1,5 +1,5 @@
 ---
-date: 2026-10-21
+date: 2026-10-27
 tags: [reports]
 status: current
 ---
@@ -35,8 +35,11 @@ checks done 2026-10-21. Deferred to
 Steam Deck and controller (TheJoe, Erbse, tigerpow100), two-client tests,
 independent priority/limit mods (wikidnumb), high-quality stand
 (NoNickNeeded), deferred scheduling after UI close (Material Defender).
-Not individually re-run on rc1: KhanKeal's Pupperai/Flambella setups,
-Samurai9400's research, Rey's Lamball, poiman's fishing pools. No reply posted.
+Old reports rerun 2026-10-27 ([g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md)):
+KhanKeal's Pupperai PASS, Flambella covered by a planning test; Rey's Lamball
+reproduced and fixed (ranches never counted as work); Samurai9400's research
+and poiman's fishing pools not reproducible (no lab or pond in the test
+world). No reply posted.
 
 ## Census totals
 

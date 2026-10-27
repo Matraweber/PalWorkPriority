@@ -1,5 +1,5 @@
 ---
-date: 2026-10-20
+date: 2026-10-27
 tags: [records, release]
 status: current
 ---
@@ -124,6 +124,23 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-27 - Ranches count as demand: one seat per built, Workable ranch.**
+  The ranch never announces its work (0 times in a session), so Farming never
+  reached "wanted" and a Lamball was fenced to Transporting while the ranch
+  stood empty (Rey's report). Same rule as coolers: BuildProcess Completed and
+  CurrentState Workable, minus Pals already on it. A Pal counts as on the
+  station when its current suitability matches, or, when that reads
+  unavailable (ranch workers), when its assignment record is occupied on that
+  type. *Rejected:* four seats per ranch (what most guides say; nothing in the
+  work or model reads a capacity, and unknown must not become demand); leaving
+  the ranch to pulses (none arrive). Default priorities still rank Farming 5,
+  so a Lamball hauls while there is hauling; whether the default should change
+  is the user's call. *Evidence:* [g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md).
+- **2026-10-27 - A work named "Harvest" is Gathering.** Plantation crop jobs
+  have no declared type and the station id `FarmBlockV2_Berries_*`, so typing
+  reached the "farm" keyword and counted them as ranch work. *Rejected:*
+  dropping the "farm" keyword (it still types real farm stations by id).
+  *Evidence:* [g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md).
 - **2026-10-17 - A published stock reading stays valid for the reuse window
   plus one pass interval** (max 60 s), because the scheduler acts on it until
   the next pass. *Rejected:* the bare reuse window (the display said "stock

@@ -51,6 +51,11 @@ stopped mining and chopping. Every fix below was tested in the game
   passes.
 - An empty generator and a cooler with food in it pull a Pal with a high
   priority for that work back to it (the game never announces this work).
+- Ranches: a Pal with a high Farming priority goes to an empty ranch again
+  instead of being kept on other work (report by Rey: "Lamball reports
+  insufficient ranch skill"). The mod counts one Pal per ranch; more Pals can
+  graze when they have nothing higher to do.
+- Berry and crop harvests count as Gathering work, not ranch work.
 - The staffing limit holds (a maximum of 3 keeps 3 working, not 4).
 - Handiwork 1 over Kindling 2 and Grizzbolt on the generator through sleep
   and wake work as set (August reports).

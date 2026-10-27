@@ -1241,9 +1241,17 @@ local function run_camp(cfg, camp, stats, prepare_stock)
                 end
                 if by_value then
                     local read_ok, needing = pcall(measured, "scheduler: station read", kind.needing, by_value[value] or {})
+                    -- A ranch worker's current suitability reads unavailable
+                    -- (2026-10-27, and on the server 2026-09-25) while its
+                    -- assignment record says occupied on Farming. Without the
+                    -- record the manned ranch stayed one vacancy forever.
                     local on = 0
                     for _, pal in ipairs(pals) do
-                        if pal.current == value then on = on + 1 end
+                        local a = pal.assignment
+                        if pal.current == value or (pal.current == nil and type(a) == "table"
+                            and a.value == value and a.state == "occupied") then
+                            on = on + 1
+                        end
                     end
                     local vacant = (read_ok and type(needing) == "number" and needing or 0) - on
                     if vacant > 0 then

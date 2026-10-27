@@ -55,6 +55,12 @@ M.BY_LABEL = {}
 for name, label in pairs(M.LABEL) do
     M.BY_LABEL[label:lower()] = name
 end
+-- Display names that are not a suitability label but name one exactly.
+-- "Harvest" is a plantation's crop job (FarmBlockV2_Berries_*), which Pals do
+-- with Gathering. Without this the station id reached the "farm" keyword and
+-- every berry harvest counted as ranch work (census 2026-10-17, found
+-- 2026-10-27): ranch Pals were sent to it, gathering demand was undercounted.
+M.BY_LABEL["harvest"] = "Collection"
 
 function M.from_label(text)
     if type(text) ~= "string" then return nil end

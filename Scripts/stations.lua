@@ -34,6 +34,13 @@
 -- load) while Pals mined and chopped for minutes, so the game never asks
 -- again. A node needs a worker while its work.CurrentState is Workable; one
 -- that belongs to a building (rocks, the stone pit) must also be built.
+-- Ranches are silent as well (0 announcements for the ranch in a session on
+-- 2026-10-27, its work Workable the whole time), so Farming never reached the
+-- demand index: a Lamball with no other job was fenced to Transporting and
+-- the ranch stood empty. A ranch needs a worker while it is built and its
+-- work is Workable. One seat per ranch, the rule the other stations use: the
+-- ranch's real capacity is not read anywhere (guides say four Pals, one says
+-- five), and unknown must not become demand.
 -- Nothing is stored. Any failed or odd read means "does not need a worker":
 -- unknown must never become demand (a full or unbuilt generator counted as a
 -- vacancy would park Pals beside it). Authority only; callers run on it.
@@ -94,6 +101,23 @@ function M.coolers_needing(works)
     return n
 end
 
+M.RANCH = workdefs.value('MonsterFarm')
+
+-- Number of ranches in `works` that are built and Workable. One seat each.
+function M.ranches_needing(works)
+    local n = 0
+    for _, w in ipairs(works or {}) do
+        if api.work_suitability(w) == M.RANCH
+            and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then
+            local model = api.unwrap(api.prop(w, 'CachedOwnerMapObjectConcreteModel'))
+            if model ~= nil and api.valid(model) and completed(w, model) then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
 M.LUMBERING = workdefs.value('Deforest')
 M.MINING = workdefs.value('Mining')
 
@@ -123,6 +147,7 @@ M.KINDS = {
     { value = M.COOLER, needing = M.coolers_needing },
     { value = M.LUMBERING, needing = function(works) return M.resources_needing(works, M.LUMBERING) end },
     { value = M.MINING, needing = function(works) return M.resources_needing(works, M.MINING) end },
+    { value = M.RANCH, needing = M.ranches_needing },
 }
 
 return M

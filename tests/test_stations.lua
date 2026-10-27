@@ -59,7 +59,7 @@ local c = stations.coolers_needing({
 })
 assert(c == 1, 'expected 1 cooler needing a worker, got ' .. tostring(c))
 assert(stations.coolers_needing(nil) == 0 and stations.coolers_needing({}) == 0)
-assert(#stations.KINDS == 4 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
+assert(#stations.KINDS == 5 and stations.KINDS[1].value == 4 and stations.KINDS[2].value == 11
     and stations.KINDS[2].needing == stations.coolers_needing)
 
 -- stations.resources_needing: Workable trees/rocks count; a node owned by a
@@ -93,3 +93,27 @@ assert(mined == 4, 'expected 4 mining works needing a worker, got ' .. tostring(
 assert(stations.resources_needing(works, 7) == 1)
 assert(stations.KINDS[4].needing(works) == 4 and stations.KINDS[3].needing(works) == 1)
 assert(stations.resources_needing(nil, 8) == 0)
+
+-- stations.ranches_needing: a built, Workable ranch is one seat (2026-10-27:
+-- the ranch never announces, so Farming was never wanted and ranch Pals were
+-- fenced away from it). Unbuilt, not Workable, unknown or another kind: none.
+assert(stations.RANCH == 13 and stations.KINDS[5].value == 13
+    and stations.KINDS[5].needing == stations.ranches_needing)
+local function ranch(state, owner, bad_outer)
+    local m = {}
+    m.GetOuter = bad_outer and function() error('boom') end or function() return manager end
+    return { value = 13, CurrentState = state, CachedOwnerMapObjectConcreteModel = m, OwnerMapObjectModelId = owner }
+end
+local r = stations.ranches_needing({
+    ranch(1, 'built'),                  -- the live shape: Workable, built
+    ranch(1, 'built'),                  -- a second ranch: one more seat
+    ranch(2, 'built'),                  -- not Workable: no
+    ranch(1, 'blueprint'),              -- unbuilt: no
+    ranch(nil, 'built'),                -- unreadable state: no
+    ranch(1, 'missing'),                -- model not found: no
+    ranch(1, 'built', true),            -- GetOuter throws: no
+    { value = 13, CurrentState = 1 },   -- no model: no
+    cooler(1, 'built'),                 -- a cooler is not a ranch
+})
+assert(r == 2, 'expected 2 ranches needing a worker, got ' .. tostring(r))
+assert(stations.ranches_needing(nil) == 0)

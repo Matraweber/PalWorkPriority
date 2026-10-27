@@ -700,6 +700,21 @@ station_needing = 1
 stats = scheduler.run_pass(config)
 assert(stats.station_vacancies == nil, "a manned generator was counted twice")
 
+-- A ranch worker reads no current suitability, only an occupied assignment
+-- (2026-10-27). That record mans the station; a ready one does not.
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}} })
+store.data.g = {[4] = 1, [5] = 3}
+station_needing = 1
+scheduler.assignment_reader = function() return {id = "gen", value = 4, state = "occupied", manual = false} end
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == nil, "a station manned only by assignment evidence was still a vacancy")
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}} })
+store.data.g = {[4] = 1, [5] = 3}
+station_needing = 1
+scheduler.assignment_reader = function() return {id = "gen", value = 4, state = "ready", manual = false} end
+stats = scheduler.run_pass(config)
+assert(stats.station_vacancies == 1, "a ready (not occupied) record manned the station")
+
 -- Coolers are silent the same way: a built cooler holding spoilable food is a
 -- vacancy that pulls a Cooling-1 Pal off Watering 2 (the 2026-10-16 Penking
 -- case). An empty or unbuilt one (cooler_needing 0) adds nothing, a Pal

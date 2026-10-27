@@ -1,5 +1,5 @@
 ---
-date: 2026-10-22
+date: 2026-10-27
 tags: [release]
 status: current
 ---
@@ -88,10 +88,15 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   0.5.0). Open: one run with a real controller through Steam Input.
   **Done when:** a controller can open the panel, move, edit priorities on
   the stand and close the panel without closing the stand.
-- [ ] **Old Pal reports rerun on rc1** (user's pick 2026-10-21): KhanKeal's
+- [x] **Old Pal reports rerun on rc1** (user's pick 2026-10-21): KhanKeal's
   Flambelle/all-1 setups, Samurai9400's research, Rey's Lamball and ranch,
   poiman's fishing pools. **Done when:** each is observed by Current Task and
-  output, or recorded as not reproducible.
+  output, or recorded as not reproducible. Done 2026-10-27 ([evidence](g4-old-reports-2026-10-27.md)):
+  Pupperai PASS; Lamball reproduced (the ranch never counted as work) and
+  fixed, observed on the ranch over two game starts; Flambelle covered by a
+  planning test (no Flambelle in the world); research and fishing not
+  reproducible (no lab or pond in the test world). Found on the way: berry
+  harvests were typed as ranch work, fixed. Output (wool) not counted.
 
 ## G4. Scheduling does what the stand shows
 
