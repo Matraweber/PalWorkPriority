@@ -124,6 +124,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-28 - Per-item limits: work-level CurrentState is the lever to
+  build on, starting with natural rocks; AssignableFixedType is rejected.**
+  Setting a stone rock's work to NotWorkable kept every Pal off it (0 of 12
+  samples) while ore and crystal rocks stayed in use; the state is not saved
+  for rocks. *Rejected:* AssignableFixedType = Cannot (value stayed, Pals were
+  still assigned, 12 of 12 samples), and for now the same lever on buildings
+  (pits, logging sites, converters): their work state is written into the
+  save, so an uninstall or crash could leave a building idle. Not built yet;
+  design open (which drops count for a rock, trees, buildings).
+  *Evidence:* [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md).
 - **2026-10-27 - A Pal with no order is left to the game (user's decision).**
   When every job a Pal may do has the same number, the planner gives it every
   allowed job (X and capped jobs are already out) and no seat; the game

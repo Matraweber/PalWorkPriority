@@ -177,7 +177,12 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   has group limits as 0.4.1 did: new ones can be created again since
   2026-10-27 (user's decision, [DECISIONS](DECISIONS.md)), each switches its
   whole work type. Next step (user's pick): research per-item control and
-  measure the overshoot BIG DADDY reported.
+  measure the overshoot BIG DADDY reported. First round 2026-10-27/28
+  ([per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)): every mining work names its product; marking a work
+  NotWorkable keeps Pals off it (0 of 12 samples on blocked stone rocks);
+  rocks do not save that state, buildings do (a pit stayed NotWorkable after
+  a reload), so per-item control is possible for natural rocks first.
+  Overshoot not measured yet (this base mines too slowly).
 - Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column

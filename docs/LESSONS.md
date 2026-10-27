@@ -13,6 +13,11 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Engine and UE4SS: the rules that prevent crashes
 
+- **A property you write may end up in the player's save.** A stone pit's
+  work state set to NotWorkable came back NotWorkable after a reload, while a
+  rock's did not (2026-10-28, [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)). Before a mod writes a game value,
+  reload once and check whether it survived; restore it by hand right after
+  the test.
 - **A stored engine object is a use-after-free.** An object obtained in the
   current call is safe. One kept for a later frame is not, and calling
   `:IsValid()` on it IS the crash. `pcall` cannot catch an access violation.
