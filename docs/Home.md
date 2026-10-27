@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md) · 2026-10-27
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-27
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-27
@@ -32,14 +33,13 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-21
 - [Vault cleanup, 2026-10-20](vault-cleanup-2026-10-20.md) · 2026-10-20
 - [Reliability candidate testing](testing.md) · 2026-10-20
-- [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md) · 2026-10-20
 
 ## Release and reports
 
+- [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md)
 - [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md)
 - [Work log, 2026-10-09 to 2026-10-11](work-log-2026-10-09-to-11.md) (history)
 - [Remaining release gates - October 9, 2026](release-gates-2026-10-09.md)
-- [0.5.0-rc1 reply drafts — not posted](release-replies-0.5.0-draft.md)
 
 ## Scheduling and limits
 

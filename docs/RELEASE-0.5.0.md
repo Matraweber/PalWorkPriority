@@ -157,7 +157,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
-- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review, reply drafts against the final build. **Done when:** the changelog lists what is
+- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review, reply drafts against the final build. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.
