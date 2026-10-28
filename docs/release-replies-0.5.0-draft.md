@@ -1,7 +1,7 @@
 ---
-date: 2026-10-27
+date: 2026-10-28
 tags: [release, reports]
-status: current
+status: history
 ---
 # 0.5.0 reply drafts (not posted)
 
