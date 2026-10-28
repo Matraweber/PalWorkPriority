@@ -84,10 +84,13 @@ stopped mining and chopping. Every fix below was tested in the game
   even when the list redraws in between.
 - Limits are shown in full up to the 9,999,999 maximum; only storage counts
   above a million are shortened (12.3M).
-- Clearer for new players: the panel says that each limit switches its whole
-  work type, before and after you add one ("Add group limit" on the item
-  tiles; a second item in the same work type says it joins that group). Status words are plain and fit their column (Below limit, Limit
-  reached, Reached 2/3, Others below, No count yet, Mod off, Test mode).
+- Clearer for new players: the item tiles say what a limit will stop before
+  you add it. Mining items say "Add item limit" (only the rocks that mainly
+  give that item stop); other work says "Add group limit" (the whole work
+  type stops), and a second item in the same work type says it joins that
+  group. Status words are plain and fit their column (Below limit, Limit
+  reached, Reached 2/3, Others below, Rocks stopped, No count yet, Mod off,
+  Test mode).
 - Escape with an armed Remove ("Sure?") cancels it instead of closing the
   panel.
 - Raising a limit above the highest step (50,000) no longer sets it to 50,000;

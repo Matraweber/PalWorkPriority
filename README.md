@@ -110,9 +110,9 @@ An amount must be a valid whole number in the supported range, including when en
 
 ### Group limits
 
-Every limit controls an entire work suitability, both older rules and ones added in the panel (adding them works again since 2026-10-27, as in 0.4.1). A stone-only Mining limit can stop ore mining too. With several Mining thresholds, the group keeps running until every threshold is reached, so individual outputs can exceed their number while another remains short.
+Limits on any work except Mining are group limits: each one controls the whole work type. A Logging limit for Wood stops all logging once it is reached. With several limits in one work type, the work keeps running until every one of them is reached, so one item can pass its number while another is still short. Adding limits works again since 2026-10-27, as in 0.4.1, and limits made before 0.5.0 carry over unchanged. Mining limits work per item (next section) unless `item_limits_on_rocks = false`, which brings back the group behaviour for Mining too.
 
-Existing rules retain that behavior under an explicit **legacy group limit** label. They remain reviewable, editable and removable; an upgrade must not silently reinterpret them as item-specific rules. Older wildcard rules retain their scope until deliberately migrated. Do not adopt shared rules merely because only one guild's camps happen to be loaded.
+Older wildcard rules retain their scope until deliberately migrated. Do not adopt shared rules merely because only one guild's camps happen to be loaded.
 
 Clearing a guild override previously exposed its inherited shared/configuration ceiling again while reporting success. The candidate persists a **guild-local OFF mask** to keep the cleared inherited rule disabled across save/load. Other guilds keep their rules. A scope/round-trip regression was added; native multiplayer verification remains pending.
 
@@ -122,9 +122,7 @@ Since 2026-10-28 a reached Mining limit switches off only the natural rocks whos
 
 ### Other item-specific limits (not available yet)
 
-Limits that stop one product while another of the same work type continues are planned for buildings and other work types. Until then, adding a limit for the other product too keeps the work type running until both are reached. The output-control adapter contract requires a supported producer to stop admitting capped output while unrelated production of the same suitability continues. It must identify producer/storage scope, preserve already-started work and specify a measured in-flight overshoot allowance.
-
-**No native producer adapter is currently accepted.** New limits are therefore group limits, and the panel says so before and after one is added. An item-name heuristic, suitability toggle or simulated adapter is insufficient. The candidate does not yet provide verified stone-only, synthesizer or other item-specific production control.
+Per-item limits for buildings (Stone Pit, logging site, furnaces) and for work other than Mining are planned. Until then those are group limits; adding a limit for the other product too keeps the work type running until both are reached. A future producer adapter must stop admitting capped output while unrelated production of the same work type continues, identify its producer and storage scope, preserve already-started work and come with a measured overshoot allowance. An item-name heuristic or suitability toggle is not enough.
 
 Storage scope must be visible: selected base, guild and local versus intended broader scope. Player inventory is not base storage. Shared guild storage must be counted once. Incomplete storage reads must display unavailable data rather than measured zero. Native container coverage and guild-chest accounting remain gates.
 
