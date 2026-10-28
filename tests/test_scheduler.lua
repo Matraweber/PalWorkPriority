@@ -828,3 +828,41 @@ stats = scheduler.run_pass(config)
 assert(next(seen) == nil and stats.station_vacancies == nil, "a typing failure still reached the counters")
 api.work_suitability = plain_typing
 for i, kind in ipairs(kinds) do kind.needing = plain_needing[i] end
+
+-- 2026-10-28: a reached Mining limit switches off only the rocks whose main
+-- drop is that item (item_sources.lua); Mining stays allowed while ore rocks
+-- are wanted, and the rock comes back when the limit goes.
+do
+    local function idname(s) return { ToString = function() return s end } end
+    local function rock(item, n)
+        local list = { ForEach = function(_, fn)
+            fn(1, { get = function() return { ItemId = { StaticId = idname(item) }, Num = n } end })
+        end }
+        return { value = 8, class = "PalWorkCollectResource", CurrentState = 1,
+            CachedOwnerMapObjectConcreteModel = { DropItemInfos = list } }
+    end
+    local saved = { camp_works = api.camp_works }
+    api.work_full_name = function(w) return w.class .. " /Game/Test.Work" end
+    api.prop = function(o, n) return o[n] end
+    api.unwrap = function(v) return v end
+    api.valid = function(o) return o ~= nil end
+    api.as_int = function(v) return type(v) == "number" and math.floor(v) or nil end
+    reset({ {key = "a", camp = "camp", ranks = {[8] = 1}, off = {}} })
+    works = { rock("Stone", 50), rock("CopperOre", 40) }
+    api.camp_works = function() return works, nil, {"stone-rock", "ore-rock"} end
+    rules.Mining = {Stone = 10}
+    stats = scheduler.run_pass(config)
+    assert(works[1].CurrentState == 2 and works[2].CurrentState == 1, "only the stone rock should be off")
+    assert(not fixture[1].off[8], "Mining was switched off although an ore rock is wanted")
+    assert(stats.rocks_held == 1 and stats.capped == 0)
+    rules = {}
+    stats = scheduler.run_pass(config)
+    assert(works[1].CurrentState == 1 and stats.rocks_started == 1, "removed limit kept the rock off")
+    -- Switched off in config: the whole Mining work type stops as before.
+    config.item_limits_on_rocks = false
+    rules.Mining = {Stone = 10}
+    stats = scheduler.run_pass(config)
+    assert(fixture[1].off[8] and works[1].CurrentState == 1, "config switch did not restore group limits")
+    config.item_limits_on_rocks = nil
+    api.camp_works = saved.camp_works
+end

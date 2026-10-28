@@ -68,7 +68,7 @@ function Widget:SetIsPassword() end
 function Widget:SetAllowContextMenu() end
 FText = function(text) return { ToString = function() return text end } end
 StaticConstructObject = function(cls) return make(cls.kind) end
-local cfg = { enabled = true, storage_scope = "camp" }
+local cfg = { enabled = true, storage_scope = "camp", item_limits_on_rocks = false }
 local data, writes = {}, 0
 local caps = { state = "saved", LADDER = { 100, 500, 1000 } }
 function caps.all() return { Mining = data } end

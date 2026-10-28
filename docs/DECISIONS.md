@@ -124,6 +124,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-28 - Per-item Mining limits on natural rocks go into 0.5.0
+  (user's decision); a rock counts as its main drop (user's decision).**
+  `item_sources.lua` marks a rock NotWorkable while the stock of its main
+  drop is at its limit and releases only rocks it marked; Mining stops as a
+  whole only when no rock or pit still produces something unlimited or
+  below its limit. Buildings are read (their product decides whether Mining
+  is still wanted) but never written. Unknown stock switches nothing; dry run
+  writes nothing. `item_limits_on_rocks = false` restores group limits.
+  *Rejected:* every drop counts (an Ore limit would stop stone rocks for 2
+  ore each), waiting for 0.5.x (user wanted it in 0.5.0). *Evidence:* [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md).
 - **2026-10-28 - Per-item limits: work-level CurrentState is the lever to
   build on, starting with natural rocks; AssignableFixedType is rejected.**
   Setting a stone rock's work to NotWorkable kept every Pal off it (0 of 12

@@ -128,12 +128,20 @@ stopped mining and chopping. Every fix below was tested in the game
 
 ### Limits in 0.5.0
 
-Limits work as in 0.4.1: you can add, change and remove them, and the ones you
-already have carry over. Each limit is a **group limit**: it switches its whole
-work type, so a Stone limit also stops ore mining. With several limits in one
-work type (Stone and Ore), the work stops only once every one of them is
-reached, so adding an Ore limit keeps your miners going while ore is short.
-Limits per item (stone stops, ore continues) are still planned.
+You can add, change and remove limits as in 0.4.1, and the ones you already
+have carry over.
+
+- **Mining limits now work per item.** A reached Stone limit stops only the
+  rocks that mainly give stone; your Pals keep mining ore and crystals. A rock
+  counts as what it mainly drops (a stone rock that drops a little ore is a
+  stone rock). Mining stops as a whole only when nothing left to mine is still
+  wanted. Stone Pits and other mining buildings cannot be stopped on their own
+  yet: they keep producing while other mining goes on. Switch this off with
+  `item_limits_on_rocks = false` (or in the options menu) to get the old
+  behaviour. Nothing is saved into your world: rocks forget it on a reload.
+- **Other limits are group limits:** each one switches its whole work type.
+  With several limits in one work type, the work stops only once every one of
+  them is reached.
 
 ### Performance (measured)
 
@@ -150,8 +158,8 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 ### Not in 0.5.0 (planned for 0.5.x / 0.6)
 
-- Limits per item (stop stone while ore continues). 0.5.0 has group limits
-  only, as 0.4.1 did.
+- Limits per item for buildings (Stone Pit, logging site, furnaces) and for
+  work other than Mining. 0.5.0 has them for natural rocks only.
 - Faster background saving (built and tested separately; planned for 0.5.x).
 - Marking a capped work column on the stand and showing the game's checkbox
   again when the mod turned a permission off.

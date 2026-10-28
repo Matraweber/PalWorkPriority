@@ -159,6 +159,16 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   switched it back on, a second item joined the Mining group and Mining
   resumed, both survived a restart, removed again from the panel. Open: a
   client adding one on the dedicated server.
+- [ ] **Mining limits per item on rocks** (user's decision 2026-10-28, into
+  0.5.0). Built: `Scripts/item_sources.lua`, scheduler, panel wording
+  ("Add item limit", "Its rocks only", "Rocks stopped"), config switch;
+  tests pass (228 Lua). Deployed 2026-10-28 14:16, **not yet run in game**:
+  the game did not start twice after the restart (no window, UE4SS.log
+  untouched). **Done when:** in game a reached Stone limit holds the stone
+  rocks off (log "rock(s) held for limits", no Pal on a stone rock in 12
+  samples) while ore and crystal rocks are mined, raising the limit releases
+  them, the panel shows "Rocks stopped", and after a reload every rock reads
+  Workable again.
 
 - [ ] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
   builds the Workshop and Nexus archives from one tagged commit with matching

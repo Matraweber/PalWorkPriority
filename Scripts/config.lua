@@ -84,6 +84,12 @@ return {
     -- steers every Pal, as 0.4.1 did.
     leave_unordered_pals_to_game = true,
 
+    -- A reached Mining limit stops only the natural rocks whose main drop is
+    -- that item (stone rocks for a Stone limit; ore keeps being mined).
+    -- Rocks forget this on a reload, so nothing stays behind in your world.
+    -- false switches the whole Mining work type, as 0.4.1 did.
+    item_limits_on_rocks = true,
+
     -- A pal needs at least this suitability rank to be considered. 1 means
     -- "has the skill at all"; raise it to stop rank-1 pals clogging jobs a
     -- rank-3 pal should be doing.
@@ -134,9 +140,13 @@ return {
     -- LEGACY GROUP LIMITS. These stop an entire work suitability only after
     -- EVERY listed item reaches its threshold. A stone-only Mining group can
     -- stop ore too; multiple items can overshoot their individual thresholds.
-    -- Limits added in the Production Limits panel work the same way. Limits
-    -- per item (stone stops, ore continues) need a verified producer control
-    -- and are not available yet.
+    -- Limits added in the Production Limits panel work the same way.
+    --
+    -- MINING is the exception (item_limits_on_rocks below): a reached Mining
+    -- limit switches off only the natural rocks whose main drop is that item,
+    -- and Mining stops as a whole only when no rock or pit still produces
+    -- something without a limit or below it. Stone Pits and other buildings
+    -- cannot be stopped on their own and keep producing until then.
     --
     -- Per-guild edits override these inherited groups. Clearing an inherited
     -- group item stores an OFF mask for that guild without changing others.

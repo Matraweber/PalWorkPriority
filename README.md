@@ -116,9 +116,13 @@ Existing rules retain that behavior under an explicit **legacy group limit** lab
 
 Clearing a guild override previously exposed its inherited shared/configuration ceiling again while reporting success. The candidate persists a **guild-local OFF mask** to keep the cleared inherited rule disabled across save/load. Other guilds keep their rules. A scope/round-trip regression was added; native multiplayer verification remains pending.
 
-### Item-specific limits (not available yet)
+### Mining limits per item (natural rocks)
 
-Limits that stop one product while another of the same work type continues (stone stops, ore continues) are planned. Until then, adding a limit for the other product too keeps the work type running until both are reached. The output-control adapter contract requires a supported producer to stop admitting capped output while unrelated production of the same suitability continues. It must identify producer/storage scope, preserve already-started work and specify a measured in-flight overshoot allowance.
+Since 2026-10-28 a reached Mining limit switches off only the natural rocks whose main drop is that item, by marking those rocks' work NotWorkable; other rocks stay in use, and Mining stops as a whole only when no rock or pit still produces something wanted (`item_limits_on_rocks`, on by default). Rocks do not save that state, so nothing outlives the mod. Buildings are never written, because their work state is saved: a Stone Pit keeps producing while other mining goes on. Evidence: docs/per-item-limits-2026-10-27.md.
+
+### Other item-specific limits (not available yet)
+
+Limits that stop one product while another of the same work type continues are planned for buildings and other work types. Until then, adding a limit for the other product too keeps the work type running until both are reached. The output-control adapter contract requires a supported producer to stop admitting capped output while unrelated production of the same suitability continues. It must identify producer/storage scope, preserve already-started work and specify a measured in-flight overshoot allowance.
 
 **No native producer adapter is currently accepted.** New limits are therefore group limits, and the panel says so before and after one is added. An item-name heuristic, suitability toggle or simulated adapter is insufficient. The candidate does not yet provide verified stone-only, synthesizer or other item-specific production control.
 

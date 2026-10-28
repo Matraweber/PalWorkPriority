@@ -30,6 +30,7 @@ local permissions = require("scheduler_permissions")
 local storage_scope = require("scheduler_storage")
 local stock_prefetch = require("storage_prefetch")
 local stations = require("stations")
+local item_sources = require("item_sources")
 -- The panel protocol caps how old a published stock reading may be.
 local storage_snapshot_max_age = require("protocol").MAX_STORAGE_MS / 1000
 
@@ -1046,6 +1047,52 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- policy. The storage publications above retain the actual read proof.
     if not has_limits then limits_available = true end
 
+    -- Limits per item on natural rocks (item_sources.lua, 2026-10-28). A
+    -- Mining limit that is reached switches off only the rocks whose main
+    -- drop is that item; Mining as a whole stops only once no rock or pit in
+    -- the camp still produces something wanted. Runs while Mining has limits
+    -- and while rocks are still held off, so a removed limit releases them.
+    local item_wanted = {}
+    local mining = workdefs.value("Mining")
+    local mining_limits = caps.for_work(cfg, "Mining", camp_guild)
+    if cfg.item_limits_on_rocks ~= false and mining
+        and (mining_limits ~= nil or item_sources.count(camp_key) > 0) then
+        local ok, got, _, keys = pcall(measured, "scheduler: camp works", api.camp_works, camp)
+        if ok and type(got) == "table" and type(keys) == "table" then
+            local known = (camp_key and work_types[camp_key]) or {}
+            local values = {}
+            local typed = pcall(function()
+                for i, w in ipairs(got) do
+                    local key = keys[i]
+                    if key then
+                        local v = known[key]
+                        if v == nil then v = api.work_suitability(w); known[key] = v end
+                        values[key] = v
+                    end
+                end
+            end)
+            if typed then
+                local stock = (limits_available and has_limits) and totals or nil
+                local applied, wanted, stopped, started = pcall(measured, "scheduler: item limits on rocks",
+                    item_sources.apply, camp_key, got, keys, values,
+                    function(v) if v == mining then return mining_limits end end,
+                    stock, not cfg.dry_run)
+                if not applied then log.debug("item limits on rocks: " .. tostring(wanted)) end
+                if applied and type(wanted) == "table" then
+                    item_wanted = wanted
+                    stats.rocks_stopped = (stats.rocks_stopped or 0) + (stopped or 0)
+                    stats.rocks_started = (stats.rocks_started or 0) + (started or 0)
+                end
+            end
+        end
+        stats.rocks_held = (stats.rocks_held or 0) + item_sources.count(camp_key)
+    end
+    -- A work type whose limits are all reached, unless one of its rocks or
+    -- pits still produces something wanted.
+    local function type_capped(name)
+        return cap_reached(cfg, name, totals, camp_guild) and not item_wanted[workdefs.value(name)]
+    end
+
     -- What the camp actually wants doing, from the game's own pulses.
     --
     -- The fallback must not key off the pulse count: a base whose pals are
@@ -1096,7 +1143,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             elseif cfg.work_priority[name] == nil then
                 stats.unconfigured = stats.unconfigured + 1
                 demand[value] = nil
-            elseif cap_reached(cfg, name, totals, camp_guild) then
+            elseif type_capped(name) then
                 stats.capped = stats.capped + 1
                 demand[value] = nil
             end
@@ -1110,7 +1157,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
         if limits_available and name ~= workdefs.ANYONE
-            and cap_reached(cfg, name, totals, camp_guild) then
+            and type_capped(name) then
             capped[workdefs.value(name)] = true
         end
 
@@ -1615,6 +1662,13 @@ function M.format_stats(cfg, stats)
     if stats.deferred > 0 then parts[#parts + 1] = stats.deferred .. " deferred" end
     if stats.unreadable > 0 then parts[#parts + 1] = stats.unreadable .. " unreadable" end
     if stats.capped > 0 then parts[#parts + 1] = stats.capped .. " capped" end
+    if (stats.rocks_held or 0) > 0 then
+        parts[#parts + 1] = stats.rocks_held .. " rock(s) held for limits"
+            .. (((stats.rocks_stopped or 0) + (stats.rocks_started or 0)) > 0
+                and (" (+" .. (stats.rocks_stopped or 0) .. "/-" .. (stats.rocks_started or 0) .. ")") or "")
+    elseif (stats.rocks_started or 0) > 0 then
+        parts[#parts + 1] = stats.rocks_started .. " rock(s) released"
+    end
     if stats.unknown_work > 0 then parts[#parts + 1] = stats.unknown_work .. " untyped" end
     if stats.covered > 0 then parts[#parts + 1] = stats.covered .. " covered" end
     if stats.idle_reconciled > 0 then

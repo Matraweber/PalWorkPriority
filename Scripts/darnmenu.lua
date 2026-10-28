@@ -58,6 +58,7 @@ return {
     max_pals_per_work_type = 3,
     min_suitability_rank = 1,
     leave_unordered_pals_to_game = true,
+    item_limits_on_rocks = true,
     storage_scope = "camp",
     log_level = "info",
     key_panel = { key = "F1", modifiers = { "ALT" } },
@@ -98,6 +99,8 @@ return {
           help = "Stops the mod dedicating a rank 1 Pal to a job a specialist should have. It does not stop that Pal working." },
         { path = "leave_unordered_pals_to_game", label = "Leave unranked Pals to the game", kind = "bool",
           help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
+        { path = "item_limits_on_rocks", label = "Mining limits per item", kind = "bool",
+          help = "A reached Mining limit stops only the rocks that mainly give that item; other mining goes on. Off: the whole Mining job stops." },
       },
     },
     {
@@ -276,6 +279,7 @@ local KEYS = {
     max_pals_per_work_type = "number",
     min_suitability_rank = "number",
     leave_unordered_pals_to_game = "boolean",
+    item_limits_on_rocks = "boolean",
     storage_scope = "string",
     log_level = "string",
 }

@@ -55,13 +55,13 @@ local classifier=assert(rb.picker, 'picker presentation unavailable')
 assert(classifier.describe(caps,{EmitFlame={Stone01=700}},'EmitFlame','Stone01','guild').detail==
     'Group limit for all Kindling work', 'picker exposed an internal work name')
 -- Without a covering group the tile says when new limits come (review P1-1).
-local plain=classifier.describe(caps,{},'Mining','StoneBlocked','guild')
+local plain=classifier.describe(caps,{},'Mining','StoneBlocked','guild',cfg)
 assert(plain.state=='unavailable' and plain.label=='Cannot be limited'
     and plain.detail=='This item cannot have a limit.', 'unsupported item not explained')
-local covered=classifier.describe(caps,all,'Mining','StoneBlocked','guild')
+local covered=classifier.describe(caps,all,'Mining','StoneBlocked','guild',cfg)
 assert(covered.state=='unavailable' and covered.label=='Group limit applies' and covered.group=='Stone01'
     and covered.detail:find('switches all Mining work',1,true), 'group-covered item not explained')
-assert(classifier.describe(caps,all,'Mining','StoneWrong','guild').state=='unavailable',
+assert(classifier.describe(caps,all,'Mining','StoneWrong','guild',cfg).state=='unavailable',
     'a rule for a different work type advertised an editable rule')
 assert(not panel.apply(cfg,{kind='item',item='StoneWrong'},-1,true) and writes==0,
     'wrong-work rule permitted an unsupported create')
@@ -79,19 +79,19 @@ assert(rendered('Add group limit'), 'capability recovery was cached away')
 assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true) and writes==1,
     'supported creation path stopped working')
 caps.support=nil
-assert(classifier.describe(caps,{},'Mining','StoneNew','guild').state=='unavailable')
+assert(classifier.describe(caps,{},'Mining','StoneNew','guild',cfg).state=='unavailable')
 caps.support=function() error('unavailable') end
-assert(classifier.describe(caps,{},'Mining','StoneNew','guild').state=='unavailable')
-assert(classifier.describe(caps,all,'Mining','Stone01',nil).state=='unavailable')
+assert(classifier.describe(caps,{},'Mining','StoneNew','guild',cfg).state=='unavailable')
+assert(classifier.describe(caps,all,'Mining','Stone01',nil,cfg).state=='unavailable')
 -- Cross-check the presentation against actual caps semantics, including OFF.
 local actual=dofile(TEST_ROOT..'/Scripts/caps.lua')
 actual.data={guild={Mining={Stone01=700,StoneOff=false},EmitFlame={StoneWrong=900}}}
 local current=actual.all({},'guild')
-assert(classifier.describe(actual,current,'Mining','Stone01','guild').state=='existing')
+assert(classifier.describe(actual,current,'Mining','Stone01','guild',cfg).state=='existing')
 -- Real caps (2026-10-27): a new Mining item joins the Mining group.
-local joins=classifier.describe(actual,current,'Mining','StoneWrong','guild')
+local joins=classifier.describe(actual,current,'Mining','StoneWrong','guild',cfg)
 assert(joins.state=='create' and joins.label=='Add group limit' and joins.group=='Stone01')
-assert(classifier.describe(actual,current,'Mining','StoneOff','guild').label==
+assert(classifier.describe(actual,current,'Mining','StoneOff','guild',cfg).label==
     'Restore group limit')
 print('PASS picker capability: visible states, exact rule scope, fresh admission and widget reuse')
 ]=], '@picker-capability-fixture'))()

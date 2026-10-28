@@ -2956,7 +2956,8 @@ local function draw_list(cfg, totals)
                 -- What the limit actually switches (P1-5): the whole work
                 -- type, not only this item. "Legacy group" said neither.
                 text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 20,
-                    "Whole work type", "dim", 9, true)
+                    (rule.work == "Mining" and cfg.item_limits_on_rocks ~= false)
+                        and "Its rocks only" or "Whole work type", "dim", 9, true)
             else
                 line(key, row, PAD + MARK_W, workdefs.label(rule.work),
                     choosable and "action" or "item", ROW_PT)
@@ -3040,6 +3041,12 @@ local function draw_list(cfg, totals)
             elseif partly then
                 status, tone = bases and ("Reached " .. partly .. "/" .. bases)
                     or ("Reached at " .. partly), "over"
+            elseif met and rule.work == "Mining" and cfg.item_limits_on_rocks ~= false then
+                -- Per-item limit on rocks (item_sources.lua): its rocks are
+                -- off while other mining goes on.
+                local loaded = package.loaded.item_sources
+                status, tone = (loaded and loaded.item_stopped(rule.item)) and "Rocks stopped"
+                    or "Limit reached", "over"
             elseif met then
                 status, tone = "Others below", "unmet"
             else
@@ -3635,7 +3642,7 @@ local function draw_item_picker(cfg, totals)
         end
 
         local work = workdefs.work_for_item(id) or workdefs.DEFAULT_WORK
-        local capability = RB.picker.describe(caps, existing_rules, work, id, guild)
+        local capability = RB.picker.describe(caps, existing_rules, work, id, guild, cfg)
         list_row(key, i - from, id, totals[id] or 0, top, capability)
         hit(key, { kind = "item", item = id })
         grid_count = grid_count + 1
@@ -5845,7 +5852,7 @@ function M.apply(cfg, what, dir, from_mouse)
         -- "you have already done this". Now it takes you to the rule instead,
         -- which is where changing it belongs.
         local guild = mine()
-        local capability = RB.picker.describe(caps, caps.all(cfg, guild), work, what.item, guild)
+        local capability = RB.picker.describe(caps, caps.all(cfg, guild), work, what.item, guild, cfg)
         if capability.state == "existing" then
             announce(string.format(
                 "%s, now %s. Click the limit to change it.",

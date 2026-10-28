@@ -21,7 +21,13 @@ local function covering_group(caps, rules, work, guild)
     end
 end
 
-function M.describe(caps, rules, work, item, guild)
+-- Mining limits stop only the rocks of their item (item_sources.lua) unless
+-- the player switched that off in config.
+local function per_item(cfg, work)
+    return work == 'Mining' and not (type(cfg) == 'table' and cfg.item_limits_on_rocks == false)
+end
+
+function M.describe(caps, rules, work, item, guild, cfg)
     if not guild then
         return {state='unavailable', label='No guild for limits', detail='Join a guild before editing limits.'}
     end
@@ -42,10 +48,14 @@ function M.describe(caps, rules, work, item, guild)
         local detail = group ~= nil
             and ('Joins the '..job..' limits: '..job..' stops once every one is reached.')
             or ('Stops all '..job..' work once reached, not only this item.')
+        if per_item(cfg, work) then
+            detail = 'Stops the rocks that mainly give this item once reached; other mining goes on.'
+        end
         return {state='create', group=group,
-            label=kind=='legacy' and 'Restore group limit' or 'Add group limit', detail=detail}
+            label=kind=='legacy' and 'Restore group limit'
+                or (per_item(cfg, work) and 'Add item limit' or 'Add group limit'), detail=detail}
     end
-    if group ~= nil then
+    if group ~= nil and not per_item(cfg, work) then
         return {state='unavailable', group=group, label='Group limit applies',
             detail='Covered by the '..job..' limit, which switches all '..job..' work.'}
     end
