@@ -61,7 +61,7 @@ UE4SS itself must already be installed in that native-mod layout. Other distribu
 
 ### Vortex
 
-Vortex is not certified for this candidate. A successful download or “enabled” status does not establish the Lua and pak destinations. Do not advertise support until clean deployment, activation, update and removal pass. Inspect the manual layout above when troubleshooting the existing Vortex report.
+Tested 2026-10-28 with the Palworld Vortex extension 0.5.0: install, update and removal pass (docs/vortex-2026-10-28.md). The extension's root-mod installer copies the archive unchanged into the game root, which is the manual layout above. Turn off "Manage modding requirements (UE4SS, Unreal Pak Tool) automatically" in Settings > Mods when UE4SS comes from the game's mod loader or the Workshop; otherwise Vortex adds a second UE4SS under `Pal\Binaries\Win64`. With the game on another drive, the staging folder must be on that drive ("Suggest").
 
 ## Settings and save files
 

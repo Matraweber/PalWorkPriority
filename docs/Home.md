@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
 - [Per-item limits: first research round (2026-10-27/28)](per-item-limits-2026-10-27.md) · 2026-10-28
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
 - [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-22
 - [Controller support: routes, build and in-game acceptance, 2026-10-22](controller-routes-2026-10-22.md) · 2026-10-22
 - [Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus](controller-2026-10-21.md) · 2026-10-22
-- [G3: Escape, photo mode, death while editing, 2026-10-17](g3-escape-photo-death-2026-10-17.md) · 2026-10-21
 
 ## Release and reports
 
@@ -117,6 +117,10 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md)
 - [PresentMon capture procedure and evidence boundaries](frame-capture-procedure-2026-10-09.md)
+
+## Other
+
+- [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md)
 
 ## Outside the vault (repo files, open on GitHub or in an editor)
 

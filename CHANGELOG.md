@@ -168,9 +168,14 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 - Requests: separate priority and limit mods, restricting high-quality stands,
   limits for Pal-produced materials.
 
-### Still being checked before release
+### Vortex
 
-- [OPEN] Vortex install, update and removal.
+Tested with the current Palworld extension (0.5.0): install, update and removal
+work, and your settings files stay. If your UE4SS comes from the game's mod
+loader or the Steam Workshop, turn off "Manage modding requirements (UE4SS,
+Unreal Pak Tool) automatically" in Vortex's Settings > Mods, or Vortex installs
+a second UE4SS. If the game is on another drive than Vortex, use "Suggest" for
+the staging folder in the same place.
 
 Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
 

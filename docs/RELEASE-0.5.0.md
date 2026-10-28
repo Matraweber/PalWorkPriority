@@ -183,8 +183,13 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.
-- [ ] **Vortex:** one install/update/remove run, or the Nexus page says it is
-  not supported yet.
+- [x] **Vortex:** one install/update/remove run, or the Nexus page says it is
+  not supported yet. PASS 2026-10-28 with the Palworld extension 0.5.0
+  ([vortex-2026-10-28](vortex-2026-10-28.md)): Vortex's root-mod installer puts our archive into the
+  manual layout; 0.4.1 installed and loaded, 0.5.0 installed over it, 0.4.1
+  removed, 0.5.0 loaded once with settings intact, removal kept the user's
+  files. The Nexus page should say to turn off Vortex's UE4SS management when
+  UE4SS comes from the game's mod loader.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
