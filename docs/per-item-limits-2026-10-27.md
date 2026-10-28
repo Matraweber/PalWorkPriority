@@ -188,9 +188,8 @@ This also closes "a client adding a limit on the dedicated server". The
 server wrote `caps.txt` at 15:18 and again at 15:20. Now it holds only the
 header, and `caps.txt.bak` holds the Stone row.
 
-Not seen on the server: which Pals mined which rock. The client sees no work
-objects of the server base, and the census command only runs on the machine
-that runs the passes. The rocks held come from the server's own count.
+Not seen in this first round: which Pals mined which rock. The client sees no
+work objects of the server base. The second round below closes this.
 
 Found on the way: the `pwp limit` listing still said "legacy group limits".
 Reworded after the test; it now names Mining's per-item rule. That change is
@@ -199,4 +198,58 @@ upload.
 
 The server log page in the panel froze the browser tab twice (very long
 log). Reading it with a single short script right after loading works.
+
+## Dedicated server, second round: who mines what (2026-10-28)
+
+The user asked for the newest code on the server, and for a way to see the
+miners there.
+
+**Making Pal Mining visible on the server.**
+
+- Admin rights were not needed. In Palworld you become admin by typing the
+  server's admin password in chat (the user would have to do that, Claude
+  does not enter passwords), and admin rights do not show which rock a Pal is
+  on.
+- Instead: new command `pwp rocks` (42f1ead). Per base it prints how many
+  rocks and buildings give each Mining item, how many are workable, how many
+  a limit holds, and which rock or building each miner's assignment is on.
+- It is run on the server through the mod's existing remote channel. The
+  server's `remote.txt` (next to the log) was edited in the GPortal file
+  editor: a new first line (a nonce) plus `pwp rocks`, then Save.
+- The output appears in the panel's UE4SS log page.
+
+**Install.**
+
+- The 34fe913 `Scripts` folder was renamed to `Scripts-before-0fac26c`.
+- `pwp-server-scripts-0fac26c.zip` (420.68 KiB) was uploaded and unzipped.
+  This needed JS clicks; screenshots of the tab timed out at the 2560 px
+  window.
+- Then `main.lua` of 42f1ead (138.6 KiB, the only file changed since 0fac26c)
+  was uploaded over the old one ("Overwrite").
+- Restart. `PWP_READY` at 15:32:37, no warning or error.
+- With nobody online the base had 0 work, as before, so the client joined
+  for the test.
+
+**Test.**
+
+| Time | Seen in the server log |
+| --- | --- |
+| 15:38:13 | Client limit Mining Stone 1. "2 rock(s) held for limits (+2/-0)". Mining wanted 4 → 2. One stone rock fewer than in round one, mined out since. |
+| 15:39:07 | `rocks: base 1: CopperOre rock 1 workable, 0 held; Stone building 1 workable, 0 held; Stone rock 0 workable, 2 held` / `miners: BOSS_CaptainPenguin -> CopperOre rock [occupied]` |
+| 15:40:08 | Same counts / `Plesiosaur -> CopperOre rock [ready]` |
+| 15:40:56 | Same counts / `Plesiosaur -> CopperOre rock [occupied]; GrassMammoth -> CopperOre rock [occupied]` |
+| 15:41:17 | Client removed the limit: "Mining Stone cleared by a player", "2 rock(s) released". |
+| 15:41:45 | `Stone rock 2 workable, 0 held` / `miners: none on a rock or pit right now` |
+
+With the limit on, the server's miners were on the copper ore rock in all 3
+samples and never on a stone rock. The Stone Pit (a building) stayed
+workable, as designed.
+
+**Left on the server.**
+
+- `remote.txt` holds `rocks-20261028-1543` / `pwp rocks`, which is read-only.
+  The previous content was `save-flush-end-200156` / `pwp perf` /
+  `pwp perf off` / `pwp status`.
+- `caps.txt` has no limits again.
+- The server runs 42f1ead.
 

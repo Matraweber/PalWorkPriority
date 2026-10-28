@@ -156,6 +156,7 @@ Chat replies go to **`priority.log` in the mod root**, and to UE4SS's log. They 
 | `!pwp restore` | Restore permitted work before removal |
 | `!pwp mode` / `!pwp cap` | Staffing mode / worker cap |
 | `!pwp limit` / `!pwp stock` | Rules / storage |
+| `!pwp rocks` | Mining rocks held by limits and which rock each miner is on (host or server) |
 | `!pwp net` | Transport diagnostics and echo test |
 | `!pwp perf [on\|off\|reset]` | Profiling controls and bounded report |
 
