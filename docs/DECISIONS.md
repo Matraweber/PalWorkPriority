@@ -16,6 +16,25 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-28 - Every bundle of the twelve-reviewer audit goes into 0.5.0
+  before the upload (user's pick: A to H).** The audit rated every area at 4-6
+  out of 10. The fixes cover:
+  - code P1s and per-item Mining robustness;
+  - panel input safety, including adding a limit in two clicks;
+  - per-item wording;
+  - all doc fixes;
+  - one camp-works read per pass;
+  - the upload tools;
+  - accessibility;
+  - the larger items.
+
+  The protocol moves to schema 5 now so clients get the server's limit verdict
+  and its `item_limits_on_rocks`. 0.5.0 is not published yet, so no 0.5.0 client
+  exists that the bump would lock out. Afterwards: in-game retest, then a retag
+  and rebuild of v0.5.0 (unpublished, so moving the tag breaks nobody).
+  *Rejected:* the minimum path (code P1s and docs only). It leaves the
+  keyboard and pad paths that create or delete limits by accident.
+  *Evidence:* [review-2026-10-28](review-2026-10-28.md).
 - **2026-10-28 - No real-controller run before 0.5.0 (user's decision).** The
   virtual XInput pad passed every stand and panel step in game on 2026-10-22,
   and the input routes were checked against other mods (PalPriority is mouse
