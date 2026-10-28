@@ -22,9 +22,17 @@ local function covering_group(caps, rules, work, guild)
 end
 
 -- Mining limits stop only the rocks of their item (item_sources.lua) unless
--- the player switched that off in config.
+-- the player switched that off in config. On a client the server's setting
+-- counts, which panel_status answers once it knows it (2026-10-28); an older
+-- panel_status has no per_item and this machine's config is the fallback.
 local function per_item(cfg, work)
-    return work == 'Mining' and not (type(cfg) == 'table' and cfg.item_limits_on_rocks == false)
+    if work ~= 'Mining' then return false end
+    local status = package.loaded.panel_status
+    if type(status) == 'table' and type(status.per_item) == 'function' then
+        local ok, on = pcall(status.per_item, cfg)
+        if ok and type(on) == 'boolean' then return on end
+    end
+    return not (type(cfg) == 'table' and cfg.item_limits_on_rocks == false)
 end
 
 function M.describe(caps, rules, work, item, guild, cfg)
@@ -33,7 +41,15 @@ function M.describe(caps, rules, work, item, guild, cfg)
     end
     local amount = (rules[work] or {})[item]
     local kind = caps.rule_kind and caps.rule_kind(work, item, guild)
+    -- A Mining limit with per-item on is an item limit whatever its stored
+    -- kind: it stops only that item's rocks (review C, 2026-10-28). The tile
+    -- said "Edit group limit" on it.
+    local item_limit = per_item(cfg, work)
     if amount ~= nil and amount ~= false then
+        if item_limit then
+            return {state='existing', amount=amount, label='Edit item limit',
+                detail='Item limit for '..workdefs.label(work)..': stops only the rocks that mainly give this item'}
+        end
         return {state='existing', amount=amount,
             label=kind=='legacy' and 'Edit group limit' or 'Edit existing limit',
             detail=kind=='legacy' and ('Group limit for all '..workdefs.label(work)..' work') or 'Existing item limit'}
@@ -48,14 +64,14 @@ function M.describe(caps, rules, work, item, guild, cfg)
         local detail = group ~= nil
             and ('Joins the '..job..' limits: '..job..' stops once every one is reached.')
             or ('Stops all '..job..' work once reached, not only this item.')
-        if per_item(cfg, work) then
+        if item_limit then
             detail = 'Stops the rocks that mainly give this item once reached; other mining goes on.'
         end
+        local label = item_limit and 'item limit' or 'group limit'
         return {state='create', group=group,
-            label=kind=='legacy' and 'Restore group limit'
-                or (per_item(cfg, work) and 'Add item limit' or 'Add group limit'), detail=detail}
+            label=(kind=='legacy' and 'Restore ' or 'Add ')..label, detail=detail}
     end
-    if group ~= nil and not per_item(cfg, work) then
+    if group ~= nil and not item_limit then
         return {state='unavailable', group=group, label='Group limit applies',
             detail='Covered by the '..job..' limit, which switches all '..job..' work.'}
     end

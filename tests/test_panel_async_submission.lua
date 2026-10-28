@@ -46,7 +46,7 @@ panel.refresh(cfg);assert(rendered('Saving change...') and rendered('Saving...')
 assert(not panel.confirm_edit(cfg,'35001'),'accepted edit was left open')
 local writes=live.writes;panel.cancel_edit();assert(live.writes==writes,'cancel replayed accepted submission')
 live:complete();assert(caps.flush() and caps.state=='saved' and live.notices==1)
-panel.refresh(cfg);assert(rendered('Saved'))
+panel.refresh(cfg);assert(rendered('Limits saved'))
 
 -- Step and confirmed removal must use exactly the same pending contract.
 panel.wants_pass=false

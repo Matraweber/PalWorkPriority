@@ -76,6 +76,9 @@ assert(not rendered('Add group limit'), 'capability change retained Add label')
 supports.StoneNew=true
 panel.refresh(cfg)
 assert(rendered('Add group limit'), 'capability recovery was cached away')
+-- Two clicks (review B4): the first arms and explains, the second creates.
+assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true) and writes==0,
+    'first click created a limit')
 assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true) and writes==1,
     'supported creation path stopped working')
 caps.support=nil

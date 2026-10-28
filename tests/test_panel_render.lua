@@ -152,10 +152,10 @@ end
 rules(1)
 panel.refresh(cfg)
 panel.toggle()
-assert(panel.open and rendered("Whole work type"))
+assert(panel.open and rendered("Group limit"))
 assert(rendered("No count yet"), "missing scheduler evidence claimed work was active")
 rules(0)
-for _,entry in ipairs({{'ready','No production limits yet.'},
+for _,entry in ipairs({{'ready','Click "Add a limit" below to start.'},
     {'connecting','Limits unavailable; check the status above.'}})do
     caps.view_status=function()return entry[1] end
     panel.refresh(cfg)
@@ -179,7 +179,7 @@ for _, entry in ipairs({{"connecting","Connecting to server..."},
     caps.view_status=function() return entry[1], "ack_timeout" end
     panel.refresh(cfg)
     assert(rendered(entry[2]), "header ignored remote state "..entry[1])
-    assert(not rendered("Saved"), "local Saved label overrode remote status")
+    assert(not rendered("Saved") and not rendered("Limits saved"), "local Saved label overrode remote status")
     assert(rendered("Server did not acknowledge the change."), "remote error not shown")
 end
 caps.view_status=function() return "applied_unsaved", "save_failed" end
@@ -187,7 +187,7 @@ panel.refresh(cfg)
 assert(rendered("Applied - not saved"),"applied_unsaved has no truthful human label")
 assert(rendered("The server applied this change but could not save it; it may be lost after a restart."),
     "save_failed has no actionable explanation")
-assert(not rendered("Saved") and not rendered("Confirmed by server"),"unsaved changes claimed durable acceptance")
+assert(not rendered("Saved") and not rendered("Limits saved") and not rendered("Confirmed by server"),"unsaved changes claimed durable acceptance")
 caps.view_status=nil
 panel.refresh(cfg)
 assert(rendered("37"), "panel did not consume selected camp storage")
@@ -227,11 +227,11 @@ for _, n in ipairs({ 0, 1, 13, 14, 26, 27 }) do
     rules(n)
     panel.refresh(cfg)
     if n==0 then
-        assert(rendered("No production limits yet."))
+        assert(rendered('Click "Add a limit" below to start.'))
         caps.view_status=function() return "connecting" end
         panel.refresh(cfg)
         assert(rendered("Limits unavailable; check the status above."))
-        assert(not rendered("No production limits yet."), "unknown snapshot presented as no rules")
+        assert(not rendered('Click "Add a limit" below to start.'), "unknown snapshot presented as no rules")
         caps.view_status=nil
     end
     if n > 13 then
@@ -382,7 +382,7 @@ items.catalogue_ids = function() return nil, "unavailable" end
 panel.refresh(cfg)
 assert(panel.command(cfg, "filter ore") == "filter is now 'ore'")
 panel.refresh(cfg)
-assert(rendered("Preparing item search...   |   Availability shown below each item"))
+assert(rendered("Preparing item search...   |   Under each item: what a click does"))
 local rb
 for i=1,100 do
     local name,value=debug.getupvalue(panel.refresh,i)
@@ -391,12 +391,12 @@ end
 assert(rb and rb.pending, "unfinished index did not request continuation")
 catalogue_state="unavailable"
 panel.refresh(cfg)
-assert(rendered("Item catalogue unavailable   |   Availability shown below each item"))
+assert(rendered("Item catalogue unavailable   |   Under each item: what a click does"))
 assert(not rb.pending, "unavailable catalogue started a fast retry loop")
 panel.command(cfg, "filter")
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
-assert(rendered("Storage unavailable - choose Show all to browse items   |   Availability shown below each item"))
+assert(rendered("Storage unavailable - choose Show all to browse items   |   Under each item: what a click does"))
 -- A click after the last draw is valid when dispatch reacquires this tree.
 -- The old 150ms draw-age gate rejected it despite successful current lookup.
 local toggle=assert(rendered("Show all items a base can make"))
@@ -404,7 +404,7 @@ toggle.IsHovered=function() return true end
 rb.validated=-100
 assert(panel.handle_click(cfg,-1), "freshly validated delayed click was dropped")
 panel.refresh(cfg)
-assert(rendered("Item catalogue unavailable   |   Availability shown below each item"))
+assert(rendered("Item catalogue unavailable   |   Under each item: what a click does"))
 toggle.IsHovered=function() return false end
 local saved_host=overlay.host
 overlay.host=function() return nil end

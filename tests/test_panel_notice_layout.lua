@@ -8,7 +8,7 @@ os.clock=function() return now end
 overlay.fit_width=function() end
 rules(14)
 -- No scheduler verdict in this fixture, so the help explains "?" / "No count yet".
-local HELP='Each limit switches its whole work type. ? or No count yet: not counted yet, Alt+F2 counts now.'
+local HELP='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.'
 panel.refresh(cfg); panel.toggle(); panel.refresh(cfg)
 panel.page_step(cfg,1); panel.refresh(cfg)
 assert(rendered('page 2 of 2, 14 limits'), 'fixture did not reach second rules page')
@@ -39,8 +39,16 @@ end
 assert(panel.apply(cfg,{kind='item',item='Stone14'},-1,true))
 panel.refresh(cfg); stable()
 assert(help.text:find('Click the limit to change it',1,true), 'existing-rule notice missing')
+-- A notice stays until the next input, not 7 seconds (review B6, 2026-10-28),
+-- with a long upper bound for a panel left open.
 now=108; panel.refresh(cfg); stable()
-assert(help.text==HELP)
+assert(help.text:find('Click the limit to change it',1,true), 'notice expired before any input')
+panel.nav(cfg,'down'); panel.refresh(cfg); stable()
+assert(help.text==HELP, 'an input did not clear the notice')
+assert(panel.apply(cfg,{kind='item',item='Stone14'},-1,true))
+panel.refresh(cfg); stable()
+now=108+61; panel.refresh(cfg); stable()
+assert(help.text==HELP, 'notice outlived its upper bound')
 caps.state,caps.error='error','Disk write failed; retry pending'
 panel.refresh(cfg); stable()
 assert(rendered(caps.error)==help, 'save error did not reuse notice widget')

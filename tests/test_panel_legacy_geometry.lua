@@ -1,5 +1,9 @@
 -- Geometry contract for the real renderer; font extents use its existing
 -- 1.35 line-height estimate, not a claim about native Slate glyph rasterization.
+-- 2026-10-28 (review E): the sub-label is 12pt in the item colour, so the
+-- two line BOXES overlap by the job's descender band. The contract is that
+-- the job's glyphs (ascent ~1.0 x size, plus shadow) end above the sub-label
+-- and the sub-label, shadow included, ends inside the 34px row.
 local f=assert(io.open(TEST_ROOT..'/tests/test_panel_render.lua','r'))
 local source=f:read('*a');f:close()
 local start=assert(source:find('\nrules%(1%)\r?\npanel.refresh'))
@@ -10,7 +14,7 @@ local function near(a,b) assert(math.abs(a-b)<0.000001, tostring(a)..' ~= '..tos
 local function check_geometry()
  local jobs,labels=0,0
  for _,w in ipairs(registry) do
-  if not w.dead and w.text=='Whole work type' then
+  if not w.dead and w.text=='Group limit' then
    labels=labels+1
    local job
    for _,other in ipairs(w.parent.children) do if other.text=='Mining' then job=other end end
@@ -20,13 +24,13 @@ local function check_geometry()
    near(height,34)
    -- Both lines, including the actual requested shadow offset, fit and do
    -- not overlap. The one-pixel shadow is part of the geometry budget.
-   local first_bottom=job.Slot.position.Y+job.Font.Size*1.35+job.shadow.Y
+   local first_glyphs=job.Slot.position.Y+job.Font.Size*1.0+job.shadow.Y
    local second_bottom=w.Slot.position.Y+w.Font.Size*1.35+w.shadow.Y
-   assert(job.Slot.position.Y>=0 and first_bottom<=w.Slot.position.Y,
-    'Job line including shadow overlaps subtitle')
-   assert(second_bottom<=height,'Whole work type including shadow overflows row')
-   near(job.Slot.position.Y,1);near(job.Font.Size,13)
-   near(w.Slot.position.Y,20);near(w.Font.Size,9)
+   assert(job.Slot.position.Y>=0 and first_glyphs<=w.Slot.position.Y,
+    'Job glyphs including shadow overlap the sub-label')
+   assert(second_bottom<=height,'Group limit including shadow overflows row')
+   near(job.Slot.position.Y,0);near(job.Font.Size,13)
+   near(w.Slot.position.Y,16);near(w.Font.Size,12)
    near(job.Slot.position.X,38);near(w.Slot.position.X,38)
   end
  end
