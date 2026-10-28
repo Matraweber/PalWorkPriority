@@ -20,6 +20,7 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     server_session_changed='The server restarted or changed. Reconnecting...',
     unsupported_limit=NO_NEW,
     no_active_legacy_rule=NO_RULE,
+    too_many_limits='This guild already has 500 limits. Remove one first.',
     rejected='The server rejected this change; confirmed settings are unchanged.',
     handler_error='The server could not process this change.',
     invalid_edit='The server rejected an invalid change.',
@@ -45,7 +46,6 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     snapshot_changed='Limits changed while saving. Check them and try again.',
     ['scope unavailable']='Your guild could not be read. Try again in a moment.',
     -- caps.lua's own sentences, which used internal terms.
-    ['Item-specific limits await a verified producer adapter and scope']=NO_NEW,
     ['No active legacy rule for this guild']=NO_RULE,
     ['ceiling out of range']='Enter a whole number from 1 to 9,999,999.',
     ['invalid item id']='This item cannot have a limit.',
@@ -169,8 +169,19 @@ function M.stock(cfg,scheduler,guild,selected,is_client,remote)
     return view
 end
 
-function M.verdict(scheduler,work,view)
-    if not view or not view.verified then return nil end
+-- This machine's role, read where panel.lua reads it. Unloaded means host.
+local function client()
+    local caps=package.loaded.caps
+    return type(caps)=='table' and caps.is_client==true
+end
+local function transport()
+    local net=package.loaded.net
+    return type(net)=='table' and net or nil
+end
+
+-- The scheduler's own record for one work type, if every camp it summarizes
+-- is proven to belong to this displayed scope.
+local function host_seen(scheduler,work,view)
     local seen=(scheduler.last_capped or {})[work]
     if not seen or seen.pass~=scheduler.pass_id or seen.unknown~=0
         or type(seen.camps)~='number' or seen.camps<=0 or type(seen.capped)~='number' then return nil end
@@ -186,8 +197,129 @@ function M.verdict(scheduler,work,view)
         end
     end
     if count~=seen.camps then return nil end
+    return seen
+end
+
+-- A client's view carries the server's verdicts (protocol schema 5), so the
+-- client shows what the server decided instead of "No count yet". Nil until
+-- a fresh count with verdicts arrived, and for a work type it did not judge.
+function M.verdict(scheduler,work,view)
+    if not view or not view.verified then return nil end
+    local seen
+    if view.limits~=nil or client() then
+        local limits=type(view.limits)=='table' and view.limits or {}
+        seen=type(limits.verdicts)=='table' and limits.verdicts[work] or nil
+        if type(seen)~='table' or seen.unknown~=0 or type(seen.camps)~='number' or seen.camps<=0
+            or type(seen.capped)~='number' then return nil end
+    else
+        seen=host_seen(scheduler,work,view)
+        if not seen then return nil end
+    end
     -- Third value: how many bases the partial count is out of ("Reached 2/3").
     return seen.capped>=seen.camps,
         seen.capped>0 and seen.capped<seen.camps and seen.capped or nil, seen.camps
+end
+
+-- Whether Mining limits work per item (on rocks). A client follows the
+-- server, since the server is the one that holds rocks; until a reply said
+-- so it falls back to its own config.
+function M.per_item(cfg)
+    if client() then
+        local net=transport()
+        local flag=net and net.server_item_limits
+        if flag==true or flag==false then return flag end
+    end
+    return not (type(cfg)=='table' and cfg.item_limits_on_rocks==false)
+end
+
+-- Whether rocks of this item are held off. A client asks the server's last
+-- fresh count (schema 5), the host asks item_sources. False when unknown.
+function M.item_stopped(item)
+    if client() then
+        local net=transport()
+        if not net or type(net.item_stopped)~='function' then return false end
+        local ok,stopped=pcall(net.item_stopped,item)
+        return ok and stopped==true
+    end
+    local sources=package.loaded.item_sources
+    if type(sources)~='table' or type(sources.item_stopped)~='function' then return false end
+    local ok,stopped=pcall(sources.item_stopped,item)
+    return ok and stopped==true
+end
+
+-- Server side of schema 5, for net.on_limit_state: the limit state of one
+-- guild for exactly the scope of a storage view it is about to send. Plain
+-- data from the last pass. A verdict counts the guild's camps in that scope:
+-- with scheduler.last_capped_by_camp ({[camp]={pass=, works={[work]=true
+-- (capped) | false (running) | 'unknown'}}}) it is exact on a server with
+-- many guilds; without it the server-wide last_capped is used only where
+-- host_seen proves it covers this scope alone, as on the host's own panel.
+function M.server_limits(cfg,scheduler,guild,view,caps,sources)
+    local out={per_item=not (type(cfg)=='table' and cfg.item_limits_on_rocks==false), verdicts={}, stopped={}}
+    if type(view)~='table' or view.verified~=true or type(scheduler)~='table'
+        or type(guild)~='string' then return out end
+    caps=caps or package.loaded.caps
+    sources=sources or package.loaded.item_sources
+    local rules
+    if type(caps)=='table' and type(caps.all)=='function' then
+        local ok,got=pcall(caps.all,cfg,guild)
+        if ok and type(got)=='table' then rules=got end
+    end
+    local camps,n={},0
+    for camp,meta in pairs(scheduler.last_storage_by_camp or {}) do
+        if type(meta)=='table' and meta.pass==scheduler.pass_id and meta.guild==guild
+            and (view.scope~='camp' or camp==view.camp) then camps[camp],n=true,n+1 end
+    end
+    if n==0 or (view.scope=='camp' and n~=1) then return out end
+    local by_camp=scheduler.last_capped_by_camp
+    local function judged(name) return rules==nil or rules[name]~=nil end
+    if type(by_camp)=='table' then
+        local function works(camp)
+            local entry=by_camp[camp]
+            if type(entry)=='table' and entry.pass==scheduler.pass_id and type(entry.works)=='table' then
+                return entry.works
+            end
+        end
+        local names={}
+        for camp in pairs(camps) do
+            for name in pairs(works(camp) or {}) do if judged(name) then names[name]=true end end
+        end
+        for name in pairs(names) do
+            local v={camps=n, capped=0, unknown=0}
+            for camp in pairs(camps) do
+                local state=(works(camp) or {})[name]
+                if state==true then v.capped=v.capped+1
+                elseif state~=false then v.unknown=v.unknown+1 end
+            end
+            out.verdicts[name]=v
+        end
+    else
+        local scope={verified=true, guild=guild, scope=view.scope, camp=view.camp}
+        for name in pairs(scheduler.last_capped or {}) do
+            local seen=judged(name) and host_seen(scheduler,name,scope)
+            if seen then out.verdicts[name]={camps=seen.camps, capped=seen.capped, unknown=0} end
+        end
+    end
+    if not out.per_item or type(sources)~='table' then return out end
+    if type(sources.held_items)=='function' then
+        for camp in pairs(camps) do
+            local ok,held=pcall(sources.held_items,camp)
+            if ok and type(held)=='table' then
+                for item,yes in pairs(held) do if yes==true then out.stopped[item]=true end end
+            end
+        end
+    elseif type(sources.item_stopped)=='function' and type(sources.blocked)=='table'
+        and rules and type(rules.Mining)=='table' then
+        -- item_stopped answers for every camp at once. That is this scope's
+        -- answer only while every camp holding rocks off lies inside it.
+        for camp,keys in pairs(sources.blocked) do
+            if type(keys)=='table' and next(keys)~=nil and not camps[camp] then return out end
+        end
+        for item in pairs(rules.Mining) do
+            local ok,stopped=pcall(sources.item_stopped,item)
+            if ok and stopped==true then out.stopped[item]=true end
+        end
+    end
+    return out
 end
 return M

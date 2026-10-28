@@ -14,8 +14,8 @@ FIELDS = frozenset(('nonce', 'phase', 'loaded', 'gate', 'gate_blocked',
                     'priority_state', 'limit_state', 'settings_opens',
                     'trial_opens', 'priority_hex', 'limit_hex', 'error'))
 EMPTY_PRIORITIES = b'# Pal Work Priority: palkey|worktype|priority (1 highest, 5 lowest, X disabled)\n'
-EMPTY_LIMITS = (b'# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-                b'# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n')
+EMPTY_LIMITS = (b'# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+                b'# guild|work|item|limit (OFF hides an inherited limit for this guild)\n')
 
 
 def require(condition, reason):

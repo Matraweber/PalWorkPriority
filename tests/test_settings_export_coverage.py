@@ -19,8 +19,8 @@ except ImportError:
     from test_settings_migration_plan import envelope
 
 P = b'# Pal Work Priority: palkey|worktype|priority (1 highest, 5 lowest, X disabled)\n'
-LIMITS = (b'# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-          b'# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n')
+LIMITS = (b'# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+          b'# guild|work|item|limit (OFF hides an inherited limit for this guild)\n')
 ALIAS = '-1145324613--1145324613--1145324613--1145324613'
 
 

@@ -79,6 +79,12 @@ M.publish_pending = nil
 -- Main supplies authenticated interest and a plain-data snapshot builder.
 M.on_storage_interest = nil
 M.on_storage_request = nil
+-- Main supplies (guild, view) -> the server's plain limit state for exactly
+-- that storage view (panel_status.server_limits). Unset, a schema 5 reply
+-- carries no verdicts and "-" for the flag, and clients keep their own cfg.
+M.on_limit_state = nil
+-- Client: the server's item_limits_on_rocks once a storage reply said it.
+M.server_item_limits = nil
 -- Set by main.lua. Called on a client with (message).
 M.on_state = nil
 
@@ -614,7 +620,7 @@ local unavailable_reason
 local recovery_retry_at,recovery_retries=nil,0
 -- Schema 3 already has a reason field. Only known codes may cross the wire;
 -- handler errors and old peers' unknown reasons collapse to generic rejection.
-local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,
+local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,too_many_limits=true,
     rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true}
 local function rejection_reason(reason)
     return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'
@@ -668,6 +674,7 @@ function M.begin_session(epoch)
     M.epoch = epoch
     M.local_nonce = string.format("%x-%x-%x", os.time(), math.floor(now() * 1000000), nonce_serial)
     M.server_nonce, M.guild, M.server_guild = nil, nil, nil
+    M.server_item_limits = nil
     M.clients, M.pals, M.rules = {}, {}, {}
     M.pals_gen, M.pending_gen = M.pals_gen + 1, M.pending_gen + 1
     receiver, requests, cells, offers, sequence = nil, {}, {}, {}, 0
@@ -799,8 +806,28 @@ function M.storage_view(guild, selected)
         -- Published totals are immutable by contract. The picker keys its
         -- sorted/search cache by this identity, so never copy on a UI read.
         out.totals = view.totals
+        -- The server's verdicts describe this count and expire with it.
+        out.limits = view.limits
     end
     return out
+end
+
+-- The server's limit state for the current, still fresh count, or nil.
+function M.limit_state()
+    local event = stock.view
+    if not event or not stock.open or unavailable_reason or event.epoch ~= M.epoch
+        or event.guild ~= M.guild or event.session ~= M.server_nonce
+        or event.client_session ~= M.local_nonce or event.storage.verified ~= true
+        or now() >= event.expires_at then return nil end
+    return event.storage.limits
+end
+
+-- Whether the server holds rocks of this item off in the counted scope; nil
+-- while no fresh schema 5 count says.
+function M.item_stopped(item)
+    local limits = M.limit_state()
+    if type(limits) ~= 'table' or type(limits.stopped) ~= 'table' then return nil end
+    return limits.stopped[item] == true
 end
 
 local function receive_stock(comp, p)
@@ -931,9 +958,25 @@ local function pump_stock()
                 M.on_storage_request,job.guild,job.selected,t)
         end)
         if not current() then discard(); return end
+        -- Schema 5: the server's own verdicts for exactly this view. Plain
+        -- data from the last pass; a failure only leaves the reply without.
+        if ok and type(view) == 'table' and M.on_limit_state then
+            local got, limits = pcall(M.on_limit_state, job.guild, view)
+            if not current() then discard(); return end
+            if got and type(limits) == 'table' then
+                local copy = {}
+                for k, v in pairs(view) do copy[k] = v end
+                copy.limits, view = limits, copy
+            end
+        end
         peer.stock_revision = (peer.stock_revision or 0) + 1
         local batch = ok and view and push_phase('network storage: encode',wire.storage_snapshot,job.server,job.client,job.guild,
             peer.stock_revision,job.request,view)
+        if not batch and ok and type(view) == 'table' and view.limits ~= nil then
+            -- An oversized or invalid limit state must not cost the count.
+            view.limits = nil
+            batch = wire.storage_snapshot(job.server,job.client,job.guild,peer.stock_revision,job.request,view)
+        end
         if not batch then
             -- Preserve bounded selector metadata if possible, never partial totals.
             local unavailable_view = {scope=type(view)=='table' and view.scope or 'camp',
@@ -1024,6 +1067,9 @@ local function receive_stock_state(message)
     local totals = {}
     for item, amount in pairs(view.totals) do totals[item] = amount end
     view.totals = totals -- one owned publication per atomic commit
+    -- The flag is server configuration, not part of the count: it stays
+    -- known for this session after the count expires.
+    if view.limits and view.limits.per_item ~= nil then M.server_item_limits = view.limits.per_item end
     event.epoch = M.epoch
     -- Retain only plain selector metadata across count expiry/timeouts, never
     -- a reference to the expired totals. Lifecycle/selection clears both.
@@ -1898,6 +1944,14 @@ function M.report_storage()
         view.scope or 'unavailable',view.camp or 'none',#view.choices,tostring(view.verified),tostring(count),stone))
     log.say(string.format('  storage cached sample: age_ms=%s expires_at=%s remaining_ms=%s (local clock now=%.3f)',
         age,expiry,remaining,t))
+    local limits, verdicts, held = view.limits, 0, 0
+    if type(limits) == 'table' then
+        for _ in pairs(limits.verdicts or {}) do verdicts = verdicts + 1 end
+        for _ in pairs(limits.stopped or {}) do held = held + 1 end
+    end
+    log.say(string.format('  server limit state: item_limits_on_rocks=%s verdicts=%s items_with_rocks_held=%s',
+        tostring(M.server_item_limits), limits and tostring(verdicts) or 'unknown',
+        limits and tostring(held) or 'unknown'))
 end
 
 function M.report()

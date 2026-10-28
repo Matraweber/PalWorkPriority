@@ -1,8 +1,13 @@
 -- Pure Lua wire validation. No engine wrappers or partial state escape here.
 -- Schema 4 adds selected-scope storage; schema 3 peers must not receive S.
--- Session-bound server availability control remains required. The existing
--- PWP_V2 envelope framing is retained; Hello/Welcome negotiate this schema.
-local M = { SCHEMA = 4, WORKS = 14, MAX_PACKET = 768,
+-- Schema 5 (2026-10-28) adds the server's limit state to every storage reply:
+-- its item_limits_on_rocks flag, its limit verdict per work type for exactly
+-- the scope that reply counts, and the items whose rocks it holds off there.
+-- Without it a client had no verdict at all and said "No count yet" all
+-- session. Session-bound server availability control remains required. The
+-- existing PWP_V2 envelope framing is retained; Hello/Welcome negotiate this
+-- schema, so a schema 4 peer is refused politely by that handshake.
+local M = { SCHEMA = 5, WORKS = 14, MAX_PACKET = 768,
     MAX_PALS = 512, MAX_RULES = 500, MAX_BYTES = 524288, TIMEOUT = 10,
     MAX_STORAGE_ITEMS = 512, MAX_STORAGE_CAMPS = 32, MAX_STORAGE_CHUNKS = 32,
     MAX_STORAGE_BYTES = 16384, MAX_STORAGE_MS = 60000, MAX_STORAGE_AMOUNT = 2147483647 }
@@ -122,34 +127,67 @@ local function decimal(value, high)
     return M.integer(value, 0, high)
 end
 
+-- Per chunk kind, how many keys one whole reply may carry: C camps, I item
+-- totals, V limit verdicts (one per work type), X items with rocks held off.
+local CHUNK_LIMIT = { C = "MAX_STORAGE_CAMPS", I = "MAX_STORAGE_ITEMS", V = "WORKS", X = "MAX_STORAGE_ITEMS" }
+
+-- A verdict is capped/camps/unknown over the camps of the reply's scope, the
+-- same three numbers as scheduler.last_capped. A camp is counted and capped,
+-- counted and running, or unknown (no readable stock), so capped and unknown
+-- together never exceed camps.
+local function verdict(capped, camps, unknown)
+    capped, camps = M.integer(capped, 0, M.MAX_STORAGE_CAMPS), M.integer(camps, 1, M.MAX_STORAGE_CAMPS)
+    unknown = M.integer(unknown, 0, M.MAX_STORAGE_CAMPS)
+    if not capped or not camps or not unknown or capped + unknown > camps then return nil end
+    return { capped = capped, camps = camps, unknown = unknown }
+end
+
 function M.storage_row(p)
     local scope = p[1]
     if scope ~= "G" and scope ~= "N"
         and not (scope:sub(1, 2) == "C:" and M.token(scope:sub(3))) then return nil end
-    local request, age, remaining, verified, items, camps = p[2]:match(
-        "^M:([%w_%-]+):(%d+):(%d+):([01]):(%d+):(%d+)$")
+    local request, age, remaining, verified, items, camps, verdicts, stopped = p[2]:match(
+        "^M:([%w_%-]+):(%d+):(%d+):([01]):(%d+):(%d+):(%d+):(%d+)$")
     if request then
         age, remaining = decimal(age, M.MAX_STORAGE_MS), decimal(remaining, M.MAX_STORAGE_MS)
         items, camps = decimal(items, M.MAX_STORAGE_ITEMS), decimal(camps, M.MAX_STORAGE_CAMPS)
+        verdicts, stopped = decimal(verdicts, M.WORKS), decimal(stopped, M.MAX_STORAGE_ITEMS)
+        -- Third field: the server's item_limits_on_rocks, "-" when it did not say.
         if not M.token(request, 64) or not age or not remaining or not items or not camps
-            or p[3] ~= "-" or age + remaining > M.MAX_STORAGE_MS then return nil end
-        if verified == "0" and (items ~= 0 or age ~= 0 or remaining ~= 0) then return nil end
+            or not verdicts or not stopped or (p[3] ~= "-" and p[3] ~= "0" and p[3] ~= "1")
+            or age + remaining > M.MAX_STORAGE_MS then return nil end
+        -- Verdicts and held rocks describe a count, so they never come without one.
+        if verified == "0" and (items ~= 0 or age ~= 0 or remaining ~= 0
+            or verdicts ~= 0 or stopped ~= 0) then return nil end
         if verified == "1" and (remaining == 0 or scope == "N") then return nil end
+        local per_item = nil
+        if p[3] ~= "-" then per_item = p[3] == "1" end
         return "M", { scope_key = scope, kind = "M", request = request, age_ms = age,
-            remaining_ms = remaining, verified = verified == "1", item_count = items, camp_count = camps }
+            remaining_ms = remaining, verified = verified == "1", item_count = items, camp_count = camps,
+            verdict_count = verdicts, stopped_count = stopped, per_item = per_item }
     end
-    local kind, index = p[2]:match("^([CI]):(%d+)$")
+    local kind, index = p[2]:match("^([CIVX]):(%d+)$")
     index = index and decimal(index, M.MAX_STORAGE_CHUNKS)
     if not index or index < 2 or p[3] == "" then return nil end
     local values, count = {}, 0
     for pair in (p[3] .. ","):gmatch("(.-),") do
-        local key, amount = pair:match("^([^=]+)=(%d+)$")
-        amount = amount and decimal(amount, M.MAX_STORAGE_AMOUNT)
+        local key, amount
+        if kind == "V" then
+            local capped, camps, unknown
+            key, capped, camps, unknown = pair:match("^([^=]+)=(%d+)/(%d+)/(%d+)$")
+            amount = key and decimal(capped, M.MAX_STORAGE_CAMPS) and decimal(camps, M.MAX_STORAGE_CAMPS)
+                and decimal(unknown, M.MAX_STORAGE_CAMPS) and verdict(capped, camps, unknown)
+        else
+            key, amount = pair:match("^([^=]+)=(%d+)$")
+            amount = amount and decimal(amount, M.MAX_STORAGE_AMOUNT)
+        end
         if not key or not amount or values[key] ~= nil
-            or (kind == "C" and (not M.token(key) or amount ~= 1))
-            or (kind == "I" and not M.item(key)) then return nil end
+            or ((kind == "C" or kind == "X") and amount ~= 1)
+            or (kind == "C" and not M.token(key))
+            or (kind == "V" and not M.token(key, 64))
+            or ((kind == "I" or kind == "X") and not M.item(key)) then return nil end
         values[key], count = amount, count + 1
-        if count > (kind == "C" and M.MAX_STORAGE_CAMPS or M.MAX_STORAGE_ITEMS) then return nil end
+        if count > M[CHUNK_LIMIT[kind]] then return nil end
     end
     return kind .. ":" .. index, { scope_key = scope, kind = kind, index = index, values = values }
 end
@@ -162,6 +200,7 @@ local function storage_rows(rows)
     local _, meta = M.row("S", rows[1])
     if not meta or meta.kind ~= "M" then return nil end
     local totals, choices, seen, items, bytes = {}, {}, {}, 0, #rows[1]
+    local verdicts, stopped, counts = {}, {}, { V = 0, X = 0 }
     for i = 2, #rows do
         local _, row = M.row("S", rows[i])
         if not row or row.kind == "M" or row.index ~= i or row.scope_key ~= meta.scope_key then return nil end
@@ -172,24 +211,36 @@ local function storage_rows(rows)
                 if seen[key] then return nil end
                 seen[key], choices[#choices + 1] = true, key
                 if #choices > M.MAX_STORAGE_CAMPS then return nil end
-            else
+            elseif row.kind == "I" then
                 if totals[key] ~= nil then return nil end
                 totals[key], items = amount, items + 1
                 if items > M.MAX_STORAGE_ITEMS then return nil end
+            else
+                local into = row.kind == "V" and verdicts or stopped
+                if into[key] ~= nil then return nil end
+                into[key], counts[row.kind] = row.kind == "V" and amount or true, counts[row.kind] + 1
+                if counts[row.kind] > M[CHUNK_LIMIT[row.kind]] then return nil end
             end
         end
     end
-    if items ~= meta.item_count or #choices ~= meta.camp_count then return nil end
+    if items ~= meta.item_count or #choices ~= meta.camp_count
+        or counts.V ~= meta.verdict_count or counts.X ~= meta.stopped_count then return nil end
     local camp = meta.scope_key:sub(1, 2) == "C:" and meta.scope_key:sub(3) or nil
     if meta.verified and camp and not seen[camp] then return nil end
+    -- A verdict for one base counts exactly that base.
+    if camp then for _, v in pairs(verdicts) do if v.camps ~= 1 then return nil end end end
     table.sort(choices)
     return { scope = meta.scope_key == "G" and "guild" or "camp", camp = camp, choices = choices,
         verified = meta.verified, totals = totals, age_ms = meta.age_ms,
-        remaining_ms = meta.remaining_ms }, meta.request
+        remaining_ms = meta.remaining_ms,
+        limits = { per_item = meta.per_item, verdicts = verdicts, stopped = stopped } }, meta.request
 end
 
 -- view = {scope, camp?, choices=array, verified=boolean, totals=FULL map,
---         age_ms, remaining_ms}. Age comes from the underlying sampled_at,
+--         age_ms, remaining_ms, limits?}. limits = {per_item=boolean?,
+--         verdicts={[work]={capped=, camps=, unknown=}}, stopped={[item]=true}}
+--         is the server's own limit state for exactly this scope; verdicts
+--         and stopped need a verified count. Age comes from the underlying sampled_at,
 -- never from a scheduler pass/cache reuse. Encode when the drip begins, not
 -- when it is queued; every queued batch remains bound to its request/session.
 -- nil, reason means unavailable: send an explicit verified=false view instead.
@@ -218,18 +269,43 @@ function M.storage_snapshot(server, client, guild, revision, request, view)
     end
     for i = 1, #camps do if view.choices[i] == nil then return nil, "invalid_storage" end end
     if view.verified and view.camp and not seen[view.camp] then return nil, "invalid_storage" end
-    table.sort(items); table.sort(camps)
+    local limits, works, held = view.limits, {}, {}
+    if limits ~= nil then
+        if type(limits) ~= "table" or (limits.per_item ~= nil and type(limits.per_item) ~= "boolean")
+            or (limits.verdicts ~= nil and type(limits.verdicts) ~= "table")
+            or (limits.stopped ~= nil and type(limits.stopped) ~= "table") then return nil, "invalid_storage" end
+        for work, v in pairs(limits.verdicts or {}) do
+            if not view.verified or not M.token(work, 64) or type(v) ~= "table"
+                or type(v.capped) ~= "number" or type(v.camps) ~= "number" or type(v.unknown) ~= "number"
+                or not verdict(v.capped, v.camps, v.unknown)
+                or (view.camp ~= nil and v.camps ~= 1) then return nil, "invalid_storage" end
+            works[#works + 1] = work
+            if #works > M.WORKS then return nil, "storage_too_large" end
+        end
+        for item, yes in pairs(limits.stopped or {}) do
+            if not view.verified or not M.item(item) or yes ~= true then return nil, "invalid_storage" end
+            held[#held + 1] = item
+            if #held > M.MAX_STORAGE_ITEMS then return nil, "storage_too_large" end
+        end
+    end
+    local flag = "-"
+    if limits ~= nil and limits.per_item ~= nil then flag = limits.per_item and "1" or "0" end
+    table.sort(items); table.sort(camps); table.sort(works); table.sort(held)
     if not M.token(server, 64) or not M.token(client, 64) or not M.token(guild)
         or not M.integer(revision, 1, 2147483647) then return nil, "invalid_storage" end
     local rows = { scope .. "|M:" .. request .. ":" .. string.format("%.0f:%.0f", age, remaining) .. ":"
-        .. (view.verified and "1" or "0") .. ":" .. #items .. ":" .. #camps .. "|-" }
+        .. (view.verified and "1" or "0") .. ":" .. #items .. ":" .. #camps
+        .. ":" .. #works .. ":" .. #held .. "|" .. flag }
     local function chunks(kind, keys, values)
         local chunk = ""
         local function prefix()
             return scope .. "|" .. kind .. ":" .. (#rows + 1) .. "|"
         end
         for _, key in ipairs(keys) do
-            local pair = key .. "=" .. string.format("%.0f", values and values[key] or 1)
+            local v = values and values[key]
+            local pair = key .. "=" .. (kind == "V"
+                and string.format("%.0f/%.0f/%.0f", v.capped, v.camps, v.unknown)
+                or string.format("%.0f", v or 1))
             local joined = chunk == "" and pair or chunk .. "," .. pair
             local overhead = #envelope("D", server, client, guild) + #( "|S|" .. revision .. "|" .. (#rows + 1) .. "|")
             if overhead + #prefix() + #joined > M.MAX_PACKET then
@@ -243,7 +319,10 @@ function M.storage_snapshot(server, client, guild, revision, request, view)
         if chunk ~= "" then rows[#rows + 1] = prefix() .. chunk end
         return true
     end
-    if not chunks("C", camps) or not chunks("I", items, view.totals) then return nil, "storage_too_large" end
+    if not chunks("C", camps) or not chunks("I", items, view.totals)
+        or not chunks("V", works, limits and limits.verdicts) or not chunks("X", held) then
+        return nil, "storage_too_large"
+    end
     local batch = M.snapshot(server, client, guild, "S", revision, "F", rows)
     if not batch then return nil, "storage_too_large" end
     return batch

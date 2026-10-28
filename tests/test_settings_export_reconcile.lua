@@ -62,3 +62,16 @@ reject(function(v)v.unexpected=true end)
 -- Canonical group destination is valid too; no duplicate claim generated.
 o=fixture();o.legacy_guild=G;o.legacy_limits=Caps.serialize_snapshot({[G]={Mining={Stone=100}}})
 r=assert(Plan.plan(o));assert(Caps.decode_snapshot(r.bodies.limits).data[G].Mining.Stone==false)
+-- A journal written before the caps.txt header changed (2026-10-28) still
+-- reconciles: its rules are compared, not its comment lines.
+local OLD_HEADER='# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
+    ..'# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n'
+o=fixture();local current=o.journal_limits
+assert(current:sub(1,#Caps.HEADER)==Caps.HEADER)
+o.journal_limits=OLD_HEADER..current:sub(#Caps.HEADER+1)
+local old_r=assert(Plan.plan(o),'old-header journal no longer reconciles')
+assert(old_r.bodies.limits==assert(Plan.plan(fixture())).bodies.limits,'old header changed the result')
+assert(old_r.bodies.limits:sub(1,#Caps.HEADER)==Caps.HEADER,'result kept the old header')
+reject(function(v)v.journal_limits=OLD_HEADER:match('^[^\n]*\n')..current:sub(#Caps.HEADER+1)end)
+reject(function(v)v.journal_limits=v.journal_limits..'# extra metadata\n'end)
+reject(function(v)v.journal_limits=current:gsub('\n([^\n]*)\n$','\n# note\n%1\n')end)
