@@ -32,7 +32,7 @@ local USER_NAME = "PalWorkPriority_user"
 --
 -- work_priority, pal_overrides and work_caps are tables, and the first and
 -- last are already editable in game - priorities on the Monitoring Stand,
--- ceilings in the Alt+F1 panel - so putting them here would be a second place
+-- limits in the Alt+F1 panel - so putting them here would be a second place
 -- to set the same thing and a second thing to keep in step. The scalars are
 -- the ones with no in-game route at all, which is the gap worth closing.
 --
@@ -46,7 +46,7 @@ return {
   tab = "Pal Work Priority",
   order = 100,
   target = "PalWorkPriority_user",
-  note = "config.lua stays the default. Anything set here overrides it. Priorities are set on the Monitoring Stand and ceilings in the Alt+F1 panel, so neither is repeated here.",
+  note = "Changes here apply after you restart Palworld. Priorities are set on the Monitoring Stand, limits in Production Limits (Alt+F1). On a server only the host's settings count.",
   applyNote = "Saved. Restart Palworld to apply.",
   live = false,
   defaults = {
@@ -73,14 +73,16 @@ return {
       title = "Running",
       options = {
         { path = "enabled", label = "Assign Pals to jobs", kind = "bool",
-          help = "Off leaves every Pal exactly as the game left it." },
+          help = "Off gives every Pal its work back and stops steering." },
         { path = "dry_run", label = "Test mode", kind = "bool",
           dependsOn = "enabled",
-          help = "Works everything out and writes nothing. The log says what it would have done." },
-        { path = "interval_seconds", label = "Seconds between passes", kind = "number",
-          integer = true, min = 2, max = 300, step = 5, dependsOn = "enabled" },
-        { path = "run_on_world_load", label = "Run a pass on world load", kind = "bool",
-          dependsOn = "enabled" },
+          help = "Works everything out and changes nothing. priority.log says what it would have done." },
+        { path = "interval_seconds", label = "Seconds between rechecks", kind = "number",
+          integer = true, min = 5, max = 300, step = 5, dependsOn = "enabled",
+          help = "How often the mod looks at every base again. Lower reacts sooner but costs a little more." },
+        { path = "run_on_world_load", label = "Recheck when a world loads", kind = "bool",
+          dependsOn = "enabled",
+          help = "Rechecks every base as soon as a world has loaded. Off waits for the first timed recheck." },
       },
     },
     {
@@ -91,39 +93,46 @@ return {
             { value = "spread", label = "Spread (one Pal per job first)" },
             { value = "fill",   label = "Fill (stack the best job first)" },
           },
-          help = "Spread gives every wanted job somebody before doubling up." },
+          help = "Spread gives every wanted job somebody before doubling up. Fill gives the top job every Pal it can first." },
         { path = "max_pals_per_work_type", label = "Most Pals on one job", kind = "number",
-          integer = true, min = 0, max = 20, step = 1, note = "0 for no limit" },
-        { path = "min_suitability_rank", label = "Lowest rank worth dedicating", kind = "number",
+          integer = true, min = 0, max = 20, step = 1, note = "0 for no limit",
+          help = "The most Pals the mod puts on the same job." },
+        { path = "min_suitability_rank", label = "Lowest work level to dedicate", kind = "number",
           integer = true, min = 1, max = 5, step = 1,
-          help = "Stops the mod dedicating a rank 1 Pal to a job a specialist should have. It does not stop that Pal working." },
+          help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Below it a Pal is not dedicated to that job, but it may still do it." },
         { path = "leave_unordered_pals_to_game", label = "Leave unranked Pals to the game", kind = "bool",
           help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
-        { path = "item_limits_on_rocks", label = "Mining limits per item", kind = "bool",
-          help = "A reached Mining limit stops only the rocks that mainly give that item; other mining goes on. Off: the whole Mining job stops." },
       },
     },
     {
-      title = "Ceilings",
+      title = "Production limits",
       options = {
         { path = "storage_scope", label = "Count storage", kind = "enum",
           values = {
             { value = "camp",   label = "Per base" },
             { value = "global", label = "Across every loaded base" },
           },
-          help = "Whether a limit is measured at each base on its own or over all of them." },
+          help = "Whether a limit is measured at each base on its own or over all of them. A base nobody is near may not be loaded and is then not counted." },
+        { path = "item_limits_on_rocks", label = "Mining limits per item", kind = "bool",
+          help = "A reached Mining limit stops only the rocks that mainly give that item; other mining goes on. Off: the whole Mining job stops." },
       },
     },
     {
       title = "Hotkeys",
       options = {
-        { path = "key_panel", label = "Production Limits panel", kind = "keychord" },
-        { path = "key_pass", label = "Run a pass now", kind = "keychord" },
-        { path = "key_stock", label = "Print base storage", kind = "keychord" },
-        { path = "key_mode", label = "Switch spread / fill", kind = "keychord" },
-        { path = "key_cap", label = "Cycle the per-job cap", kind = "keychord" },
-        { path = "key_scope", label = "Switch storage scope", kind = "keychord" },
-        { subtitle = "Esc closes the panel and is not rebindable." },
+        { path = "key_panel", label = "Production Limits panel", kind = "keychord",
+          help = "Opens and closes Production Limits, where you set how much of an item a base keeps." },
+        { path = "key_pass", label = "Recheck now", kind = "keychord",
+          help = "Rechecks every base now instead of waiting for the next timed recheck." },
+        { path = "key_stock", label = "Print base storage", kind = "keychord",
+          help = "Writes what each container holds to priority.log in the mod folder." },
+        { path = "key_mode", label = "Switch spread / fill", kind = "keychord",
+          help = "Switches between Spread and Fill until you restart. The saved choice is Assignment above." },
+        { path = "key_cap", label = "Cycle most Pals on one job", kind = "keychord",
+          help = "Steps Most Pals on one job through 1, 2, 3, 4 and no limit until you restart." },
+        { path = "key_scope", label = "Switch Count storage", kind = "keychord",
+          help = "Switches Count storage between per base and every loaded base until you restart." },
+        { subtitle = "Esc (controller: B) closes Production Limits. On the stand, View opens it." },
       },
     },
     {
@@ -131,12 +140,20 @@ return {
       options = {
         { path = "log_level", label = "Log detail", kind = "enum",
           values = { "debug", "info", "warn", "error" },
-          help = "info is the normal amount. debug is loud." },
+          help = "How much goes into priority.log. info is the normal amount, debug is a lot." },
       },
     },
   },
 }
 ]==]
+
+-- The schema as a table, for the range checks in M.apply and for the tests.
+-- Parsed from the same text DarnMenu reads, so the page and the checks
+-- cannot drift apart.
+function M.schema()
+    local chunk = load(SCHEMA_SOURCE, "=darnmenu schema", "t", {})
+    return chunk and chunk() or nil
+end
 
 -- Mods/shared/, found from this file rather than hardcoded, so a non-standard
 -- install still resolves.
@@ -295,9 +312,15 @@ local KEYS = {
 -- Returns key, modifiers, changed.
 local MODS = { CONTROL = true, ALT = true, SHIFT = true }
 
-function M.binding(name, default_key, default_mods)
+-- What the player saved, or nil. On M so a test can hand in a file's
+-- contents without a Mods/shared/ folder on disk.
+function M.user_settings()
     local shared = shared_dir()
-    local user = shared and read_table(shared .. USER_NAME .. ".lua") or nil
+    return shared and read_table(shared .. USER_NAME .. ".lua") or nil
+end
+
+function M.binding(name, default_key, default_mods)
+    local user = M.user_settings()
     local saved = user and user[name] or nil
 
     local key_name = default_key
@@ -342,23 +365,68 @@ function M.binding(name, default_key, default_mods)
     return key, mods, changed, label
 end
 
+-- Why a saved value cannot be used, or nil when it can.
+--
+-- The schema's own kind, range and values first, then configuration.validate
+-- on that one key, which is what decides whether the mod starts at all. Until
+-- 2026-10-28 the page offered "Seconds between rechecks" from 2 while validate
+-- wanted 5, so a 2 saved here stopped the mod on every launch.
+local function refusal(key, value, option, configuration)
+    if option and option.kind == "number" then
+        if value ~= value or value == math.huge or value == -math.huge then
+            return "not a number"
+        end
+        if option.integer and math.tointeger(value) == nil then return "not a whole number" end
+        if option.min and value < option.min then return "below " .. option.min end
+        if option.max and value > option.max then return "above " .. option.max end
+    elseif option and option.kind == "enum" then
+        local known = false
+        for _, entry in ipairs(option.values or {}) do
+            if (type(entry) == "table" and entry.value or entry) == value then known = true end
+        end
+        if not known then return "not one of the choices" end
+    end
+    -- 0 means "no limit" in the menu, which config spells as nil. The menu has
+    -- no way to offer an absent number, so the two vocabularies are translated
+    -- in M.apply rather than teaching the scheduler a second one.
+    if key == "max_pals_per_work_type" and value == 0 then return nil end
+    local ok, valid = pcall(configuration.validate, { [key] = value })
+    if not ok or not valid then return "refused by the config check" end
+    return nil
+end
+
+-- A bad value is skipped with a warning naming it, never passed on: this runs
+-- before configuration.validate, and a value that fails there stops the whole
+-- mod. The setting then keeps what config.lua says.
 function M.apply(cfg)
     if type(cfg) ~= "table" then return 0 end
 
-    local shared = shared_dir()
-    if shared == nil then return 0 end
-
-    local user = read_table(shared .. USER_NAME .. ".lua")
+    local user = M.user_settings()
     if user == nil then return 0 end
+
+    local configuration = require("configuration")
+    local options = {}
+    for _, section in ipairs((M.schema() or {}).sections or {}) do
+        for _, option in ipairs(section.options or {}) do
+            if option.path then options[option.path] = option end
+        end
+    end
 
     local n = 0
     for key, want in pairs(KEYS) do
         local value = user[key]
-        if type(value) == want then
-            -- 0 means "no limit" in the menu, which config spells as nil. The
-            -- menu has no way to offer an absent number, so the two
-            -- vocabularies are translated here rather than teaching the
-            -- scheduler a second one.
+        local option = options[key]
+        local why = nil
+        if value ~= nil and type(value) ~= want then
+            why = "not a " .. want
+        elseif value ~= nil then
+            why = refusal(key, value, option, configuration)
+        end
+        if why then
+            log.warn("darnmenu: ignored \"" .. (option and option.label or key) .. "\" = " ..
+                tostring(value) .. " from Mods/shared/" .. USER_NAME .. ".lua (" .. why ..
+                "); keeping " .. tostring(cfg[key]) .. " from config.lua")
+        elseif value ~= nil then
             if key == "max_pals_per_work_type" and value == 0 then
                 value = nil
             end

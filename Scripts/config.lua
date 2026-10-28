@@ -12,30 +12,29 @@ return {
     -- false = actually assign pals
     --
     -- Set this to true to watch a session before letting the mod touch a
-    -- base. Every pass then logs what it would change and sends nothing.
+    -- base. Every recheck then logs what it would change and sends nothing.
     dry_run = false,
 
-    -- Seconds between automatic passes.
+    -- Seconds between rechecks (5 or more).
     --
     -- Demand is short-lived: a job appears, a pal takes it, and it is gone.
-    -- At 30 seconds the mod was sampling far slower than work arrives and
-    -- could miss a whole job between passes, so a pal was never fenced to
-    -- work that existed only between two samples. The reference reconciles
-    -- every few seconds for exactly this reason.
+    -- At 30 seconds the mod looked far less often than work arrives and could
+    -- miss a whole job between two rechecks, so no pal was ever steered to
+    -- it. Similar mods recheck every few seconds for exactly this reason.
     --
-    -- Passes send changed permissions only. Native lookup cost still needs
-    -- measurement; unchanged toggles do not establish low frame-time cost.
+    -- A recheck only changes the jobs that need changing. Each one still
+    -- takes some game time, so a lower number costs a little more.
     interval_seconds = 10,
 
     -- "debug" | "info" | "warn" | "error"
     log_level = "info",
 
-    -- Run a pass automatically when a world finishes loading.
+    -- Recheck every base as soon as a world finishes loading.
     run_on_world_load = true,
 
-    -- Legacy-install defaults: 1 is highest, 5 lowest, false is X. A verified
-    -- fresh installation captures vanilla checked=1/unchecked=X per Pal first.
-    -- Existing saved per-Pal values take precedence over this table.
+    -- Used only by installs upgraded from 0.4.1: 1 is highest, 5 lowest,
+    -- false is X. A new install starts from the game's own ticks instead
+    -- (ticked = 1, unticked = X). Values saved per Pal win over this table.
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.
@@ -53,7 +52,7 @@ return {
         Mining = 4,              -- Mining
         OilExtraction = 4,       -- Oil Extraction
         MonsterFarm = 5,         -- Farming
-        Anyone = 3,              -- INERT, see README: nothing ever resolves work to this type
+        Anyone = 3,              -- unused: the game never assigns work to this type
     },
 
 
@@ -90,36 +89,37 @@ return {
     -- false switches the whole Mining work type, as 0.4.1 did.
     item_limits_on_rocks = true,
 
-    -- A pal needs at least this suitability rank to be considered. 1 means
-    -- "has the skill at all"; raise it to stop rank-1 pals clogging jobs a
-    -- rank-3 pal should be doing.
+    -- Lowest work level to dedicate: the Pal's level for that job (the small
+    -- number on the job icon), not the 1-5 priority. 1 means "can do the job
+    -- at all"; raise it to stop level-1 pals clogging jobs a level-3 pal
+    -- should be doing.
     min_suitability_rank = 1,
 
-    -- Which containers do NOT count as storage for a ceiling.
+    -- Which containers do NOT count as storage for a limit.
     --
     -- Everything else on the base does, chests and every station alike, so a
     -- station type this file has never heard of still counts. Listing what to
     -- include instead was the wrong way round: Palworld has more station
     -- types than any hand written list will name, and each one missed is a
-    -- ceiling quietly overshooting by whatever that station is holding.
+    -- limit quietly overshooting by whatever that station is holding.
     --
     -- Press Alt+F3, or run "!pwp stock", to print what every container
     -- on your base is holding.
-    -- Empty: everything on the base counts towards a ceiling.
+    -- Empty: everything on the base counts towards a limit.
     --
     -- Three classes used to be excluded, and the reasoning was that a feed box
     -- holds food set aside to be eaten rather than stock, so counting it would
     -- stop a ranch that was only keeping pace with what the pals get through.
     --
     -- What that actually produced was a lie on the screen. A base with 20,454
-    -- Berries in its feed box and a 3,000 ceiling reported "0 in storage" and
+    -- Berries in its feed box and a 3,000 limit reported "0 in storage" and
     -- went on planting, because the only berries it had were in the one
     -- container it refused to look at. A limit that ignores most of what you
     -- own is not a limit, and "in storage" has to mean in storage.
     --
     -- The ranch case is real but it is a hysteresis problem, not a counting
     -- one: the box drains as the pals eat, and work resumes when it falls back
-    -- under the ceiling. Put the classes back here if you would rather have
+    -- under the limit. Put the classes back here if you would rather have
     -- the old behaviour - "!pwp stock" prints every container by class name.
     uncounted_containers = {},
 
@@ -129,24 +129,23 @@ return {
     --                          "PalMapObjectGuildChestModel" },
     counted_containers = nil,
 
-    -- Which verified storage a legacy group ceiling is measured against.
-    -- "camp": selected base. "global": all loaded bases of the same guild.
-    -- Unknown ownership/quantities remain unavailable. Other guilds are never
-    -- included. Shared guild storage needs native identity/deduplication proof.
-    -- Whether a distant camp remains loaded depends on the running game;
-    -- a player's distance is not proof that its stock is absent.
+    -- Which storage every limit is measured against.
+    -- "camp": each base on its own. "global": every loaded base of the same
+    -- guild added up. Other guilds are never included, and a container whose
+    -- owner or contents cannot be read is not counted. A base nobody is near
+    -- may not be loaded; the game decides that, not the mod.
     storage_scope = "camp",
 
-    -- LEGACY GROUP LIMITS. These stop an entire work suitability only after
-    -- EVERY listed item reaches its threshold. A stone-only Mining group can
-    -- stop ore too; multiple items can overshoot their individual thresholds.
-    -- Limits added in the Production Limits panel work the same way.
+    -- GROUP LIMITS. These stop a whole work type only after EVERY listed
+    -- item has reached its limit, so one item can overshoot its own limit
+    -- while another is still short. Limits added in the Production Limits
+    -- panel work the same way.
     --
-    -- MINING is the exception (item_limits_on_rocks below): a reached Mining
-    -- limit switches off only the natural rocks whose main drop is that item,
-    -- and Mining stops as a whole only when no rock or pit still produces
-    -- something without a limit or below it. Stone Pits and other buildings
-    -- cannot be stopped on their own and keep producing until then.
+    -- MINING is per item by default (item_limits_on_rocks above): a reached
+    -- Mining limit switches off only the natural rocks whose main drop is
+    -- that item, and Mining stops as a whole only when no rock or pit still
+    -- produces something without a limit or below it. Stone Pits and other
+    -- buildings cannot be stopped on their own and keep producing until then.
     --
     -- Per-guild edits override these inherited groups. Clearing an inherited
     -- group item stores an OFF mask for that guild without changing others.
@@ -169,6 +168,7 @@ return {
     -- },
     pal_overrides = {},
 
-    -- Chat command prefix. Type "!pwp help" in game for the command list.
+    -- Chat command prefix. Type "!pwp help" in chat (multiplayer) for the
+    -- command list; the README has it too.
     chat_prefix = "!pwp",
 }

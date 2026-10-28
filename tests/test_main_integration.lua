@@ -12,6 +12,9 @@ local original_native = {}
 for _, name in ipairs(native_names) do original_native[name] = _G[name] end
 local ROOT = "/__pwp_main_integration_only__/mod/"
 local failures = {}
+-- Set by a test to boot with the real darnmenu reading this as the player's
+-- saved Mods/shared/PalWorkPriority_user.lua; nil boots with a stub.
+local darnmenu_user = nil
 
 local function upvalue(fn, wanted)
     for i=1,100 do
@@ -121,6 +124,13 @@ local function boot(authority,empty_caps,prepare,expected_error)
     package.loaded.reload={}
     package.loaded.remote={poll=function() state.maintenance_calls=state.maintenance_calls+1 end,drain=noop}
     package.loaded.darnmenu={apply=noop,register=noop,binding=function() return nil end}
+    if darnmenu_user then
+        package.loaded.darnmenu=nil
+        local real=require("darnmenu")
+        real.user_settings=function() return darnmenu_user end
+        real.register=noop -- writes beside the real Mods/shared; not under test here
+        state.darnmenu=real
+    end
     package.loaded.clock={
         every=function(name,ms,fn) assert(type(fn)=="function"); state.timers[name]={ms=ms,fn=fn} end,
         once=function(ms,fn) state.once[#state.once+1]={ms=ms,fn=fn} end,
@@ -372,7 +382,7 @@ test("status never presents client config as confirmed server staffing or storag
     local function no_local_policy(output)
         assert(not output:find('mode: fill',1,true)
             and not output:find('max per work type: 17',1,true)
-            and not output:find('ceilings measured against:',1,true),
+            and not output:find('limits measured against:',1,true),
             'local config was advertised as active server policy')
     end
     local output=status()
@@ -391,9 +401,9 @@ test("status never presents client config as confirmed server staffing or storag
     host.console={};host.commands.status();output=table.concat(host.console,'\n')
     assert(output:find('| local configuration: enabled | live | every 10s',1,true))
     assert(output:find('mode: fill, max per work type: 17',1,true))
-    assert(output:find('ceilings measured against: every loaded base',1,true))
+    assert(output:find('limits measured against: every loaded base',1,true))
     host_cfg.storage_scope='camp';host.console={};host.commands.status()
-    assert(table.concat(host.console,'\n'):find('ceilings measured against: each base on its own',1,true))
+    assert(table.concat(host.console,'\n'):find('limits measured against: each base on its own',1,true))
     assert(s.scheduler_calls==0 and host.scheduler_calls==0,'status ran scheduling')
 end)
 
@@ -1221,6 +1231,62 @@ test("cutover fence precedes settings recovery and launcher inspection",function
     for _,op in ipairs(clean.fs.operations)do reads[op]=true end
     assert(reads['read:'..ROOT..'priorities.txt'] and reads['read:'..ROOT..'caps.txt'])
     assert(reads['open:'..ROOT..'async-trial/launch.lua'],'clean boot skipped normal trial check')
+end)
+
+test("a DarnMenu value validate refuses is skipped with a warning and the mod starts",function()
+    -- Review A1: the page offered 2 seconds, validate wanted 5, and main.lua
+    -- logged "did not start" on every launch.
+    for _,bad in ipairs({2,7.5}) do
+        darnmenu_user={interval_seconds=bad,dry_run=true}
+        local ok,why=pcall(boot,true)
+        darnmenu_user=nil
+        package.loaded.darnmenu=nil
+        assert(ok,"mod did not start with interval "..bad..": "..tostring(why))
+        local s=why
+        local output=table.concat(s.console,"\n")
+        assert(not output:find("did not start",1,true),output)
+        assert(s.cfg().interval_seconds==10 and s.cfg().dry_run==true,
+            "bad menu value reached the config or cost the good one")
+        assert(output:find('ignored "Seconds between rechecks" = '..tostring(bad),1,true),
+            "no warning naming the option: "..output)
+    end
+end)
+
+test("pwp rocks refuses on a client before touching base works",function()
+    local s=boot(false); s.timers.role.fn()
+    local camps=0
+    s.api.base_camps=function() camps=camps+1; return {} end
+    s.console={}; s.commands.rocks(); s.session.drain()
+    local output=table.concat(s.console,"\n")
+    assert(output:find("rocks: only the server can see this; ask the server.",1,true),output)
+    assert(camps==0,"client rocks read base camps")
+end)
+
+test("Delete asks the open panel to remove the selected limit and leaves the world alone",function()
+    local s=boot(true)
+    local panel=package.loaded.panel
+    local calls={}
+    panel.row_action=function(cfg,kind) calls[#calls+1]=kind; assert(cfg==s.cfg()) return true end
+    assert(type(s.keys.DELETE)=="function","Delete is not bound")
+    panel.open=false; s.keys.DELETE(); s.session.drain()
+    assert(#calls==0,"Delete acted with the panel closed")
+    panel.open=true; s.keys.DELETE(); s.session.drain()
+    assert(#calls==1 and calls[1]=="drop","Delete did not ask for drop")
+end)
+
+test("chat help and the load line are in player words",function()
+    local s=boot(true)
+    local loaded=table.concat(s.console,"\n")
+    assert(loaded:find("help in chat (multiplayer) or see the README.",1,true),loaded)
+    s.console={}; s.commands.help()
+    local help=table.concat(s.console,"\n")
+    for _,word in ipairs({"census","elimination","unfence","ceiling","authority","threshold"}) do
+        assert(not help:lower():find(word,1,true),"help says "..word)
+    end
+    for _,want in ipairs({"list, set or remove production limits","Alt+F2 recheck now",
+        "give every Pal all its work back (do this before removing the mod)"}) do
+        assert(help:find(want,1,true),"help lacks "..want)
+    end
 end)
 
 io.open,io.popen=original_io.open,original_io.popen
