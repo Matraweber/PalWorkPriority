@@ -3149,12 +3149,12 @@ local function draw_list(cfg, totals)
                 -- The sub-label is 12pt in the item colour (review E): at
                 -- 9pt dim it was under 4.5:1. Its line box starts inside the
                 -- job's descender band; the glyphs do not meet.
-                text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT,
-                    workdefs.label(rule.work), "item", 13)
+                text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT - 3,
+                    workdefs.label(rule.work), "item", 12)
                 -- What the limit actually switches (P1-5): the item's own
                 -- rocks for a per-item Mining limit, otherwise the whole job.
-                text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 16,
-                    item_row and "Item limit, rocks" or "Group limit", "item", 12, true)
+                text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 14,
+                    item_row and "Item limit, rocks" or "Group limit", "item", 11, true)
             else
                 line(key, row, PAD + MARK_W, workdefs.label(rule.work),
                     choosable and "action" or "item", ROW_PT)
