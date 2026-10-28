@@ -59,6 +59,7 @@ local function fixture(keys)
             if self.fail_text then error('text write failed') end; self.text=v
         end
         function o:SetColorAndOpacity(v) fresh(); self.colour=v end
+        function o:SetBrushColor(v) fresh(); self.brush=v end
         function o:SetToolTipText(v) fresh(); self.tooltip=v end
         function o:SetFont(v) fresh(); self.Font=v end
         function o:SetJustification() fresh() end
@@ -95,7 +96,7 @@ local function fixture(keys)
         cdo=function(path)
             if path=='/Script/UMG.Default__WidgetBlueprintLibrary' then return f.widget_lib end
             if path=='/Script/AssetRegistry.Default__AssetRegistryHelpers' then return f.registry end
-            return {}
+            return {path=path}
         end,
     }
     f.net={status='ready', pals={}, pals_gen=1, pending_gen=0, PREFIX='PWP:', to_server=function() return false end}
@@ -147,8 +148,11 @@ local function fixture(keys)
         if class=='WBP_WorkSuitabilityPreference_CheckBox_0_C' then return f.cells end
         return {}
     end
-    StaticConstructObject=function(_,tree)
+    StaticConstructObject=function(class,tree)
         f.serial=f.serial+1
+        if class and class.path=='/Script/UMG.Border' then
+            return object('Border',tree.name..'.PWPBox'..f.serial)
+        end
         local text=object('TextBlock',tree.name..'.PWP'..f.serial)
         text.fail_text=f.fail_new_text
         return text
@@ -208,6 +212,16 @@ local function fixture(keys)
         assert(delivered,'BindFromSlot hook was not installed')
     end
     for _,row in ipairs(f.rows) do f.bind(row) end
+    -- The stand legends in a root: each is a Border we own holding one TextBlock.
+    function f.legends(root)
+        local out={}
+        for _,w in ipairs((root or f.root).children) do
+            if w.class=='Border' and w.children[1] and w.children[1].class=='TextBlock' then
+                out[#out+1]=w.children[1]
+            end
+        end
+        return out
+    end
     function f.texts(cell)
         local out={}
         for _,w in ipairs(cell.WidgetTree.RootWidget.children) do
@@ -925,11 +939,18 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     assert(tb.text=='1*','optimistic pending value looked confirmed')
     assert(tb.colour.SpecifiedColor~=normal,'pending value kept confirmed colour')
     assert(f.cells[1].tooltip:find('Sending',1,true),'cell lacks readable pending explanation')
-    local legends={}
-    for _,w in ipairs(f.root.children) do
-        if w.text==f.ui.EDIT_LEGEND then legends[#legends+1]=w end
-    end
-    assert(#legends==1 and legends[1].visibility==3,'visible legend not attached to current menu')
+    local legends=f.legends()
+    assert(#legends==1 and legends[1].text==f.ui.EDIT_LEGEND and legends[1].visibility==3,
+        'visible legend not attached to current menu')
+    -- Readable over the world (audit E, 2026-10-28): a dark backing behind
+    -- 14 pt near-white text, and the backing takes no clicks.
+    local box=legends[1].parent
+    assert(box.class=='Border' and box.visibility==3,'legend has no hit-test-invisible backing')
+    assert(box.brush and box.brush.A>=0.8 and box.brush.R<0.05 and box.brush.G<0.05 and box.brush.B<0.05,
+        'legend backing is not dark enough')
+    assert(legends[1].Font.Size==14,'legend is not 14 pt')
+    local c=legends[1].colour.SpecifiedColor
+    assert(c.R>0.85 and c.G>0.85 and c.B>0.85,'legend text is not light on the dark backing')
     assert(legends[1].text:find('X off',1,true) and legends[1].text:find('! not saved',1,true))
     -- One line: the mouse first, then the marks and the panel key. A second
     -- line ran into the game's "unused Stat Points" bar (in game, 2026-10-22).
@@ -945,9 +966,7 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     package.loaded.darnmenu=dm
     f.menu.visibility=2; f.ui.refresh(f.cfg)
     f.menu.visibility=0; f.bind(f.rows[1]); assert(f.ui.refresh(f.cfg))
-    local n=0
-    for _,w in ipairs(f.root.children) do if w.text==f.ui.EDIT_LEGEND then n=n+1 end end
-    assert(n==1,'reopening duplicated the footer legend')
+    assert(#f.legends()==1 and f.legends()[1].text==f.ui.EDIT_LEGEND,'reopening duplicated the footer legend')
 end)
 
 check('unsaved X survives snapshot, acknowledgement and retry until durable acceptance',function()
@@ -993,6 +1012,156 @@ check('connecting and missing priorities show unknown without fabricating X',fun
     assert(#f.writes==0,'cycling unknown priority invented a new value')
 end)
 
+-- Audit A5 (2026-10-28): a server that never completes the handshake used to
+-- leave "?" in every cell and the checkbox hidden for the whole session.
+local function receiver_of(cell)
+    for _,w in ipairs(cell.WidgetTree.RootWidget.children) do
+        if w.class=='WBP_StandInput_C' then return w end
+    end
+end
+local function no_unknown(f)
+    for _,cell in ipairs(f.cells) do
+        for _,tb in ipairs(f.texts(cell)) do
+            if tostring(tb.text or ''):find('?',1,true) then return false end
+        end
+    end
+    return true
+end
+for _,case in ipairs({
+    {status='incompatible',reason='server_requires_matching_mod',says='different Pal Work Priority version'},
+    {status='incompatible',reason='schema_or_work_width',says='until both match'},
+    {status='connecting',reason='handshake_timeout',says='does not run Pal Work Priority'},
+    {status='unavailable',reason='settings_recovering',says='works as in the base game'},
+}) do
+    check('server without a finished handshake gives the stand back: '..case.status..'/'..case.reason,function()
+        local f=fixture({'a','b'}); assert(f.ui.refresh(f.cfg))
+        f.ui.bind_mouse(function() return f.cfg end)
+        assert(f.cells[1].PalCheckBox.visibility==2 and receiver_of(f.cells[1]).visibility==0)
+        -- The server's data goes with the session; nothing is left to draw.
+        f.net.status,f.net.status_reason=case.status,case.reason; f.net.pals={}
+        f.net.pals_gen=f.net.pals_gen+1
+        assert(f.ui.refresh(f.cfg),'a vanilla stand left its generation unpainted')
+        assert(not f.ui.wants_repaint(),'a vanilla stand would repaint every beat')
+        for _,cell in ipairs(f.cells) do
+            assert(cell.PalCheckBox.visibility==0,'vanilla checkbox stayed hidden')
+            assert(f.texts(cell)[1].text=='','a number or mark stayed over the checkbox')
+            local r=receiver_of(cell)
+            assert(r.visibility==2 and r.PWP_Target=='','the stand receiver stayed armed')
+            assert(cell.tooltip=='','vanilla cell kept a tooltip of ours')
+        end
+        assert(no_unknown(f),'"?" drawn on a server that will not answer')
+        assert(f.ui.legend_text():find(case.says,1,true),f.ui.legend_text())
+        assert(f.legends()[1].text==f.ui.legend_text(),'the legend did not say why')
+        -- No edit can start: pointer, number key, navigation.
+        f.cells[1].hovered=true; f.click(-1); f.key(f.cells[1],2); f.session.drain(error)
+        assert(#f.writes==0)
+        assert(not f.ui.capture_direct() and not f.ui.nav(f.cfg,'raise') and not f.ui.nav(f.cfg,'here'))
+        -- A later refresh keeps it that way rather than flickering.
+        f.ui.detach(); assert(f.ui.refresh(f.cfg)); assert(no_unknown(f))
+    end)
+end
+
+check('the vanilla legend names this version and the incompatible case',function()
+    local f=fixture()
+    local file=assert(io.open(TEST_ROOT..'/Scripts/main.lua','rb'))
+    local main=file:read('a'); file:close()
+    local version=main:match('local%s+VERSION%s*=%s*"([^"]+)"')
+    assert(version and f.ui.MOD_VERSION==version,'ui.MOD_VERSION is not main.lua VERSION '..tostring(version))
+    assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority '..version
+        ..'. The stand works as in the base game.')
+    assert(f.ui.VANILLA_INCOMPATIBLE=='This server runs a different Pal Work Priority version. '
+        ..'The stand works as in the base game until both match.')
+end)
+
+check('brief connecting stays unknown; the handshake timeout latches until a Welcome or new session',function()
+    local f=fixture(); assert(f.ui.refresh(f.cfg))
+    f.net.local_nonce='n1'; f.net.server_nonce=nil
+    f.net.status,f.net.status_reason='connecting','awaiting_handshake'; f.net.pals={}
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.texts(f.cells[1])[1].text=='?','a normal join lost its brief unknown state')
+    assert(f.cells[1].PalCheckBox.visibility==2)
+    assert(f.cells[1].tooltip:find('Connecting',1,true))
+    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    f.net.status_reason='handshake_timeout'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].PalCheckBox.visibility==0 and f.texts(f.cells[1])[1].text=='')
+    -- The next Hello that cannot be sent reports transport_unavailable for a
+    -- beat; the stand must not flicker back to "?".
+    f.net.status_reason='transport_unavailable'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].PalCheckBox.visibility==0 and f.texts(f.cells[1])[1].text=='','latch lost on a send failure')
+    assert(f.ui.legend_text()==f.ui.VANILLA_ABSENT)
+    -- A late Welcome: the mod is there after all; "?" until the snapshots arrive.
+    f.net.server_nonce='srv'; f.net.status_reason='awaiting_snapshots'
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.texts(f.cells[1])[1].text=='?' and f.cells[1].PalCheckBox.visibility==2)
+    f.net.status,f.net.status_reason='ready',nil; f.net.pals.a={ranks={[1]=1},prios={[1]=3}}
+    f.net.pals_gen=f.net.pals_gen+1; assert(f.ui.refresh(f.cfg))
+    assert(f.texts(f.cells[1])[1].text=='3' and receiver_of(f.cells[1]).visibility==0,'grid did not come back')
+    -- A new session (new nonce) starts unknown again, not latched.
+    f.net.server_nonce=nil; f.net.local_nonce='n2'
+    f.net.status,f.net.status_reason='connecting','transport_unavailable'; f.net.pals={}
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.texts(f.cells[1])[1].text=='?','a new session inherited the old timeout')
+end)
+
+check('vanilla stand keeps its reason in the tooltip when the root takes no legend',function()
+    local f=fixture(); local inner=f.root
+    local root=f.object('SizeBox','single-child-root'); root:AddChild(inner)
+    f.menu.WidgetTree.RootWidget=root
+    assert(f.ui.refresh(f.cfg)); assert(f.ui.legend_mode=='tooltip')
+    f.net.status='incompatible'; f.net.pals={}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].tooltip==f.ui.VANILLA_INCOMPATIBLE)
+    assert(f.cells[1].PalCheckBox.visibility==0)
+end)
+
+check('controller does not take the focus from a vanilla stand',function()
+    local f=fixture(); assert(f.ui.refresh(f.cfg))
+    package.loaded.palapi.input_is_gamepad=function() return true end
+    f.net.status='incompatible'; f.net.pals={}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    local nav=f.ui.nav; local asked=0
+    f.ui.nav=function(...) asked=asked+1; return nav(...) end
+    f.ui.pad_tick(f.cfg)
+    f.ui.nav=nav; package.loaded.palapi.input_is_gamepad=nil
+    assert(asked==0 and f.focus==nil,'controller handover ran on a vanilla stand')
+end)
+
+check('every stand legend fits one 1280x720 line and names controller buttons',function()
+    local f=fixture()
+    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND,f.ui.VANILLA_ABSENT,f.ui.VANILLA_INCOMPATIBLE,
+        f.ui.PAK_MISSING,'Server settings are locked. The host must restart the game or server before editing can resume.'
+            ..f.ui.VANILLA_LOCKED}) do
+        assert(#text<=f.ui.LEGEND_MAX_CHARS,'legend too wide at 14 pt: '..#text..' '..text)
+        assert(not text:find('\n',1,true),'stand legend must stay one line')
+    end
+    assert(f.ui.PAD_LEGEND:find('X button: set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
+    assert(f.ui.PAD_LEGEND:find('View button: Production Limits',1,true))
+    local api=package.loaded.palapi; api.last_input_type=1
+    assert(f.ui.legend_text()==f.ui.PAD_LEGEND); api.last_input_type=nil
+end)
+
+check('a Pal with the same number on every job is told the game picks',function()
+    local f=fixture({'same','mixed'})
+    -- Two capable jobs each; only the first has a cell on this stand, and the
+    -- hint reads the Pal's whole row from the data.
+    f.net.pals.same={ranks={[1]=1,[2]=1},prios={[1]=3,[2]=3}}
+    f.net.pals.mixed={ranks={[1]=1,[2]=1},prios={[1]=3,[2]=1}}
+    f.ui.detach(); f.net.pals_gen=f.net.pals_gen+1; assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true),'same-number Pal got no hint')
+    assert(not f.cells[2].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true),'steered Pal got the hint')
+    -- X is not a number: 3 and X leaves one numbered job, nothing to choose.
+    f.net.pals.same.prios[2]=false; f.net.pals_gen=f.net.pals_gen+1; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(not f.cells[1].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true),'one numbered job got the hint')
+    f.net.pals.same.prios[2]=3; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true))
+    -- An edit repaints with the new answer, not a memo from the last grid.
+    f.cells[1].hovered=true; f.ui.bind_mouse(function() return f.cfg end)
+    f.click(-1); f.session.drain(error)
+    assert(#f.writes==1 and f.writes[1].value==2)
+    assert(not f.cells[1].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true),'input paint reused a stale answer')
+    -- Off in config: the scheduler steers equal numbers, so no hint.
+    f.pending.same=nil; f.cfg.leave_unordered_pals_to_game=false; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(not f.cells[1].tooltip:find(f.ui.SAME_NUMBER_HINT,1,true))
+end)
+
 check('edit history resets on session change and explicit UI reset',function()
     local f=fixture(); assert(f.ui.refresh(f.cfg))
     f.ui.edit_status('a',1,'rejected'); f.ui.refresh(f.cfg)
@@ -1029,13 +1198,21 @@ end)
 check('legend refresh resolves replacement wrapper in the current root',function()
     local f=fixture(); assert(f.ui.refresh(f.cfg))
     local old,index
-    for i,w in ipairs(f.root.children) do if w.text==f.ui.EDIT_LEGEND then old,index=w,i end end
-    assert(old,'legend absent')
-    local replacement=f.object('TextBlock','newlegend'); replacement.name=old.name
+    for i,w in ipairs(f.root.children) do if w.class=='Border' then old,index=w,i end end
+    assert(old and old.children[1] and old.children[1].text==f.ui.EDIT_LEGEND,'legend absent')
+    -- Same names, new wrappers: both the backing and its text are resolved again.
+    local replacement=f.object('Border','newlegendbox'); replacement.name=old.name
     replacement.Slot=f.object('VerticalBoxSlot','newlegendslot')
-    f.root.children[index]=replacement; old.dead=true
+    local text=f.object('TextBlock','newlegend'); text.name=old.children[1].name
+    replacement:AddChild(text)
+    f.root.children[index]=replacement; old.dead=true; old.children[1].dead=true
     f.ui.detach(); assert(f.ui.refresh(f.cfg))
-    assert(f.stale_calls==0 and replacement.text==f.ui.EDIT_LEGEND)
+    assert(f.stale_calls==0 and text.text==f.ui.EDIT_LEGEND and replacement.brush)
+    -- A backing whose text never attached is filled, not duplicated.
+    replacement.children={}
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(#replacement.children==1 and replacement.children[1].text==f.ui.EDIT_LEGEND)
+    assert(#f.legends()==1,'retry added a second legend')
 end)
 
 check('unknown root uses tooltip legend without replacing native content',function()
@@ -1072,9 +1249,7 @@ check('settings fence explains recovery and terminal closure, blocks queued edit
     assert(gate.require_restart(token)); assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text():find('Restart the game',1,true))
     assert(f.cells[1].tooltip:find('Restart the game',1,true))
-    local seen=false
-    for _,w in ipairs(f.root.children)do if w.text==f.ui.legend_text()then seen=true end end
-    assert(seen,'footer did not change on closure')
+    assert(f.legends()[1].text==f.ui.legend_text(),'footer did not change on closure')
     f.key(f.cells[1],false); f.session.drain(error); assert(#f.writes==0)
     assert(gate.release(token));assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
@@ -1087,9 +1262,14 @@ check('server settings fence explains host action and cancels queued input',func
     f.cells[1].hovered=true;f.focus_cell(f.cells[1]);f.key(f.cells[1],4)
     f.net.status='unavailable';f.net.status_reason='settings_restart_required'
     assert(f.ui.refresh(f.cfg))
-    assert(f.texts(f.cells[1])[1].text=='?')
+    -- The server's scheduler is fenced too, so its stand is the game's again
+    -- (audit A5): checkbox back, no "?", the legend says why.
+    assert(f.texts(f.cells[1])[1].text=='','fenced server still drew a priority cell')
+    assert(f.cells[1].PalCheckBox.visibility==0,'fenced server kept the vanilla checkbox hidden')
     assert(f.ui.legend_text():find('host must restart',1,true))
-    assert(f.cells[1].tooltip==f.ui.legend_text())
+    assert(f.ui.legend_text():find('works as in the base game',1,true))
+    assert(f.legends()[1].text==f.ui.legend_text())
+    assert(f.cells[1].tooltip=='','vanilla cell kept a tooltip of ours')
     assert(not f.ui.capture_direct() and not f.ui.nav(f.cfg,'raise'))
     f.session.drain(error);assert(#f.writes==0)
     local _,label,detail=require('panel_status').save({view_status=function()
@@ -1100,6 +1280,7 @@ check('server settings fence explains host action and cancels queued input',func
     assert(f.ui.legend_text():find('server is loading',1,true))
     f.net.status='ready';f.net.status_reason=nil;assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    assert(f.texts(f.cells[1])[1].text=='3' and f.cells[1].PalCheckBox.visibility==2,'grid did not come back')
 end)
 
 print(string.format('Stand integration: %d passed, %d failed',passed,#failures))
