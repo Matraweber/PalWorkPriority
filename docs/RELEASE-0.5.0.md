@@ -201,16 +201,12 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
-- Item-specific production limits (stone stops while ore continues). 0.5.0
-  has group limits as 0.4.1 did: new ones can be created again since
-  2026-10-27 (user's decision, [DECISIONS](DECISIONS.md)), each switches its
-  whole work type. Next step (user's pick): research per-item control and
-  measure the overshoot BIG DADDY reported. First round 2026-10-27/28
-  ([per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)): every mining work names its product; marking a work
-  NotWorkable keeps Pals off it (0 of 12 samples on blocked stone rocks);
-  rocks do not save that state, buildings do (a pit stayed NotWorkable after
-  a reload), so per-item control is possible for natural rocks first.
-  Overshoot not measured yet (this base mines too slowly).
+- Item-specific limits for buildings (Stone Pit, logging site, furnaces) and
+  for work other than Mining. 0.5.0 has per-item Mining limits on natural
+  rocks only (2026-10-28, [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md));
+  buildings save their work state, so they are read but never written.
+  Overshoot (BIG DADDY) not measured yet, and no G5 capture with Mining
+  limits yet ([review-2026-10-28](review-2026-10-28.md) H).
 - Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column
@@ -221,7 +217,9 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   buttons.
 - Live tests with two real clients and two real guilds (needs a second Steam
   account and machine), unmodded-client edit detection.
-- Physical Steam Deck, ultrawide and UI scaling matrix.
+- Physical Steam Deck, ultrawide and UI scaling matrix. A physical
+  controller and Steam Input run (no real-controller run before 0.5.0,
+  user's decision 2026-10-28, [DECISIONS](DECISIONS.md)).
 - Requests: independent priority/limit mods, high-quality stand restriction,
   Pal-produced materials, deferred scheduling after UI close.
 

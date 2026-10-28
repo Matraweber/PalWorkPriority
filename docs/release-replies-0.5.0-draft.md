@@ -1,9 +1,11 @@
 ---
 date: 2026-10-27
 tags: [release, reports]
-status: current
+status: superseded
 ---
 # 0.5.0 reply drafts (not posted)
+
+**Superseded 2026-10-28.** Replies are not needed (user's decision 2026-10-27), and two claims here are false for the final build: new limits can be added (Mining per item), and the controller was a virtual XInput pad, not an Xbox controller. Do not post these without a rewrite.
 
 Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md)
 
