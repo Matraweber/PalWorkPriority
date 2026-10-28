@@ -39,7 +39,8 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 
 ## G2. Saving backend decision
 
-- [ ] **0.5.0 ships the synchronous writer; the native async DLL is not in
+- [x] **0.5.0 ships the synchronous writer; the native async DLL is not in
+  PASS 2026-10-28 on the final v0.5.0 build ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)): neither archive holds a DLL; clean manual, clean Workshop and a real 0.4.1 upgrade all ran the synchronous writer with no lock, no "restart to edit" and no warning.
   the package** (G2b moved to 0.5.x on 2026-10-20). 2026-10-20: the rc1
   archives hold no DLL, and a clean manual install ran the synchronous writer
   with no fence, and so did a clean Workshop install on 2026-10-21 ([evidence](g7-install-2026-10-20.md)). Open: the G1 upgrade
@@ -179,11 +180,13 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   them, the panel shows "Rocks stopped", and after a reload every rock reads
   Workable again.
 
-- [ ] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
+- [x] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
+  PASS 2026-10-28: tag v0.5.0 (35366bf), `tools/release.py` built both archives reproducibly with identical Lua and pak bytes; reruns A (manual) and C (Workshop) pass on them ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)). Server RAM runs 0.5.0; a 0.5.0 client syncs.
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
-- [ ] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review. Replies: not needed (user's decision 2026-10-27); the drafts stay as a record. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
+- [x] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review. Replies: not needed (user's decision 2026-10-27); the drafts stay as a record. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
+  Done 2026-10-28: CHANGELOG 0.5.0 dated and current (fixed, Mining per-item limits, untouched Pals left to the game, Vortex notes, deferred list, lost X); replies not needed (user's decision 2026-10-27). Publishing on the Workshop and Nexus is the user's action.
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.

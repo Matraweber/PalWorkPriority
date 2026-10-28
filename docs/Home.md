@@ -23,6 +23,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
 - [Per-item limits: first research round (2026-10-27/28)](per-item-limits-2026-10-27.md) · 2026-10-28
+- [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, server (2026-10-28)](g7-final-build-2026-10-28.md) · 2026-10-28
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
 - [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md) · 2026-10-27
@@ -32,7 +33,6 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Decision log](DECISIONS.md) · 2026-10-27
 - [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-22
 - [Controller support: routes, build and in-game acceptance, 2026-10-22](controller-routes-2026-10-22.md) · 2026-10-22
-- [Controller input on game 1.0.5, 2026-10-21/22: works in the world, blocked by menus](controller-2026-10-21.md) · 2026-10-22
 
 ## Release and reports
 
@@ -121,6 +121,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Other
 
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md)
+- [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, server (2026-10-28)](g7-final-build-2026-10-28.md)
 
 ## Outside the vault (repo files, open on GitHub or in an editor)
 
