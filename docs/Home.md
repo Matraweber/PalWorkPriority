@@ -21,21 +21,22 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
+- [Reliability candidate testing](testing.md) · 2026-10-28
 - [Per-item limits: first research round (2026-10-27/28)](per-item-limits-2026-10-27.md) · 2026-10-28
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, server (2026-10-28)](g7-final-build-2026-10-28.md) · 2026-10-28
+- [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-28
+- [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-28
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
 - [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md) · 2026-10-27
 - [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-27
-- [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-27
-- [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-27
 - [Decision log](DECISIONS.md) · 2026-10-27
-- [Production Limits panel: new-user review, 2026-10-21](ux-review-2026-10-21.md) · 2026-10-22
-- [Controller support: routes, build and in-game acceptance, 2026-10-22](controller-routes-2026-10-22.md) · 2026-10-22
 
 ## Release and reports
 
+- [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md)
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md)
 - [G7 install checks: clean installs and the Workshop/manual conflict, 2026-10-20](g7-install-2026-10-20.md)
 - [Work log, 2026-10-09 to 2026-10-11](work-log-2026-10-09-to-11.md) (history)

@@ -1,5 +1,5 @@
 ---
-date: 2026-10-27
+date: 2026-10-28
 tags: [release]
 status: current
 ---
@@ -186,7 +186,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
 - [x] **Changelog and replies.** 2026-10-20: CHANGELOG.md 0.5.0 draft written from the gate evidence (fixed, before-you-update incl. lost X, legacy limits locked, measured performance, deferred list, open items marked [OPEN]); the stale rc1 section was replaced (git keeps it). Open: user review. Replies: not needed (user's decision 2026-10-27); the drafts stay as a record. 2026-10-27: reply drafts rewritten against 252c0e3 from the gate evidence, one per reporter group plus KhanKeal, Samurai9400, Rey, poiman, like and Ceo of Toes; two depend on Vortex and the real-controller run. **Done when:** the changelog lists what is
-  Done 2026-10-28: CHANGELOG 0.5.0 dated and current (fixed, Mining per-item limits, untouched Pals left to the game, Vortex notes, deferred list, lost X); replies not needed (user's decision 2026-10-27). Publishing on the Workshop and Nexus is the user's action.
+  Done 2026-10-28: CHANGELOG 0.5.0 dated and current (fixed, Mining per-item limits, untouched Pals left to the game, Vortex notes, deferred list, lost X); replies not needed (user's decision 2026-10-27). Publishing on the Workshop and Nexus is the user's action. Workshop upload macro ready 2026-10-28 (`tools/workshop_upload.py`, dry run passed; [workshop-upload-2026-10-28](workshop-upload-2026-10-28.md)).
   fixed, what is deferred (below) and that 0.4.1 X losses cannot be undone, and
   [release-replies-0.5.0-draft.md](release-replies-0.5.0-draft.md) is updated
   against the final build. Posting is the user's action.

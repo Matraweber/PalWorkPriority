@@ -31,6 +31,7 @@ if MODE = '--check'
 if !(MODE = '--stand' || MODE = '--world' || MODE = '--title' || MODE = '--launch' || MODE = '--open-only')
     ExitApp 2
 CoordMode 'Mouse', 'Client'
+CoordMode 'Pixel', 'Client'
 SetKeyDelay 70, 90
 SetMouseDelay 80
 OnExit ReleaseKeys
@@ -54,12 +55,12 @@ try {
       hwnd := GameWindow()
       oldPid := WinGetPID('ahk_id ' hwnd)
       if MODE != '--title' {
-        if MODE = '--stand' {
-            Key('Escape')
-            Sleep 1200
-        }
-        Key('Escape')
-        Sleep 1500
+        ; Escape until the game menu is really open (--stand needs one more
+        ; for the stand). A single blind Escape was swallowed by the game
+        ; right after it got focus: on 2026-10-28 --world failed three times
+        ; with the character still in the world, while --title (clicks only)
+        ; worked.
+        OpenMenu()
         Point(306, 573) ; Return to title (normal save path)
         Sleep 1200
         Point(552, 477) ; Yes
@@ -205,6 +206,30 @@ Focus() {
     if w < 800 || h < 450 || Abs(w / h - 16 / 9) > 0.035
         throw Error('This calibration needs a 16:9 game window, at least 800x450.')
     return [w, h]
+}
+; The game menu (Escape) shows the "Options" tab highlighted in bright blue
+; at the top right. Measured 2026-10-28 in a 1280x720 client: open
+; R0 G144 B255 at (1041,40) and R38 G160 B255 at (1080,45); closed (sky)
+; about R85-89 G106-113 B133-143.
+MenuOpen() {
+    size := Focus()
+    for pt in [[1041, 40], [1080, 45]] {
+        c := Integer(PixelGetColor(Round(pt[1] * size[1] / 1280), Round(pt[2] * size[2] / 720)))
+        r := (c >> 16) & 0xFF
+        b := c & 0xFF
+        if b < 230 || r > 60
+            return false
+    }
+    return true
+}
+OpenMenu() {
+    loop 4 {
+        Key('Escape')
+        Sleep 1500
+        if MenuOpen()
+            return
+    }
+    throw Error('The game menu did not open after four Escape presses.')
 }
 Point(x, y) {
     size := Focus()

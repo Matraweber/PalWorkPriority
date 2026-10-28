@@ -1,5 +1,5 @@
 ---
-date: 2026-10-20
+date: 2026-10-28
 tags: [testing, tooling]
 status: current
 ---
@@ -123,7 +123,7 @@ User workflow preference (September 12): stage checked Lua changes while the gam
 
 ### Singleplayer macro: `tools/restart-stand.ahk`
 
-Start in gameplay at the Monitoring Stand with its grid open (default `--stand`). The macro closes the stand, takes Return to Title (the normal save path) and Quit, waits up to 60 s for the old PID to exit, launches the game, clicks through Mods Detected / Start Game, picks the **first** world in the list and Start Game (never Delete World), waits up to 150 s for a fresh `PWP_READY ... session=N` (N ≥ 1) after its own log offset, waits 12 s more for the loading fade, then holds V for 850 ms to open the stand.
+Start in gameplay at the Monitoring Stand with its grid open (default `--stand`). The macro closes the stand, presses Escape until it sees the game menu open (the blue "Options" tab, pixel check, at most 4 presses; since 2026-10-28), takes Return to Title (the normal save path) and Quit, waits up to 60 s for the old PID to exit, launches the game, clicks through Mods Detected / Start Game, picks the **first** world in the list and Start Game (never Delete World), waits up to 150 s for a fresh `PWP_READY ... session=N` (N ≥ 1) after its own log offset, waits 12 s more for the loading fade, then holds V for 850 ms to open the stand.
 
 | Mode | Use |
 | --- | --- |
@@ -155,6 +155,19 @@ Same modes as the singleplayer macro except `--return-title-only`, `-select` and
 - When keys stop arriving while clicks still work, or a focus click fires the weapon, see LESSONS (2026-10-17): both macros now fall back to a title-bar click for focus and wait 800 ms after a focus change.
 - Run restarts and any wait over a minute with `run_in_background` (LESSONS).
 - **Use the repo copies.** On 2026-10-20 the Desktop shortcuts `Restart and open monitoring stand.ahk` (2026-09-24) and `Restart server and open monitoring stand.ahk` (2026-09-25) were older than `tools/`: no `-select`, `-absent` or `--return-title-only`, no focus fallback, and the server copy lacks the 2026-10-19 list waits.
+
+### Workshop upload: `tools/workshop_upload.py`
+
+Drives Pocketpair's Palworld Mod Uploader (Steam app 4212470) for the Workshop item 3786408856 ([workshop-upload-2026-10-28](workshop-upload-2026-10-28.md)). Steam must be running and logged in; close the uploader first.
+
+```
+python tools/workshop_upload.py prepare            # stage build/release-<VERSION> Workshop zip + change note
+python tools/workshop_upload.py upload --dry-run   # full click-through, then Cancel: nothing is sent
+python tools/workshop_upload.py upload             # stops at the filled Change Notes window: OK publishes
+python tools/workshop_upload.py check              # after Steam's download: subscribed copy == stage
+```
+
+`upload --submit` presses OK itself. Publishing is the user's action, so agents run only `prepare` and `--dry-run`.
 
 ### `tools/remote.py`
 

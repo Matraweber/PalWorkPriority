@@ -1,5 +1,5 @@
 ---
-date: 2026-10-27
+date: 2026-10-28
 tags: [records, testing]
 status: current
 ---
@@ -244,6 +244,16 @@ discovers a new one, with the date and a link to the evidence.
   only the hot-reload path, almost silently. New state goes into an existing
   table.
 - A regex rename across Lua rewrites table-literal keys too.
+- **One blind Escape after focusing the game can be swallowed.** On
+  2026-10-28 `restart-stand.ahk --world` failed three times: the menu never
+  opened, the Return to Title click hit the world, and the macro stopped
+  with "Normal exit did not finish". `--title` (clicks only) worked. The
+  macro now presses Escape until a pixel check sees the menu's blue Options
+  tab (at most 4 presses); the next `--world-select` run passed. Check that a
+  screen is really showing before clicking into it.
+- Steam caps a Workshop change note at 8,000 bytes; the 0.5.0 changelog
+  section is about 10,000. `tools/workshop_upload.py` trims by priority
+  and links the full changelog (2026-10-28).
 - Heredocs eat backslashes. Use `chr(10)` / `chr(92)` in generated code.
 - Steam Workshop and a manual install fight: Palworld rewrites `mods.txt`
   and copies its own Scripts on launch. Check for a Workshop subscription
