@@ -131,7 +131,12 @@ function M.forget(keep_permissions)
     remote_stock_interest = {}
     api.last_storage_scan = nil
     hold_since = {}
-    if not keep_permissions then permission_history = {} end
+    if not keep_permissions then
+        permission_history = {}
+        -- A new world: the rocks held off belonged to the old one, and the
+        -- old world's rocks forgot their state when it unloaded.
+        item_sources.forget()
+    end
     stock = {}
     guild_stock, guild_stock_key, guild_stock_at = {}, nil, nil
     guild_stock_failures = 0
@@ -1052,11 +1057,13 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- drop is that item; Mining as a whole stops only once no rock or pit in
     -- the camp still produces something wanted. Runs while Mining has limits
     -- and while rocks are still held off, so a removed limit releases them.
+    -- Switched off in config, rocks still held are released here and the
+    -- answer about wanted work is ignored (group limits only).
     local item_wanted = {}
     local mining = workdefs.value("Mining")
-    local mining_limits = caps.for_work(cfg, "Mining", camp_guild)
-    if cfg.item_limits_on_rocks ~= false and mining
-        and (mining_limits ~= nil or item_sources.count(camp_key) > 0) then
+    local per_item = cfg.item_limits_on_rocks ~= false
+    local mining_limits = per_item and caps.for_work(cfg, "Mining", camp_guild) or nil
+    if mining and (mining_limits ~= nil or item_sources.count(camp_key) > 0) then
         local ok, got, _, keys = pcall(measured, "scheduler: camp works", api.camp_works, camp)
         if ok and type(got) == "table" and type(keys) == "table" then
             local known = (camp_key and work_types[camp_key]) or {}
@@ -1079,7 +1086,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
                     stock, not cfg.dry_run)
                 if not applied then log.debug("item limits on rocks: " .. tostring(wanted)) end
                 if applied and type(wanted) == "table" then
-                    item_wanted = wanted
+                    item_wanted = per_item and wanted or {}
                     stats.rocks_stopped = (stats.rocks_stopped or 0) + (stopped or 0)
                     stats.rocks_started = (stats.rocks_started or 0) + (started or 0)
                 end

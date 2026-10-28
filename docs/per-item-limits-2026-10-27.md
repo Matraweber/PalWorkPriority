@@ -122,3 +122,38 @@ The test world was checked after the run:
   snapshots.
 - The probe file matches the original.
 - The launch task is back on `--title`.
+
+## Built and run in game (2026-10-28)
+
+The user decided to put this into 0.5.0 and to count a rock as its main drop.
+Built as `Scripts/item_sources.lua` plus the scheduler and panel changes (see
+DECISIONS). Run on the test world, whose Stone limit is 35,000 and is reached
+(46,623 in storage).
+
+| Check | Seen |
+| --- | --- |
+| First pass after loading | "19 rock(s) held for limits", which is every stone rock (`0009`, `0010`, `0012`) in both camps (11 + 8). Probe: all of them state 2. Ore node, crystal rocks and both pits state 1. Mining wanted 16 to 18, only Lumbering capped. |
+| Who mines what, 12 samples at 20 s (`mine_itemlimit.txt`) | **0 of 12 on a stone rock.** Miners on the copper ore node `0002` and crystal rocks `0017`; 3 samples nobody on Mining. |
+| Panel | Stone row "Rocks stopped", sub line "Its rocks only". Help line "Mining stops by item, other limits stop their whole job." Ore and Paldium Fragment tiles "Add item limit", others "Add group limit". |
+| Stone limit raised to 100,000 | "19 rock(s) released", every stone rock state 1, Mining wanted 29. |
+| Back to 35,000 | "19 rock(s) held for limits (+19/-0)" in the same pass. |
+| Full game restart | First pass blocked 19 again from Workable. With an empty held list this means the rocks loaded Workable, so the state was not saved. |
+| Return to title and load the world again (world change, same process) | Same again: 19 held from scratch. |
+
+Two fixes came out of the run and are tested:
+
+- Turning `item_limits_on_rocks` off now releases rocks that are still held,
+  instead of leaving them off until a reload.
+- A world change clears the held list.
+
+The help line was added after the first look at the panel.
+
+## Restore (2026-10-28)
+
+- `caps.txt` rows are back to the snapshot: the Stone limit was raised to
+  test the release and set back to 35,000.
+- `priorities.txt` and the probe file match.
+- The launch task is back on `--title`.
+- The stone rocks stay held, because the world's own Stone limit is reached.
+  That is the new behaviour, and it resets on every load.
+

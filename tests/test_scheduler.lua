@@ -858,11 +858,15 @@ do
     rules = {}
     stats = scheduler.run_pass(config)
     assert(works[1].CurrentState == 1 and stats.rocks_started == 1, "removed limit kept the rock off")
-    -- Switched off in config: the whole Mining work type stops as before.
-    config.item_limits_on_rocks = false
+    -- Switched off in config: held rocks are released and the whole Mining
+    -- work type stops as before.
     rules.Mining = {Stone = 10}
     stats = scheduler.run_pass(config)
-    assert(fixture[1].off[8] and works[1].CurrentState == 1, "config switch did not restore group limits")
+    assert(works[1].CurrentState == 2, "rock not held before the switch")
+    config.item_limits_on_rocks = false
+    stats = scheduler.run_pass(config)
+    assert(fixture[1].off[8] and works[1].CurrentState == 1 and stats.rocks_started == 1,
+        "config switch did not release the rock and restore group limits")
     config.item_limits_on_rocks = nil
     api.camp_works = saved.camp_works
 end

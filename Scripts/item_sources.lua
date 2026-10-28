@@ -140,6 +140,12 @@ function M.apply(camp_key, works, keys, values, ceilings, totals, can_write)
     return wanted, stopped, started
 end
 
+-- World change: nothing held carries over (the unloaded world's rocks reset
+-- themselves; their keys mean nothing in the next world).
+function M.forget()
+    products, M.blocked = {}, {}
+end
+
 -- Rocks this module holds switched off in a camp.
 function M.count(camp_key)
     local n = 0

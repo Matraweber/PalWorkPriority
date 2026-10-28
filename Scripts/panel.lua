@@ -2842,7 +2842,9 @@ local function draw_list(cfg, totals)
             .. (caps.is_client and "the host has not sent a count."
                 or ("not counted yet, " .. RB.key_prose("key_pass", "ALT+F2") .. " counts now.")), "dim", 14)
     else
-        line("why", 0, PAD, "Click a limit to type a new number. Each limit switches its whole work type.", "dim", 14)
+        line("why", 0, PAD, cfg.item_limits_on_rocks ~= false
+            and "Click a limit to type a new number. Mining stops by item, other limits stop their whole job."
+            or "Click a limit to type a new number. Each limit switches its whole work type.", "dim", 14)
     end
     RB.done_row()
 

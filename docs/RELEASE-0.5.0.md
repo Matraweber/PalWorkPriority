@@ -159,12 +159,13 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   switched it back on, a second item joined the Mining group and Mining
   resumed, both survived a restart, removed again from the panel. Open: a
   client adding one on the dedicated server.
-- [ ] **Mining limits per item on rocks** (user's decision 2026-10-28, into
+- [x] **Mining limits per item on rocks** (user's decision 2026-10-28, into
   0.5.0). Built: `Scripts/item_sources.lua`, scheduler, panel wording
   ("Add item limit", "Its rocks only", "Rocks stopped"), config switch;
-  tests pass (228 Lua). Deployed 2026-10-28 14:16, **not yet run in game**:
-  the game did not start twice after the restart (no window, UE4SS.log
-  untouched). **Done when:** in game a reached Stone limit holds the stone
+  tests pass (228 Lua). PASS 2026-10-28 in game ([evidence](per-item-limits-2026-10-27.md)):
+  19 stone rocks held, 0 of 12 samples on stone while ore and crystals were
+  mined, released at a raised limit, held again, fresh after a restart and
+  after a world change. Open: the same on the dedicated server. **Done when:** in game a reached Stone limit holds the stone
   rocks off (log "rock(s) held for limits", no Pal on a stone rock in 12
   samples) while ore and crystal rocks are mined, raising the limit releases
   them, the panel shows "Rocks stopped", and after a reload every rock reads
