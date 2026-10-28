@@ -62,14 +62,16 @@ local prior_events = #events; pad.drive(actions)
 assert(#events == prior_events)
 
 pc = {IsInputKeyDown = function(_, key) return buttons[key.KeyName] == true end}
+-- RB + View opened the game's map as well as the panel and was rejected on
+-- 2026-10-22 (DECISIONS). The shut-panel poll is gone: no lookup, no read, no
+-- open, and RB is a plain tab press again once the panel is open.
 buttons = {Gamepad_RightShoulder=true, Gamepad_Special_Left=true}
-prior = lookups
-assert(pad.open_asked() and lookups == prior + 1)
-assert(not pad.open_asked(), 'held opening chord repeated')
+prior = lookups; local prior_reads = reads
+assert(pad.open_asked() == false, 'RB + View still opens the panel')
+assert(lookups == prior and reads == prior_reads, 'the shut panel still polls the pad')
+assert(#pad.OPEN_CHORD == 0)
 local tabs = 0
-pad.drive({tab_next = function() tabs = tabs + 1 end})
-assert(tabs == 0, 'opening chord also switched tabs')
-buttons = {}; pad.open_asked(); pad.drive({})
+buttons = {}; pad.drive({})
 buttons.Gamepad_RightShoulder = true
 pad.drive({tab_next = function() tabs = tabs + 1 end})
 assert(tabs == 1)

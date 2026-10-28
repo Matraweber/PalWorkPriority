@@ -5,7 +5,9 @@ local session = require('session')
 local tree = require('ui_tree')
 local lifecycle = require('stand_lifecycle')
 local M = {path='/Game/Mods/PalWorkPriority/UI/WBP_StandInput.WBP_StandInput_C',
-    events=0,queued=0,rejected=0,created=0}
+    events=0,queued=0,rejected=0,created=0,
+    -- nil until the first lookup, then whether the receiver class was absent.
+    asset_missing=nil}
 local owned, serial, epoch, hooked, retry_at = {}, 0, session.epoch, false, -math.huge
 local apply, allowed, key_event, selection_revision
 local key_hooked = false
@@ -95,6 +97,9 @@ local function ready()
     if os.clock()<retry_at then return false end
     retry_at=os.clock()+10
     local loaded, class = pcall(load_class)
+    -- A clean "not found" from both routes is the missing pak, and the stand
+    -- legend says so (ui.PAK_MISSING). A thrown lookup proves nothing either way.
+    if loaded then M.asset_missing=not valid(class) end
     if not loaded or not valid(class) then M.last_error='asset: '..tostring(loaded and 'unavailable' or class); return false end
     if not hooked then
         local ok, why = pcall(RegisterHook, M.path..':PWP_Dispatch', receive)

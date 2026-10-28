@@ -115,9 +115,31 @@ local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like 
 M.EDIT_LEGEND = "Left click: toward 1  Right click: toward X  Keys 1-5, X  |  "
     .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  ALT+F1: Production Limits"
 -- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
--- view switch, so the panel opens with View.
-M.PAD_LEGEND = "LB / A: toward 1  RB: toward X  X: off  |  "
-    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  View: Production Limits"
+-- view switch, so the panel opens with View. Buttons are named as buttons:
+-- "X: off" read as "X means off", not "press X" (audit 2026-10-28).
+M.PAD_LEGEND = "LB / A button: toward 1  RB: toward X  X button: set X  |  "
+    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  View button: Production Limits"
+-- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
+-- on 2026-10-28: 152 characters drew 730 px wide, so 14 pt is about 5.6 px a
+-- character and 160 characters about 900 px with the backing's padding.
+M.LEGEND_MAX_CHARS = 160
+-- Bumped with main.lua's VERSION, like net.OLD_CLIENT_NOTICE
+-- (tests/test_ui_integration.lua compares the two).
+M.MOD_VERSION = "0.5.0"
+-- A client whose server never completes the mod's handshake gets the game's
+-- own stand back (audit A5, 2026-10-28): no "?" cells, the vanilla checkboxes,
+-- and one line saying why.
+M.VANILLA_ABSENT = "This server does not run Pal Work Priority " .. M.MOD_VERSION
+    .. ". The stand works as in the base game."
+M.VANILLA_INCOMPATIBLE = "This server runs a different Pal Work Priority version. "
+    .. "The stand works as in the base game until both match."
+M.VANILLA_LOCKED = " Until then the stand works as in the base game."
+-- The receivers that take clicks, numbers and controller buttons live in the
+-- pak. Without it the stand can show numbers but nothing on it edits them.
+M.PAK_MISSING = "Mouse editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
+-- Shown in a cell's tooltip for a Pal the scheduler leaves to the game
+-- (scheduler_plan.unordered: every job it may do has the same number).
+M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs different numbers to steer this Pal."
 -- The panel key as the player bound it in DarnMenu. main.lua records it in
 -- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
 function M.edit_legend()
@@ -400,8 +422,9 @@ local function try_hook_bind()
                             -- keeps firing it after joining a server.
                             --
                             -- The only safe test is who owns the pal. A client
-                            -- with no data draws nothing, which is the correct
-                            -- answer to "I do not know yet".
+                            -- with no data reads no ranks here: its cells show
+                            -- "?" while the handshake runs and the vanilla
+                            -- checkbox when it never completes (vanilla_message).
                             if api.has_authority() then
                                 for t = 1, #workdefs.ORDER do
                                     local r = api.suitability_rank(param, t)
@@ -813,7 +836,60 @@ function M.settings_message()
         return 'Server settings are unavailable. Priority and limit editing is locked.'
     end
 end
-function M.legend_text() return M.settings_message() or M.edit_legend() end
+
+-- Has this client's server failed to give us anything to draw, for good?
+--
+-- Then the stand belongs to the game again: the vanilla checkbox, no "?"
+-- cells, no receivers. Drawing "?" over every cell and hiding the checkbox
+-- for a whole session (audit A5) took the base game's own control away on a
+-- server that never had the mod.
+--
+--   incompatible   a 0.4.1 server, or another schema: it will not change
+--                  until one side is updated.
+--   unavailable    the server's settings fence holds; its scheduler is
+--                  blocked too (scheduler.lua), so the vanilla flags are what
+--                  is in force.
+--   connecting / handshake_timeout   four Hellos without an answer, about a
+--                  minute: a server without the mod. Latched for this
+--                  transport nonce, because the next failed Hello reports
+--                  transport_unavailable in between and the stand must not
+--                  flicker back to "?". A Welcome sets server_nonce and a new
+--                  session a new nonce; either one ends it.
+--
+-- "connecting" before the timeout stays "?" with its tooltip: the brief wait
+-- of a normal join. Plain reads of net fields only.
+local absent_latched, absent_nonce = false, nil
+function M.vanilla_message()
+    if api.has_authority() ~= false then return nil end
+    local status = net.status
+    if status == "incompatible" then return M.VANILLA_INCOMPATIBLE end
+    if status == "unavailable" then
+        return (M.settings_message() or "Server settings are unavailable.") .. M.VANILLA_LOCKED
+    end
+    if status ~= "connecting" or net.server_nonce ~= nil then
+        absent_latched = false
+        return nil
+    end
+    if net.status_reason == "handshake_timeout" then
+        absent_latched, absent_nonce = true, net.local_nonce
+    end
+    if absent_latched and absent_nonce == net.local_nonce then return M.VANILLA_ABSENT end
+    return nil
+end
+
+-- Edits are refused while either the settings fence holds or the stand is
+-- the game's again.
+local function editing_blocked()
+    return M.settings_message() ~= nil or M.vanilla_message() ~= nil
+end
+
+local function pak_message()
+    if stand_pointer.asset_missing == true then return M.PAK_MISSING end
+end
+
+function M.legend_text()
+    return M.vanilla_message() or M.settings_message() or pak_message() or M.edit_legend()
+end
 
 local function edit_presentation(key, work)
     local blocked=M.settings_message()
@@ -851,6 +927,15 @@ end
 -- One small legend in a known multi-child root. Ownership is names only; each
 -- refresh discovers it in the CURRENT tree. Single-child/unknown roots are
 -- left intact and receive the same legend in cell tooltips instead.
+--
+-- The text sits in a dark Border. Bare 12 pt grey over the world measured
+-- 1.4-2.4:1 on grass (audit E, 2026-10-28); the backing is the panel's own
+-- near-black at 0.85 and the text 14 pt near-white, which is well above 7:1
+-- whatever is behind it. The Border is the root child we own; the TextBlock
+-- is its only content and is found through it on every refresh.
+local LEGEND_BACKING = { R = 0.014, G = 0.021, B = 0.035, A = 0.85 }
+local LEGEND_TEXT = { R = 0.93, G = 0.94, B = 0.96, A = 1.0 }
+M.LEGEND_FONT_SIZE = 14
 local function refresh_legend(menu)
     local ok,shown=pcall(function()
         local name=full_name(menu)
@@ -862,29 +947,44 @@ local function refresh_legend(menu)
         if kind~="CanvasPanel" and kind~="Overlay" and kind~="VerticalBox" then return false end
         local n=api.as_int(root:GetChildrenCount())
         if not n or n<0 or n>1024 then return false end
-        local tb
+        local box
         for i=0,n-1 do
             local child=root:GetChildAt(i)
             if not alive(child) then return false end -- incomplete is not absent
-            if full_name(child)==legend_names[name] then tb=child end
+            if full_name(child)==legend_names[name] then box=child end
         end
-        if not tb then
+        if not box then
             if not legend_names[name] and legend_count>=64 then return false end
+            local class=api.cdo("/Script/UMG.Border")
+            if not class then return false end
+            box=StaticConstructObject(class,tree)
+            if not alive(box) then return false end
+            local box_name=full_name(box)
+            if not box_name then return false end
+            local slot=root:AddChild(box)
+            -- Record attachment before style writes, so a retry cannot double it.
+            if not legend_names[name] then legend_count=legend_count+1 end
+            legend_names[name]=box_name
+            if not alive(slot) then return false end
+        end
+        local function write(value) if value==false then error("legend write refused") end end
+        -- The content, found in the current tree. A Border holds one child; a
+        -- failed earlier attach leaves it empty and this one fills it.
+        local inner=api.as_int(box:GetChildrenCount())
+        if inner==nil or inner<0 or inner>1 then return false end
+        local tb
+        if inner==1 then
+            tb=box:GetChildAt(0)
+            if not alive(tb) then return false end
+        else
             local class=api.cdo("/Script/UMG.TextBlock")
             if not class then return false end
             tb=StaticConstructObject(class,tree)
             if not alive(tb) then return false end
-            local label_name=full_name(tb)
-            if not label_name then return false end
-            local slot=root:AddChild(tb)
-            -- Record attachment before style writes, so a retry cannot double it.
-            if not legend_names[name] then legend_count=legend_count+1 end
-            legend_names[name]=label_name
-            if not alive(slot) then return false end
+            if not alive(box:AddChild(tb)) then return false end
         end
-        local slot=tb.Slot
+        local slot=box.Slot
         if not alive(slot) then return false end
-        local function write(value) if value==false then error("legend write refused") end end
         if kind=="CanvasPanel" then
             write(slot:SetAnchors({Minimum={X=0.5,Y=1},Maximum={X=0.5,Y=1}}))
             write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-8}))
@@ -894,9 +994,12 @@ local function refresh_legend(menu)
             if kind=="Overlay" then write(slot:SetVerticalAlignment(3)) end
             write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=4}))
         end
-        local font=tb.Font; font.Size=12; write(tb:SetFont(font))
+        write(box:SetBrushColor(LEGEND_BACKING))
+        write(box:SetPadding({Left=10,Top=3,Right=10,Bottom=3}))
+        write(box:SetVisibility(3))
+        local font=tb.Font; font.Size=M.LEGEND_FONT_SIZE; write(tb:SetFont(font))
         write(tb:SetText(make_ftext(M.legend_text())))
-        write(tb:SetColorAndOpacity({SpecifiedColor=COLOUR.unknown,ColorUseRule=0}))
+        write(tb:SetColorAndOpacity({SpecifiedColor=LEGEND_TEXT,ColorUseRule=0}))
         write(tb:SetVisibility(3))
         return true
     end)
@@ -964,6 +1067,43 @@ local function shown_prio(cfg, pal, work_name, t)
     return store.effective(cfg, pal, work_name, t)
 end
 
+-- The same test as scheduler_plan.unordered, on what the stand shows: two or
+-- more jobs with a number and all of them the same. Such a Pal is left to
+-- the game, which a grid of equal numbers does not say by itself (UX P2-14).
+-- Answered once per Pal per paint (same_memo is emptied by every whole-grid
+-- refresh and every input paint), not once per cell.
+local same_memo = {}
+local function same_number(cfg, pal, ranks)
+    if type(cfg) == "table" and cfg.leave_unordered_pals_to_game == false then return false end
+    local memo = pal.key and same_memo[pal.key]
+    if memo ~= nil then return memo end
+    local seen, count, same = nil, 0, true
+    for t in pairs(ranks) do
+        local work_name = workdefs.name(t)
+        local p = work_name and shown_prio(cfg, pal, work_name, t)
+        if type(p) == "number" then
+            if seen ~= nil and seen ~= p then same = false; break end
+            seen, count = p, count + 1
+        end
+    end
+    same = same and count >= 2
+    if pal.key then same_memo[pal.key] = same end
+    return same
+end
+
+-- The cell back to the game: its checkbox, no receiver, no number, and no
+-- tooltip of ours unless the tooltip is where the legend lives.
+local function give_back(cell, cell_name)
+    stand_pointer.disable(cell, cell_name)
+    local existing, _, hint = tree_lookup.find(cell, cell_text[cell_name], alive, cell_paths[cell_name])
+    cell_paths[cell_name] = hint
+    if existing and alive(existing) then set_cell(existing, cell_name, "", "blank") end
+    local tip = M.legend_mode == "tooltip" and M.legend_text() or ""
+    pcall(function() cell:SetToolTipText(make_ftext(tip)) end)
+    if not restore_checkbox(cell, cell_name) then return "failed" end
+    return "vanilla"
+end
+
 local function handle_cell(cfg, cell, known_name)
     if not alive(cell) then return end
     -- The caller has already paid GetFullName for its seen-set; computing it
@@ -984,6 +1124,10 @@ local function handle_cell(cfg, cell, known_name)
 
     local work_name = workdefs.name(t)
     if work_name == nil then return end
+
+    -- Before the row lookup: an unbound row's cell may still carry an earlier
+    -- session's hidden checkbox, and it goes back too.
+    if M.vanilla_message() then return give_back(cell, cell_name) end
 
     local rname = cell_row[cell_name]
     if not rname then
@@ -1043,7 +1187,11 @@ local function handle_cell(cfg, cell, known_name)
 
     if prio~=nil and ranks and capable and store.decided and not M.settings_message() then
         if not stand_pointer.ensure(cell,cell_name,pal.key,t,inject_at_checkbox) then
-            warn_once("pointer", "stand mouse input unavailable; matching input asset required, navigation remains available")
+            if stand_pointer.asset_missing then
+                warn_once("pointer", "stand editing unavailable: LogicMods/PalWorkPriority.pak is missing (WBP_StandInput not found); reinstall the mod")
+            else
+                warn_once("pointer", "stand mouse input unavailable; matching input asset required, navigation remains available")
+            end
         end
     else stand_pointer.disable(cell,cell_name) end
 
@@ -1051,7 +1199,8 @@ local function handle_cell(cfg, cell, known_name)
     local unavailable = not api.has_authority() and net.status~="ready" and net.status~="rejected"
         and net.status~="applied_unsaved"
     local glyph, colour
-    if prio == nil or not ranks or unavailable or M.settings_message() then
+    local known = not (prio == nil or not ranks or unavailable or M.settings_message())
+    if not known then
         glyph,colour="?","unknown"
         if unavailable then detail=M.settings_message() or EDIT_MESSAGES[net.status] or "Priority data unavailable." end
         if prio==nil and not unavailable then detail="Priority data unavailable; waiting for a confirmed value." end
@@ -1065,8 +1214,9 @@ local function handle_cell(cfg, cell, known_name)
     glyph=glyph..marker
     colour=edit_colour or colour
     if M.settings_message() then detail=M.settings_message() end
-    local help=M.edit_legend().."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
+    local help=(pak_message() or M.edit_legend()).."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
         .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
+    if known and same_number(cfg,pal,ranks) then help=help.."\n"..M.SAME_NUMBER_HINT end
     if M.settings_message() then help=M.settings_message() end
     pcall(function() cell:SetToolTipText(make_ftext(help)) end)
     if M.selection and M.selection.key == pal.key and M.selection.work == t then glyph = "[" .. glyph .. "]" end
@@ -1120,6 +1270,7 @@ end
 -- Returns how many cells it actually painted, so the caller can tell a draw
 -- that happened from one that did not.
 local function refresh_cells(cfg, menu)
+    same_memo = {}
     local cells, meta, names = live_cells(menu)
     if not cells or #cells == 0 then return 0, false, meta end
 
@@ -1138,7 +1289,9 @@ local function refresh_cells(cfg, menu)
         -- assumption in any of them blanks the whole grid silently. Said once
         -- per distinct message, because it fires per cell.
         local ok, err = pcall(function() return handle_cell(cfg, cell, name) end)
-        if ok and err == "rendered" then
+        -- A cell handed back to the game is drawn too: it is what the stand
+        -- should show, and an uncommitted generation would repaint every beat.
+        if ok and (err == "rendered" or err == "vanilla") then
             painted = painted + 1
         elseif not ok or err == "failed" then
             complete = false
@@ -1191,7 +1344,8 @@ function M.refresh(cfg,flush_receipt)
     -- never registered on a machine that must not run it. Vanilla's own grid
     -- is untouched underneath.
     if not api.has_authority() then
-        -- A client draws the grid from what the server sent, or not at all.
+        -- A client draws the grid from what the server sent, or gives the
+        -- stand back to the game.
         --
         -- The three reasons this was off are answered separately. The fatal
         -- rank call is gone from the client path entirely - the ranks arrive
@@ -1200,15 +1354,18 @@ function M.refresh(cfg,flush_receipt)
         -- protocol carries PWP_Prio upward and the server's answer back down,
         -- so the number that changes on screen is the server's.
         --
-        -- No data means no grid, rather than an empty one: before the server's
-        -- first push there is nothing honest to draw, and a grid of dashes
-        -- reads as "this pal can do nothing" instead of "not known yet".
-        -- The hook is registered either way, and the DRAW is what waits.
+        -- No data is not a grid of dashes, which would read as "this pal can
+        -- do nothing". While the handshake is under way each cell shows "?"
+        -- ("not known yet", with a Connecting tooltip). When it cannot finish
+        -- - a server without the mod, another version, a settings fence -
+        -- every cell goes back to the vanilla checkbox (M.vanilla_message)
+        -- and the legend says why. The hook is registered either way.
         --
         -- Returning here also skipped try_hook_bind, so the hook only existed
         -- once data had arrived - and rows bound before that were never bound
         -- again. Registering is safe with no data: the rank loop inside is
-        -- gated on authority, and a pal with no entry draws nothing.
+        -- gated on authority, and a pal with no entry shows "?" until data
+        -- arrives.
         if not (net.pals and next(net.pals) ~= nil) then
             if not said_client then
                 said_client = true
@@ -1517,6 +1674,7 @@ end
 -- All wrappers belong to this action's freshly proved roster. Data/snapshot
 -- invalidations still get a complete refresh at the normal maintenance beat.
 local function paint_input(cfg, cells, edited, previous)
+    same_memo = {}
     for _, cell in ipairs(cells or {}) do
         local paint = cell == edited
         if not paint and previous then
@@ -1527,7 +1685,7 @@ local function paint_input(cfg, cells, edited, previous)
             local name = full_name(cell)
             if name then cell_last[name] = nil end
             local ok, result = pcall(handle_cell, cfg, cell, name)
-            if not ok or result ~= "rendered" then
+            if not ok or (result ~= "rendered" and result ~= "vanilla") then
                 -- Do not consume the full-grid generation on a partial draw.
                 invalidate_cells()
                 if not ok then warn_once("input paint", "stand edit could not be drawn: " .. tostring(result)) end
@@ -1538,7 +1696,7 @@ end
 
 -- dir -1 for left click (towards priority 1), +1 for right click.
 local function bump(cfg, dir, cell_name, key, work, token, revision)
-    if M.settings_message() then return false end
+    if editing_blocked() then return false end
     if not menu_likely_open or not store.decided then return end
 
     -- Fresh discovery also invalidates queued actions when the visible menu
@@ -1604,7 +1762,7 @@ local function input_targets(cells)
 end
 
 function M.nav(cfg,direction,origin)
-    if M.settings_message() then return false end
+    if editing_blocked() then return false end
     if not menu_likely_open or not store.decided or (input_blocked and input_blocked()) then return false end
     local epoch=session.ui_epoch
     local menu=live_menu()
@@ -1650,7 +1808,7 @@ end
 -- Native keyboard callback only. Resolve the target NOW, while Slate has
 -- delivered the event to our focused receiver, and keep scalar identity only.
 function M.capture_direct(source_name,source_key,source_work,source_token,source_only)
-    if M.settings_message() then return false end
+    if editing_blocked() then return false end
     if not menu_likely_open or not store.decided then return false end
     local epoch=session.ui_epoch
     local menu=live_menu()
@@ -1678,7 +1836,7 @@ function M.capture_direct(source_name,source_key,source_work,source_token,source
 end
 
 function M.direct(cfg,priority,intent)
-    if M.settings_message() then return false end
+    if editing_blocked() then return false end
     if not menu_likely_open or not store.decided or (input_blocked and input_blocked()) or type(intent)~='table'
         or intent.world~=session.epoch or intent.ui~=session.ui_epoch then return false end
     if priority~=false and (type(priority)~='number' or priority%1~=0 or priority<1 or priority>5) then return false end
@@ -1719,9 +1877,10 @@ function M.pad_tick(cfg)
     -- A controller press can only reach our receiver while it has the focus,
     -- and the game's stand gives the focus to its own cell. On a controller
     -- (asked at most four times a second) put it on the current selection,
-    -- the same as the first arrow key does on a keyboard.
+    -- the same as the first arrow key does on a keyboard. Not while the stand
+    -- is the game's again: then its own cursor keeps the focus.
     local now=os.clock()
-    if (M.pad_focus_at or 0)<=now then
+    if (M.pad_focus_at or 0)<=now and not M.vanilla_message() then
         M.pad_focus_at=now+0.25
         local gamepad=api.input_is_gamepad and api.input_is_gamepad()==true
         if gamepad and not stand_pointer.keyboard_active() then

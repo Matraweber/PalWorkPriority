@@ -8,6 +8,16 @@
 -- loader still owns those file names and deletes them when that copy updates
 -- or is removed. Running a different version than the loader manages is the
 -- signal. Plain file reads only; anything unreadable means "no warning".
+--
+-- The same check looks for the old UE4SS layout next to the official one
+-- (audit H, 2026-10-28): a second copy of this mod in
+-- <game>/Pal/Binaries/Win64/ue4ss/Mods/PalWorkPriority, or a second UE4SS
+-- there (its dwmapi.dll proxy). The official loader keeps UE4SS in
+-- Mods/NativeMods/UE4SS and puts no dwmapi.dll in Pal/Binaries/Win64 (the
+-- 2026-10-28 Vortex run, docs/vortex-2026-10-28.md); Vortex's own UE4SS
+-- management or an old manual install does, and then mods can load twice.
+-- On a dedicated server that layout is the normal one, and a mod running
+-- from it is never checked.
 local M = {}
 
 local function read(path)
@@ -18,14 +28,16 @@ local function read(path)
     return text
 end
 
--- dir: this mod's folder (ends in a slash). version: the running version.
--- Returns nil when there is nothing to say, or {managed = <version or nil>}.
-function M.check(dir, version, reader)
-    reader = reader or read
-    if type(dir) ~= 'string' or type(version) ~= 'string' then return nil end
-    -- Only the official layout has a loader: <game>/Mods/NativeMods/UE4SS/Mods/<mod>/.
-    local mods = dir:match('^(.*[\\/][Mm]ods[\\/])[Nn]ative[Mm]ods[\\/]')
-    if not mods then return nil end
+-- Opened and closed, never read: a DLL is no text to load.
+local function exists(path)
+    local f = io.open(path, 'rb')
+    if not f then return false end
+    f:close()
+    return true
+end
+
+-- The Workshop half: {workshop = true, managed = <version or nil>} or nil.
+local function workshop(mods, version, reader)
     local settings = reader(mods .. 'PalModSettings.ini')
     if type(settings) ~= 'string' then return nil end
     local active = false
@@ -36,10 +48,39 @@ function M.check(dir, version, reader)
     local info = reader(mods .. 'ManagedMods/PalWorkPriority/Info.json')
     local managed = type(info) == 'string' and info:match('"Version"%s*:%s*"([^"]+)"') or nil
     if managed == version then return nil end
-    return { managed = managed }
+    return { workshop = true, managed = managed }
 end
 
-function M.text(found, version)
+-- dir: this mod's folder (ends in a slash). version: the running version.
+-- Returns nil when there is nothing to say, or a table with any of:
+--   workshop = true, managed = <version or nil>   the Workshop copy is on
+--   old_copy = <folder>    a second copy of this mod in the old layout
+--   old_ue4ss = <folder>   a second UE4SS (dwmapi.dll) in Pal/Binaries/Win64
+-- reader and present are for tests. A test reader also answers present, so
+-- a test never looks at the real disk.
+function M.check(dir, version, reader, present)
+    if not present then
+        present = reader and function(path) return reader(path) ~= nil end or exists
+    end
+    reader = reader or read
+    if type(dir) ~= 'string' or type(version) ~= 'string' then return nil end
+    -- Only the official layout has a loader: <game>/Mods/NativeMods/UE4SS/Mods/<mod>/.
+    local game, mods_name = dir:match('^(.*[\\/])([Mm]ods[\\/])[Nn]ative[Mm]ods[\\/]')
+    if not game then return nil end
+    local found = workshop(game .. mods_name, version, reader) or {}
+    -- Named the way the player will look for it, with the separator the game
+    -- handed us (a backslash on Windows).
+    local sep = dir:find('\\', 1, true) and '\\' or '/'
+    local win64 = game .. table.concat({ 'Pal', 'Binaries', 'Win64' }, sep)
+    local old = win64 .. sep .. table.concat({ 'ue4ss', 'Mods', 'PalWorkPriority' }, sep)
+    if present(old .. sep .. 'Scripts' .. sep .. 'main.lua') then found.old_copy = old end
+    if present(win64 .. sep .. 'dwmapi.dll') then found.old_ue4ss = win64 end
+    if next(found) == nil then return nil end
+    found.sep, found.native = sep, table.concat({ 'Mods', 'NativeMods', 'UE4SS', 'Mods' }, sep)
+    return found
+end
+
+local function workshop_text(found, version)
     if found.managed == nil then
         return 'Pal Work Priority: the Steam Workshop copy is switched on in the game\'s mod list but not installed yet. '
             .. 'On the next start the game will install it over this version (' .. version .. '). '
@@ -50,8 +91,36 @@ function M.text(found, version)
         .. 'Use one copy: update the Workshop copy, or switch it off or unsubscribe and reinstall this version.'
 end
 
+local function old_layout_text(found)
+    local parts = {}
+    if found.old_copy then
+        parts[#parts + 1] = 'Pal Work Priority: a second copy of this mod is in ' .. found.old_copy
+            .. ', the old UE4SS layout. Remove that folder. The copy the game\'s mod loader runs is the one in '
+            .. found.native .. '.'
+    end
+    if found.old_ue4ss then
+        local sep = found.sep
+        parts[#parts + 1] = 'Pal Work Priority: a second UE4SS is installed in ' .. found.old_ue4ss
+            .. ', next to the one from the game\'s mod loader, so mods can load twice. Remove '
+            .. found.old_ue4ss .. sep .. 'dwmapi.dll and the folder ' .. found.old_ue4ss .. sep .. 'ue4ss'
+            .. ' after moving any mods you still use to ' .. found.native .. '.'
+    end
+    return table.concat(parts, ' ')
+end
+
+-- The log text: every problem found, each in its own plain sentences.
+function M.text(found, version)
+    local parts = {}
+    if found.workshop then parts[#parts + 1] = workshop_text(found, version) end
+    if found.old_copy or found.old_ue4ss then parts[#parts + 1] = old_layout_text(found) end
+    return table.concat(parts, ' ')
+end
+
 -- One short clause for the panel's sub line, which has room for one line.
+-- A second copy of the mod comes first: it can run the mod twice.
 function M.short(found)
+    if found.old_copy then return 'Second copy in Pal/Binaries/Win64/ue4ss: remove it.' end
+    if found.old_ue4ss then return 'Second UE4SS in Pal/Binaries/Win64: remove it.' end
     if found.managed == nil then
         return 'Steam Workshop copy also on, not installed yet: use one copy.'
     end
