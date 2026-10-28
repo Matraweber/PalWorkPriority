@@ -25,8 +25,8 @@ def fixture_body(stream, revision):
         return ('# Pal Work Priority: palkey|worktype|priority (1 highest, 5 lowest, X disabled)\n'
                 '# baseline=vanilla\ntrial-pal|1|1\ntrial-pal|2|2\ntrial-pal|3|3\ntrial-pal|4|4\n'
                 'trial-pal|5|5\ntrial-pal|6|X\n'+f'trial-pal|7|{revision}\n').encode()
-    return ('# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-            '# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n'
+    return ('# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+            '# guild|work|item|limit (OFF hides an inherited limit for this guild)\n'
             +GUILD+f'|Mining|Ore|{revision*100}\n'+GUILD+'|Mining|Stone|OFF\n').encode()
 
 

@@ -23,8 +23,8 @@ def typed_payload(stream, revision):
                 'trial-pal|1|1\ntrial-pal|2|2\ntrial-pal|3|3\ntrial-pal|4|4\n'
                 'trial-pal|5|5\ntrial-pal|6|X\n' + f'trial-pal|7|{revision}\n')
     else:
-        body = ('# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-                '# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n'
+        body = ('# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+                '# guild|work|item|limit (OFF hides an inherited limit for this guild)\n'
                 + f'{GUILD}|Mining|Ore|{100 * revision}\n{GUILD}|Mining|Stone|OFF\n')
     raw = body.encode('utf-8')
     return f'PWP-SETTINGS-1\n{WORLD}\n{GUILD}\n{stream}\n{len(raw)}\n'.encode() + raw

@@ -1,7 +1,9 @@
--- Group limits and a strictly separate session view for clients. A limit
--- switches its whole work type off once every limit on that type is reached
--- (scheduler.cap_state); new ones can be created again since 2026-10-27
--- (user's decision, DECISIONS). Item-specific control waits for producers.lua.
+-- Production limits and a strictly separate session view for clients. A
+-- limit switches its whole work type off once every limit on that type is
+-- reached (scheduler.cap_state); new ones can be created again since
+-- 2026-10-27 (user's decision, DECISIONS). Mining limits are the exception
+-- since 2026-10-28: item_sources.lua stops only the rocks of their item
+-- (item_limits_on_rocks). The rules are stored the same way either way.
 local log = require("log")
 local file = require("datafile")
 local settings_gate = require('settings_gate')
@@ -160,6 +162,14 @@ local function decode(text)
     return result
 end
 
+-- The fixed comment lines at the top of caps.txt. Every line starts with '#'
+-- and ends with '\n', so decode skips them, and files with the header before
+-- 2026-10-28 ("# Legacy work-type groups: ...") still load unchanged. Tests
+-- and acceptance tools pin these bytes; change them together.
+M.HEADER = "# Production limits. Mining limits stop only the rocks of their item; "
+    .. "every other limit switches its whole work type.\n"
+    .. "# guild|work|item|limit (OFF hides an inherited limit for this guild)\n"
+
 -- Pure parser for recovered snapshot bytes. No IO, remote-view replacement or
 -- saved-state change. Scope/authority and generation remain caller obligations.
 function M.decode_snapshot(text)
@@ -207,9 +217,7 @@ function M.serialize_snapshot(data)
         end
     end
     table.sort(rows)
-    local payload = "# Legacy work-type groups: may stop unrelated products of the same suitability.\n"
-        .. "# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n" .. table.concat(rows)
-    return payload
+    return M.HEADER .. table.concat(rows)
 end
 
 function M.serialize()
@@ -549,10 +557,11 @@ function M.rule_kind(work, item, guild)
     return "item"
 end
 
--- Any valid work and item can have a group limit (locked 2026-10-11, open
--- again 2026-10-27: 0.4.1 users could add them and nobody asked for the lock).
+-- Any valid work and item can have a limit (locked 2026-10-11, open again
+-- 2026-10-27: 0.4.1 users could add them and nobody asked for the lock).
 -- rule_kind still tells an existing rule ("legacy") from a new one ("item");
--- both are stored and enforced the same way, as a group.
+-- both are stored the same way. How a reached one acts (whole work type, or
+-- only the rocks of its item for Mining) is the scheduler's business.
 function M.support(work,item,guild)
     local ok, why = M.valid_rule(work, item, 1)
     if not ok then return false, why end
@@ -650,7 +659,7 @@ end
 function M.offer_adopt(guild)
     if offered or not guild_ok(guild) or not M.data[M.ANY_GUILD] then return false end
     offered = true
-    log.say("Shared legacy group limits exist. '!pwp adopt' moves them to this guild; check other guilds before doing so.")
+    log.say("Some limits are shared by every guild (from an older version). '!pwp adopt' moves them to this guild; check other guilds before doing so.")
     return true
 end
 

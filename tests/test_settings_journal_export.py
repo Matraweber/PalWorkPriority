@@ -15,8 +15,8 @@ def record(stream, body=None, generation=1, guild=G):
     if body is None:
         body=(b'# Pal Work Priority: palkey|worktype|priority (1 highest, 5 lowest, X disabled)\n'
               if stream=='priorities' else
-              b'# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-              b'# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n')
+              b'# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+              b'# guild|work|item|limit (OFF hides an inherited limit for this guild)\n')
     scope=f'PWP-SCOPE-1:{W}:{guild}:{stream}'.encode()
     payload=b'PWP-SETTINGS-1\n'+W.encode()+b'\n'+guild.encode()+b'\n'+stream.encode()+b'\n'+str(len(body)).encode()+b'\n'+body
     raw=b'PWPJNL1\n'+struct.pack('<HII',len(scope),generation,len(payload))+scope+payload

@@ -18,8 +18,8 @@ def payload(stream, revision):
         body = '# Pal Work Priority: palkey|worktype|priority (1 highest, 5 lowest, X disabled)\n# baseline=vanilla\n'
         body += ''.join(f'trial-pal|{i}|{v}\n' for i, v in enumerate([1, 2, 3, 4, 5, 'X', revision], 1))
     else:
-        body = '# Legacy work-type groups: may stop unrelated products of the same suitability.\n'
-        body += '# guild|work|item|ceiling (OFF masks an inherited group rule for this guild)\n'
+        body = '# Production limits. Mining limits stop only the rocks of their item; every other limit switches its whole work type.\n'
+        body += '# guild|work|item|limit (OFF hides an inherited limit for this guild)\n'
         body += f'{G}|Mining|Ore|{100 * revision}\n{G}|Mining|Stone|OFF\n'
     return f'PWP-SETTINGS-1\n{W}\n{G}\n{stream}\n{len(body.encode())}\n{body}'.encode()
 
