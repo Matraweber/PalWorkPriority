@@ -819,6 +819,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " discover  write Discovery.txt")
     log.say("  " .. p .. " guilds    write Guilds.txt")
     log.say("  " .. p .. " assignments  read-only authority assignment census")
+    log.say("  " .. p .. " rocks     Mining rocks held by limits, and who mines what")
     log.say("  " .. p .. " icons     probe the overlay icons")
     log.say("  " .. p .. " perf      hook counts and file writes " ..
             "(perf on for ms)")
@@ -1440,6 +1441,74 @@ COMMANDS.assignments = function()
     run_now(function()
         local census = require('assignment_probe')
         log.say(census.format(census.read()))
+    end)
+end
+
+-- Mining per item (item_sources.lua), seen from the machine that runs the
+-- passes: per base, how many rocks and pits give each item and how many are
+-- held off by a limit, and which rock or pit each miner's assignment is on.
+-- Reads only. Added 2026-10-28 so a dedicated server can be checked through
+-- remote.txt; a client sees no base works and says so.
+COMMANDS.rocks = function()
+    run_now(function()
+        local sources = require("item_sources")
+        local mining = workdefs.value("Mining")
+        local camps = api.base_camps() or {}
+        if #camps == 0 then
+            log.say("rocks: no base camps on this machine (a client sees none; ask the server)")
+            return
+        end
+        for ci, camp in ipairs(camps) do
+            local camp_key = api.guid_key(api.camp_id(camp))
+            local held = (camp_key and sources.blocked[camp_key]) or {}
+            local works, err, keys = api.camp_works(camp)
+            if err or type(works) ~= "table" or type(keys) ~= "table" then
+                log.say(string.format("rocks: base %d works unavailable (%s)", ci, tostring(err)))
+            else
+                local label_of, counts, order = {}, {}, {}
+                for i, w in ipairs(works) do
+                    local key = keys[i]
+                    if key and api.work_suitability(w) == mining then
+                        local p = sources.product(w, key)
+                        if p then
+                            local label = p.item .. (p.rock and " rock" or " building")
+                            label_of[key] = label
+                            local c = counts[label]
+                            if not c then
+                                c = { workable = 0, held = 0, off = 0 }
+                                counts[label] = c
+                                order[#order + 1] = label
+                            end
+                            if held[key] then
+                                c.held = c.held + 1
+                            elseif api.as_int(api.prop(w, "CurrentState")) == 1 then
+                                c.workable = c.workable + 1
+                            else
+                                c.off = c.off + 1
+                            end
+                        end
+                    end
+                end
+                table.sort(order)
+                local parts = {}
+                for _, label in ipairs(order) do
+                    local c = counts[label]
+                    parts[#parts + 1] = string.format("%s %d workable, %d held%s", label, c.workable, c.held,
+                        c.off > 0 and (", " .. c.off .. " off by the game") or "")
+                end
+                log.say(string.format("rocks: base %d: %s", ci, #parts > 0 and table.concat(parts, "; ") or "no Mining sources"))
+                local miners = {}
+                local pals = api.camp_pals(camp) or {}
+                for _, pal in ipairs(pals) do
+                    local ok, a = pcall(scheduler.assignment_reader, pal, camp)
+                    if ok and type(a) == "table" and a.id and label_of[a.id] then
+                        miners[#miners + 1] = tostring(pal.name) .. " -> " .. label_of[a.id]
+                            .. (held[a.id] and " (held)" or "") .. " [" .. tostring(a.state) .. "]"
+                    end
+                end
+                log.say("  miners: " .. (#miners > 0 and table.concat(miners, "; ") or "none on a rock or pit right now"))
+            end
+        end
     end)
 end
 
