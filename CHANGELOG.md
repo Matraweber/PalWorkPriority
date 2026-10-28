@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 - DRAFT, not released yet
+## 0.5.0 - 2026-10-28
 
 A reliability release. It fixes the problems reported most since 0.4.1:
 priorities and X lost after a restart, a second or stuck panel, and Pals that
@@ -170,8 +170,8 @@ the profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 
 ### Vortex
 
-Tested with the current Palworld extension (0.5.0): install, update and removal
-work, and your settings files stay. If your UE4SS comes from the game's mod
+Tested with Vortex 2.9.1 and 1.15.2 and the current Palworld extension (0.5.0):
+install, update and removal work, and your settings files stay. If your UE4SS comes from the game's mod
 loader or the Steam Workshop, turn off "Manage modding requirements (UE4SS,
 Unreal Pak Tool) automatically" in Vortex's Settings > Mods, or Vortex installs
 a second UE4SS. If the game is on another drive than Vortex, use "Suggest" for

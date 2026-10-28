@@ -2,9 +2,9 @@
 
 Work priorities for base Pals in Palworld, with an editor on the Monitoring Stand and a separate Production Limits panel.
 
-**0.5.0-rc1 is an unpublished reliability candidate.** It protects saved choices, reports incomplete edits and unavailable data, and repairs permission, panel and session handling. See the [release plan](docs/RELEASE-0.5.0.md) for completed tests and outstanding work (the project notes form an Obsidian vault, start at [docs/Home.md](docs/Home.md)), and the [current comment census](docs/comment-ledger-2026-09-11.md) for all 70 Steam comments, 17 Nexus posts/replies and two Nexus bug reports reviewed October 9.
+**0.5.0 is a reliability release.** Saved priorities and X survive restarts, the panel no longer doubles or sticks, Pals mine and chop again, limits can be added again (Mining limits per rock item), and the Monitoring Stand and panel work with a controller. What was tested and how is in the [release plan](docs/RELEASE-0.5.0.md) (the project notes form an Obsidian vault, start at [docs/Home.md](docs/Home.md)); public reports are tracked in the [comment census](docs/comment-ledger-2026-09-11.md).
 
-**Native acceptance remains open.** Local dedicated-server legacy-limit save/restart and selected storage readback have evidence, but item-specific production, complete assignment coverage, frontend/lifecycle cases, multiple guilds and matched frame-time testing are not complete. Public/default and dedicated native asynchronous saving remain off; the development trial is not a normal-installation release. Passing isolated tests does not establish crash-free menus, correct production or multiplayer compatibility.
+**Not covered by the 0.5.0 tests:** two real players in two guilds at once, players without the mod editing on a modded server, Steam Deck hardware, item-specific limits for buildings (Stone Pit, logging site, furnaces) and the asynchronous saver (built, off, planned for 0.5.x).
 
 ## What the mod controls
 
@@ -35,7 +35,7 @@ Use one installation route. A Workshop copy plus a manual copy can load duplicat
 
 The intended dependency is [Experimental UE4SS for Palworld, Workshop item 3625223587](https://steamcommunity.com/sharedfiles/filedetails/?id=3625223587), package name `UE4SSExperimentalPW`. This identifies the distribution; it does not certify every update.
 
-The saved August test log identifies UE4SS `c838a8ac`. The dependency reviewed in September advertises `2281fa31`, updated September 3. **0.5.0-rc1 has no accepted native game/runtime combination yet.** Acceptance must record the actually loaded game revision, UE4SS build/binary hash, Lua version, mod source/package hashes and pak hash. A dependency page or banner alone does not prove what the process loaded.
+The saved August test log identifies UE4SS `c838a8ac`. The dependency reviewed in September advertises `2281fa31`, updated September 3. **0.5.0 was tested on game 1.0.5 (build 102999) with the Experimental UE4SS for Palworld from the Workshop and on a GPortal dedicated server.** Acceptance must record the actually loaded game revision, UE4SS build/binary hash, Lua version, mod source/package hashes and pak hash. A dependency page or banner alone does not prove what the process loaded.
 
 ### Steam Workshop
 

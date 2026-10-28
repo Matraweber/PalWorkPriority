@@ -16,6 +16,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-28 - No real-controller run before 0.5.0 (user's decision).** The
+  virtual XInput pad passed every stand and panel step in game on 2026-10-22,
+  and the input routes were checked against other mods (PalPriority is mouse
+  only; DarnMenu gets controller input through the game's own CommonUI
+  buttons). *Rejected:* holding the release for a Steam Input run with the
+  user's pad. *Evidence:* [controller-routes-2026-10-22](controller-routes-2026-10-22.md).
+- **2026-10-28 - 0.5.0 is the version string of the release build** (was
+  0.5.0-rc1). Server and every player need exactly the same version, so the
+  server gets the same build.
+
 - **2026-10-20 - A Workshop copy switched on next to a manual install is
   reported in the log and on the Production Limits panel.** At load
   `install_check.lua` reads PalModSettings.ini and the loader's Info.json; when

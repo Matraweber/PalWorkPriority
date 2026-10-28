@@ -85,7 +85,11 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
   navigation, tabs, Y confirms, B closes only the panel; keyboard and mouse
   rechecked. A in the panel stays the game's own confirm (Y used). Built into
   WorkRules contract 4 / StandInput contract 3 (user's decision to ship it in
-  0.5.0). Open: one run with a real controller through Steam Input.
+  0.5.0). A run with a real controller through Steam Input is not needed
+  (user's decision 2026-10-28): the virtual pad passed in game and the routes
+  were checked against how other mods take controller input
+  ([controller-routes-2026-10-22](controller-routes-2026-10-22.md), "What
+  other mods do").
   **Done when:** a controller can open the panel, move, edit priorities on
   the stand and close the panel without closing the stand.
 - [x] **Old Pal reports rerun on rc1** (user's pick 2026-10-21): KhanKeal's
@@ -189,7 +193,8 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   manual layout; 0.4.1 installed and loaded, 0.5.0 installed over it, 0.4.1
   removed, 0.5.0 loaded once with settings intact, removal kept the user's
   files. The Nexus page should say to turn off Vortex's UE4SS management when
-  UE4SS comes from the game's mod loader.
+  UE4SS comes from the game's mod loader. Rechecked on Vortex 2.9.1 (same
+  day): fresh install, game load and removal pass.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
