@@ -13,7 +13,7 @@ panel.apply(cfg,{kind='page',by=1},-1,true); panel.refresh(cfg)
 assert(rendered('page 2 of 4'), 'fixture did not reach a non-first picker page')
 assert(overlay.parts.NoticeRow.visibility==0,
     'picker help row is collapsed before an unsupported selection')
-local help=assert(rendered('Click an item to add a limit. Green items have one already: click to open it.'))
+local help=assert(rendered('Click an item to add a limit. Items saying Edit already have one: click to open it.'))
 assert(help.parent==overlay.parts.Notice, 'help is not in the reserved notice row')
 assert(rendered('Search items'), 'picker placeholder still promises item limits')
 local row, height, widgets=overlay.parts.NoticeRow,overlay.height,count
@@ -37,9 +37,12 @@ panel.refresh(cfg)
 assert(rendered('This item cannot have a limit.')==help,
     'rejection did not replace the existing help text')
 stable()
+-- Kept until the next input (review B6), then the help comes back in place.
 now=108; panel.refresh(cfg)
-assert(rendered('Click an item to add a limit. Green items have one already: click to open it.')==help,
-    'notice expiry did not restore help in place')
+assert(rendered('This item cannot have a limit.')==help, 'notice expired before any input')
+panel.nav(cfg,'right'); panel.refresh(cfg)
+assert(rendered('Click an item to add a limit. Items saying Edit already have one: click to open it.')==help,
+    'input did not restore help in place')
 stable()
 assert(not panel.apply(cfg,{kind='item',item='StoneAB'},-1,true))
 panel.refresh(cfg); stable()

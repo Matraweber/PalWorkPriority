@@ -26,10 +26,15 @@ assert(#list==0 and not all and status=='pending' and prepares==1 and searches==
 assert(env.picker_key==nil, 'partial index committed a cache')
 state='unavailable'; list,all,status=pick({})
 assert(status=='unavailable' and env.picker_key==nil and searches==0)
-state='ready'; list,all,status=pick({})
+local stock={}
+state='ready'; list,all,status=pick(stock)
 assert(status==nil and #list==1 and list[1]=='Ore' and searches==1)
 assert(names.Decoration==nil, 'localized a non-job item before filtering')
-assert(pick({})==list and searches==1, 'complete result was not reused')
+assert(pick(stock)==list and searches==1, 'complete result was not reused')
+-- The stock table and the selected base are part of the key (review B6,
+-- 2026-10-28): another base, or a new pass's totals, is a new list.
+assert(pick(stock,'camp-b')~=list and searches==2, 'another base reused the first base list')
+assert(pick({},'camp-b') and searches==3, 'a new stock table reused the old list')
 -- World reset while the query is unchanged must gate even an old cache.
 state='pending'; local pending=select(3,pick({})); assert(pending=='pending')
 env.search_text,env.show_all='',true

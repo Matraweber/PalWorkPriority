@@ -67,7 +67,7 @@ local remove={kind='drop',rule={work='Mining',item='Stone01',amount=101}}
 assert(panel.apply(cfg,remove,-1,true))
 panel.refresh(cfg)
 assert(rendered('Sure?'), 'Remove did not arm')
-assert(notice()=='Click Sure? to delete this Mining limit.',
+assert(notice()=='Click Sure? to delete the Mining limit for Stone01.',
     'armed Remove notice: '..tostring(notice()))
 panel.escape()
 assert(panel.open, 'Escape with an armed Remove closed the panel')
@@ -87,21 +87,21 @@ panel.escape()
 assert(not panel.open, 'second Escape did not close')
 panel.toggle(); panel.refresh(cfg)
 
--- Key hints: both close keys, the host-only recount and the mouse line.
+-- Key hints: both close keys, the host-only recheck and the mouse line.
 assert(rendered('ESC / ALT+F1'), 'close key hint missing')
-assert(rendered('ALT+F2 RECOUNT NOW'), 'host recount hint missing')
-assert(rendered('Left click a limit to type it, right click to lower it one step. Alt+F2 recounts storage now.'))
+assert(rendered('ALT+F2 RECHECK NOW'), 'host recheck hint missing')
+assert(rendered('Left click a limit to type it, right click to lower it one step. Delete removes. Alt+F2 rechecks now.'))
 local esc,close=rendered('ESC / ALT+F1'),rendered('CLOSE')
 assert(esc.Slot.position.X+#esc.text*12*0.76<=close.Slot.position.X-9, 'close key hint runs into CLOSE')
 local dm0=package.loaded.darnmenu
 package.loaded.darnmenu={labels={key_panel='ALT+F7',key_pass='ALT+F8'}}
 panel.refresh(cfg)
-assert(rendered('ESC / ALT+F7') and rendered('ALT+F8 RECOUNT NOW'), 'rebound keys not named')
+assert(rendered('ESC / ALT+F7') and rendered('ALT+F8 RECHECK NOW'), 'rebound keys not named')
 package.loaded.darnmenu=dm0
 caps.is_client=true
 panel.refresh(cfg)
-assert(not rendered('ALT+F2 RECOUNT NOW'), 'client shown a recount it cannot do')
-assert(rendered('Left click a limit to type it, right click to lower it one step.'))
+assert(not rendered('ALT+F2 RECHECK NOW'), 'client shown a recheck it cannot do')
+assert(rendered('Left click a limit to type it, right click to lower it one step. Delete removes.'))
 caps.is_client=nil
 panel.refresh(cfg)
 
