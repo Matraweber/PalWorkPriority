@@ -64,7 +64,12 @@ local function boot(authority,empty_caps,prepare,expected_error)
     StaticFindObject=function() return nil end
     LoadAsset=function() return nil end
     FName=function(value) return value end
-    Key=setmetatable({}, {__index=function(_,key) return key end})
+    -- Only names UE4SS really has: a made-up one (DELETE, 2026-10-28) bound
+    -- nothing in game while this stub happily answered for it.
+    Key=setmetatable({}, {__index=function(_,key)
+        if key:match("^F%d+$") or ({ALT=1,ESCAPE=1,RETURN=1,DEL=1,BACKSPACE=1,TAB=1,
+            UP_ARROW=1,DOWN_ARROW=1,LEFT_ARROW=1,RIGHT_ARROW=1,SPACE=1})[key] then return key end
+    end})
     ModifierKey={ALT="ALT",CONTROL="CONTROL",SHIFT="SHIFT"}
 
     -- Use real persistence, configuration, transport/protocol, session and
@@ -1267,10 +1272,10 @@ test("Delete asks the open panel to remove the selected limit and leaves the wor
     local panel=package.loaded.panel
     local calls={}
     panel.row_action=function(cfg,kind) calls[#calls+1]=kind; assert(cfg==s.cfg()) return true end
-    assert(type(s.keys.DELETE)=="function","Delete is not bound")
-    panel.open=false; s.keys.DELETE(); s.session.drain()
+    assert(type(s.keys.DEL)=="function","Delete is not bound")
+    panel.open=false; s.keys.DEL(); s.session.drain()
     assert(#calls==0,"Delete acted with the panel closed")
-    panel.open=true; s.keys.DELETE(); s.session.drain()
+    panel.open=true; s.keys.DEL(); s.session.drain()
     assert(#calls==1 and calls[1]=="drop","Delete did not ask for drop")
 end)
 

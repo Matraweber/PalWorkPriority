@@ -3137,7 +3137,7 @@ local function arrows()
         { "RETURN",      function() if panel.open then return panel.nav(cfg, "enter") end; return ui.raw_nav(cfg,"enter") end },
         -- Remove for keyboard users (review B6): the same arm-then-confirm as
         -- the pad's Remove, so two presses. The stand has no use for it.
-        { "DELETE",      function() if panel.open then return panel.row_action(cfg, "drop") end end },
+        { "DEL",         function() if panel.open then return panel.row_action(cfg, "drop") end end },
     }
 
     for _, entry in ipairs(moves) do
