@@ -614,7 +614,7 @@ local unavailable_reason
 local recovery_retry_at,recovery_retries=nil,0
 -- Schema 3 already has a reason field. Only known codes may cross the wire;
 -- handler errors and old peers' unknown reasons collapse to generic rejection.
-local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,
+local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,too_many_limits=true,
     rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true}
 local function rejection_reason(reason)
     return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'

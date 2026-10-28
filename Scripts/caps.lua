@@ -593,6 +593,15 @@ function M.apply_set(work,item,ceiling,guild)
     if M.state == "error" and not dirty then return false end
     local supported, reason = M.support(work,item,guild)
     if not supported then M.error=reason; log.say(reason); return false,'unsupported_limit' end
+    -- A client receives its guild's whole view in one snapshot of at most
+    -- MAX_RULES rows; one more left every member "connecting" for good
+    -- (audit 2026-10-28, A6). Changing an existing limit stays allowed.
+    local view = M.all(config_source, guild)
+    if not (view[work] and view[work][item] ~= nil) then
+        local count = 0
+        for _, items in pairs(view) do for _ in pairs(items) do count = count + 1 end end
+        if count >= M.MAX_RULES then M.error='too_many_limits'; return false,'too_many_limits' end
+    end
     if persistence then local data=candidate_data();put(data,guild,work,item,clean);return async_candidate(data,guild) end
     if persistence_blocked then return false,'detached' end
     put(M.data,guild,work,item,clean)

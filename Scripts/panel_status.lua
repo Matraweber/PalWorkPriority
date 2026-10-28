@@ -20,6 +20,7 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     server_session_changed='The server restarted or changed. Reconnecting...',
     unsupported_limit=NO_NEW,
     no_active_legacy_rule=NO_RULE,
+    too_many_limits='This guild already has 500 limits. Remove one first.',
     rejected='The server rejected this change; confirmed settings are unchanged.',
     handler_error='The server could not process this change.',
     invalid_edit='The server rejected an invalid change.',
@@ -45,7 +46,6 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     snapshot_changed='Limits changed while saving. Check them and try again.',
     ['scope unavailable']='Your guild could not be read. Try again in a moment.',
     -- caps.lua's own sentences, which used internal terms.
-    ['Item-specific limits await a verified producer adapter and scope']=NO_NEW,
     ['No active legacy rule for this guild']=NO_RULE,
     ['ceiling out of range']='Enter a whole number from 1 to 9,999,999.',
     ['invalid item id']='This item cannot have a limit.',
