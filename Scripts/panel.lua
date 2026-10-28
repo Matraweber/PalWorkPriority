@@ -3146,14 +3146,14 @@ local function draw_list(cfg, totals)
             if legacy then
                 -- Two lines inside the existing 34px host, including the
                 -- one-pixel shadow. Use row-local tops, not line() centering.
-                -- The sub-label is 12pt in the item colour (review E): at
-                -- 9pt dim it was under 4.5:1. Its line box starts inside the
-                -- job's descender band; the glyphs do not meet.
-                text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT - 3,
+                -- The sub-label is in the item colour (review E): at 9pt dim it
+                -- was under 4.5:1. 13pt over 12pt touched in game (2026-10-28),
+                -- so the job is 12pt and the sub-label 11pt, 16px below it.
+                text_at(key, PAD + MARK_W, row * LINE - RB.ROW_LIFT,
                     workdefs.label(rule.work), "item", 12)
                 -- What the limit actually switches (P1-5): the item's own
                 -- rocks for a per-item Mining limit, otherwise the whole job.
-                text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 14,
+                text_at("legacy" .. i, PAD + MARK_W, row * LINE - RB.ROW_LIFT + 16,
                     item_row and "Item limit, rocks" or "Group limit", "item", 11, true)
             else
                 line(key, row, PAD + MARK_W, workdefs.label(rule.work),
