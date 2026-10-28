@@ -52,4 +52,49 @@ assert(found and found.managed == '0.4.1', 'Windows path separators not handled'
 -- A line that only starts with the name is another mod.
 files = { [SETTINGS] = '[PalModSettings]\r\nActiveModList=PalWorkPriorityExtras\r\n' }
 assert(check.check(dir, '0.5.0', reader) == nil, 'matched another mod by prefix')
-print('install_check: switched-off, same-version, managed-older, pending, layout and prefix cases')
+-- The old UE4SS layout next to the official one (audit H, 2026-10-28).
+local OLD_MAIN = 'D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64/ue4ss/Mods/PalWorkPriority/Scripts/main.lua'
+local DWMAPI = 'D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64/dwmapi.dll'
+local OLD_DIR = 'D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64/ue4ss/Mods/PalWorkPriority'
+
+-- A second copy of the mod there, Workshop copy off: warned, folder named.
+files = { [SETTINGS] = OFF, [OLD_MAIN] = '-- old' }
+found = check.check(dir, '0.5.0', reader)
+assert(found and found.old_copy == OLD_DIR and not found.workshop and not found.old_ue4ss,
+    'missed a second copy in the old UE4SS layout')
+text = check.text(found, '0.5.0')
+assert(text:find('Remove that folder', 1, true) and text:find(OLD_DIR, 1, true), text)
+assert(not text:find('Workshop', 1, true), 'old-layout text talked about the Workshop')
+assert(#check.short(found) <= 60 and check.short(found):find('remove it', 1, true))
+
+-- A second UE4SS (its dwmapi.dll proxy) there, even without a copy of the mod.
+files = { [DWMAPI] = 'MZ' }
+found = check.check(dir, '0.5.0', reader)
+assert(found and found.old_ue4ss == 'D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64' and not found.old_copy)
+text = check.text(found, '0.5.0')
+assert(text:find('second UE4SS', 1, true) and text:find('Win64/dwmapi.dll', 1, true)
+    and text:find('Win64/ue4ss', 1, true), text)
+assert(check.short(found) == 'Second UE4SS in Pal/Binaries/Win64: remove it.')
+
+-- Both problems and the Workshop conflict: every one in the log, the second
+-- copy (it can run the mod twice) on the panel line.
+files = { [SETTINGS] = ON, [INFO] = '{ "Version": "0.4.1" }', [OLD_MAIN] = '', [DWMAPI] = '' }
+found = check.check(dir, '0.5.0', reader)
+assert(found.workshop and found.managed == '0.4.1' and found.old_copy and found.old_ue4ss)
+text = check.text(found, '0.5.0')
+assert(text:find('0.4.1', 1, true) and text:find('Remove that folder', 1, true) and text:find('dwmapi.dll', 1, true))
+assert(check.short(found):find('Second copy', 1, true))
+
+-- Windows paths: the folder is named with backslashes, as Explorer shows it.
+files = { [OLD_MAIN] = '' }
+found = check.check(backslash_dir, '0.5.0', slashed)
+assert(found and found.old_copy == (OLD_DIR:gsub('/', '\\')), tostring(found and found.old_copy))
+assert(check.text(found, '0.5.0'):find('Mods\\NativeMods\\UE4SS\\Mods', 1, true))
+
+-- The dedicated server's normal layout is the old one: never checked.
+files = { ['/home/srv/Pal/Binaries/Win64/dwmapi.dll'] = '' }
+assert(check.check('/home/srv/Pal/Binaries/Win64/ue4ss/Mods/PalWorkPriority/', '0.5.0', reader) == nil)
+-- Only the mod's own folder in ue4ss/Mods counts, not another mod's.
+files = { ['D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64/ue4ss/Mods/OtherMod/Scripts/main.lua'] = '' }
+assert(check.check(dir, '0.5.0', reader) == nil)
+print('install_check: switched-off, same-version, managed-older, pending, layout, prefix and old-layout cases')
