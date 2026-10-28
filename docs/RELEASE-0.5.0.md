@@ -157,15 +157,19 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   2026-10-27 in singleplayer ([evidence](limits-unlock-2026-10-27.md)):
   added from the panel, reached at once switched the work type off, raised
   switched it back on, a second item joined the Mining group and Mining
-  resumed, both survived a restart, removed again from the panel. Open: a
-  client adding one on the dedicated server.
+  resumed, both survived a restart, removed again from the panel. Dedicated
+  server PASS 2026-10-28: a client added Mining Stone 1, the server logged
+  "set ... by a player" and saved it, the client's list showed it, and the
+  client's removal was applied and saved too ([per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)).
 - [x] **Mining limits per item on rocks** (user's decision 2026-10-28, into
   0.5.0). Built: `Scripts/item_sources.lua`, scheduler, panel wording
   ("Add item limit", "Its rocks only", "Rocks stopped"), config switch;
   tests pass (228 Lua). PASS 2026-10-28 in game ([evidence](per-item-limits-2026-10-27.md)):
   19 stone rocks held, 0 of 12 samples on stone while ore and crystals were
   mined, released at a raised limit, held again, fresh after a restart and
-  after a world change. Open: the same on the dedicated server. **Done when:** in game a reached Stone limit holds the stone
+  after a world change. Dedicated server PASS 2026-10-28 (GPortal "RAM" on
+  34fe913): the client's Stone limit held 3 stone rocks for 2 minutes while
+  Mining stayed wanted, and its removal released all 3. **Done when:** in game a reached Stone limit holds the stone
   rocks off (log "rock(s) held for limits", no Pal on a stone rock in 12
   samples) while ore and crystal rocks are mined, raising the limit releases
   them, the panel shows "Rocks stopped", and after a reload every rock reads

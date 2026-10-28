@@ -1006,7 +1006,8 @@ test("limit listing keeps unknown stock unavailable and labels legacy scope",fun
     s.commands.limit('')
     local output=table.concat(s.console,'\n')
     assert(output:find('unavailable',1,true),'unreadable stock was not disclosed')
-    assert(output:find('legacy group',1,true),'whole-work-type behavior was not disclosed')
+    assert(output:find('switch their whole work type',1,true) and output:find('Mining limits stop only the rocks',1,true),
+        'what a limit switches was not disclosed')
     assert(not output:find('0 / 100',1,true),'unreadable stock appeared as zero')
 end)
 

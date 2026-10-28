@@ -1713,15 +1713,15 @@ local function show_limits()
     table.sort(works)
 
     if #works == 0 then
-        log.say("no legacy group limits in the available view")
-        log.say("new item-specific limits are unavailable until producer controls are verified")
+        log.say("no limits in the available view")
+        log.say("add one with: " .. cfg.chat_prefix .. " limit <work> <item> <amount>")
         return
     end
 
     run_now(function()
         local totals, verified, scope = stock_across_camps()
 
-        log.say("legacy group limits; " .. scope .. (verified and "" or " (stock unavailable)"))
+        log.say("limits; " .. scope .. (verified and "" or " (stock unavailable)"))
         for _, work in ipairs(works) do
             local items = {}
             for item in pairs(all[work]) do items[#items + 1] = item end
@@ -1735,7 +1735,12 @@ local function show_limits()
                     have and have >= ceiling and "   threshold met" or ""))
             end
         end
-        log.say("legacy groups can restrict the entire work type, including unrelated products; thresholds do not prove actual activity")
+        -- Mining limits stop only the rocks of their item (item_sources.lua,
+        -- 2026-10-28); every other limit switches its whole work type.
+        log.say((cfg.item_limits_on_rocks ~= false
+            and "Mining limits stop only the rocks that mainly give their item; other limits switch their whole work type"
+            or "each limit can switch its entire work type, including unrelated products")
+            .. "; thresholds do not prove actual activity")
     end)
 end
 
@@ -1812,7 +1817,7 @@ COMMANDS.limit = function(args)
             log.say("limit change queued; awaiting server confirmation")
             return
         end
-        log.say("legacy group limit " .. (clearing and "removed and saved: " or "saved: ")
+        log.say("limit " .. (clearing and "removed and saved: " or "saved: ")
             .. workdefs.label(work) .. " " .. id .. (clearing and "" or " " .. ceiling))
         log.say(scope .. ": stock " .. (verified and tostring(totals[id] or 0) or "unavailable")
             .. "; this does not confirm actual production")

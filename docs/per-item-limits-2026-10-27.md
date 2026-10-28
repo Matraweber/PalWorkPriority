@@ -157,3 +157,46 @@ The help line was added after the first look at the panel.
 - The stone rocks stay held, because the world's own Stone limit is reached.
   That is the new behaviour, and it resets on every load.
 
+## Dedicated server (2026-10-28, GPortal "RAM")
+
+Install, through the GPortal web panel with 0 players online:
+
+- The live `Scripts` (30ee360, from 10-19) was renamed to
+  `Scripts-before-34fe913`.
+- `pwp-server-scripts-34fe913.zip` was uploaded (git archive of 34fe913, 60
+  Lua files, 420.6 KiB, sha256 starts b8eb1bdf) and unzipped in place. The
+  panel asks for confirmation; the first try missed that dialog and unzipped
+  nothing.
+- The listing showed 60 files. `item_sources.lua`, `scheduler.lua`,
+  `panel.lua`, `main.lua`, `picker_presentation.lua`, `config.lua` and
+  `stations.lua` match the commit's sizes.
+- Panel restart. UE4SS log: `PWP_READY` 15:12:51 (authority, settings
+  available), no PalWorkPriority warning or error. The base has 1 camp and 9
+  Pals, all left to the game. Mining wanted 5.
+
+Test, from the local client joined as a player (`role: client`):
+
+| Time | Seen (server UE4SS log in the panel) |
+| --- | --- |
+| 15:18:48 | Client `pwp limit Mining Stone 1`, which is "queued; awaiting server confirmation". |
+| 15:18:49 | Server: "Mining set Stone to 1 by a player". Rule-change pass: **"3 rock(s) held for limits (+3/-0)"**. Mining wanted dropped from 5 to 2, so Mining was not capped. |
+| 15:18:59 | Client `pwp limit`: the row shows "Mining Stone unavailable / 1". The client does not get the server's stock. |
+| 15:19:00 to 15:20:45 | 10 passes, each "3 rock(s) held for limits". Mining wanted 1 to 2. |
+| 15:20:55 | Client `pwp limit Mining Stone off`. Server: "Mining Stone cleared by a player", then **"3 rock(s) released"**. Mining wanted back to 5. |
+
+This also closes "a client adding a limit on the dedicated server". The
+server wrote `caps.txt` at 15:18 and again at 15:20. Now it holds only the
+header, and `caps.txt.bak` holds the Stone row.
+
+Not seen on the server: which Pals mined which rock. The client sees no work
+objects of the server base, and the census command only runs on the machine
+that runs the passes. The rocks held come from the server's own count.
+
+Found on the way: the `pwp limit` listing still said "legacy group limits".
+Reworded after the test; it now names Mining's per-item rule. That change is
+in the client install only. The server stays on 34fe913 until the next
+upload.
+
+The server log page in the panel froze the browser tab twice (very long
+log). Reading it with a single short script right after loading works.
+
