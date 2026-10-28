@@ -28,7 +28,7 @@
 local M = {}
 
 -- Bumped by hand when this file changes, so a report says which copy ran.
-M.VERSION = 16
+M.VERSION = 17
 
 local api = require("palapi")
 local log = require("log")
@@ -374,52 +374,20 @@ function M.forget()
     -- neutral sample clears it; changing UI is not a physical key release.
 end
 
--- Opening the panel from a pad.
+-- Opening the panel from a pad: not here any more.
 --
--- A chord rather than a button, and not for elegance. While the panel is shut
--- the game has its input and we cannot take it away, so whatever is bound here
--- ALSO does whatever the game has it doing. A single free button would open
--- the panel and throw a sphere at the same time. Two held together is a
--- gesture the game does not use for anything.
+-- RB + View was polled once a second while the panel was shut. View is the
+-- game's map button, so the chord opened the map as well as the panel, and
+-- the 2026-10-22 controller decision rejected it on that measurement
+-- (DECISIONS, UI and input). A controller opens the panel with View on the
+-- Monitoring Stand (StandInput contract 3) or the DarnMenu tile instead.
 --
--- The pair was picked against what is actually installed rather than by taste:
--- LeftTrigger, LeftShoulder, Special_Right, FaceButton_Left and both stick
--- clicks are claimed by FreeCam or FullSphereSummon. RightShoulder and
--- Special_Left are free in both.
-M.OPEN_CHORD = { "Gamepad_RightShoulder", "Gamepad_Special_Left" }
-
-local chord_was = false
-
--- True on the beat the chord closes, not while it is held.
-local function chord_down()
-    local pc = input_controller()
-    local all = true
-    for _, name in ipairs(M.OPEN_CHORD) do
-        if down_on(pc, name) ~= true then all = false break end
-    end
-    return all
-end
+-- open_asked stays so an older panel.lua that still calls it gets a plain
+-- "no", without a controller lookup or a single key read.
+M.OPEN_CHORD = {}
 
 function M.open_asked()
-    local all = chord_down()
-    local fired = all and not chord_was
-    chord_was = all
-
-    if fired then
-        -- Mark the chord's buttons as already held.
-        --
-        -- RightShoulder is half of this chord AND tab_next. The panel calls
-        -- forget() before this, so without seeding, the shoulder the player is
-        -- still holding reads as a brand new press on the very next tick and
-        -- the panel opens on the wrong tab. It survives today only because the
-        -- opening beat happens to find an empty hits table, which is luck
-        -- rather than design and would break the moment the draw order shifts.
-        for _, name in ipairs(M.OPEN_CHORD) do
-            held[name] = 1
-        end
-    end
-
-    return fired
+    return false
 end
 
 local WATCH = "pad watch"
