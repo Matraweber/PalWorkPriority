@@ -37,7 +37,7 @@ function M.support(work, item)
             if ok and supported == true then return true, id end
         end
     end
-    return false, 'Unsupported item limit: no verified output control for this producer. Existing legacy group limits can still be edited or removed.'
+    return false, 'Unsupported item limit: no verified output control for this producer. Existing limits can still be edited or removed.'
 end
 
 -- Stock and scope must be known. Started work may finish; no cancellation API

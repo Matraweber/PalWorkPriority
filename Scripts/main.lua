@@ -2671,6 +2671,12 @@ net.on_storage_request = function(guild, selected, now)
     if not store.decided or store.is_client or api.has_authority() ~= true then return nil end
     return require('storage_snapshot').build(cfg, scheduler, guild, selected, now)
 end
+-- Schema 5: the same reply carries this machine's limit verdict, so a
+-- client's panel shows what the server decided instead of "No count yet".
+net.on_limit_state = function(guild, view)
+    if not store.decided or store.is_client or api.has_authority() ~= true then return nil end
+    return require('panel_status').server_limits(cfg, scheduler, guild, view)
+end
 clock.every('storage transport', 100, function()
     net.set_storage_open(store.decided and store.is_client == true and panel.open == true)
     net.storage_tick()

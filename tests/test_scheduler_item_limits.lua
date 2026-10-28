@@ -143,6 +143,17 @@ for _, scope in ipairs({ "camp", "global" }) do
     assert(stats.rocks_held == 1)
     local seen = scheduler.last_capped.Mining
     assert(seen.camps == 2 and seen.capped == 1, scope .. ": per-camp verdict not published")
+    -- Schema 5: the same verdict per camp, and held items per camp, so a
+    -- server answers one client's scope without other camps mixed in.
+    local camps_seen, capped_camps, held = 0, 0, {}
+    for key, entry in pairs(scheduler.last_capped_by_camp) do
+        assert(entry.pass == scheduler.pass_id, scope .. ": stale per-camp verdict")
+        camps_seen = camps_seen + 1
+        if entry.works.Mining == true then capped_camps = capped_camps + 1 end
+        for item in pairs(require("item_sources").held_items(key)) do held[item] = (held[item] or 0) + 1 end
+    end
+    assert(camps_seen == 2 and capped_camps == 1, scope .. ": per-camp verdicts wrong")
+    assert(held.Stone == 1 and held.CopperOre == nil, scope .. ": held items per camp wrong")
 end
 
 -- F: one camp_works read per camp per pass with a Mining limit, shared by

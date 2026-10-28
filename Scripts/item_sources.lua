@@ -249,6 +249,19 @@ function M.count(camp_key)
     return n
 end
 
+-- Items whose rocks this module holds off in one camp. A server answers a
+-- client's scope with it (schema 5) instead of item_stopped, which looks at
+-- every camp at once, other guilds' included.
+function M.held_items(camp_key)
+    local out = {}
+    local known = (camp_key and products[camp_key]) or {}
+    for key in pairs((camp_key and M.blocked[camp_key]) or {}) do
+        local p = known[key]
+        if p and p.item then out[p.item] = true end
+    end
+    return out
+end
+
 -- Whether any camp has rocks switched off for this item (panel wording).
 function M.item_stopped(item)
     for camp_key, keys in pairs(M.blocked) do

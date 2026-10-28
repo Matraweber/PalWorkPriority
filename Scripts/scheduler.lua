@@ -95,6 +95,10 @@ M.last_storage_by_camp = {}
 -- leaving a stale verdict behind: entries from an older pass are ignored and
 -- overwritten the next time that work is considered.
 M.last_capped = {}
+-- camp -> { pass = n, works = { name = true | false | 'unknown' } }: the same
+-- verdicts per camp, so a server can answer one client's scope exactly
+-- (schema 5) when several guilds' bases are loaded at once.
+M.last_capped_by_camp = {}
 M.pass_id = 0
 local pass_totals = nil
 local totals_guild, totals_ambiguous = nil, false
@@ -161,6 +165,7 @@ function M.forget(keep_permissions)
     M.last_totals_by_camp = {}
     M.last_storage_by_camp = {}
     M.last_capped = {}
+    M.last_capped_by_camp = {}
     if not keep_permissions then M.pass_id = 0 end
 end
 
@@ -1039,8 +1044,13 @@ end
 -- working, because both were right about different numbers. cap_state was
 -- exported so the two could not disagree about the rule; this stops them
 -- disagreeing about the input.
-local function decide_capped(limits_available, type_capped)
+local function decide_capped(limits_available, type_capped, camp_key)
     local capped = {}
+    local by_camp = camp_key and M.last_capped_by_camp[camp_key]
+    if camp_key and (by_camp == nil or by_camp.pass ~= M.pass_id) then
+        by_camp = { pass = M.pass_id, works = {} }
+        M.last_capped_by_camp[camp_key] = by_camp
+    end
     for i = 1, #workdefs.ORDER do
         local name = workdefs.ORDER[i]
         if name ~= workdefs.ANYONE then
@@ -1056,6 +1066,10 @@ local function decide_capped(limits_available, type_capped)
             if not limits_available then seen.unknown = (seen.unknown or 0) + 1 end
             if capped[workdefs.value(name)] then
                 seen.capped = seen.capped + 1
+            end
+            if by_camp then
+                by_camp.works[name] = (not limits_available) and 'unknown'
+                    or (capped[workdefs.value(name)] == true)
             end
         end
     end
@@ -1109,7 +1123,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             if not has_limits then limits_available = true end
             decide_capped(limits_available, function(name)
                 return cap_reached(cfg, name, totals, camp_guild)
-            end)
+            end, camp_key)
         end
         log.debug("camp has no working pals")
         return
@@ -1306,7 +1320,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- Which work types have a satisfied rule right now. Worked out once for
     -- the camp and used both to drop them from demand and to withdraw the
     -- permission, so a rule reading "done" actually stops the work.
-    local capped = decide_capped(limits_available, type_capped)
+    local capped = decide_capped(limits_available, type_capped, camp_key)
 
     stats.camps = stats.camps + 1
     stats.pals = stats.pals + #pals
