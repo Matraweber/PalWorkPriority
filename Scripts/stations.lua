@@ -129,12 +129,29 @@ end
 M.HANDIWORK = workdefs.value('Handcraft')
 M.SILENT_HANDIWORK_CLASSES = { PalWorkFishPond = true, PalWorkLabResearch = true }
 
+-- work key -> class name, for the Handiwork works handed to the counter
+-- below. A work's class never changes, and GetFullName is a native string
+-- call per work per pass otherwise. Plain strings only; the work itself is
+-- never kept. Cleared on a world change (forget).
+local classes = {}
+
+function M.forget()
+    classes = {}
+end
+
 -- Number of fishing ponds and Handiwork research labs in `works` that are
--- built and Workable. One seat each.
-function M.ponds_and_labs_needing(works)
+-- built and Workable. One seat each. `keys[i]`, when given, is works[i]'s
+-- work id, so its class is read once.
+function M.ponds_and_labs_needing(works, keys)
     local n = 0
-    for _, w in ipairs(works or {}) do
-        local class = (api.work_full_name(w) or ''):match('^(%S+)')
+    for i, w in ipairs(works or {}) do
+        local key = type(keys) == 'table' and keys[i] or nil
+        local class = key and classes[key] or nil
+        if class == nil then
+            class = (api.work_full_name(w) or ''):match('^(%S+)')
+            -- "<unknown work>" is a failed read, asked again next pass.
+            if key and class and class:sub(1, 1) ~= '<' then classes[key] = class end
+        end
         if class and M.SILENT_HANDIWORK_CLASSES[class]
             and api.work_suitability(w) == M.HANDIWORK
             and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then

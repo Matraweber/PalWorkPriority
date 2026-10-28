@@ -839,7 +839,7 @@ do
             fn(1, { get = function() return { ItemId = { StaticId = idname(item) }, Num = n } end })
         end }
         return { value = 8, class = "PalWorkCollectResource", CurrentState = 1,
-            CachedOwnerMapObjectConcreteModel = { DropItemInfos = list } }
+            CachedOwnerMapObjectConcreteModel = { class = "PalMapObjectItemDropOnDamagModel", DropItemInfos = list } }
     end
     local saved = { camp_works = api.camp_works }
     api.work_full_name = function(w) return w.class .. " /Game/Test.Work" end
