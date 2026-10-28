@@ -1,7 +1,12 @@
 -- User configuration lives beside the saves, outside replaceable Scripts.
 local file = require('datafile')
 local workdefs = require('workdefs')
+local log = require('log')
 local M = {}
+-- True once the shipped defaults replaced a config.lua an earlier install had:
+-- the Workshop and Vortex loaders delete every file they installed before an
+-- update (LESSONS, 2026-10-20). The panel says so once; it is never cleared.
+M.upgrade_reset = false
 function M.validate(c)
     if type(c) ~= 'table' then return nil, 'configuration must return a table' end
     local function integer(n, low, high)
@@ -85,6 +90,11 @@ function M.load(root, scripts)
     for _, name in ipairs({'priority.log','priorities.txt','caps.txt','config.migration.bak','remote.txt'}) do
         local previous, _, missing = file.read_raw(root .. name)
         if previous ~= nil or missing ~= 2 then fresh = false end
+    end
+    if source == scripts .. 'default_config.lua' and fresh == false then
+        M.upgrade_reset = true
+        log.warn("Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
+            .. "Default settings are in use; options-menu settings are kept.")
     end
     -- Preserve the exact original before creating the editable copy.
     local backup = root .. 'config.migration.bak'

@@ -804,42 +804,42 @@ local COMMANDS = {}
 COMMANDS.help = function()
     local p = cfg.chat_prefix
     log.say("commands:")
-    log.say("  " .. p .. " status    what the mod thinks is going on")
-    log.say("  " .. p .. " run       run one pass now")
-    log.say("  " .. p .. " dry       switch to log-only")
-    log.say("  " .. p .. " live      actually assign pals")
-    log.say("  " .. p .. " on / off  enable or disable")
+    log.say("  " .. p .. " status    what the mod is doing now")
+    log.say("  " .. p .. " run       recheck every base now")
+    log.say("  " .. p .. " dry       test mode: work it out, change nothing")
+    log.say("  " .. p .. " live      leave test mode")
+    log.say("  " .. p .. " on / off  switch the mod on or off")
     log.say("  " .. p .. " reload    re-read config.lua")
-    log.say("  " .. p .. " mode      spread <-> fill")
-    log.say("  " .. p .. " cap       how many pals may share one work type")
-    log.say("  " .. p .. " stock     print base storage by item id")
-    log.say("  " .. p .. " limit     how much of an item a base stockpiles")
-    log.say("  " .. p .. " scope     ceilings per base, or across loaded bases")
-    log.say("  " .. p .. " net       transport state, and echo test")
-    log.say("  " .. p .. " discover  write Discovery.txt")
-    log.say("  " .. p .. " guilds    write Guilds.txt")
-    log.say("  " .. p .. " assignments  read-only authority assignment census")
-    log.say("  " .. p .. " rocks     Mining rocks held by limits, and who mines what")
-    log.say("  " .. p .. " icons     probe the overlay icons")
-    log.say("  " .. p .. " perf      hook counts and file writes " ..
-            "(perf on for ms)")
-    log.say("  " .. p .. " stand     write the Monitoring Stand's widget " ..
-            "tree to StandTree.txt")
-    log.say("  " .. p .. " funcs     write a class's callable functions to " ..
-            "Functions.txt")
-    log.say("  " .. p .. " probe     targeted reads for the elimination " ..
-            "routes")
-    log.say("  " .. p .. " adopt     make limits from before guild rules " ..
-            "this guild's")
-    log.say("  " .. p .. " restore   give every pal its work back, unfence")
+    log.say("  " .. p .. " mode      switch spread / fill")
+    log.say("  " .. p .. " cap       how many Pals may share one job")
+    log.say("  " .. p .. " stock     write what each container holds to priority.log")
+    log.say("  " .. p .. " limit     list, set or remove production limits")
+    log.say("  " .. p .. " scope     count storage per base or across loaded bases")
+    log.say("  " .. p .. " net       connection state, and a test message")
+    log.say("  " .. p .. " discover  write Discovery.txt (for bug reports)")
+    log.say("  " .. p .. " guilds    write Guilds.txt (for bug reports)")
+    log.say("  " .. p .. " assignments  which job each Pal is on (server only)")
+    log.say("  " .. p .. " rocks     Mining rocks stopped by limits, and who mines what (server only)")
+    log.say("  " .. p .. " icons     check the panel icons")
+    log.say("  " .. p .. " perf      how often the mod runs and writes files " ..
+            "(perf on for timings)")
+    log.say("  " .. p .. " stand     write the Monitoring Stand's layout " ..
+            "to StandTree.txt (for bug reports)")
+    log.say("  " .. p .. " funcs     write a game class's functions to " ..
+            "Functions.txt (for bug reports)")
+    log.say("  " .. p .. " probe     extra reads for bug reports")
+    log.say("  " .. p .. " adopt     give limits made before guild rules " ..
+            "to this guild")
+    log.say("  " .. p .. " restore   give every Pal all its work back " ..
+            "(do this before removing the mod)")
     log.say("keys, all on Alt, because Ctrl is crouch:")
-    log.say("  Alt+F1 Production Limits Alt+F2 run a pass")
+    log.say("  Alt+F1 Production Limits Alt+F2 recheck now")
     log.say("  Alt+F3 base storage      Alt+F5 Discovery.txt")
-    log.say("  Alt+F9 transport test")
-    log.say("keys that change a setting:")
-    log.say("  Alt+F10 mode   Alt+F11 pals per work   Alt+F12 storage scope")
-    log.say("in the panel: up and down move, right and left change the " ..
-        "ceiling, Esc or Alt+F1 closes it")
+    log.say("  Alt+F9 connection test")
+    log.say("keys that change a setting until you restart:")
+    log.say("  Alt+F10 spread / fill   Alt+F11 Pals per job   Alt+F12 count storage")
+    log.say("in Production Limits: up and down move, right and left change the " ..
+        "limit, Delete twice removes it, Esc or Alt+F1 closes it")
 end
 
 COMMANDS.status = function()
@@ -886,7 +886,7 @@ COMMANDS.status = function()
     if authority == true then
         log.say("  mode: " .. tostring(cfg.assignment_mode) .. ", max per work type: " ..
             (cfg.max_pals_per_work_type and tostring(cfg.max_pals_per_work_type) or "no limit"))
-        log.say("  ceilings measured against: " ..
+        log.say("  limits measured against: " ..
             (cfg.storage_scope == "global" and "every loaded base" or "each base on its own"))
     elseif authority == false then
         -- Client config is local, not a confirmed copy of server scheduling policy.
@@ -1043,7 +1043,7 @@ end
 
 COMMANDS.scope = function()
     cfg.storage_scope = (cfg.storage_scope == "global") and "camp" or "global"
-    log.say("ceilings measured against: " ..
+    log.say("limits measured against: " ..
         (cfg.storage_scope == "global"
             and "every loaded base together"
             or "each base on its own"))
@@ -1450,6 +1450,12 @@ end
 -- Reads only. Added 2026-10-28 so a dedicated server can be checked through
 -- remote.txt; a client sees no base works and says so.
 COMMANDS.rocks = function()
+    -- Server-only reads: on a client the works are replicated proxies, and a
+    -- UFunction on one is an access violation (LESSONS). Review A7.
+    if api.latch_authority() ~= true then
+        log.say("rocks: only the server can see this; ask the server.")
+        return
+    end
     run_now(function()
         local sources = require("item_sources")
         local mining = workdefs.value("Mining")
@@ -1658,7 +1664,7 @@ COMMANDS.stock = function()
                 log.say(string.format("  ... and %d more, full list in Stock.txt", #rows - 15))
             end
             if chests == 0 then
-                log.say(complete and "  no counted storage in this base" or "  no verified storage total; ceilings remain undecided")
+                log.say(complete and "  no counted storage in this base" or "  no verified storage total; limits remain undecided")
             end
 
             -- Report containers excluded by the user's class filters.
@@ -1700,7 +1706,7 @@ COMMANDS.stock = function()
             table.sort(classes)
 
             if #classes > 0 then
-                local title = "  holding stock but NOT counted by ceilings:"
+                local title = "  holding stock but NOT counted by limits:"
                 log.say(title)
                 if f then f:write(title .. "\n") end
 
@@ -1801,7 +1807,7 @@ local function show_limits()
                 local have = verified and (totals[item] or 0) or nil
                 log.say(string.format("  %-22s %-24s %s / %d%s",
                     workdefs.label(work), item, have and tostring(have) or "unavailable", ceiling,
-                    have and have >= ceiling and "   threshold met" or ""))
+                    have and have >= ceiling and "   limit reached" or ""))
             end
         end
         -- Mining limits stop only the rocks of their item (item_sources.lua,
@@ -1809,7 +1815,7 @@ local function show_limits()
         log.say((cfg.item_limits_on_rocks ~= false
             and "Mining limits stop only the rocks that mainly give their item; other limits switch their whole work type"
             or "each limit can switch its entire work type, including unrelated products")
-            .. "; thresholds do not prove actual activity")
+            .. "; a reached limit does not show whether the work has stopped yet")
     end)
 end
 
@@ -1876,7 +1882,7 @@ COMMANDS.limit = function(args)
                 log.say("limit change accepted; saving asynchronously: " .. workdefs.label(work)
                     .. " " .. id .. (clearing and " off" or " " .. ceiling))
             elseif outcome == "applied_unsaved" then
-                log.say("legacy limit changed in memory but not saved; retry pending: " .. tostring(caps.error))
+                log.say("limit changed for now, but saving it failed; the mod will try again: " .. tostring(caps.error))
             else
                 log.say("limit change unconfirmed: " .. tostring(caps.error or "session or rule unavailable"))
             end
@@ -2594,7 +2600,7 @@ local function decide_write_or_send()
                 net.push_rules(caps, cfg, nil)
             end)
             if not ok_push then
-                log.warn("pushing the ceilings to clients failed: " ..
+                log.warn("pushing the limits to clients failed: " ..
                     tostring(err_push))
             end
         end
@@ -3012,11 +3018,11 @@ end
 -- is FreeCam. Eight slots for eight keys, which is why the icon probe became
 -- a chat command instead: it is a diagnostic for a bug that is long fixed and
 -- it was the only one here nobody would miss.
-bind_action("key_pass", "F2", "run pass", function()
+bind_action("key_pass", "F2", "recheck now", function()
     run_pass("keybind", true)
 end)
 
-log.say(string.format("%s %s loaded (%s, %s). Type '%s help' in chat.",
+log.say(string.format("%s %s loaded (%s, %s). Type %s help in chat (multiplayer) or see the README.",
     MOD_NAME, VERSION,
     cfg.enabled and "enabled" or "disabled",
     cfg.dry_run and "dry run" or "live",
@@ -3123,6 +3129,9 @@ local function arrows()
         { "RIGHT_ARROW", function() if panel.open then return panel.nav(cfg, "right") end; return ui.raw_nav(cfg,"right") end },
         { "LEFT_ARROW",  function() if panel.open then return panel.nav(cfg, "left") end; return ui.raw_nav(cfg,"left") end },
         { "RETURN",      function() if panel.open then return panel.nav(cfg, "enter") end; return ui.raw_nav(cfg,"enter") end },
+        -- Remove for keyboard users (review B6): the same arm-then-confirm as
+        -- the pad's Remove, so two presses. The stand has no use for it.
+        { "DELETE",      function() if panel.open then return panel.row_action(cfg, "drop") end end },
     }
 
     for _, entry in ipairs(moves) do
