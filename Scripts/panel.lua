@@ -4375,13 +4375,8 @@ function M.refresh(cfg)
             -- A button still down when the panel shuts must not fire again the
             -- instant it reopens.
             pcall(RB.pad.forget)
-
-            -- Shut, so the only thing worth reading is the chord that opens it.
-            if RB.pad.open_asked then
-                local asked = false
-                pcall(function() asked = RB.pad.open_asked() end)
-                if asked then pcall(function() M.toggle() end) end
-            end
+            -- No chord opens it any more: RB+View also opened the map
+            -- (DECISIONS 2026-10-22, removed 2026-10-28). View on the stand does.
         end
     end
 

@@ -341,8 +341,8 @@ M.pc_fallbacks = 0
 -- The walk fallback backs off; the chain never does.
 --
 -- Measured on the headless test server: 7.3ms per player_controller() call,
--- 6.4ms/s forever, because the closed panel polls the pad chord once a
--- second and on that machine the chain has no GameViewport to read, so
+-- 6.4ms/s forever, because the closed panel polled the pad chord once a
+-- second (that poll is gone since 2026-10-28) and on that machine the chain has no GameViewport to read, so
 -- every poll fell through to FindFirstOf("PalPlayerController") - the
 -- pathological walk, hunting one instance of a class that has ZERO on a
 -- server, which means no early exit and a full array read to answer "no".
