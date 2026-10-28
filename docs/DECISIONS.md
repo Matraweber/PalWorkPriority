@@ -153,6 +153,28 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-28 - Per-item Mining is decided per base, and the mod gives back
+  what it switched off.** These came out of the audit, see
+  [review-2026-10-28](review-2026-10-28.md).
+  - **Per base:** with per-item on, readable works and numeric Mining limits,
+    a base's own rocks and pits decide whether Mining is capped there. A
+    stone-only base with a Stone Pit stops while Ore is short elsewhere.
+  - **Fallback:** the guild-wide group rule stays for every other work type,
+    and decides Mining when a works read failed and no earlier decision
+    exists for that base.
+  - **Release:** off, `pwp restore` and test mode release held rocks. Test
+    mode still switches none off, so it writes only to undo the mod's own
+    writes.
+  - **What gets written:** only rocks whose owner model is
+    `PalMapObjectItemDropOnDamagModel` are written.
+  - **Read failures:** a failed works read keeps held rocks. A failed product
+    read is not cached.
+  - **Empty bases:** a base with no Pals counts in the verdict by the group
+    rule.
+  - **Cap:** a guild holds at most 500 limits (`too_many_limits`). Loading a
+    file with more is not refused, because refusing would make every limit
+    unavailable.
+
 - **2026-10-28 - Per-item Mining limits on natural rocks go into 0.5.0
   (user's decision); a rock counts as its main drop (user's decision).**
   `item_sources.lua` marks a rock NotWorkable while the stock of its main
@@ -360,6 +382,27 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Multiplayer and network
 
+- **2026-10-28 - Protocol schema 5 carries the server's limit state.** A
+  storage reply now also carries:
+  - the per-work-type verdict for the client's guild and scope;
+  - the items whose rocks are held;
+  - the server's `item_limits_on_rocks`.
+
+  Clients show that instead of a permanent "No count yet", and word Mining
+  by the server's setting. Every earlier 0.5.0 build, server included, is
+  now refused as incompatible, so the server needs this build too. Nothing
+  public had 0.5.0 yet.
+  *Rejected:* working the verdict out on the client from storage totals. It
+  cannot see the server's per-base decisions or its pits.
+- **2026-10-28 - A client on a server without the mod, or with another
+  version, gets the base game's stand.** This covers the incompatible,
+  unavailable and handshake-timeout states.
+  - The checkboxes come back and no "?" is drawn.
+  - The legend says why.
+
+  It used to keep "?" and hidden checkboxes for the whole session, which
+  locked every subscriber out of the stand on unmodded servers.
+
 - **2026-09-23 - An edit timeout invalidates its stream and waits for that
   stream's own full snapshot**; an unrelated snapshot or a late ack cannot
   restore readiness. *Evidence:* tests/test_net_commit_errors.lua.
@@ -382,6 +425,30 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   versions under Release and scope.)
 
 ## UI and input
+
+- **2026-10-28 - Adding a limit takes two clicks, and keyboard or pad
+  selection follows what it points at.**
+  - **First click:** says what the limit stops and the amount.
+  - **Second click:** creates it.
+  - **Seed:** above 50,000 in storage the seed is the next 10,000 above it.
+    No limit is created while storage is not counted.
+  - **Selection:** the keyboard and pad selection is found again by
+    rule, tile or control after every draw.
+  - **Typing:** bound keys are ignored while a text box has focus.
+  - **Remove:** shares one 8 s timer with its notice and names the item.
+    Delete arms it from the keyboard.
+- **2026-10-28 - Readability from measured screenshots.**
+  - The stand legend sits on a dark box at 14 pt.
+  - Sub-labels are 12 pt.
+  - The selected row is darker, with a cyan rail.
+  - A selected tile keeps both rails.
+  - Controller hints name pad buttons.
+
+  The RB+View chord is removed from the code (rejected 2026-10-22).
+- **2026-10-28 - An options-menu value that the config check refuses is
+  skipped with a warning.** The value from config.lua is kept. It used to
+  stop the mod from starting on every launch: the menu allowed an interval
+  of 2, validation needs 5.
 
 - **2026-10-22 - Controller support ships in 0.5.0, all parts (user's
   decision).** Open the panel through a DarnMenu tile and a chord the game does

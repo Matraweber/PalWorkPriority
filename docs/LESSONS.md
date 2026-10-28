@@ -244,6 +244,18 @@ discovers a new one, with the date and a link to the evidence.
   only the hot-reload path, almost silently. New state goes into an existing
   table.
 - A regex rename across Lua rewrites table-literal keys too.
+- **A menu's range must be the config check's range.** DarnMenu offered an
+  interval from 2 while validation required 5, and one saved value stopped
+  the mod on every launch (found 2026-10-28). The test now checks every menu
+  range against `configuration.validate`.
+- **A selection stored as a list position slides.** Controls that appear above
+  it (change base, Confirm/Cancel, more tiles) moved the keyboard selection
+  onto Remove or a tile. Two "raise" presses could delete another limit
+  (2026-10-28). Store what is selected, not where it was.
+- **Contrast in code comments was claimed, not measured.** Colours are linear
+  values that the game draws lighter. Amber on a selected row was commented
+  as 7.3:1 and measured 4.29:1 on screen (2026-10-28). Measure from a
+  screenshot.
 - **One blind Escape after focusing the game can be swallowed.** On
   2026-10-28 `restart-stand.ahk --world` failed three times: the menu never
   opened, the Return to Title click hit the world, and the macro stopped
