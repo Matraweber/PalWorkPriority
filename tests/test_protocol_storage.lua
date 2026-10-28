@@ -1,6 +1,6 @@
 -- Pure wire fixtures: no engine, filesystem, transport, deploy or game actions.
 local p = require("protocol")
-assert(p.SCHEMA == 4)
+assert(p.SCHEMA == 5)
 
 local function view(overrides)
     local v = {scope="camp", camp="camp-A", choices={"camp-B", "camp-A"},
@@ -44,7 +44,7 @@ local function refused(batch, wanted)
     assert(last and (not wanted or wanted == last), tostring(last) .. " ~= " .. tostring(wanted))
     assert(s.revisions.S == 0 and not s.pending.S)
 end
-local meta = "C:camp-A|M:req-1:2000:58000:1:1:1|-"
+local meta = "C:camp-A|M:req-1:2000:58000:1:1:1:0:0|-"
 local camps = "C:camp-A|C:2|camp-A=1"
 
 -- Full selected-scope totals, not the subset of item IDs present in rules.
@@ -162,7 +162,7 @@ for i=#batch-1,2,-1 do
 end
 assert(p.receive(reordered, batch[#batch], 0).storage.totals.Ore == 12)
 refused(raw({meta, camps, "C:camp-A|I:3|Ore=1,Ore=2"}), "invalid_row")
-refused(raw({meta:gsub(":1:1|", ":2:1|"), camps, "C:camp-A|I:3|Ore=1", "C:camp-A|I:4|Ore=2"}), "invalid_storage")
+refused(raw({meta:gsub(":1:1:0:0|", ":2:1:0:0|"), camps, "C:camp-A|I:3|Ore=1", "C:camp-A|I:4|Ore=2"}), "invalid_storage")
 refused(raw({meta, camps, "C:camp-A|C:3|camp-A=1", "C:camp-A|I:4|Ore=1"}), "invalid_storage")
 refused(raw({meta, camps}), "invalid_storage")
 refused(raw({meta, "C:camp-A|C:2|camp-B=1", "C:camp-A|I:3|Ore=1"}), "invalid_storage")
