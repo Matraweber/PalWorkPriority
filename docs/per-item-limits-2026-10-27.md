@@ -73,9 +73,10 @@ After a save and reload (return to title, quit, start):
 - **Stone pits:** still state 2 after the reload, while their own model said
   `bIsWorkable=true`. **The state of a building's work is saved.** If the mod
   set a pit NotWorkable and was then removed, the pit would stay idle.
-  Restored to 1 by hand at 00:08. After that both pits read 1. A second
-  reload to confirm 1 was not done, because the restart script stopped (the
-  game did not exit and another session was using the PC).
+  Restored to 1 by hand at 00:08. After that both pits read 1. The game was
+  closed overnight; on the next start (2026-10-28 14:07) both pits and every
+  rock loaded with state 1 and their default assignability, so the test
+  world carries nothing from this round.
 
 ## What this means for a design
 
