@@ -16,6 +16,16 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-29 - Round-2 findings: every P1 and P2 goes in before the upload
+  (user's pick).** The left click keeps wrapping 1 to X, and the stand legend
+  now says so. A clamp at 1 was rejected because it would change 0.4.1 behaviour.
+  The unpublished v0.5.0 tag moves to the final commit and that one tag is
+  force-pushed. Nobody downloaded 0.5.0, and the change-note links must reach the
+  fixed CHANGELOG.
+  *Rejected:* shipping the P1s only, and keeping the old tag and shipping as
+  0.5.1.
+  *Evidence:* [review-round2-2026-10-29](review-round2-2026-10-29.md).
+
 - **2026-10-28 - Every bundle of the twelve-reviewer audit goes into 0.5.0
   before the upload (user's pick: A to H).** The audit rated every area at 4-6
   out of 10. The fixes cover:
