@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md) · 2026-10-29
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
 - [Reliability candidate testing](testing.md) · 2026-10-28
@@ -32,10 +33,10 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-27
 - [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
 - [Old Pal reports rerun on rc1, 2026-10-27](g4-old-reports-2026-10-27.md) · 2026-10-27
-- [Public report census (comment ledger)](comment-ledger-2026-09-11.md) · 2026-10-27
 
 ## Release and reports
 
+- [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md)
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md)
 - [Twelve-reviewer audit of 0.5.0 (2026-10-28)](review-2026-10-28.md)
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md)
