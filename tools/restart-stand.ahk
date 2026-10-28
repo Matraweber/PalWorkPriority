@@ -210,7 +210,9 @@ Focus() {
 ; The game menu (Escape) shows the "Options" tab highlighted in bright blue
 ; at the top right. Measured 2026-10-28 in a 1280x720 client: open
 ; R0 G144 B255 at (1041,40) and R38 G160 B255 at (1080,45); closed (sky)
-; about R85-89 G106-113 B133-143.
+; about R85-89 G106-113 B133-143. With the Monitoring Stand grid open and the
+; game menu closed (sampled live 2026-10-28, 23:2x): R123 G135 B150 at
+; (1041,40) and R117 G128 B143 at (1080,45), so the stand alone reads closed.
 MenuOpen() {
     size := Focus()
     for pt in [[1041, 40], [1080, 45]] {
@@ -223,6 +225,12 @@ MenuOpen() {
     return true
 }
 OpenMenu() {
+    ; If the check already reads "open" before any Escape, either the menu
+    ; really is open (an Escape would close it) or something else on screen
+    ; matches the blue tab. Either way the loop below could stop on a wrong
+    ; reading and click Return to Title into the world, so refuse instead.
+    if MenuOpen()
+        throw Error('The game menu already looks open before the first Escape (blue Options tab); refusing the menu sequence. Close the menu, or use --title from the title screen.')
     loop 4 {
         Key('Escape')
         Sleep 1500
