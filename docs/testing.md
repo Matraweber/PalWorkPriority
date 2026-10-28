@@ -125,6 +125,8 @@ User workflow preference (September 12): stage checked Lua changes while the gam
 
 Start in gameplay at the Monitoring Stand with its grid open (default `--stand`). The macro closes the stand, presses Escape until it sees the game menu open (the blue "Options" tab, pixel check, at most 4 presses; since 2026-10-28), takes Return to Title (the normal save path) and Quit, waits up to 60 s for the old PID to exit, launches the game, clicks through Mods Detected / Start Game, picks the **first** world in the list and Start Game (never Delete World), waits up to 150 s for a fresh `PWP_READY ... session=N` (N ≥ 1) after its own log offset, waits 12 s more for the loading fade, then holds V for 850 ms to open the stand.
 
+Before the first Escape (`--stand`, `--world`, `--return-title-only`) the macro reads the pixel check once. If the menu already looks open, it stops with a `STOPPED:` line and presses nothing: an Escape would close a really open menu, and a false "open" could end the loop early and send the Return to Title click into the world. The open stand does not trigger it: sampled live on 2026-10-28 (1280x720, grid open, menu closed) the two points read R123 G135 B150 and R117 G128 B143, against the blue tab's B 255.
+
 | Mode | Use |
 | --- | --- |
 | `--stand` (default) | at the stand, grid open |
@@ -164,10 +166,14 @@ Drives Pocketpair's Palworld Mod Uploader (Steam app 4212470) for the Workshop i
 python tools/workshop_upload.py prepare            # stage build/release-<VERSION> Workshop zip + change note
 python tools/workshop_upload.py upload --dry-run   # full click-through, then Cancel: nothing is sent
 python tools/workshop_upload.py upload             # stops at the filled Change Notes window: OK publishes
-python tools/workshop_upload.py check              # after Steam's download: subscribed copy == stage
+python tools/workshop_upload.py check              # after Steam's download: subscribed copy == hashes from prepare
 ```
 
-`upload --submit` presses OK itself. Publishing is the user's action, so agents run only `prepare` and `--dry-run`.
+- `prepare` refuses a version that is not newer than the live one. The live version is the newest of the subscribed copy's `Info.json` and the `last_published_version` the uploader wrote into an earlier stage (it does that right after a successful upload, before Steam has downloaded anything). The subscribed `.workshop.json` is one release behind and is not used for this. The live version goes into the staged `.workshop.json` as `last_published_version`. The change note comes from `git show v<version>:CHANGELOG.md`, so it matches the tagged archive, not the working tree.
+- `upload` waits until the uploader's Workshop directory box shows the stage path, then selects the row whose **Directory** cell is `PalWorkPriority`.
+- `upload --submit` presses OK itself and classifies the uploader's final status: "Workshop item submitted successfully." and "Submitted, but ..." (a step after the upload failed) are published and exit 0, the second with a warning; anything else exits 1. Publishing is the user's action, so agents run only `prepare` and `--dry-run`.
+- `check` defaults to the staged version. It refuses when the stage changed since `prepare`, and compares Steam's copy with the hashes recorded then (`.workshop.json` excluded, the uploader rewrites it).
+- Every guard exits with a message instead of an `assert`, so `python -O` keeps them. Offline tests: `python -m unittest tests.test_workshop_upload -v` (temporary directories and fakes, no Steam).
 
 ### `tools/remote.py`
 

@@ -79,3 +79,38 @@ The real upload and the Steam download after it. Both are the user's action:
 Steam may need a restart, or the item re-subscribed, before the subscribed
 copy updates. The game's loader then reinstalls on the next launch, as in
 [g1-workshop-2026-10-20](g1-workshop-2026-10-20.md).
+
+## Fixes after the review
+
+From bundle G of [review-2026-10-28](review-2026-10-28.md). The uploader's
+behaviour below was read in its source (MainWindow.xaml.cs, OnItemSubmitted
+and OnLoaded) and is covered offline by `tests/test_workshop_upload.py`.
+
+- **Version guard.** The uploader writes `last_published_version` only after
+  a successful upload, so the subscribed `.workshop.json` is one release
+  behind. `prepare` now takes the live version from the subscribed
+  `Info.json` and from the `last_published_version` of earlier stages. It
+  refuses an equal or older version before it touches the stage, and writes
+  the live version into the staged `.workshop.json`.
+- **Submit result.** After a successful upload the uploader can replace
+  "Workshop item submitted successfully." with "Submitted, but failed to
+  update metadata / open Steam page". Both now count as published, the
+  second with a warning. The wait also ignores the status text from before
+  OK, so a startup "Failed to read workshop subscriptions" no longer reads as
+  a failed upload.
+- **Asserts.** Every guard is an explicit check with a message, so
+  `python -O` keeps them.
+- **check** defaults to the staged version. It refuses when the stage
+  changed since `prepare` and compares Steam's copy with the hashes recorded
+  then.
+- **Row selection.** The driver waits until the Workshop directory box shows
+  the stage path, then matches the row by its Directory cell.
+- **Change note** from `git show v<version>:CHANGELOG.md`. For 0.5.0 it is the
+  same 7,491 bytes as in the dry run.
+- **Restart macro.** `restart-stand.ahk` stops before the first Escape if the
+  menu check already reads open. With the stand open it reads closed: R123
+  G135 B150 and R117 G128 B143, sampled live on 2026-10-28.
+
+Not live-tested yet: the Directory-cell match and the directory wait (UI
+Automation against the real uploader). The next `upload --dry-run` checks
+both.
