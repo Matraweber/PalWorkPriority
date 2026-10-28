@@ -24,4 +24,6 @@ tools/*-last-run.log
 # Obsidian (docs/ is a vault): per-device state stays local
 docs/.obsidian/workspace*.json
 docs/.obsidian/cache
+docs/.obsidian/appearance.json
+docs/.obsidian/graph.json
 docs/.trash/
