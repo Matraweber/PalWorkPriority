@@ -69,7 +69,7 @@ left click:   X → 5 → 4 → 3 → 2 → 1 → X
 right click:  1 → 2 → 3 → 4 → 5 → X → 1
 ```
 
-You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5 or X. The legend under the stand lists the clicks and keys. It also reminds you that 1 wraps to X and that a Pal with all jobs equal is left to the game. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
+You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5 or X. The legend under the stand opens with the scale: 1 first, X never. It lists the clicks and keys, reminds you that 1 wraps to X, and that all jobs start equal, so the game picks until you give a Pal different numbers. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
 
 A dash means the Pal cannot do that job at all. It is not a priority.
 
@@ -175,7 +175,7 @@ Commands go into chat. Their replies are written to `priority.log` in the mod fo
 
 1. **Is UE4SS on?** Look for `<Palworld>\Mods\NativeMods\UE4SS\UE4SS.dll`. After a game start `UE4SS.log` is next to it. An empty `UE4SS` folder is not enough. If the files are missing, switch Experimental UE4SS for Palworld on in the game's Mod Management and start the game once.
 2. **Is the mod in the right place?** You need `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\Scripts\main.lua` and `<Palworld>\Pal\Content\Paks\LogicMods\PalWorkPriority.pak`. If they sit in an extra folder named after the zip, extract again with exactly `<Palworld>` as the target.
-3. **Did it load?** Open `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log`. It should say `Pal Work Priority 0.5.0 loaded`. If it says `config.lua rejected`, that line names the value, and Alt+F1 shows it too: no Pal is assigned until you fix it in `config.lua`, or delete `config.lua` and restart the game to get the defaults back. If it says `did not start`, a settings file could not be read, and the line before it names the file. Stopped loading right after a game update? UE4SS may need an update for the new game version first. Wait for Experimental UE4SS for Palworld to update, then start the game again.
+3. **Did it load?** Open `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log`. It should say `Pal Work Priority 0.5.0 loaded`. If it says `config.lua rejected`, that line names the value, and Alt+F1 shows it too: the mod is paused until you fix it in `config.lua`, or delete `config.lua` and restart the game to get the defaults back. If it says `did not start`, a settings file could not be read, and the line before it names the file. Stopped loading right after a game update? UE4SS may need an update for the new game version first. Wait for Experimental UE4SS for Palworld to update, then start the game again.
 4. **No numbers on the stand?** The mod is not running. Go through steps 1 to 3.
 5. **Numbers, but the stand cannot be edited and the legend says the pak is missing?** Copy `PalWorkPriority.pak` back to `<Palworld>\Pal\Content\Paks\LogicMods\` or reinstall.
 6. **Two copies?** Use either the Workshop or the manual zip. The mod warns when it finds a switched-on Workshop copy of another version. It also warns when it finds `<Palworld>\Pal\Binaries\Win64\dwmapi.dll`. If that is an old UE4SS, for example one Vortex added, remove it or switch off UE4SS in Vortex.
