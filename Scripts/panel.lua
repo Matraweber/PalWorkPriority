@@ -761,6 +761,7 @@ function RB.clear_widgets()
     RB.hmap, RB.hmap_keys, RB.hrect, RB.hover_due = nil, {}, {}, false
     RB.validated, root_checked = -1, -1
     pin_count = 0
+    RB.shelf_name, RB.shelf_skip, RB.shelf_read = nil, nil, nil
     search_box, amount_box, editing, edit_focus = nil, nil, nil, false
     styled_boxes, picker_key, picker_hit = {}, nil, nil
     was_hit, was_sel, hover_key, hits = {}, nil, nil, {}
@@ -779,7 +780,7 @@ local function ensure_root()
     end
     -- Only names survive across callbacks. Rebind widgets from this call's
     -- current tree before asking them anything, including IsValid/IsHovered.
-    if not RB.runtime:snapshot(host) then
+    if not RB.runtime:snapshot(host, nil, RB.shelf_skip) then
         -- Preserve name-only row identities through a transient incomplete
         -- read. No wrapper from the previous callback remains usable.
         root, root_tree, backdrop, search_box, amount_box = nil, nil, nil, nil, nil
@@ -1621,9 +1622,64 @@ end
 -- it does today - swept when resident, reloaded when not.
 local PIN_MAX = 400
 
+-- The pins live on one shelf (perf P2-3, 2026-10-29).
+--
+-- Each pin used to be an Image straight on the panel's root, so ensure_root's
+-- rescan of every widget under the root - five times a second, on every tab -
+-- paid one GetFullName per pin and grew with every icon a session browsed,
+-- up to 400. They are now the children of one collapsed CanvasPanel that the
+-- rescan records but does not descend into (RB.shelf_skip). Its children are
+-- read only by a draw that looks for a pin, at most once per tree snapshot,
+-- and always from the shelf this snapshot just found: never a widget kept
+-- from an earlier callback.
+--
+-- Answers false when the shelf cannot be read; nothing is pinned then, so a
+-- shelf that cannot be read never fills with duplicates.
+function RB.read_shelf()
+    local objects = RB.runtime.objects
+    if RB.shelf_read == objects then return RB.shelf_ok end
+    RB.shelf_read, RB.shelf_ok = objects, false
+    if RB.shelf_name == nil then
+        RB.shelf_ok = pin_count == 0
+        return RB.shelf_ok
+    end
+    local shelf = objects[RB.shelf_name]
+    if not alive(shelf) then return false end
+    local ok = pcall(function()
+        local n = shelf:GetChildrenCount()
+        for i = 0, n - 1 do
+            local child = shelf:GetChildAt(i)
+            local name = RB.logic.name(child)
+            if name then objects[name] = child end
+        end
+    end)
+    RB.shelf_ok = ok
+    return ok
+end
+
+-- The shelf itself, made on the first pin of a tree.
+function RB.shelf()
+    if not RB.read_shelf() then return nil end
+    if RB.shelf_name ~= nil then return RB.runtime.objects[RB.shelf_name] end
+    local cls = api.cdo("/Script/UMG.CanvasPanel")
+    if not cls then return nil end
+    local shelf
+    pcall(function() shelf = StaticConstructObject(cls, root_tree) end)
+    if not alive(shelf) then return nil end
+    if not pcall(function() root:AddChildToCanvas(shelf) end) then return nil end
+    pcall(function() shelf:SetVisibility(1) end)
+    local name = RB.runtime:remember(shelf)
+    if not name then return nil end
+    RB.shelf_name, RB.shelf_skip = name, { [name] = true }
+    return shelf
+end
+
 local function pin(texture, item_id)
-    if pinned[item_id] ~= nil or pin_count >= PIN_MAX then return end
+    if pin_count >= PIN_MAX then return end
     if not (alive(root) and alive(root_tree)) then return end
+    -- The shelf first: until it is read, an existing pin looks missing.
+    local shelf = RB.shelf()
+    if shelf == nil or pinned[item_id] ~= nil then return end
 
     local cls = api.cdo("/Script/UMG.Image")
     if not cls then return end
@@ -1632,7 +1688,7 @@ local function pin(texture, item_id)
     pcall(function() img = StaticConstructObject(cls, root_tree) end)
     if not alive(img) then return end
 
-    if not pcall(function() root:AddChildToCanvas(img) end) then return end
+    if not pcall(function() shelf:AddChildToCanvas(img) end) then return end
 
     -- The texture wrapper is from this same call, per the tile that is about
     -- to draw it, so handing it to a second brush costs nothing and keeps
@@ -1669,6 +1725,8 @@ local function pin_from_sweep(found)
     if not M.open then return end
     root_checked = -1
     if not ensure_root() then return end
+    -- Existing pins are only known once the shelf is read.
+    if not RB.read_shelf() then return end
 
     -- Twenty four, not eight. Eight took ten sweeps to cover the seventy odd
     -- item icons a browse loads, and each of those sweeps is the 25ms this is
@@ -1793,7 +1851,7 @@ local function picture(key, px, py, size, item_id, token)
         local texture
         local icon_name = item_id and icons.name_for
             and icons.name_for(item_id) or nil
-        local pin_w = icon_name and pinned[icon_name] or nil
+        local pin_w = icon_name and RB.read_shelf() and pinned[icon_name] or nil
         if pin_w ~= nil and pin_w ~= true and alive(pin_w) then
             pcall(function()
                 local b = pin_w.Brush
@@ -4442,17 +4500,43 @@ end
 RB.hmap, RB.hmap_keys, RB.hrect = nil, {}, {}
 RB.hover_bad, RB.HOVER_BAD_MAX, RB.HOVER_GAP = 0, 8, 0.033
 RB.BODY_PAD, RB.FOOT_ROW = 18, { "Foot", 76 }
+
+-- Why the map is or is not there, said once per reason per opening (INFO,
+-- so it reaches priority.log at the default level). Added for the in-game
+-- check of 2026-10-29, where no map was ever built and nothing said why.
+RB.hmap_said = {}
+function RB.hover_note(why)
+    if RB.hmap_said[why] then return end
+    RB.hmap_said[why] = true
+    log.info("panel: hover map " .. why)
+end
+
+-- Off, with the reason kept for the note.
+function RB.hover_stop(why)
+    RB.hover_off, RB.hover_off_why = true, why
+    RB.hover_note("off: " .. why)
+end
+
 function M.hover_map()
     local rects = RB.hrect
     RB.hrect = {}
     RB.hmap, RB.hmap_keys = nil, {}
-    if RB.hover_off or #rects == 0 then return 0 end
+    if RB.hover_off then
+        RB.hover_note("not built: off (" .. tostring(RB.hover_off_why) .. ")")
+        return 0
+    end
+    if #rects == 0 then RB.hover_note("not built: this draw recorded no row-hosted targets") return 0 end
     local parts = overlay.parts
+    if not parts then RB.hover_note("not built: no shell parts (overlay.parts nil)") return 0 end
     local bw, bh
     if overlay.backdrop_size then bw, bh = overlay.backdrop_size() end
-    if not (parts and bw and bh) then return 0 end
-    local vw, vh = RB.viewport()
-    if vw == nil then RB.hover_off = true return 2 end
+    if not (bw and bh) then
+        RB.hover_note(overlay.backdrop_size and "not built: backdrop size unknown (not fitted yet)"
+            or "not built: overlay has no backdrop_size")
+        return 0
+    end
+    local vw, vh, vwhy = RB.viewport()
+    if vw == nil then RB.hover_stop("viewport unreadable: " .. tostring(vwhy)) return 2 end
 
     -- Where each row's canvas starts, in the order Body stacks them.
     local top, unknown = {}, false
@@ -4486,7 +4570,15 @@ function M.hover_map()
     list("RuleList")
     list("ItemList")
     chrome(RB.FOOT_ROW)
-    if unknown then return 2 end
+    if unknown then
+        local names = {}
+        for _, row in ipairs(RB.rows) do
+            if RB.vis["chrome:" .. row[1]] == nil then names[#names + 1] = row[1] end
+        end
+        if RB.vis["chrome:" .. RB.FOOT_ROW[1]] == nil then names[#names + 1] = RB.FOOT_ROW[1] end
+        RB.hover_note("not built: chrome row visibility unknown: " .. table.concat(names, ","))
+        return 2
+    end
 
     -- The hit key each surface answers for: its face, or the slab itself
     -- when the slab carries the key.
@@ -4507,6 +4599,18 @@ function M.hover_map()
     if #map > 0 then
         RB.hmap, RB.hmap_keys = map, keys
         RB.hover_seen = RB.hover_x and RB.hover_lookup(RB.hover_x, RB.hover_y)
+        local r = map[1]
+        RB.hover_note(string.format(
+            "built: %d rects (%d recorded), %d row tops, viewport %.0fx%.0f, "
+            .. "backdrop %.0fx%.0f at %.1f,%.1f, first %s %.1f,%.1f-%.1f,%.1f",
+            #map, #rects, (function() local n = 0 for _ in pairs(top) do n = n + 1 end return n end)(),
+            vw, vh, bw, bh, vw / 2 - bw / 2, vh / 2 - bh / 2, r[1], r[2], r[3], r[4], r[5]))
+    else
+        local faces, tops = 0, 0
+        for _ in pairs(key_of) do faces = faces + 1 end
+        for _ in pairs(top) do tops = tops + 1 end
+        RB.hover_note(string.format("not built: no recorded target matched a row "
+            .. "(%d recorded, %d faces, %d row tops)", #rects, faces, tops))
     end
     return 2
 end
@@ -4523,18 +4627,22 @@ end
 -- one object api.cdo may cache, and the controller is this callback's.
 function RB.viewport()
     local lib = api.cdo("/Script/UMG.Default__WidgetLayoutLibrary")
+    if not lib then return nil, nil, "no WidgetLayoutLibrary class default" end
     local pc = api.local_player_controller and api.local_player_controller()
-    if not (lib and pc) then return nil end
-    local w, h
-    pcall(function()
+    if not pc then return nil, nil, "no local player controller" end
+    local w, h, said
+    local ok, err = pcall(function()
         local size = lib:GetViewportSize(pc)
         local scale = tonumber(lib:GetViewportScale(pc))
+        said = string.format("size %s,%s scale %s", tostring(size and size.X),
+            tostring(size and size.Y), tostring(scale))
         if scale and scale > 0 then
             w, h = tonumber(size.X), tonumber(size.Y)
             w, h = w and w / scale, h and h / scale
         end
     end)
-    if not (w and h and w > 0 and h > 0) then return nil end
+    if not ok then return nil, nil, "error " .. tostring(err) end
+    if not (w and h and w > 0 and h > 0) then return nil, nil, tostring(said) end
     return w, h
 end
 
@@ -4559,7 +4667,7 @@ function RB.hover_watch()
     if RB.hover_off or RB.hmap == nil or RB.hover_due then return end
     local x, y = RB.cursor()
     -- Not readable on this build: off, rather than a lookup every 16ms.
-    if x == nil then RB.hover_off = true return end
+    if x == nil then RB.hover_stop("cursor unreadable (fast loop)") return end
     if x == RB.hover_x and y == RB.hover_y then return end
     RB.hover_x, RB.hover_y = x, y
     local key = RB.hover_lookup(x, y)
@@ -4569,7 +4677,7 @@ end
 -- The draw's half: does the map agree with IsHovered?
 function RB.hover_check(hovered)
     local x, y = RB.cursor()
-    if x == nil then RB.hover_off = true return end
+    if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
     RB.hover_x, RB.hover_y = x, y
     local said = RB.hover_lookup(x, y)
     if said == hovered or (said == nil and (hovered == nil or not RB.hmap_keys[hovered])) then
@@ -4580,7 +4688,8 @@ function RB.hover_check(hovered)
     -- Slate can answer a beat after the pointer moved, so look once more.
     if RB.hover_bad == 1 then RB.hover_due = true end
     if RB.hover_bad >= RB.HOVER_BAD_MAX then
-        RB.hover_off = true
+        RB.hover_stop("disagreed with the widgets " .. RB.HOVER_BAD_MAX
+            .. " times (map said " .. tostring(said) .. ", widgets " .. tostring(hovered) .. ")")
         log.debug("panel: the pointer map disagreed with the widgets "
             .. RB.HOVER_BAD_MAX .. " times, hover follows the draw again")
     end
@@ -4998,7 +5107,13 @@ function M.refresh(cfg)
         .. ":" .. tostring(bw) .. "x" .. tostring(bh)
     if RB.hmap == nil or RB.hmap_sig ~= sig
         or RB.hmap_x ~= RB.hover_x or RB.hmap_y ~= RB.hover_y then
-        RB.hmap_calls = M.hover_map()
+        local ok, calls = pcall(M.hover_map)
+        if not ok then
+            RB.hrect, RB.hmap = {}, nil
+            RB.hover_note("not built: error " .. tostring(calls))
+            calls = 0
+        end
+        RB.hmap_calls = calls
         RB.hmap_sig, RB.hmap_x, RB.hmap_y = sig, RB.hover_x, RB.hover_y
     else
         RB.hrect, RB.hmap_calls = {}, 0
@@ -5063,10 +5178,10 @@ function M.refresh(cfg)
         if perf_worst > 4.0 then
             log.say(string.format(
                 "panel refresh worst %.1fms  (setup %.1f, hover %.1f/%d, " ..
-                "stock %.1f, draw %.1f, blank %.1f, tail %.1f)",
+                "stock %.1f, draw %.1f, blank %.1f, tail %.1f; rescan %d widgets, %d pins)",
                 perf_worst, worst_setup * 1000, worst_hover * 1000, worst_hits,
                 worst_stock * 1000, worst_draw * 1000, worst_blank * 1000,
-                (RB.worst_tail or 0) * 1000))
+                (RB.worst_tail or 0) * 1000, RB.runtime.last_count or 0, pin_count))
         end
         perf_worst = 0
     end
@@ -5227,6 +5342,7 @@ function M.toggle()
     RB.unveiled, RB.laid_out, RB.unveil_by = false, false, nil
     -- The pointer's map is trusted again, and starts from nothing.
     RB.hover_off, RB.hover_bad, RB.hover_seen = nil, 0, nil
+    RB.hover_off_why, RB.hmap_said = nil, {}
     RB.hover_x, RB.hover_y = nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
