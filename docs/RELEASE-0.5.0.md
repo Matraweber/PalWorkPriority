@@ -168,7 +168,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   client's removal was applied and saved too ([per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)).
 - [x] **Mining limits per item on rocks** (user's decision 2026-10-28, into
   0.5.0). Built: `Scripts/item_sources.lua`, scheduler, panel wording
-  ("Add item limit", "Its rocks only", "Rocks stopped"), config switch;
+  (job column "Mining (rocks)" since the round-2 fixes, status "Rocks stopped"), config switch;
   tests pass (228 Lua). PASS 2026-10-28 in game ([evidence](per-item-limits-2026-10-27.md)):
   19 stone rocks held, 0 of 12 samples on stone while ore and crystals were
   mined, released at a raised limit, held again, fresh after a restart and
@@ -199,14 +199,29 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   UE4SS comes from the game's mod loader. Rechecked on Vortex 2.9.1 (same
   day): fresh install, game load and removal pass.
 
+- [ ] **Audit fixes** ([review-2026-10-28](review-2026-10-28.md),
+  [review-round2-2026-10-29](review-round2-2026-10-29.md)): retested in game
+  and on the server ([retest-2026-10-29](retest-2026-10-29.md)); round-2
+  fixes retest pending. Only checked by automated tests so far, and said so in
+  the changelog: the cap of 500 limits per guild, the stand on a server
+  without the mod or with another version, the missing-pak and second-UE4SS
+  warnings, the config reset notice, controller input after the latest fixes.
+  **Done when:** the round-2 fixes are retested in game and on the server, and
+  the install checks (manual, Workshop, 0.4.1 upgrade) are rerun on the final
+  archives.
+
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
 - Item-specific limits for buildings (Stone Pit, logging site, furnaces) and
   for work other than Mining. 0.5.0 has per-item Mining limits on natural
   rocks only (2026-10-28, [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md));
   buildings save their work state, so they are read but never written.
-  Overshoot (BIG DADDY) not measured yet, and no G5 capture with Mining
-  limits yet ([review-2026-10-28](review-2026-10-28.md) H).
+  Overshoot (BIG DADDY) not measured yet. No PresentMon (G5) capture with
+  Mining limits yet ([review-2026-10-28](review-2026-10-28.md) H), but
+  `pwp perf` with Mining limits on two bases gave a scheduler pass of 19.3 ms
+  mean and 20 ms max, in line with the G5 pass of about 20 ms
+  ([retest-2026-10-29](retest-2026-10-29.md)). No `pwp perf` reading with the
+  panel open yet.
 - Async saving (gate G2b, moved 2026-10-20), on by default later, and async on dedicated servers (open checklist:
   [dedicated-async-next-gates-2026-10-09](dedicated-async-next-gates-2026-10-09.md)).
 - Design calls open since the 2026-08-26 audit: marking a capped work column
