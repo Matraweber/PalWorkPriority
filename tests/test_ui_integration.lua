@@ -975,13 +975,13 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     -- One line: the mouse first, then the panel key. A second line ran into
     -- the game's "unused Stat Points" bar (in game, 2026-10-22).
     assert(legends[1].text:find('Left click/Enter: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
-    assert(legends[1].text:find('All equal: game picks',1,true))
+    assert(legends[1].text:find('(all start equal: game picks)',1,true))
     assert(not legends[1].text:find('\n',1,true),'stand legend must stay one line')
-    assert(legends[1].text:find('ALT+F1: Production Limits',1,true),'legend lost the panel key')
+    assert(legends[1].text:find('ALT+F1: Limits panel',1,true),'legend lost the panel key')
     -- A rebound panel key is named as bound; an absent label keeps the default.
     local dm=package.loaded.darnmenu
     package.loaded.darnmenu={labels={key_panel='ALT+F7'}}
-    assert(f.ui.edit_legend():find('ALT+F7: Production Limits',1,true) and not f.ui.edit_legend():find('F1',1,true))
+    assert(f.ui.edit_legend():find('ALT+F7: Limits panel',1,true) and not f.ui.edit_legend():find('F1',1,true))
     package.loaded.darnmenu={labels={}}
     assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND)
     package.loaded.darnmenu=dm
@@ -1234,23 +1234,25 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
     end
     assert(f.ui.PAD_LEGEND:find('X (left button): set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
     assert(f.ui.PAD_LEGEND:find('LB/A (bottom button): toward 1',1,true),'pad legend does not say where A sits')
-    assert(f.ui.PAD_LEGEND:find('View button: Production Limits',1,true))
+    assert(f.ui.PAD_LEGEND:find('View button: Limits',1,true))
     -- Decision 2026-10-29: a left click (LB / A on a pad) wraps from 1 to X,
     -- and equal numbers leave the Pal to the game. Both legends say it, and
-    -- round 3 adds the state every job starts in (newcomer P2-2).
+    -- round 3 adds the state every job starts in (newcomer P2-2). UX
+    -- crowding P2-1/P3-8: both open with what the numbers mean, and the
+    -- starting state is "equal", not "1" (an unticked job starts as X).
     for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND}) do
         assert(text:find('toward 1 (1 wraps to X)',1,true),'legend hides the wrap: '..text)
-        assert(text:find('All equal: game picks',1,true),'legend lacks the equal-numbers rule: '..text)
-        assert(text:find('All start at 1 | ',1,true)==1,'legend does not start with the starting state: '..text)
+        assert(text:find('1 first, X never (all start equal: game picks) | ',1,true)==1,
+            'legend does not open with the scale and the starting state: '..text)
+        assert(not text:find('All start at 1',1,true),'legend claims every job starts at 1: '..text)
         -- Clear separators (accessibility P2-3: "(1 wraps to X)  Right click" ran together).
         assert(not text:find('  ',1,true),'legend parts run together: '..text)
     end
-    assert(f.ui.EDIT_LEGEND=='All start at 1 | Left click/Enter: toward 1 (1 wraps to X) | Right click: toward X'
-        ..' | Arrows, keys 1-5, X | All equal: game picks | ALT+F1: Production Limits',f.ui.EDIT_LEGEND)
+    assert(f.ui.EDIT_LEGEND=='1 first, X never (all start equal: game picks) | Left click/Enter: toward 1 (1 wraps to X)'
+        ..' | Right click: toward X | Arrows, keys 1-5, X | ALT+F1: Limits panel',f.ui.EDIT_LEGEND)
     -- The longest rebound key drops the starting state rather than overflow,
-    -- and keeps every control and the panel key.
-    assert(not rebound:find('All start at 1',1,true) and rebound:find(f.ui.LEGEND_CONTROLS,1,true)
-        and rebound:find(string.rep('W',24)..': Production Limits',1,true),rebound)
+    -- and keeps the scale, every control and the panel key.
+    assert(rebound==f.ui.LEGEND_SCALE..' | '..f.ui.LEGEND_CONTROLS..' | '..string.rep('W',24)..': Limits panel',rebound)
     -- The wrap the legend promises is what a left click does.
     assert(require('store').cycle(1,-1)==false)
     local api=package.loaded.palapi; api.last_input_type=1
@@ -1468,17 +1470,19 @@ check('the legend shows the steering count only where the passes run',function()
         f.authority=false
         assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND,'a client showed a steering count')
         f.authority=true
+        -- Every Pal equal: "Steering 0 of 14 Pals: all jobs equal" beside
+        -- the scale and every control is wider than the line, so the
+        -- starting-state wording says it (UX crowding P2-1).
         local zero=f.ui.edit_legend()
-        assert(zero=='Steering 0 of 14 Pals: all jobs equal | '..f.ui.LEGEND_CONTROLS..' | ALT+F1: Production Limits',zero)
-        assert(#zero<=f.ui.LEGEND_MAX_CHARS)
+        assert(zero==f.ui.EDIT_LEGEND,zero)
         -- Some Pals could not be read: not all of them are "equal".
         count={0,14,12}
-        assert(f.ui.edit_legend():find('Steering 0 of 14 Pals | ',1,true)==1,f.ui.edit_legend())
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 0 of 14 Pals | ',1,true)==1,f.ui.edit_legend())
         count={3,14,11}
         local some=f.ui.edit_legend()
-        assert(some:find('Steering 3 of 14 Pals | Left click/Enter',1,true)==1,some)
+        assert(some:find('1 first, X never | Steering 3 of 14 Pals | Left click/Enter',1,true)==1,some)
         count={1,1,0}
-        assert(f.ui.edit_legend():find('Steering 1 of 1 Pal | ',1,true)==1,f.ui.edit_legend())
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 1 of 1 Pal | ',1,true)==1,f.ui.edit_legend())
         -- The longest counts with the longest rebound key still fit one line
         -- and keep every control and the panel key.
         local dm=package.loaded.darnmenu
@@ -1487,14 +1491,18 @@ check('the legend shows the steering count only where the passes run',function()
             count=c
             local text=f.ui.edit_legend()
             assert(#text<=f.ui.LEGEND_MAX_CHARS,'steering legend too wide: '..#text..' '..text)
-            assert(text:find(f.ui.LEGEND_CONTROLS,1,true) and text:find('Production Limits',1,true),text)
+            assert(text:find(f.ui.LEGEND_CONTROLS,1,true) and text:find('Limits panel',1,true)
+                and text:find(f.ui.LEGEND_SCALE..' | ',1,true)==1,text)
         end
         package.loaded.darnmenu=dm
         -- The pad legend carries it the same way.
         local api=package.loaded.palapi; api.last_input_type=1
         count={0,14,14}
         local pad_text=f.ui.edit_legend()
-        assert(pad_text=='Steering 0 of 14 Pals: all jobs equal | '..f.ui.PAD_CONTROLS..' | '..f.ui.PAD_PANEL,pad_text)
+        assert(pad_text==f.ui.PAD_LEGEND,pad_text)
+        count={3,14,11}
+        pad_text=f.ui.edit_legend()
+        assert(pad_text=='1 first, X never | Steering 3 of 14 Pals | '..f.ui.PAD_CONTROLS..' | '..f.ui.PAD_PANEL,pad_text)
         assert(#pad_text<=f.ui.LEGEND_MAX_CHARS)
         api.last_input_type=nil
         -- No current pass, an impossible answer or a throwing reader: no count.
@@ -1506,7 +1514,7 @@ check('the legend shows the steering count only where the passes run',function()
         -- And it is what the footer draws.
         package.loaded.scheduler={steering_count=function() return 2,5,3 end}
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
-        assert(f.legends()[1].text:find('Steering 2 of 5 Pals | ',1,true)==1,f.legends()[1].text)
+        assert(f.legends()[1].text:find('1 first, X never | Steering 2 of 5 Pals | ',1,true)==1,f.legends()[1].text)
     end)
     package.loaded.scheduler=scheduler; f.authority=false
     assert(ok,err)
@@ -1619,6 +1627,37 @@ check('a missing-pal ask with no answer is asked again, a pending one counts as 
     end)
     os.clock=clock
     assert(ok,err)
+end)
+
+-- UX crowding P3-4 (round 3, ScreenShot00405): 8 units above the bottom
+-- edge, the legend covered the game's "You have unused Stat Points" bar,
+-- which starts about 35 px above the bottom of a 1280x720 screen. It sits
+-- about 26 px higher there now, in a canvas root and an overlay root alike.
+check('the legend sits clear of the unused Stat Points bar',function()
+    for _,kind in ipairs({'CanvasPanel','Overlay'}) do
+        local f=fixture()
+        local root=f.object(kind,'menu.'..kind)
+        for _,child in ipairs(f.root.children) do child.parent=root; root.children[#root.children+1]=child end
+        f.menu.WidgetTree.RootWidget=root; f.root=root
+        local add=root.AddChild
+        function root:AddChild(child)
+            local slot=add(self,child)
+            if slot then
+                function slot:SetPosition(v) self.position=v end
+                function slot:SetPadding(v) self.padding=v end
+            end
+            return slot
+        end
+        assert(f.ui.refresh(f.cfg))
+        local legend=assert(f.legends()[1],'no legend in a '..kind..' root')
+        local slot=legend.parent.Slot
+        local lift=kind=='CanvasPanel' and slot.position and -slot.position.Y
+            or slot.padding and slot.padding.Bottom
+        assert(lift==f.ui.LEGEND_LIFT,kind..' legend lift: '..tostring(lift))
+        -- In screen pixels at 720p (slate scale 720/1080): at least 26 above
+        -- where it was, and not so high that it meets the HUD's Build hint.
+        assert((lift-8)*720/1080>=25.9 and (lift-8)*720/1080<=30,kind..' legend lift in pixels')
+    end
 end)
 
 print(string.format('Stand integration: %d passed, %d failed',passed,#failures))

@@ -155,7 +155,9 @@ assert(panel.nav(cfg,'enter')); panel.refresh(cfg)
 assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Press Enter again to add a limit of 100.',
     'keyboard tile prompt: '..tostring(notice()))
 assert(rendered('Press Enter to add'), 'armed tile does not name Enter')
-assert(caption():find('Under each item: what Enter does',1,true), 'caption still says click: '..tostring(caption()))
+-- UX crowding P3-1: the caption no longer repeats what the tile label shows.
+assert(not caption():find('Under each item',1,true) and not caption():find('click',1,true),
+    'caption still says click: '..tostring(caption()))
 panel.escape(); panel.refresh(cfg)
 -- The pad's Y through its own route, with the game's flag unset (round 3,
 -- P2-1: the flag is frozen while the panel is open, and setting it by hand
@@ -164,7 +166,7 @@ api.last_input_type=nil
 assert(panel.native_pad(7)); panel.refresh(cfg)
 assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Press Y again to add a limit of 100.',
     'pad tile prompt: '..tostring(notice()))
-assert(rendered('Press Y to add') and caption():find('what Y does',1,true), 'pad label or caption')
+assert(rendered('Press Y to add'), 'pad label')
 panel.escape(); panel.refresh(cfg)
 -- And a key after the pad, with the flag still saying controller.
 api.last_input_type=1
@@ -174,8 +176,7 @@ assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Pr
 panel.escape(); panel.refresh(cfg)
 api.last_input_type=nil
 assert(panel.apply(cfg,{kind='item',item='Wood'},-1,true)); panel.refresh(cfg)
-assert(notice():find('Click again to add a limit',1,true) and rendered('Click again to add')
-    and caption():find('what a click does',1,true), 'mouse wording')
+assert(notice():find('Click again to add a limit',1,true) and rendered('Click again to add'), 'mouse wording')
 for by,label in pairs(rb.AGAIN_TILE) do assert(#label<=21, by..' tile label too long: '..label) end
 
 -- P3: an empty-space click, Escape and a right click take the arm back.

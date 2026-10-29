@@ -118,7 +118,11 @@ for _,cap in ipairs({0,1,2,5,8,9,400}) do
     same(items.search_picker('WOOD',cap),expected)
 end
 same(items.search_picker('wood beam',40),{'Zebra'})
-same(items.search_picker('Birch',40),{'Birch'})
+-- The picker matches the name a player reads, never the id (UX crowding
+-- P3-6: "ore" listed Lily Hat and Paloxite through their ids). Birch's id
+-- is not its name ("Wood").
+same(items.search_picker('Birch',40),{})
+same(items.search_picker('irc',40),{})
 same(items.search_picker('%',40),{'Literal%Wood'})
 same(items.search_picker('no such item',40),{})
 same(items.search_picker('',2),{filtered[1],filtered[2]})
@@ -127,6 +131,7 @@ assert(step()==filtered and examined==before, 'warm index rebuilt')
 -- Generic callers retain the full catalogue and still invoke the sentinel.
 assert(items.search('NPC_CrashSentinel',1)[1]=='NPC_CrashSentinel')
 assert(calls.NPC_CrashSentinel==1 and #items.ids==#ids)
+assert(items.search('Birch',1)[1]=='Birch', 'the debug search lost the id')
 same(items.search_picker('wood',400),ranked)
 
 -- Count rejected IDs as work even with a coarse clock or slow scalar filter.

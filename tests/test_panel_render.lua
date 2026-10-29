@@ -402,7 +402,7 @@ items.catalogue_ids = function() return nil, "unavailable" end
 panel.refresh(cfg)
 assert(panel.command(cfg, "filter ore") == "filter is now 'ore'")
 panel.refresh(cfg)
-assert(rendered("Preparing item search...   |   Under each item: what a click does"))
+assert(rendered("Preparing item search..."))
 local rb
 for i=1,100 do
     local name,value=debug.getupvalue(panel.refresh,i)
@@ -411,14 +411,14 @@ end
 assert(rb and rb.pending, "unfinished index did not request continuation")
 catalogue_state="unavailable"
 panel.refresh(cfg)
-assert(rendered("Item catalogue unavailable   |   Under each item: what a click does"))
+assert(rendered("Item catalogue unavailable"))
 assert(not rb.pending, "unavailable catalogue started a fast retry loop")
 panel.command(cfg, "filter")
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 -- Says how to get a count (round 2), not "choose Show all": nothing can
 -- be added from Show all either until storage is counted.
-assert(rendered("Storage not counted yet. Alt+F2 rechecks now.   |   Under each item: what a click does"))
+assert(rendered("Storage not counted yet. Alt+F2 rechecks now."))
 -- A click after the last draw is valid when dispatch reacquires this tree.
 -- The old 150ms draw-age gate rejected it despite successful current lookup.
 local toggle=assert(rendered("Show all items a base can make"))
@@ -426,7 +426,7 @@ toggle.IsHovered=function() return true end
 rb.validated=-100
 assert(panel.handle_click(cfg,-1), "freshly validated delayed click was dropped")
 panel.refresh(cfg)
-assert(rendered("Item catalogue unavailable   |   Under each item: what a click does"))
+assert(rendered("Item catalogue unavailable"))
 toggle.IsHovered=function() return false end
 local saved_host=overlay.host
 overlay.host=function() return nil end

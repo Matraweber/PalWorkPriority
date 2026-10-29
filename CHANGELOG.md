@@ -53,7 +53,7 @@ respawn, and controller input after the latest fixes.
   instead of stopping the mod, while you leave that value as it was. A BOM
   in `config.lua` is fine now.
 - A wrong value in `config.lua` no longer makes the mod vanish: Alt+F1 says
-  which value, and no Pal is assigned until you fix it.
+  which value, and the mod is paused until you fix it.
 - A `caps.txt` or `priorities.txt` edited by hand or saved by 0.4.1 is used,
   not an older backup.
 - The options page (ESC > Darn Mod Options, needs the optional DarnMenu)
@@ -89,8 +89,9 @@ respawn, and controller input after the latest fixes.
   installed (reports by DarkWyrmReaper and NoMo).
 - A guild can hold at most 500 limits. More left its players stuck
   connecting.
-- The stand legend says what clicks, Enter and keys do, that every job
-  starts at 1, and how many Pals the mod steers.
+- The stand legend says what the numbers mean (1 first, X never), what
+  clicks, Enter and keys do, that all jobs start equal, and how many Pals
+  the mod steers.
 - With several bases the panel says which base it counts, and a new limit
   starts above your fullest base.
 

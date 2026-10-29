@@ -321,11 +321,18 @@ local function refused_config(why)
     -- The chunk name is the whole install path; the line number is enough.
     local reason = tostring(why):gsub("^@?[^\n]-config%.lua:(%d+):", "line %1:")
     -- Short enough for the panel's notice row (retest 2026-10-29: the
-    -- longer text ran past the panel's edge).
-    config_rejected = "config.lua rejected: " .. reason .. ". Fix it, or delete config.lua and restart. " ..
-        "No Pals are assigned until then."
+    -- longer text ran past the panel's edge). The row holds about 125
+    -- characters, so a long reason (a Lua syntax error names the token and
+    -- the line it pairs with) is cut and the next step always stays (UX
+    -- crowding P3-7). The log keeps the whole reason.
+    local NEXT = ". Fix it, or delete config.lua and restart. The mod is paused until then."
+    local full = reason:gsub("%s+", " ")
+    local room = 125 - #"config.lua rejected: " - #NEXT
+    local shown = full
+    if #shown > room then shown = shown:sub(1, room - 3) .. "..." end
+    config_rejected = "config.lua rejected: " .. shown .. NEXT
     configuration.show_rejection(config_rejected)
-    log.error(config_rejected)
+    log.error(shown == full and config_rejected or ("config.lua rejected: " .. full .. NEXT))
 end
 
 local function load_config(at_startup)

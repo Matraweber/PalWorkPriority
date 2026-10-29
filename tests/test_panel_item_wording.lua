@@ -80,7 +80,7 @@ status.verdict=verdict
 -- C: uncounted texts, host and client.
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.' or
-    notice():find('Mining stops rocks by item, Stone Pits keep producing',1,true), 'host help: '..tostring(notice()))
+    notice():find("Mining limits stop only that item's rocks; Stone Pits keep producing",1,true), 'host help: '..tostring(notice()))
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.', 'host uncounted: '..tostring(notice()))
@@ -95,7 +95,8 @@ scheduler.last_storage_by_camp.base1.sampled_at=os.clock()
 -- C: empty list.
 rules(0)
 panel.refresh(cfg)
-assert(notice()=="No limits yet. Mining limits stop only that item's rocks, not pits; others stop their whole job.")
+-- UX crowding P2-5: it says what a limit is.
+assert(notice()=="No limits yet. A limit stops a job once storage holds that many of an item.", tostring(notice()))
 assert(rendered('Choose "Add a limit" below to start.'))
 rules(2)
 
@@ -113,11 +114,11 @@ assert(rendered('Add item limit'), 'Mining create tile uses group wording')
 assert(rendered('Edit item limit'), 'Mining existing tile uses group wording')
 assert(not rendered('Edit group limit') and not rendered('Add group limit'))
 assert(notice()=='Click an item to add a limit. Items saying Edit already have one: click to open it.')
-local caption=false
+-- UX crowding P3-1: the caption no longer repeats it; the label and the
+-- help row above say it.
 for _,w in ipairs(registry) do
-    if not w.dead and w.text and w.text:find('Under each item: what a click does',1,true) then caption=true end
+    assert(w.dead or not (w.text and w.text:find('Under each item',1,true)), 'caption still explains the label')
 end
-assert(caption, 'caption does not say what the line under an item means')
 -- E: 12pt labels in the item colour, 14pt names.
 local label=assert(rendered('Edit item limit'))
 assert(label.Font.Size==12 and same(label.tint,0.86,0.89,0.95), 'tile label not 12pt item colour')
@@ -136,19 +137,21 @@ local opened=assert(panel.apply(cfg,{kind='item',item='Stone01'},-1,true))
 panel.refresh(cfg)
 assert(notice():find('Item limit for Mining',1,true), 'existing item limit notice: '..tostring(notice()))
 
--- C: Show all during a search is dimmed and explained, and does nothing.
+-- C: Show all during a search is dimmed and does nothing. Its label stays
+-- plain (UX crowding P3-1); the grey says it.
 local items=package.loaded.items
 items.prepare_picker=function() return {}, 'ready' end
 items.search_picker=function() return {'Stone01'} end
 panel.set_screen('item')
 assert(panel.command(cfg,'filter ston')=="filter is now 'ston'")
 panel.refresh(cfg)
-local all=assert(rendered('Show all items a base can make (a search already does)'), 'Show all not explained')
+assert(not rendered('Show all items a base can make (a search already does)'))
+local all=assert(rendered('Show all items a base can make'), 'Show all missing during a search')
 assert(same(all.tint,0.62,0.67,0.73), 'Show all not dimmed during a search')
 assert(not panel.apply(cfg,{kind='toggle_all'},-1,true), 'Show all toggled during a search')
 panel.refresh(cfg)
 assert(notice()=='A search already covers every item a base can make. Clear it to use Show all.')
-assert(rendered('Show all items a base can make (a search already does)'))
+assert(same(assert(rendered('Show all items a base can make')).tint,0.62,0.67,0.73))
 panel.command(cfg,'filter')
 panel.refresh(cfg)
 assert(rendered('Show all items a base can make'))
