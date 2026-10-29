@@ -72,9 +72,13 @@ files = { [DWMAPI] = 'MZ' }
 found = check.check(dir, '0.5.0', reader)
 assert(found and found.old_ue4ss == 'D:/Steam/steamapps/common/Palworld/Pal/Binaries/Win64' and not found.old_copy)
 text = check.text(found, '0.5.0')
-assert(text:find('second UE4SS', 1, true) and text:find('Win64/dwmapi.dll', 1, true)
-    and text:find('Win64/ue4ss', 1, true), text)
-assert(check.short(found) == 'Second UE4SS in Pal/Binaries/Win64: remove it.')
+assert(text:find('Win64/dwmapi.dll found', 1, true) and text:find('If it is an old UE4SS', 1, true)
+    and text:find('Win64/ue4ss', 1, true) and text:find('disable UE4SS in Vortex', 1, true), text)
+-- Other loaders use that file name too (round 2, 2026-10-29): the text names
+-- the condition rather than claiming it is UE4SS and ordering a delete.
+assert(not text:find('a second UE4SS is installed', 1, true) and text:find('Other mod loaders', 1, true), text)
+assert(check.short(found) == 'Pal/Binaries/Win64/dwmapi.dll found: if it is an old UE4SS, remove it (or disable UE4SS in Vortex).',
+    check.short(found))
 
 -- Both problems and the Workshop conflict: every one in the log, the second
 -- copy (it can run the mod twice) on the panel line.

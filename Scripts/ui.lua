@@ -108,17 +108,28 @@ local cell_last = {}            -- cell full name -> last style token written
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 local edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
 local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like cell_text
+-- menu full name -> the name of the legend Border whose style is written.
+-- The backing, padding and visibility are set once per Border, not each beat.
+local legend_styled = {}
 -- One line under the stand (review 2026-10-21): what each mouse button does,
--- what the marks mean and where the limits panel is. Two lines were tried and
--- the upper one ran into the game's own "unused Stat Points" bar, which sits
--- just above the bottom-anchored text (in game, 2026-10-22).
-M.EDIT_LEGEND = "Left click: toward 1  Right click: toward X  Keys 1-5, X  |  "
-    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  ALT+F1: Production Limits"
+-- the rule a newcomer trips over and where the limits panel is. Two lines were
+-- tried and the upper one ran into the game's own "unused Stat Points" bar,
+-- which sits just above the bottom-anchored text (in game, 2026-10-22).
+--
+-- A left click keeps wrapping from 1 to X (decision 2026-10-29: a clamp would
+-- change 0.4.1 behaviour), so the legend says it: the first left click on a
+-- fresh install sets X. Equal numbers leave the Pal to the game. The number
+-- scale and the marks "* ! ?" moved to every cell's tooltip (M.MARKS_HELP)
+-- to make room for both.
+M.EDIT_LEGEND = "Left click: toward 1 (1 wraps to X)  Right click: toward X  Keys 1-5, X  |  "
+    .. "All jobs equal: game picks  |  ALT+F1: Production Limits"
 -- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
 -- view switch, so the panel opens with View. Buttons are named as buttons:
 -- "X: off" read as "X means off", not "press X" (audit 2026-10-28).
-M.PAD_LEGEND = "LB / A button: toward 1  RB: toward X  X button: set X  |  "
-    .. "1 highest, 5 lowest, X off  * sending  ! not saved  ? unknown  |  View button: Production Limits"
+M.PAD_LEGEND = "LB / A button: toward 1 (1 wraps to X)  RB: toward X  X button: set X  |  "
+    .. "All jobs equal: game picks  |  View button: Production Limits"
+-- What the legend line no longer has room for, in each cell's tooltip.
+M.MARKS_HELP = "1 highest, 5 lowest, X off.  * sending  ! not saved  ? unknown"
 -- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
 -- on 2026-10-28: 152 characters drew 730 px wide, so 14 pt is about 5.6 px a
 -- character and 160 characters about 900 px with the backing's padding.
@@ -131,12 +142,15 @@ M.MOD_VERSION = "0.5.0"
 -- and one line saying why.
 M.VANILLA_ABSENT = "This server does not run Pal Work Priority " .. M.MOD_VERSION
     .. ". The stand works as in the base game."
-M.VANILLA_INCOMPATIBLE = "This server runs a different Pal Work Priority version. "
-    .. "The stand works as in the base game until both match."
-M.VANILLA_LOCKED = " Until then the stand works as in the base game."
--- The receivers that take clicks, numbers and controller buttons live in the
--- pak. Without it the stand can show numbers but nothing on it edits them.
-M.PAK_MISSING = "Mouse editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
+-- A server with another version of the mod still schedules: a 0.4.1 server
+-- rewrites the work flags every pass, so base-game checkboxes would show a
+-- choice it overwrites (review round 2, 2026-10-29). The stand stays
+-- read-only and says who controls work.
+M.LOCKED_INCOMPATIBLE = "This server runs another Pal Work Priority version, which controls work here. "
+    .. "Update both to edit."
+-- The receivers that take clicks, number keys and controller buttons live in
+-- the pak. Without it the stand can show numbers but nothing on it edits them.
+M.PAK_MISSING = "Stand editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
 -- Shown in a cell's tooltip for a Pal the scheduler leaves to the game
 -- (scheduler_plan.unordered: every job it may do has the same number).
 M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs different numbers to steer this Pal."
@@ -271,6 +285,7 @@ function M.reset()
     cell_cb = {}
     edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
     legend_names, legend_count = {}, 0
+    legend_styled = {}
     menu_name = nil
     row_pal = {}
     menu_likely_open = false
@@ -802,7 +817,7 @@ set_cell = measurement.callback("stand: text and colour writes", set_cell)
 local EDIT_MESSAGES = {
     pending="Sending change; the value is not confirmed yet.",
     acknowledged="Server acknowledged the change; waiting for confirmed data.",
-    applied="Waiting for durable confirmation.",
+    applied="Saving...",
     accepted="Confirmed by server.",
     applied_unsaved="The server applied this change but could not save it; it may be lost after a restart.",
     rejected="The server rejected this change; showing the last confirmed value.",
@@ -837,18 +852,13 @@ function M.settings_message()
     end
 end
 
--- Has this client's server failed to give us anything to draw, for good?
+-- Does this client's server run no Pal Work Priority at all?
 --
 -- Then the stand belongs to the game again: the vanilla checkbox, no "?"
 -- cells, no receivers. Drawing "?" over every cell and hiding the checkbox
 -- for a whole session (audit A5) took the base game's own control away on a
 -- server that never had the mod.
 --
---   incompatible   a 0.4.1 server, or another schema: it will not change
---                  until one side is updated.
---   unavailable    the server's settings fence holds; its scheduler is
---                  blocked too (scheduler.lua), so the vanilla flags are what
---                  is in force.
 --   connecting / handshake_timeout   four Hellos without an answer, about a
 --                  minute: a server without the mod. Latched for this
 --                  transport nonce, because the next failed Hello reports
@@ -856,16 +866,16 @@ end
 --                  flicker back to "?". A Welcome sets server_nonce and a new
 --                  session a new nonce; either one ends it.
 --
+-- Only this case. A server that answers with another version or a settings
+-- fence runs the mod, and base-game checkboxes would mislead there
+-- (M.lock_message, review round 2, 2026-10-29).
+--
 -- "connecting" before the timeout stays "?" with its tooltip: the brief wait
 -- of a normal join. Plain reads of net fields only.
 local absent_latched, absent_nonce = false, nil
 function M.vanilla_message()
     if api.has_authority() ~= false then return nil end
     local status = net.status
-    if status == "incompatible" then return M.VANILLA_INCOMPATIBLE end
-    if status == "unavailable" then
-        return (M.settings_message() or "Server settings are unavailable.") .. M.VANILLA_LOCKED
-    end
     if status ~= "connecting" or net.server_nonce ~= nil then
         absent_latched = false
         return nil
@@ -877,10 +887,27 @@ function M.vanilla_message()
     return nil
 end
 
--- Edits are refused while either the settings fence holds or the stand is
--- the game's again.
+-- Does this client's server run the mod but refuse our edits for now?
+--
+--   incompatible   a 0.4.1 server, or another schema. Its scheduler keeps
+--                  writing the work flags (0.4.1 does it every pass), so a
+--                  base-game checkbox would show a choice the server
+--                  overwrites. It will not change until one side is updated.
+--   unavailable    the server's settings fence holds; settings_message has
+--                  the server's own reason.
+--
+-- The stand stays ours and read-only: "?" cells, the checkbox hidden, no
+-- receiver armed, every edit refused, and the legend says why.
+function M.lock_message()
+    if api.has_authority() ~= false then return nil end
+    if net.status == "incompatible" then return M.LOCKED_INCOMPATIBLE end
+    if net.status == "unavailable" then return M.settings_message() end
+end
+
+-- Edits are refused while the settings fence holds, the server locks the
+-- stand, or the stand is the game's again.
 local function editing_blocked()
-    return M.settings_message() ~= nil or M.vanilla_message() ~= nil
+    return M.settings_message() ~= nil or M.lock_message() ~= nil or M.vanilla_message() ~= nil
 end
 
 local function pak_message()
@@ -888,7 +915,7 @@ local function pak_message()
 end
 
 function M.legend_text()
-    return M.vanilla_message() or M.settings_message() or pak_message() or M.edit_legend()
+    return M.vanilla_message() or M.lock_message() or M.settings_message() or pak_message() or M.edit_legend()
 end
 
 local function edit_presentation(key, work)
@@ -905,7 +932,7 @@ local function edit_presentation(key, work)
     if entry and entry.issue then
         local detail=EDIT_REASONS[entry.issue_reason] or EDIT_MESSAGES[entry.issue]
         if status=="pending" or status=="acknowledged" then
-            detail=detail.." Retry pending; this warning clears after durable confirmation."
+            detail=detail.." It will be retried; this warning clears once it is saved."
         end
         return "!","issue",detail
     end
@@ -919,9 +946,9 @@ local function edit_presentation(key, work)
         return "?","unknown",EDIT_MESSAGES[status]
     end
     if state.incomplete and not entry then
-        return "?","unknown","Earlier edit status is unavailable; durable confirmation is needed."
+        return "?","unknown","Not saved yet; it will be retried."
     end
-    return "",nil,status and EDIT_MESSAGES[status] or "Priority setting; this is not current work activity."
+    return "",nil,status and EDIT_MESSAGES[status] or "This is the priority you set, not what the Pal is doing now."
 end
 
 -- One small legend in a known multi-child root. Ownership is names only; each
@@ -981,26 +1008,35 @@ local function refresh_legend(menu)
             if not class then return false end
             tb=StaticConstructObject(class,tree)
             if not alive(tb) then return false end
+            legend_styled[name]=nil -- a new text block takes the style below
             if not alive(box:AddChild(tb)) then return false end
         end
-        local slot=box.Slot
-        if not alive(slot) then return false end
-        if kind=="CanvasPanel" then
-            write(slot:SetAnchors({Minimum={X=0.5,Y=1},Maximum={X=0.5,Y=1}}))
-            write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-8}))
-            write(slot:SetAutoSize(true)); write(slot:SetZOrder(20))
-        else
-            write(slot:SetHorizontalAlignment(2))
-            if kind=="Overlay" then write(slot:SetVerticalAlignment(3)) end
-            write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=4}))
+        -- The style is the same on every beat, so it is written once per
+        -- Border and its text (review round 2: up to eleven engine calls on
+        -- every refresh with the stand open). It is recorded only after every write went
+        -- through, so a refused write is tried again on the next refresh.
+        -- Only the text changes with the state.
+        if legend_styled[name]~=legend_names[name] then
+            local slot=box.Slot
+            if not alive(slot) then return false end
+            if kind=="CanvasPanel" then
+                write(slot:SetAnchors({Minimum={X=0.5,Y=1},Maximum={X=0.5,Y=1}}))
+                write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-8}))
+                write(slot:SetAutoSize(true)); write(slot:SetZOrder(20))
+            else
+                write(slot:SetHorizontalAlignment(2))
+                if kind=="Overlay" then write(slot:SetVerticalAlignment(3)) end
+                write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=4}))
+            end
+            write(box:SetBrushColor(LEGEND_BACKING))
+            write(box:SetPadding({Left=10,Top=3,Right=10,Bottom=3}))
+            write(box:SetVisibility(3))
+            local font=tb.Font; font.Size=M.LEGEND_FONT_SIZE; write(tb:SetFont(font))
+            write(tb:SetColorAndOpacity({SpecifiedColor=LEGEND_TEXT,ColorUseRule=0}))
+            write(tb:SetVisibility(3))
+            legend_styled[name]=legend_names[name]
         end
-        write(box:SetBrushColor(LEGEND_BACKING))
-        write(box:SetPadding({Left=10,Top=3,Right=10,Bottom=3}))
-        write(box:SetVisibility(3))
-        local font=tb.Font; font.Size=M.LEGEND_FONT_SIZE; write(tb:SetFont(font))
         write(tb:SetText(make_ftext(M.legend_text())))
-        write(tb:SetColorAndOpacity({SpecifiedColor=LEGEND_TEXT,ColorUseRule=0}))
-        write(tb:SetVisibility(3))
         return true
     end)
     M.legend_mode=ok and shown and "footer" or "tooltip"
@@ -1185,7 +1221,8 @@ local function handle_cell(cfg, cell, known_name)
     local tb = ensure_cell_text(cell, cell_name)
     if not tb then return "failed" end
 
-    if prio~=nil and ranks and capable and store.decided and not M.settings_message() then
+    -- A locked stand (settings fence, another server version) arms nothing.
+    if prio~=nil and ranks and capable and store.decided and not editing_blocked() then
         if not stand_pointer.ensure(cell,cell_name,pal.key,t,inject_at_checkbox) then
             if stand_pointer.asset_missing then
                 warn_once("pointer", "stand editing unavailable: LogicMods/PalWorkPriority.pak is missing (WBP_StandInput not found); reinstall the mod")
@@ -1202,7 +1239,9 @@ local function handle_cell(cfg, cell, known_name)
     local known = not (prio == nil or not ranks or unavailable or M.settings_message())
     if not known then
         glyph,colour="?","unknown"
-        if unavailable then detail=M.settings_message() or EDIT_MESSAGES[net.status] or "Priority data unavailable." end
+        if unavailable then
+            detail=M.lock_message() or M.settings_message() or EDIT_MESSAGES[net.status] or "Priority data unavailable."
+        end
         if prio==nil and not unavailable then detail="Priority data unavailable; waiting for a confirmed value." end
         if marker=="?" then marker="" end
     elseif prio == false then
@@ -1213,11 +1252,15 @@ local function handle_cell(cfg, cell, known_name)
 
     glyph=glyph..marker
     colour=edit_colour or colour
-    if M.settings_message() then detail=M.settings_message() end
-    local help=(pak_message() or M.edit_legend()).."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
+    local locked=M.lock_message() or M.settings_message()
+    if locked then detail=locked end
+    -- The legend line names the controls; the number scale and the marks
+    -- live here (M.MARKS_HELP).
+    local help=(pak_message() or M.edit_legend()).."\n"..M.MARKS_HELP
+        .."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
         .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
     if known and same_number(cfg,pal,ranks) then help=help.."\n"..M.SAME_NUMBER_HINT end
-    if M.settings_message() then help=M.settings_message() end
+    if locked then help=locked end
     pcall(function() cell:SetToolTipText(make_ftext(help)) end)
     if M.selection and M.selection.key == pal.key and M.selection.work == t then glyph = "[" .. glyph .. "]" end
     local result = set_cell(tb, cell_name, glyph, colour)
@@ -1356,10 +1399,11 @@ function M.refresh(cfg,flush_receipt)
         --
         -- No data is not a grid of dashes, which would read as "this pal can
         -- do nothing". While the handshake is under way each cell shows "?"
-        -- ("not known yet", with a Connecting tooltip). When it cannot finish
-        -- - a server without the mod, another version, a settings fence -
-        -- every cell goes back to the vanilla checkbox (M.vanilla_message)
-        -- and the legend says why. The hook is registered either way.
+        -- ("not known yet", with a Connecting tooltip). On a server without
+        -- the mod every cell goes back to the vanilla checkbox
+        -- (M.vanilla_message); with another version or a settings fence the
+        -- cells stay "?" and refuse edits (M.lock_message). Either way the
+        -- legend says why. The hook is registered either way.
         --
         -- Returning here also skipped try_hook_bind, so the hook only existed
         -- once data had arrived - and rows bound before that were never bound
@@ -1878,9 +1922,10 @@ function M.pad_tick(cfg)
     -- and the game's stand gives the focus to its own cell. On a controller
     -- (asked at most four times a second) put it on the current selection,
     -- the same as the first arrow key does on a keyboard. Not while the stand
-    -- is the game's again: then its own cursor keeps the focus.
+    -- is the game's again or the server locks it: then its own cursor keeps
+    -- the focus, and nothing of ours could be edited anyway.
     local now=os.clock()
-    if (M.pad_focus_at or 0)<=now and not M.vanilla_message() then
+    if (M.pad_focus_at or 0)<=now and not M.vanilla_message() and not M.lock_message() then
         M.pad_focus_at=now+0.25
         local gamepad=api.input_is_gamepad and api.input_is_gamepad()==true
         if gamepad and not stand_pointer.keyboard_active() then

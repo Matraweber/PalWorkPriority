@@ -434,6 +434,20 @@ check('missing input asset preserves numbers but never revives raw hover editing
     f.ui.bind_mouse(function() return f.cfg end)
     f.cells[1].hovered=true; f.bindings.rightmouse(); f.session.drain(error)
     assert(#f.writes==0 and require('stand_pointer').created==0)
+    -- Both lookups answered "not found": that is the missing pak.
+    assert(require('stand_pointer').asset_missing==true)
+    assert(f.ui.legend_text()==f.ui.PAK_MISSING)
+    assert(f.cells[1].tooltip:find(f.ui.PAK_MISSING,1,true))
+end)
+
+-- Round 2 (P3): an invalid AssetRegistry CDO was reported as a missing pak.
+check('no asset registry to ask is not a missing pak',function()
+    local f=fixture(); f.native_asset=false; f.registry=nil
+    assert(f.ui.refresh(f.cfg))
+    assert(require('stand_pointer').created==0)
+    assert(require('stand_pointer').asset_missing~=true,'a lookup that could not run was called a missing pak')
+    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND,f.ui.legend_text())
+    assert(not f.cells[1].tooltip:find('pak is missing',1,true))
 end)
 
 check('mounted mod class loads through asset registry when LoadAsset cannot find it',function()
@@ -951,10 +965,15 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     assert(legends[1].Font.Size==14,'legend is not 14 pt')
     local c=legends[1].colour.SpecifiedColor
     assert(c.R>0.85 and c.G>0.85 and c.B>0.85,'legend text is not light on the dark backing')
-    assert(legends[1].text:find('X off',1,true) and legends[1].text:find('! not saved',1,true))
-    -- One line: the mouse first, then the marks and the panel key. A second
-    -- line ran into the game's "unused Stat Points" bar (in game, 2026-10-22).
-    assert(legends[1].text:find('Left click: toward 1',1,true) and legends[1].text:find('Right click: toward X',1,true))
+    -- The number scale and the marks moved from the line to every cell's
+    -- tooltip (round 2) to make room for the wrap and the equal-numbers rule.
+    assert(f.cells[1].tooltip:find(f.ui.MARKS_HELP,1,true),'cell tooltip lost the marks')
+    assert(f.ui.MARKS_HELP:find('X off',1,true) and f.ui.MARKS_HELP:find('! not saved',1,true)
+        and f.ui.MARKS_HELP:find('* sending',1,true) and f.ui.MARKS_HELP:find('? unknown',1,true))
+    -- One line: the mouse first, then the panel key. A second line ran into
+    -- the game's "unused Stat Points" bar (in game, 2026-10-22).
+    assert(legends[1].text:find('Left click: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
+    assert(legends[1].text:find('All jobs equal: game picks',1,true))
     assert(not legends[1].text:find('\n',1,true),'stand legend must stay one line')
     assert(legends[1].text:find('ALT+F1: Production Limits',1,true),'legend lost the panel key')
     -- A rebound panel key is named as bound; an absent label keeps the default.
@@ -986,6 +1005,27 @@ check('unsaved X survives snapshot, acknowledgement and retry until durable acce
     f.ui.edit_status('a',1,'accepted'); assert(f.ui.refresh(f.cfg))
     assert(tb.text=='X','durable acceptance did not clear marker')
     assert(not f.cells[1].tooltip:find('could not save',1,true),'accepted cell retained stale error tooltip')
+end)
+
+-- Round 2 (P3 UX): the stand tooltips used developer words ("durable
+-- confirmation", "not current work activity").
+check('stand tooltips speak plainly',function()
+    local f=fixture(); assert(f.ui.refresh(f.cfg))
+    local function tip() return f.cells[1].tooltip end
+    assert(tip():find('This is the priority you set, not what the Pal is doing now.',1,true),tip())
+    f.ui.edit_status('a',1,'applied'); f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(tip():find('Saving...',1,true),tip())
+    f.ui.edit_status('a',1,'applied_unsaved','save_failed'); f.ui.edit_status('a',1,'pending')
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(tip():find('It will be retried',1,true),tip())
+    -- More unsaved edits than the record holds: an untracked cell says so.
+    f.ui.edit_status('a',1,'accepted')
+    for i=1,129 do assert(f.ui.edit_status('k'..i,1,'pending')) end
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(tip():find('Not saved yet; it will be retried.',1,true),tip())
+    for _,cell in ipairs(f.cells) do
+        assert(not cell.tooltip:find('durable',1,true) and not cell.tooltip:find('work activity',1,true),cell.tooltip)
+    end
 end)
 
 check('rejection and timeout mark confirmed value without retaining failed optimistic value',function()
@@ -1028,10 +1068,7 @@ local function no_unknown(f)
     return true
 end
 for _,case in ipairs({
-    {status='incompatible',reason='server_requires_matching_mod',says='different Pal Work Priority version'},
-    {status='incompatible',reason='schema_or_work_width',says='until both match'},
     {status='connecting',reason='handshake_timeout',says='does not run Pal Work Priority'},
-    {status='unavailable',reason='settings_recovering',says='works as in the base game'},
 }) do
     check('server without a finished handshake gives the stand back: '..case.status..'/'..case.reason,function()
         local f=fixture({'a','b'}); assert(f.ui.refresh(f.cfg))
@@ -1061,6 +1098,46 @@ for _,case in ipairs({
     end)
 end
 
+-- Review round 2 (2026-10-29): a server that runs another version of the mod
+-- (0.4.1 rewrites the work flags every pass) or holds its settings fence
+-- still controls work, so the base-game checkboxes would lie. The stand
+-- stays ours, read-only, and says why.
+for _,case in ipairs({
+    {status='incompatible',reason='server_requires_matching_mod',says='another Pal Work Priority version, which controls work here'},
+    {status='incompatible',reason='schema_or_work_width',says='Update both to edit.'},
+    {status='unavailable',reason='settings_recovering',says='The server is loading saved settings.'},
+    {status='unavailable',reason='settings_restart_required',says='host must restart'},
+}) do
+    check('server that runs another version or a fence keeps the stand read-only: '..case.status..'/'..case.reason,function()
+        local f=fixture({'a','b'}); assert(f.ui.refresh(f.cfg))
+        f.ui.bind_mouse(function() return f.cfg end)
+        assert(f.cells[1].PalCheckBox.visibility==2 and receiver_of(f.cells[1]).visibility==0)
+        f.net.status,f.net.status_reason=case.status,case.reason; f.net.pals={}
+        f.net.pals_gen=f.net.pals_gen+1
+        assert(f.ui.refresh(f.cfg))
+        assert(not f.ui.wants_repaint(),'a locked stand would repaint every beat')
+        for _,cell in ipairs(f.cells) do
+            assert(cell.PalCheckBox.visibility==2,'base-game checkbox came back on a server that overwrites it')
+            assert(f.texts(cell)[1].text=='?','a locked cell claimed a value')
+            local r=receiver_of(cell)
+            assert(r.visibility==2 and r.PWP_Target=='','the stand receiver stayed armed')
+            assert(cell.tooltip==f.ui.legend_text(),'locked cell tooltip: '..tostring(cell.tooltip))
+        end
+        assert(f.ui.legend_text():find(case.says,1,true),f.ui.legend_text())
+        assert(not f.ui.legend_text():find('base game',1,true),'locked stand claimed base-game behaviour')
+        assert(f.legends()[1].text==f.ui.legend_text(),'the legend did not say why')
+        f.cells[1].hovered=true; f.click(-1); f.key(f.cells[1],2); f.session.drain(error)
+        assert(#f.writes==0)
+        assert(not f.ui.capture_direct() and not f.ui.nav(f.cfg,'raise') and not f.ui.nav(f.cfg,'here'))
+        f.ui.detach(); assert(f.ui.refresh(f.cfg)); assert(f.cells[1].PalCheckBox.visibility==2)
+        -- The server comes back: the grid is editable again.
+        f.net.status,f.net.status_reason='ready',nil; f.net.pals.a={ranks={[1]=1},prios={[1]=3}}
+        f.net.pals_gen=f.net.pals_gen+1; assert(f.ui.refresh(f.cfg))
+        assert(f.texts(f.cells[1])[1].text=='3' and receiver_of(f.cells[1]).visibility==0,'grid did not come back')
+        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    end)
+end
+
 check('the vanilla legend names this version and the incompatible case',function()
     local f=fixture()
     local file=assert(io.open(TEST_ROOT..'/Scripts/main.lua','rb'))
@@ -1069,8 +1146,9 @@ check('the vanilla legend names this version and the incompatible case',function
     assert(version and f.ui.MOD_VERSION==version,'ui.MOD_VERSION is not main.lua VERSION '..tostring(version))
     assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority '..version
         ..'. The stand works as in the base game.')
-    assert(f.ui.VANILLA_INCOMPATIBLE=='This server runs a different Pal Work Priority version. '
-        ..'The stand works as in the base game until both match.')
+    assert(f.ui.LOCKED_INCOMPATIBLE=='This server runs another Pal Work Priority version, which controls work here. '
+        ..'Update both to edit.')
+    assert(f.ui.VANILLA_INCOMPATIBLE==nil and f.ui.VANILLA_LOCKED==nil,'a base-game fallback text survived')
 end)
 
 check('brief connecting stays unknown; the handshake timeout latches until a Welcome or new session',function()
@@ -1108,34 +1186,63 @@ check('vanilla stand keeps its reason in the tooltip when the root takes no lege
     local root=f.object('SizeBox','single-child-root'); root:AddChild(inner)
     f.menu.WidgetTree.RootWidget=root
     assert(f.ui.refresh(f.cfg)); assert(f.ui.legend_mode=='tooltip')
-    f.net.status='incompatible'; f.net.pals={}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
-    assert(f.cells[1].tooltip==f.ui.VANILLA_INCOMPATIBLE)
+    f.net.local_nonce='n1'; f.net.server_nonce=nil
+    f.net.status,f.net.status_reason='connecting','handshake_timeout'; f.net.pals={}
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].tooltip==f.ui.VANILLA_ABSENT)
     assert(f.cells[1].PalCheckBox.visibility==0)
+    -- Another version: the reason is in the tooltip, the stand stays locked.
+    f.net.status,f.net.status_reason='incompatible','server_requires_matching_mod'
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.cells[1].tooltip==f.ui.LOCKED_INCOMPATIBLE)
+    assert(f.cells[1].PalCheckBox.visibility==2)
 end)
 
-check('controller does not take the focus from a vanilla stand',function()
-    local f=fixture(); assert(f.ui.refresh(f.cfg))
-    package.loaded.palapi.input_is_gamepad=function() return true end
-    f.net.status='incompatible'; f.net.pals={}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
-    local nav=f.ui.nav; local asked=0
-    f.ui.nav=function(...) asked=asked+1; return nav(...) end
-    f.ui.pad_tick(f.cfg)
-    f.ui.nav=nav; package.loaded.palapi.input_is_gamepad=nil
-    assert(asked==0 and f.focus==nil,'controller handover ran on a vanilla stand')
-end)
+for _,case in ipairs({{'connecting','handshake_timeout'},{'incompatible','server_requires_matching_mod'},
+    {'unavailable','settings_recovering'}}) do
+    check('controller does not take the focus from a vanilla or locked stand: '..case[1],function()
+        local f=fixture(); assert(f.ui.refresh(f.cfg))
+        package.loaded.palapi.input_is_gamepad=function() return true end
+        f.net.local_nonce='n1'; f.net.server_nonce=nil
+        f.net.status,f.net.status_reason=case[1],case[2]; f.net.pals={}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        local nav=f.ui.nav; local asked=0
+        f.ui.nav=function(...) asked=asked+1; return nav(...) end
+        f.ui.pad_tick(f.cfg)
+        f.ui.nav=nav; package.loaded.palapi.input_is_gamepad=nil
+        assert(asked==0 and f.focus==nil,'controller handover ran on a stand nobody can edit')
+    end)
+end
 
 check('every stand legend fits one 1280x720 line and names controller buttons',function()
     local f=fixture()
-    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND,f.ui.VANILLA_ABSENT,f.ui.VANILLA_INCOMPATIBLE,
-        f.ui.PAK_MISSING,'Server settings are locked. The host must restart the game or server before editing can resume.'
-            ..f.ui.VANILLA_LOCKED}) do
+    -- The longest panel key DarnMenu may name (24 characters) still fits.
+    local dm=package.loaded.darnmenu
+    package.loaded.darnmenu={labels={key_panel=string.rep('W',24)}}
+    local rebound=f.ui.edit_legend()
+    package.loaded.darnmenu=dm
+    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND,rebound,f.ui.VANILLA_ABSENT,f.ui.LOCKED_INCOMPATIBLE,
+        f.ui.PAK_MISSING,'Server settings are locked. The host must restart the game or server before editing can resume.'}) do
         assert(#text<=f.ui.LEGEND_MAX_CHARS,'legend too wide at 14 pt: '..#text..' '..text)
         assert(not text:find('\n',1,true),'stand legend must stay one line')
     end
     assert(f.ui.PAD_LEGEND:find('X button: set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
     assert(f.ui.PAD_LEGEND:find('View button: Production Limits',1,true))
+    -- Decision 2026-10-29: a left click (LB / A on a pad) wraps from 1 to X,
+    -- and equal numbers leave the Pal to the game. Both legends say it.
+    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND}) do
+        assert(text:find('toward 1 (1 wraps to X)',1,true),'legend hides the wrap: '..text)
+        assert(text:find('All jobs equal: game picks',1,true),'legend lacks the equal-numbers rule: '..text)
+    end
+    assert(f.ui.EDIT_LEGEND:find('Left click: toward 1 (1 wraps to X)  Right click: toward X  Keys 1-5, X',1,true))
+    -- The wrap the legend promises is what a left click does.
+    assert(require('store').cycle(1,-1)==false)
     local api=package.loaded.palapi; api.last_input_type=1
     assert(f.ui.legend_text()==f.ui.PAD_LEGEND); api.last_input_type=nil
+end)
+
+check('stand editing without the pak is named for every input, not just the mouse',function()
+    local f=fixture()
+    assert(f.ui.PAK_MISSING=='Stand editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod.')
 end)
 
 check('a Pal with the same number on every job is told the game picks',function()
@@ -1207,12 +1314,59 @@ check('legend refresh resolves replacement wrapper in the current root',function
     replacement:AddChild(text)
     f.root.children[index]=replacement; old.dead=true; old.children[1].dead=true
     f.ui.detach(); assert(f.ui.refresh(f.cfg))
-    assert(f.stale_calls==0 and text.text==f.ui.EDIT_LEGEND and replacement.brush)
-    -- A backing whose text never attached is filled, not duplicated.
+    -- Same name, same widget: its style is already written, only the text is.
+    assert(f.stale_calls==0 and text.text==f.ui.EDIT_LEGEND)
+    -- A backing whose text never attached is filled, not duplicated, and the
+    -- new text block gets the style.
     replacement.children={}
     f.ui.detach(); assert(f.ui.refresh(f.cfg))
     assert(#replacement.children==1 and replacement.children[1].text==f.ui.EDIT_LEGEND)
+    assert(replacement.children[1].Font.Size==f.ui.LEGEND_FONT_SIZE and replacement.children[1].visibility==3
+        and replacement.children[1].colour and replacement.brush,'refilled legend was not styled')
     assert(#f.legends()==1,'retry added a second legend')
+end)
+
+-- Round 2 (P3 perf): the backing's brush, padding and visibility were written
+-- on every refresh, about once a second with the stand open.
+check('legend style is written once per backing; only the text follows the state',function()
+    local f=fixture(); assert(f.ui.refresh(f.cfg))
+    local box=f.legends()[1].parent; local tb=f.legends()[1]; local slot=box.Slot
+    local calls={}
+    local function count(o,method)
+        local inner=o[method]
+        o[method]=function(self,...) calls[method]=(calls[method] or 0)+1; return inner(self,...) end
+    end
+    for _,m in ipairs({'SetBrushColor','SetPadding','SetVisibility'}) do count(box,m) end
+    for _,m in ipairs({'SetText','SetFont','SetColorAndOpacity','SetVisibility'}) do count(tb,m) end
+    count(slot,'SetHorizontalAlignment')
+    for _=1,3 do f.ui.detach(); assert(f.ui.refresh(f.cfg)) end
+    assert(calls.SetText==3,'legend text not refreshed: '..tostring(calls.SetText))
+    for _,m in ipairs({'SetBrushColor','SetPadding','SetVisibility','SetFont','SetColorAndOpacity','SetHorizontalAlignment'}) do
+        assert(calls[m]==nil,m..' rewritten on every refresh: '..tostring(calls[m]))
+    end
+    -- The state still reaches the text.
+    f.net.status,f.net.status_reason='incompatible','server_requires_matching_mod'; f.net.pals={}
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(tb.text==f.ui.LOCKED_INCOMPATIBLE and box.visibility==3)
+end)
+
+check('a refused legend style write is tried again on the next refresh',function()
+    local f=fixture()
+    local construct=StaticConstructObject; local refuse=true
+    StaticConstructObject=function(class,tree)
+        local o=construct(class,tree)
+        if o.class=='Border' then
+            local set=o.SetBrushColor
+            o.SetBrushColor=function(self,v) if refuse then return false end; return set(self,v) end
+        end
+        return o
+    end
+    f.ui.refresh(f.cfg)
+    StaticConstructObject=construct
+    assert(f.ui.legend_mode=='tooltip','a refused style write passed as a footer')
+    refuse=false; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    assert(f.ui.legend_mode=='footer' and f.legends()[1].parent.brush,'style was never written again')
+    assert(#f.legends()==1)
 end)
 
 check('unknown root uses tooltip legend without replacing native content',function()
@@ -1262,14 +1416,14 @@ check('server settings fence explains host action and cancels queued input',func
     f.cells[1].hovered=true;f.focus_cell(f.cells[1]);f.key(f.cells[1],4)
     f.net.status='unavailable';f.net.status_reason='settings_restart_required'
     assert(f.ui.refresh(f.cfg))
-    -- The server's scheduler is fenced too, so its stand is the game's again
-    -- (audit A5): checkbox back, no "?", the legend says why.
-    assert(f.texts(f.cells[1])[1].text=='','fenced server still drew a priority cell')
-    assert(f.cells[1].PalCheckBox.visibility==0,'fenced server kept the vanilla checkbox hidden')
+    -- The server runs the mod and holds its fence: the stand stays ours and
+    -- read-only with the server's lock message (round 2), not the base game's.
+    assert(f.texts(f.cells[1])[1].text=='?','fenced server cell claimed a value')
+    assert(f.cells[1].PalCheckBox.visibility==2,'fenced server handed back a checkbox it does not honour')
     assert(f.ui.legend_text():find('host must restart',1,true))
-    assert(f.ui.legend_text():find('works as in the base game',1,true))
+    assert(not f.ui.legend_text():find('base game',1,true))
     assert(f.legends()[1].text==f.ui.legend_text())
-    assert(f.cells[1].tooltip=='','vanilla cell kept a tooltip of ours')
+    assert(f.cells[1].tooltip==f.ui.legend_text(),'locked cell lacks the lock reason')
     assert(not f.ui.capture_direct() and not f.ui.nav(f.cfg,'raise'))
     f.session.drain(error);assert(#f.writes==0)
     local _,label,detail=require('panel_status').save({view_status=function()
