@@ -87,6 +87,20 @@ shared[#shared+1]='guild-D|Mining|Stone|10'
 fs.files['shared-caps']=table.concat(shared,'\n')..'\n'
 warnings={}
 assert(caps.load('shared-caps')==502 and #warnings==1 and warnings[1]:find('every guild',1,true))
+-- Review round 3: at startup caps.txt loads before config.lua, and config
+-- work_caps reach the client too. 499 file limits plus 2 from config.lua are
+-- 501, said once config.lua is read; nothing is said before.
+package.loaded.caps=nil
+local fresh_caps=require('caps')
+local near={}
+for i=1,499 do near[#near+1]='guild-F|Mining|Item'..i..'|'..i end
+fs.files['near-caps']=table.concat(near,'\n')..'\n'
+warnings={}
+assert(fresh_caps.load('near-caps')==499 and #warnings==0,'warned before config.lua was read')
+fresh_caps.configure{work_caps={Watering={Water=5},Deforest={Wood=9}}}
+assert(#warnings==1 and warnings[1]:find('guild guild-F holds 501 limits',1,true),
+    'config.lua limits were not counted: '..tostring(warnings[1]))
+package.loaded.caps=caps
 package.loaded.log.warn=function() end
 assert(caps.load('caps')==before and count('guild-A')==500)
 caps.set_role('authority',1)

@@ -221,6 +221,9 @@ end
 --   2. the old file is renamed to .bak, never removed (os.rename will not
 --      replace a file on Windows, so it has to move first);
 --   3. .tmp is renamed into place; if that fails, .bak is moved back.
+--   4. .bak is removed once the new file is in place (review round 3: a kept
+--      .bak brought back the names of mods removed since, the next time the
+--      index went missing).
 -- A crash between 2 and 3 leaves .tmp and .bak, and M.register recovers the
 -- index from them. At no point is the only copy of the old list deleted.
 local function write_if_changed(path, source)
@@ -243,7 +246,10 @@ local function write_if_changed(path, source)
     end
 
     local ok, renamed = pcall(os.rename, tmp, path)
-    if ok and renamed then return true end
+    if ok and renamed then
+        pcall(os.remove, bak)
+        return true
+    end
 
     -- Put the old file back. Should that fail too, .tmp and .bak both stay
     -- for the next register to recover from.
@@ -363,10 +369,21 @@ local KEYS = {
 local MODS = { CONTROL = true, ALT = true, SHIFT = true }
 
 -- What the player saved, or nil. On M so a test can hand in a file's
--- contents without a Mods/shared/ folder on disk.
+-- contents without a Mods/shared/ folder on disk. A file that is there but
+-- does not read as a table is said once (review round 3): silently, an
+-- option the player had switched off came back on.
+local said_unreadable = false
 function M.user_settings()
     local shared = M.shared_dir()
-    return shared and read_table(shared .. USER_NAME .. ".lua") or nil
+    if shared == nil then return nil end
+    local path = shared .. USER_NAME .. ".lua"
+    local saved = read_table(path)
+    if saved == nil and not said_unreadable and read_all(path) ~= nil then
+        said_unreadable = true
+        log.warn("darnmenu: Mods/shared/" .. USER_NAME .. ".lua is damaged and was ignored, so config.lua " ..
+            "and the default hotkeys apply. Fix or delete that file.")
+    end
+    return saved
 end
 
 function M.binding(name, default_key, default_mods)
