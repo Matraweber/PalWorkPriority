@@ -41,12 +41,20 @@ local ok, why = pcall(function()
     assert(fs.files[SCHEMA] and names(fs.files[INDEX]).PalWorkPriority)
     assert(fs.files[INDEX .. '.tmp'] == nil)
 
-    -- Another mod already listed: both stay, the old list is kept as .bak.
+    -- Another mod already listed: both stay. The old list was moved to .bak
+    -- and is removed once the new one is in place (review round 3), so a
+    -- later missing index cannot bring back mods removed since.
     fresh({ [INDEX] = OTHER })
+    local moved_to_bak = false
+    fs.fault = function(kind, path)
+        if kind == 'rename' and path == INDEX .. '>' .. INDEX .. '.bak' then moved_to_bak = true end
+    end
     assert(darnmenu.register() == true)
+    fs.fault = nil
     local set, count = names(fs.files[INDEX])
     assert(set.OtherMod and set.PalWorkPriority and count == 2)
-    assert(fs.files[INDEX .. '.bak'] == OTHER, 'old index was removed, not kept as .bak')
+    assert(moved_to_bak, 'old index was removed, not moved to .bak first')
+    assert(fs.files[INDEX .. '.bak'] == nil, 'a stale .bak was kept after a good write')
 
     -- Already listed: nothing is rewritten.
     local before = #fs.operations
@@ -92,6 +100,7 @@ local ok, why = pcall(function()
     assert(darnmenu.register() == true)
     set, count = names(fs.files[INDEX])
     assert(set.OtherMod and set.ThirdMod and set.PalWorkPriority and count == 3, 'crash recovery lost a mod')
+    assert(fs.files[INDEX .. '.bak'] == nil, 'the recovered .bak was kept')
 
     -- Only the .bak survived.
     fresh({ [INDEX .. '.bak'] = OTHER })
@@ -115,6 +124,21 @@ local ok, why = pcall(function()
     fresh({ [INDEX] = '\239\187\191' .. OTHER })
     assert(darnmenu.register() == true)
     assert(names(fs.files[INDEX]).OtherMod)
+
+    -- Review round 3: a torn user file is said once; an absent one is not.
+    local warned = {}
+    log.warn = function(m) warned[#warned + 1] = m end
+    local USER = DIR .. 'PalWorkPriority_user.lua'
+    fresh()
+    assert(darnmenu.user_settings() == nil and #warned == 0, 'an absent user file was reported')
+    fresh({ [USER] = 'return { enabled = false, dry_run = tr' })
+    assert(darnmenu.user_settings() == nil)
+    assert(#warned == 1 and warned[1]:find('PalWorkPriority_user.lua is damaged and was ignored', 1, true),
+        'a torn user file was ignored silently')
+    assert(darnmenu.user_settings() == nil and #warned == 1, 'said more than once')
+    fresh({ [USER] = 'return { enabled = false }' })
+    assert(darnmenu.user_settings().enabled == false)
+    log.warn = function() end
 end)
 
 io.open, os.rename, os.remove = original_io_open, original_rename, original_remove

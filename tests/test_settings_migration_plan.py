@@ -25,6 +25,9 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(p['backup']['original']['priorities']['bytes']),self.p)
     def test_newest_checked_recovery_selected_exact_original(self):
         newest=envelope(self.c.replace(b'300',b'450'),8)
+        # A 0.5 live file: a plain one beside a .bak is a 0.4.1 or hand edit
+        # and wins over every generation (review round 3, datafile.read).
+        (self.root/'caps.txt').write_bytes(envelope(self.c,6))
         (self.root/'caps.txt.pending').write_bytes(newest)
         (self.root/'caps.txt.bak').write_bytes(envelope(self.c,7))
         r=self.plan()

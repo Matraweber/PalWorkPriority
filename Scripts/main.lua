@@ -310,7 +310,23 @@ local function validate(c)
     return c
 end
 
-local function load_config()
+-- Set while a refused config.lua keeps the mod on the shipped defaults. It
+-- used to stop at "did not start" with no panel and no hotkey, so in game the
+-- mod had simply vanished (review round 3). Now it comes up so Production
+-- Limits can say why, and run_pass schedules nothing until a reload or a
+-- restart reads a valid file.
+local config_rejected = nil
+
+local function refused_config(why)
+    -- The chunk name is the whole install path; the line number is enough.
+    local reason = tostring(why):gsub("^@?[^\n]-config%.lua:(%d+):", "line %1:")
+    config_rejected = "config.lua rejected: " .. reason .. ". Fix that value, or delete config.lua and " ..
+        "restart to get the defaults. Pals are not assigned until then."
+    configuration.show_rejection(config_rejected)
+    log.error(config_rejected)
+end
+
+local function load_config(at_startup)
     -- loadfile, not require.
     --
     -- reload.lua proved this by experiment and wrote it down: clearing
@@ -324,9 +340,17 @@ local function load_config()
     -- back, printed "config reloaded", and never once picked up an edit to
     -- config.lua - which the file's own header tells the user it does.
     local loaded, load_err, fresh = configuration.load(DIR, SCRIPT_DIR)
+    local fallback = false
     if not loaded then
         log.error("user config unavailable: " .. tostring(load_err))
-        return false
+        -- A read error is not a refusal: unreadable files never become
+        -- defaults, so that case still does not start.
+        if not configuration.refused or not (at_startup or config_rejected) then return false end
+        refused_config(load_err)
+        if config_rejected and cfg then return false end -- a reload: keep the defaults already in use
+        loaded = configuration.defaults(SCRIPT_DIR)
+        if not loaded then return false end
+        fallback, fresh = true, false
     end
     if fresh and store.state == "missing" then store.baseline = true end
 
@@ -343,6 +367,10 @@ local function load_config()
     cfg = validate(loaded)
     caps.configure(cfg)
     log.set_level(cfg.log_level)
+    if not fallback and config_rejected then
+        config_rejected = nil
+        configuration.clear_rejection()
+    end
 
     -- Written on every load, so an edit to the schema reaches the menu without
     -- anyone remembering to do it by hand. Idempotent: it only writes when the
@@ -424,6 +452,11 @@ local function run_pass(reason, explicit)
         return
     end
     if not cfg or not store.decided or store.is_client then return end
+    -- Before the "disabled" give-back below too: these are only defaults.
+    if config_rejected then
+        if explicit then log.say("pass refused: " .. config_rejected) end
+        return
+    end
     if store.state == "error" or caps.state == "error" then
         if explicit then log.say("pass refused: settings are unavailable or awaiting a successful save") end
         return
@@ -1285,9 +1318,17 @@ COMMANDS.adopt = function()
         return
     end
 
-    local moved = caps.adopt_wildcard(sole)
-    if moved == 0 then
+    local moved, why = caps.adopt_wildcard(sole)
+    if why == "unsaved" then
+        -- Moved in memory already; the normal retry writes caps.txt later.
+        log.say("moved " .. moved .. " shared limit(s) to this guild, but caps.txt could not be saved: " ..
+            tostring(caps.error) .. ". Saving is retried, and no pass runs until it works.")
+    elseif why then
+        log.say("not now: limits are busy or unavailable (" .. tostring(why) .. "). Try again in a moment.")
+    elseif moved == 0 then
         log.say("there was nothing left from before guild rules to adopt")
+    else
+        log.say("moved " .. moved .. " shared limit(s) to this guild")
     end
 end
 
@@ -2071,7 +2112,7 @@ end
 -- Wiring
 -- ---------------------------------------------------------------------------
 
-if not load_config() then
+if not load_config(true) then
     log.error(MOD_NAME .. " " .. VERSION .. " did not start")
     return
 end
@@ -2906,7 +2947,8 @@ end))
 -- it, which left the mod loaded but inert on the headless rig: no ticks, no
 -- command channel, nothing. Both loops idle harmlessly while there is no
 -- world, so starting early costs nothing on the client either.
-if cfg and cfg.enabled then
+-- A refused config.lua still gets the panel, which says why.
+if cfg and (cfg.enabled or config_rejected) then
     start_timer()
     start_ui()
 end
@@ -3078,7 +3120,7 @@ end)
 
 log.say(string.format("%s %s loaded (%s, %s). Type %s help in chat (multiplayer) or see the README.",
     MOD_NAME, VERSION,
-    cfg.enabled and "enabled" or "disabled",
+    config_rejected and "config.lua rejected, nothing is scheduled" or (cfg.enabled and "enabled" or "disabled"),
     cfg.dry_run and "dry run" or "live",
     cfg.chat_prefix))
 

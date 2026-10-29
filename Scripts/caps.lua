@@ -92,10 +92,14 @@ function M.finish_retirement(expected)
 end
 local config_rules = {}
 local config_source,config_epoch=nil,0
+local warn_oversized
 function M.configure(cfg)
     config_epoch=config_epoch+1
     config_source=cfg
     config_rules = (cfg or {}).work_caps or {}
+    -- caps.txt loads before config.lua at startup, so the >500 check runs
+    -- again here with config.lua's work_caps counted (review round 3).
+    if M.data then pcall(warn_oversized, M.data) end
 end
 -- Bound plain defaults, including OFF masks. Read the property afresh so replacing
 -- work_caps cannot leave a guard validating an obsolete table.
@@ -184,7 +188,7 @@ end
 -- holding more still loads (DECISIONS 2026-10-28: refusing it would make
 -- every limit unavailable), but say so: that guild's players stay
 -- "connecting" until limits are removed.
-local function warn_oversized(data)
+function warn_oversized(data)
     local shared, defaults = data[M.ANY_GUILD], type(config_source)=='table' and config_source.work_caps or nil
     local function size(own)
         local seen, n = {}, 0
@@ -235,7 +239,8 @@ function M.load(path)
         dirty, M.state = true, "saving"
         log.warn("recovered limits from " .. meta.source)
     end
-    pcall(warn_oversized, M.data)
+    -- Before config.lua is read, configure runs the check instead.
+    if config_source ~= nil then pcall(warn_oversized, M.data) end
     return decoded.count
 end
 
@@ -712,11 +717,13 @@ function M.offer_adopt(guild)
     return true
 end
 
+-- Returns the number of limits moved, and a reason when nothing could be
+-- done ('unsaved': moved in memory, but caps.txt could not be written yet).
 function M.adopt_wildcard(guild)
     if settings_gate.blocked() then return 0,'settings_recovering' end
-    if activation_busy() then return 0 end
-    if persistence or persistence_blocked then return 0 end -- no implicit scoped migration
-    if not M.decided or M.is_client or not guild_ok(guild) or guild == M.ANY_GUILD then return 0 end
+    if activation_busy() then return 0,'busy' end
+    if persistence or persistence_blocked then return 0,'busy' end -- no implicit scoped migration
+    if not M.decided or M.is_client or not guild_ok(guild) or guild == M.ANY_GUILD then return 0,'unavailable' end
     local shared, n = M.data[M.ANY_GUILD], 0
     if not shared then return 0 end
     for work, items in pairs(shared) do
@@ -729,7 +736,9 @@ function M.adopt_wildcard(guild)
     end
     M.data[M.ANY_GUILD] = nil
     dirty, M.state = true, "saving"
-    if not M.save() then return 0 end
+    -- The rows have moved either way, so the count is kept (review round 3:
+    -- a failed save was reported as "nothing left to adopt").
+    if not M.save() then return n,'unsaved' end
     return n
 end
 

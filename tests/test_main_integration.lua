@@ -1627,6 +1627,67 @@ test("the old-client notice names this build's version",function()
     assert(version and s.net.OLD_CLIENT_NOTICE:find('('..version..')',1,true),s.net.OLD_CLIENT_NOTICE)
 end)
 
+test("a refused config.lua still brings up Alt+F1 with the reason and schedules nothing",function()
+    -- Review round 3: main.lua logged "did not start" and returned, so the
+    -- panel and every hotkey were gone without a word in game.
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."config.lua"]="return {interval_seconds=2}"
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end,"invalid interval_seconds")
+    local output=table.concat(s.console,"\n")
+    local notice="config.lua rejected: invalid interval_seconds. Fix that value, or delete config.lua and "
+        .."restart to get the defaults."
+    assert(output:find(notice,1,true),output)
+    assert(not output:find("did not start",1,true),output)
+    assert(output:find("loaded (config.lua rejected, nothing is scheduled",1,true),output)
+    assert(s.keys.F1 and s.keys.F1.mods and s.keys.F1.mods[1]=="ALT","Alt+F1 was not bound")
+    local configuration=package.loaded.configuration
+    assert(configuration.upgrade_reset==true and configuration.upgrade_message:find(notice,1,true),
+        "the panel has nothing to show")
+    s.timers.role.fn()
+    s.console={}
+    s.keys.F2.fn(); s.timers.ui.fn(); s:background()
+    s.timers.pass.fn(); s:background()
+    output=table.concat(s.console,"\n")
+    assert(s.scheduler_calls==0,"a refused config.lua still scheduled Pals")
+    assert(output:find("pass refused: "..notice,1,true),output)
+    -- A syntax error names its line, not the whole install path.
+    s.fs.files[ROOT.."config.lua"]="return {interval_seconds=10"
+    s.console={}; s.commands.reload()
+    output=table.concat(s.console,"\n")
+    assert(output:find("config.lua rejected: line 1:",1,true) and not output:find("config reloaded",1,true),output)
+    -- Fixed and reloaded: the notice goes and passes run again.
+    s.fs.files[ROOT.."config.lua"]=defaults
+    s.console={}; s.commands.reload()
+    output=table.concat(s.console,"\n")
+    assert(output:find("config reloaded",1,true),output)
+    assert(configuration.rejection==nil and configuration.upgrade_reset==false,"the notice outlived the fix")
+    s.keys.F2.fn(); s.timers.ui.fn(); s:background()
+    assert(s.scheduler_calls==1,"a fixed config.lua did not schedule again")
+end)
+
+test("adopt says what happened when caps.txt cannot be saved",function()
+    -- Review round 3: the rows moved in memory, then the reply said there was
+    -- nothing left to adopt.
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."caps.txt"]="guild-local|Mining|Stone|100\n*|Deforest|Wood|5\n"
+    end)
+    s.timers.role.fn()
+    s.scheduler.adoptable="guild-local"
+    s.fs.fault=function(op,path) return op=="write" and path==ROOT.."caps.txt.tmp" end
+    s.console={}; s.commands.adopt()
+    s.fs.fault=nil
+    local output=table.concat(s.console,"\n")
+    assert(output:find("moved 1 shared limit(s) to this guild, but caps.txt could not be saved",1,true)
+        and not output:find("nothing left",1,true),output)
+    assert(s.caps.data["guild-local"].Deforest.Wood==5 and s.caps.state=="error")
+    s.console={}; s.commands.adopt()
+    output=table.concat(s.console,"\n")
+    assert(output:find("there was nothing left from before guild rules to adopt",1,true),output)
+end)
+
 io.open,io.popen=original_io.open,original_io.popen
 os.rename,os.remove,os.execute,os.clock,os.time=original_os.rename,original_os.remove,original_os.execute,original_os.clock,original_os.time
 for _,name in ipairs(native_names) do _G[name]=original_native[name] end
