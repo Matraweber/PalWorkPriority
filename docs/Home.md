@@ -22,6 +22,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Latest
 
 - [Second strict review round after the audit fixes (2026-10-29)](review-round2-2026-10-29.md) · 2026-10-29
+- [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md) · 2026-10-29
 - [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md) · 2026-10-29
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
@@ -32,11 +33,11 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, server (2026-10-28)](g7-final-build-2026-10-28.md) · 2026-10-28
 - [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-28
 - [Lessons: mistakes this project already paid for](LESSONS.md) · 2026-10-28
-- [Adding limits again (2026-10-27)](limits-unlock-2026-10-27.md) · 2026-10-27
 
 ## Release and reports
 
 - [Second strict review round after the audit fixes (2026-10-29)](review-round2-2026-10-29.md)
+- [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md)
 - [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md)
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md)
 - [Twelve-reviewer audit of 0.5.0 (2026-10-28)](review-2026-10-28.md)
