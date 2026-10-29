@@ -7,7 +7,8 @@ Uploader (Steam app 4212470), the tool 0.4.1 was published with.
                              (default: the staged version)
 
 prepare checks the archive against build/release-V/PalWorkPriority-V-release.json,
-extracts it into D:/PalWorkPriority-workshop/stage/PalWorkPriority (an older
+that tag vV is the commit it was built from, and that the public tag on origin
+is the same commit (the change note links to GitHub at vV). It extracts it into D:/PalWorkPriority-workshop/stage/PalWorkPriority (an older
 stage is moved aside, never deleted), writes the uploader's .workshop.json
 (item 3786408856, last_published_version = the live version) and the change
 note (the CHANGELOG section at tag vV as Steam BBCode, at most 8000
@@ -28,6 +29,12 @@ open and pressing OK publishes. --submit presses OK and waits for Steam's
 answer (classify_status: "Workshop item submitted successfully." and
 "Submitted, but ..." are published, anything else exits 1); --dry-run presses
 Cancel and closes the uploader (nothing is sent).
+
+upload and check first re-check the stage against the release: tag vV must
+still be the commit recorded at prepare, the release manifest's Workshop hash
+must still be the staged one, and no newer version may be live (upload also
+needs the staged version to be newer than the live one). A moved tag or a
+rebuilt archive therefore needs a new prepare before anything is uploaded.
 
 check compares Steam's copy with the hashes recorded at prepare and refuses
 when the stage itself changed since then.
@@ -50,8 +57,10 @@ NOTE_MAX = 8000  # Steam: k_cchPublishedDocumentChangeDescriptionMax
 GITHUB = 'https://github.com/Matraweber/PalWorkPriority'
 # Changelog parts in the order they are kept when the note is too long
 # ("Section/Sub" is a bold sub-heading inside a section; '' is the intro).
+# Production Limits ranks above Installation and Controller: the panel is
+# what 0.5.0 adds, so its fixes are the last Fixed group to be cut.
 KEEP = ['', 'Before you update', 'Limits in', 'Fixed/Settings', 'Fixed/Scheduling', 'Fixed/Multiplayer',
-        'Fixed/Installation', 'Fixed/Controller', 'Fixed/Production Limits', 'Not in', 'Vortex', 'Performance']
+        'Fixed/Production Limits', 'Fixed/Installation', 'Fixed/Controller', 'Not in', 'Vortex', 'Performance']
 # The uploader's StatusTextBlock after a successful SubmitItemUpdate
 # (PalworldModUploader MainWindow.xaml.cs, OnItemSubmitted).
 PUBLISHED = 'Workshop item submitted successfully.'
@@ -235,44 +244,116 @@ def change_note(version):
         for chunk in chunks[1:]:
             units.append((title + '/' + chunk.splitlines()[0].strip('* '), title, bbcode(chunk, version)))
     rank = lambda key: next((i for i, k in enumerate(KEEP) if key.startswith(k) and (k or not key)), len(KEEP))
-    footer = 'Full changelog: [url=%s/blob/v%s/CHANGELOG.md]CHANGELOG.md[/url] (also in the mod folder).' % (GITHUB, version)
-    budget = NOTE_MAX - len(footer) - 150  # room for the "not shown" line
-    keep, used = set(), 0
+    link = 'Full changelog: [url=%s/blob/v%s/CHANGELOG.md]CHANGELOG.md[/url] (also in the mod folder).' % (GITHUB, version)
+
+    def render(keep):
+        """The whole note for a set of kept units, with the footer that names
+        exactly the parts left out: sizes are measured, not estimated."""
+        left_out = [u[0].split('/', 1)[1] + ' fixes' if u[1] == 'Fixed' else u[0]
+                    for i, u in enumerate(units) if i not in keep]
+        note = '\n\n'.join(u[2] for i, u in enumerate(units) if i in keep and u[2].strip())
+        footer = 'Not shown here for length: %s. %s' % (', '.join(left_out), link) if left_out else link
+        return note + '\n\n' + footer, left_out
+
+    # In KEEP order, a part (with its section heading) is kept when the whole
+    # note, footer included, still fits. Each accepted set was measured, so
+    # the final note always fits; a later, smaller part can still use the
+    # room a larger one left.
+    keep = set()
     for i in sorted(range(len(units)), key=lambda i: rank(units[i][0])):
         parent = units[i][1]
         need = {i} | {j for j, u in enumerate(units) if parent is not None and u[0] == parent}
-        size = sum(len(units[j][2].encode('utf-8')) + 2 for j in need - keep)
-        if used + size <= budget:
+        if need <= keep:
+            continue
+        if len(render(keep | need)[0].encode('utf-8')) <= NOTE_MAX:
             keep |= need
-            used += size
-    left_out = [u[0].split('/', 1)[1] + ' fixes' if u[1] == 'Fixed' else u[0]
-                for i, u in enumerate(units) if i not in keep]
-    note = '\n\n'.join(u[2] for i, u in enumerate(units) if i in keep and u[2].strip())
-    if left_out:
-        footer = 'Not shown here for length: %s. %s' % (', '.join(left_out), footer)
-    note += '\n\n' + footer
+    note, left_out = render(keep)
     size = len(note.encode('utf-8'))
     if size > NOTE_MAX:
         die('the change note is %d bytes; Steam allows %d' % (size, NOTE_MAX))
     return note, left_out
 
 
+def release_manifest(version):
+    return read_json(REPO / ('build/release-%s/PalWorkPriority-%s-release.json' % (version, version)),
+                     'the release manifest')
+
+
+def tag_commit(version):
+    """The commit the local tag v<version> points at; dies when it is missing."""
+    tag = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--verify', '--quiet', 'v%s^{commit}' % version],
+                         capture_output=True, text=True).stdout.strip()
+    if not tag:
+        die('tag v%s does not exist' % version)
+    return tag
+
+
+def public_tag_commit(version):
+    """The commit tag v<version> points at on origin ('' when origin has no
+    such tag). An annotated tag is peeled (its ^{} line); a lightweight tag
+    names the commit directly."""
+    ref = 'refs/tags/v%s' % version
+    r = subprocess.run(['git', '-C', str(REPO), 'ls-remote', 'origin', ref, ref + '^{}'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        die('git ls-remote origin failed, so the public tag v%s cannot be checked: %s'
+            % (version, (r.stderr or '').strip() or 'exit code %d' % r.returncode))
+    refs = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            refs[parts[1]] = parts[0]
+    return refs.get(ref + '^{}') or refs.get(ref, '')
+
+
+def check_stage_release(state, uploading):
+    """The stage still belongs to the release: tag v<version> is the commit
+    recorded at prepare, the release manifest still lists the staged Workshop
+    archive, and nothing newer is live. Uploading also needs the staged
+    version to be newer than the live one. After a successful upload the live
+    version equals the staged one, so check accepts equal."""
+    version = state['version']
+    tag = tag_commit(version)
+    if tag != state['source_commit']:
+        die('tag v%s is now %s, but the stage was prepared from %s: the tag moved. '
+            'Rebuild with tools/release.py and run prepare again' % (version, tag[:12], state['source_commit'][:12]))
+    manifest = release_manifest(version)
+    entry = manifest['archives']['workshop']
+    if entry['sha256'] != state['sha256'] or manifest.get('source_commit') != state['source_commit']:
+        die('the release manifest lists another Workshop archive (%s from %s) than the stage (%s from %s); '
+            'run prepare again' % (entry['sha256'][:12], str(manifest.get('source_commit'))[:12],
+                                   state['sha256'][:12], state['source_commit'][:12]))
+    live, seen = live_version()
+    sources = ', '.join('%s: %s' % kv for kv in seen.items())
+    if uploading and version_key(version) <= version_key(live):
+        die('version %s is not newer than the live version %s (%s); no re-upload, no downgrade'
+            % (version, live, sources))
+    if version_key(live) > version_key(version):
+        die('a newer version %s is live (%s); the stage holds %s' % (live, sources, version))
+
+
 def prepare(version):
     version_key(version)
-    manifest = read_json(REPO / ('build/release-%s/PalWorkPriority-%s-release.json' % (version, version)),
-                         'the release manifest')
+    manifest = release_manifest(version)
     entry = manifest['archives']['workshop']
     archive = REPO / ('build/release-%s' % version) / entry['file']
     if not archive.is_file():
         die('archive not found: %s' % archive)
     if sha(archive) != entry['sha256']:
         die('archive hash does not match the release manifest')
-    tag = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--verify', '--quiet', 'v%s^{commit}' % version],
-                         capture_output=True, text=True).stdout.strip()
-    if not tag:
-        die('tag v%s does not exist' % version)
+    tag = tag_commit(version)
     if tag != manifest['source_commit']:
         die('tag v%s is not the commit the archive was built from' % version)
+    # The change note links to GitHub at v<version>: the public tag must be
+    # the same commit, or the links show another CHANGELOG.
+    public = public_tag_commit(version)
+    if not public:
+        die('tag v%s is not on origin; push it first (git push origin v%s), the change note links to it'
+            % (version, version))
+    if public != tag:
+        die('the public tag v%s on origin is %s, the local tag is %s, so the change-note links would show '
+            'another CHANGELOG. Push the moved tag first (git push --force origin v%s)'
+            % (version, public[:12], tag[:12], version))
 
     # The version guard runs before the stage is touched: a refusal leaves it as it is.
     published = read_json(SUBSCRIBED / '.workshop.json', "the subscribed copy's .workshop.json")
@@ -324,6 +405,7 @@ def upload(mode):
     state = read_json(STAGE / 'stage.json', 'stage.json (run prepare first)')
     if tree(MOD) != state['files']:
         die('the stage changed since prepare (or it was already uploaded); run prepare again')
+    check_stage_release(state, uploading=True)
     tasks = subprocess.run(['tasklist'], capture_output=True, text=True).stdout.lower()
     if 'steam.exe' not in tasks:
         die('start Steam and log in first')
@@ -354,6 +436,7 @@ def check(version=None):
     recorded = without_meta(state['files'])
     if without_meta(tree(MOD)) != recorded:
         die('the stage changed since prepare; its files no longer match the hashes recorded then')
+    check_stage_release(state, uploading=False)
     if not SUBSCRIBED.is_dir():
         die('no subscribed copy at %s (subscribe to item %s)' % (SUBSCRIBED, ITEM))
     steam = without_meta(tree(SUBSCRIBED))

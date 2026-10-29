@@ -5,6 +5,11 @@ SHA-256 are required. Both archives carry the same logical manifest and identica
 Lua/asset bytes. Native widget compatibility remains a separate acceptance gate.
 
   python tools/release.py --pak LogicMods/PalWorkPriority.pak --pak-sha256 <hash>
+
+The default output is build/release-<version>, the folder
+tools/workshop_upload.py prepare reads. A folder that already holds a
+different build of the same version is refused, never overwritten: move it
+aside first.
 """
 from __future__ import annotations
 
@@ -253,10 +258,17 @@ def compile_payload_gate(root: Path, payload: dict[str, bytes]) -> None:
             raise ReleaseFailure("packaged Lua compile gate failed:\n" + result.stdout + result.stderr)
 
 
-def build(root: Path, output: Path, pak: Path, expected_sha256: str) -> dict:
-    root, output, pak = root.resolve(), output.resolve(), pak.resolve()
+def default_output(root: Path, version: str) -> Path:
+    """build/release-<version>: where tools/workshop_upload.py looks."""
+    return root / "build" / f"release-{version}"
+
+
+def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> dict:
+    root, pak = root.resolve(), pak.resolve()
     revision = clean_revision(root)
     payload, manifest = collect_payload(root, pak, expected_sha256, revision)
+    # The version is known only from the validated Info.json.
+    output = (output if output is not None else default_output(root, manifest["version"])).resolve()
     compile_gate(root)
     compile_payload_gate(root, payload)
     if clean_revision(root) != revision:
@@ -290,13 +302,12 @@ def build(root: Path, output: Path, pak: Path, expected_sha256: str) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, help="default: build/release-<version>")
     parser.add_argument("--pak", type=Path)
     parser.add_argument("--pak-sha256", required=True)
     args = parser.parse_args(argv)
     try:
-        result = build(args.root, args.output or args.root / "build" / "release",
-                       args.pak or args.root / PAK_LOGICAL, args.pak_sha256)
+        result = build(args.root, args.output, args.pak or args.root / PAK_LOGICAL, args.pak_sha256)
     except (ReleaseFailure, OSError, subprocess.SubprocessError) as exc:
         print(f"RELEASE BLOCKED: {exc}", file=sys.stderr)
         return 1

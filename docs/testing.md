@@ -143,10 +143,11 @@ The two suffixes cannot be combined. Calibration is window-relative (1280x720 re
 
 ### Dedicated-server macro: `tools/restart-server-stand.ahk`
 
-Same modes as the singleplayer macro except `--return-title-only`, `-select` and `-absent`; it adds `--self-test` (9 readiness-classification cases). Start at the stand with the grid open. After launch it clicks Join Multiplayer Game, Recent Servers and the calibrated **RAM row, which is the second Recent Servers entry** (recalibrate if that list changes; image matching was tried and did not find the label reliably). Since 2026-10-19 it waits 4 s after Recent Servers (the list loads players and ping before rows exist; clicking at once hit an empty list and the join silently never happened), 3 s after selecting the row and 2.5 s after accepting the game-stored password, then confirms. No password and no GPortal restart are in the macro; the repo copy reads the server address from `PWP_SERVER` only to log it, the real address stays in the Desktop copy (DECISIONS 2026-10-11).
+Same modes as the singleplayer macro except `--return-title-only`, `-select` and `-absent`; it adds `--self-test` (13 readiness-classification cases). Start at the stand with the grid open. After launch it clicks Join Multiplayer Game, Recent Servers and the calibrated **RAM row, which is the second Recent Servers entry** (recalibrate if that list changes; image matching was tried and did not find the label reliably). Since 2026-10-19 it waits 4 s after Recent Servers (the list loads players and ping before rows exist; clicking at once hit an empty list and the join silently never happened), 3 s after selecting the row and 2.5 s after accepting the game-stored password, then confirms. No password and no GPortal restart are in the macro; the repo copy reads the server address from `PWP_SERVER` only to log it, the real address stays in the Desktop copy (DECISIONS 2026-10-11).
 
 - **The developer channel must be on before launch**: `remote.txt` must exist when the game starts (`--check` also requires it). The macro uses it to send `pwp status` / `pwp net` after a fresh `world key: World` line.
 - Readiness needs `synchronization: client; ready`, `authority: client; server owns assignments` and the exact configured guild. The title screen can report authority, so it is not readiness. Unavailable guild data waits; a different confirmed guild stops without sending the stand key. A truncated log is refused.
+- **The guild id is not in the repo** (since 2026-10-29). Set it once as a user environment variable, then start the macro from a new shell or Explorer: `setx PWP_SERVER_GUILD "<guild id>"`. The id is the `server guild:` line of `pwp net` on a client joined to the server (or the `guild=` of an earlier `SERVER_READY` line in `restart-server-last-run.log`). Without the variable the macro still runs, logs `NOTICE: PWP_SERVER_GUILD is not set, so the guild check is off`, accepts any confirmed guild and logs `guild=unchecked`; then it can act in another server's world, so set it before edit runs.
 - After joining it opens and closes the vanilla pause menu once (900 ms each) before holding V. That round trip restores the missing interaction prompts seen after joining; it is a workaround, not a fix (release-gates §3).
 - It logs to `restart-server-last-run.log` next to the script. `SERVER_READY` there proves only the connection checks. The accepted run on 2026-09-25 took about two minutes; slow connections take longer. Keep other input idle.
 
@@ -169,11 +170,32 @@ python tools/workshop_upload.py upload             # stops at the filled Change 
 python tools/workshop_upload.py check              # after Steam's download: subscribed copy == hashes from prepare
 ```
 
+- `prepare` reads `build/release-<version>/` (the default output of `tools/release.py`). It refuses when tag `v<version>` is not the commit in the release manifest, and when the **public** tag differs: `git ls-remote origin refs/tags/v<version>^{}` must be the local tag's commit, because the change note links to GitHub at that tag. After a moved tag, force-push it first.
 - `prepare` refuses a version that is not newer than the live one. The live version is the newest of the subscribed copy's `Info.json` and the `last_published_version` the uploader wrote into an earlier stage (it does that right after a successful upload, before Steam has downloaded anything). The subscribed `.workshop.json` is one release behind and is not used for this. The live version goes into the staged `.workshop.json` as `last_published_version`. The change note comes from `git show v<version>:CHANGELOG.md`, so it matches the tagged archive, not the working tree.
+- `upload` and `check` re-check the stage before anything else: tag `v<version>` must still be the `source_commit` recorded at prepare, the release manifest's Workshop sha256 must still be the staged one, and no newer version may be live (`upload` also needs the staged version to be newer than the live one). A retag or rebuild after `prepare` therefore refuses with "run prepare again"; PowerShell is not started.
+- The change note keeps parts in a fixed order (Production Limits fixes before Installation and Controller) and measures the whole note, footer included, for every part it adds, so it always fits Steam's 8,000 bytes.
 - `upload` waits until the uploader's Workshop directory box shows the stage path, then selects the row whose **Directory** cell is `PalWorkPriority`.
 - `upload --submit` presses OK itself and classifies the uploader's final status: "Workshop item submitted successfully." and "Submitted, but ..." (a step after the upload failed) are published and exit 0, the second with a warning; anything else exits 1. Publishing is the user's action, so agents run only `prepare` and `--dry-run`.
 - `check` defaults to the staged version. It refuses when the stage changed since `prepare`, and compares Steam's copy with the hashes recorded then (`.workshop.json` excluded, the uploader rewrites it).
 - Every guard exits with a message instead of an `assert`, so `python -O` keeps them. Offline tests: `python -m unittest tests.test_workshop_upload -v` (temporary directories and fakes, no Steam).
+
+### G7 install rig: `tools/g7_install_matrix.py`
+
+Reversible install scenarios on the real game folder ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)). Every command first checks with tasklist that the game is closed and exits with a message otherwise (no `assert`).
+
+```
+python tools/g7_install_matrix.py prepare                          # prints the state folder
+python tools/g7_install_matrix.py manual build/release-0.5.0/PalWorkPriority-0.5.0-manual.zip
+python tools/g7_install_matrix.py manual <0.4.1 zip> --sha256 <hash>  # an archive without a release manifest
+python tools/g7_install_matrix.py workshop-content build/release-0.5.0/PalWorkPriority-0.5.0-workshop.zip
+python tools/g7_install_matrix.py workshop on|off
+python tools/g7_install_matrix.py wipe | status
+python tools/g7_install_matrix.py restore --state <state folder>
+```
+
+- `manual` checks the archive's sha256 against the release manifest next to it, so a stale archive from an older tag is refused before anything is extracted.
+- `restore` checks the backup (dev install tree, dev pak, Workshop copy, `PalModSettings.ini`, `mods.txt`) against `state.json` **before** it wipes or replaces anything; a mismatch changes nothing.
+- Offline tests: `python -m unittest tests.test_g7_install_matrix -v` (temporary folders, a fake tasklist).
 
 ### `tools/remote.py`
 
