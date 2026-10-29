@@ -81,6 +81,10 @@ function overlay.backdrop_size() if fitted then return fitted[1], fitted[2] end 
 -- Slate, small. Positions in viewport units.
 local VW, VH, SCALE = 2580, 1080, 4 / 3
 local scrolled = 0 -- a list the wheel has scrolled: the map does not know
+-- What the map cannot know (in game, 2026-10-29, the tiles sat a little
+-- below the map): extra height in the column headings row, and list rows
+-- of another pitch than the panel asked for.
+local head_extra, row_extra = 0, 0
 local function collapsed(w) return w.visibility == 1 end
 local layout
 local function height(w)
@@ -91,7 +95,10 @@ local function height(w)
         for _, c in ipairs(w.children) do h = h + height(c) end
         return h
     end
-    return w.height or 0
+    local extra = 0
+    if w == P.HeadRow then extra = head_extra end
+    if w.kind == 'SizeBox' and (w.parent == P.ItemList or w.parent == P.RuleList) then extra = row_extra end
+    return (w.height or 0) + extra
 end
 function layout(w)
     local P, p = overlay.parts, w.parent
@@ -161,16 +168,17 @@ local ROW_HOVER = assert(up(rb.retint, 'ROW_HOVER'))
 local function hovered() return up(rb.retint, 'hover_key') end
 local function lit(key) local b = surface(key) return b and b.colour == ROW_HOVER end
 -- The cursor on the middle of a surface, from the Slate model.
-local function point(key)
+-- fy: how far down the surface, 0.5 by default.
+local function point(key, fy)
     local b = assert(surface(key), 'no surface '..key)
     local x, y = layout(b)
-    cursor = { X = x + b.Slot.size.X / 2, Y = y + b.Slot.size.Y / 2 }
+    cursor = { X = x + b.Slot.size.X / 2, Y = y + b.Slot.size.Y * (fy or 0.5) }
 end
 local function tick() now = now + 0.016; panel.hover_tick(); return panel.fill_tick() end
 -- The pointer moved to a surface and left there for three beats, so the
 -- draw spacing is not what is being tested. Answers the draws it cost.
-local function reach(key)
-    if key then point(key) else cursor = { X = 5, Y = 5 } end
+local function reach(key, fy)
+    if key then point(key, fy) else cursor = { X = 5, Y = 5 } end
     local n = 0
     for _ = 1, 3 do if tick() then n = n + 1 end end
     return n
@@ -242,13 +250,40 @@ for _, r in ipairs(rb.hmap) do
     assert(type(r[1]) == 'string')
 end
 
--- A map that disagrees with the widgets (here the wheel scrolled the list,
--- which the map does not model) is switched off, and hover rides the draw.
-panel.set_screen('item'); draw()
+-- The in-game case: everything under the headings sits lower than the map
+-- says. The first draw that disagrees teaches the offset, and the map then
+-- agrees, standing still and moving.
+head_extra = 14
+panel.close(); panel.toggle(); panel.set_screen('item'); draw()
+-- Low in pick7, where the unlearned map already has pick10, as in game.
+point('pick7', 0.9)
+assert(rb.hover_lookup(cursor.X, cursor.Y) == 'pick10', 'fixture: not the in-game shape')
+for _ = 1, 3 do tick() end
+assert(hovered() == 'pick7', 'pick7: '..tostring(hovered()))
+for _ = 1, 20 do panel.refresh(cfg) end
+assert(not rb.hover_off, 'a constant offset turned the map off: '..tostring(rb.hover_off_why))
+local cal = assert(rb.hover_cal.item, 'no offset learned')
+assert(cal.dx == 0 and cal.dy > 0 and cal.dy <= 38, 'offset '..cal.dx..','..cal.dy)
+assert(noted('^panel: hover map offset on item: '), 'the offset was not said')
+local learned = 0
+for i, key in ipairs({ 'pick10', 'pick0', 'pick25', 'pick13', 'all', 'back' }) do
+    learned = learned + reach(key, i % 2 == 0 and 0.95 or 0.05)
+    assert(hovered() == key, key..' after learning: '..tostring(hovered()))
+end
+assert(learned == 6 and rb.hover_bad == 0, learned..' draws for six targets after learning')
+-- A wheel-scrolled list is an offset of the same kind.
 scrolled = 25
+for _, key in ipairs({ 'pick4', 'pick19', 'pick8' }) do reach(key, 0.9); assert(hovered() == key) end
+assert(not rb.hover_off, 'a scrolled list turned the map off')
+head_extra, scrolled = 0, 0
+
+-- A map that is not one offset away (rows of another pitch) contradicts
+-- itself, is switched off, and hover rides the draw.
+panel.close(); panel.toggle(); panel.set_screen('item'); draw()
+row_extra = 6
 local extra = 0
 for i = 1, 60 do
-    point('pick'..(i % 27))
+    point('pick'..(i % 27), i % 2 == 0 and 0.95 or 0.05)
     for _ = 1, 3 do if tick() then extra = extra + 1 end end
     if i % 4 == 0 then panel.refresh(cfg) end
 end
@@ -256,8 +291,10 @@ assert(rb.hover_off, 'a wrong map stayed on')
 local after = 0
 for i = 1, 30 do point('pick'..(i % 27)); if tick() then after = after + 1 end end
 assert(after == 0, 'a map switched off still asked for '..after..' draws')
+assert(noted('^panel: hover map off: disagreed with the widgets %(map said '), 'no measurable off note')
+assert(noted('cursor [%d.]+,[%d.]+, offset '), 'the off note has no cursor or offset')
 -- Reopening trusts the map again.
-scrolled = 0
+row_extra = 0
 panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 assert(not rb.hover_off and rb.hmap, 'reopening left the map off')
 assert(reach('pick8') == 1 and hovered() == 'pick8', 'after reopening: '..tostring(hovered()))
