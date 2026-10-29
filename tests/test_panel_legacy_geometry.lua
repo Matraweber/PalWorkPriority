@@ -1,10 +1,9 @@
 -- Geometry contract for the real renderer; font extents use its existing
 -- 1.35 line-height estimate, not a claim about native Slate glyph rasterization.
--- 2026-10-28 (review E, then seen in game): job 12pt, sub-label 11pt in the
--- item colour (13 over 12 touched on screen), so the
--- two line BOXES overlap by the job's descender band. The contract is that
--- the job's glyphs (ascent ~1.0 x size, plus shadow) end above the sub-label
--- and the sub-label, shadow included, ends inside the 34px row.
+-- Round 2 (2026-10-29): the job cell is ONE line at the row's size. The two
+-- line version (job 12pt over an 11pt "Group limit" / "Item limit, rocks",
+-- 0 px between them) was too cramped to read in game (retest r03/r06). A
+-- group row shows its job; a per-item Mining row "Mining (rocks)".
 local f=assert(io.open(TEST_ROOT..'/tests/test_panel_render.lua','r'))
 local source=f:read('*a');f:close()
 local start=assert(source:find('\nrules%(1%)\r?\npanel.refresh'))
@@ -12,30 +11,27 @@ assert(load(source:sub(1,start-1)..'\n'..[=[
 function Widget:SetShadowOffset(v) self.shadow=v end
 rules(2);panel.refresh(cfg);panel.toggle();panel.refresh(cfg)
 local function near(a,b) assert(math.abs(a-b)<0.000001, tostring(a)..' ~= '..tostring(b)) end
-local function check_geometry()
- local jobs,labels=0,0
+local function job_cells(text)
+ local jobs=0
  for _,w in ipairs(registry) do
-  if not w.dead and w.text=='Group limit' then
-   labels=labels+1
-   local job
-   for _,other in ipairs(w.parent.children) do if other.text=='Mining' then job=other end end
-   assert(job,'subtitle has no matching Job line')
+  if not w.dead and w.text==text then
    jobs=jobs+1
-   local height=w.parent.parent.height
-   near(height,34)
-   -- Both lines, including the actual requested shadow offset, fit and do
-   -- not overlap. The one-pixel shadow is part of the geometry budget.
-   local first_glyphs=job.Slot.position.Y+job.Font.Size*1.0+job.shadow.Y
-   local second_bottom=w.Slot.position.Y+w.Font.Size*1.35+w.shadow.Y
-   assert(job.Slot.position.Y>=0 and first_glyphs<=w.Slot.position.Y,
-    'Job glyphs including shadow overlap the sub-label')
-   assert(second_bottom<=height,'Group limit including shadow overflows row')
-   near(job.Slot.position.Y,0);near(job.Font.Size,12)
-   near(w.Slot.position.Y,16);near(w.Font.Size,11)
-   near(job.Slot.position.X,38);near(w.Slot.position.X,38)
+   near(w.parent.parent.height,34)
+   -- One line, at the row's 17pt, on the same baseline as the item name.
+   near(w.Font.Size,17);near(w.Slot.position.X,38);near(w.Slot.position.Y,3.315)
+   -- Ends before ITEM (x 210) with room to spare. 0.59 per point is the
+   -- mixed-case width measured off r03 (Lumbering, 12pt, 85 px).
+   assert(38+#text*17*0.59<=210-8, text..' runs into the item column')
+   for _,other in ipairs(w.parent.children) do
+    assert(other.dead or (other.text~='Group limit' and other.text~='Item limit, rocks'),
+     'the two-line sub-label is still drawn')
+   end
   end
  end
- assert(jobs==2 and labels==2)
+ return jobs
+end
+local function check_geometry()
+ assert(job_cells('Mining')==2, 'group rows do not show just the job')
  -- Baseline coordinates from the pre-fix two-rule renderer. The Job change
  -- must not move the header, other columns, row hosts or amount editor.
  near(overlay.width,1110)
@@ -53,6 +49,13 @@ local function check_geometry()
   end
  end
 end
+check_geometry()
+-- Per-item Mining rows: the same cell, "Mining (rocks)".
+cfg.item_limits_on_rocks=nil
+panel.refresh(cfg)
+assert(job_cells('Mining (rocks)')==2 and job_cells('Mining')==0, 'per-item rows do not say rocks')
+cfg.item_limits_on_rocks=false
+panel.refresh(cfg)
 check_geometry()
 panel.apply(cfg,{kind='rule',rule={work='Mining',item='Stone01',amount=101},row=4},-1,true)
 panel.refresh(cfg)

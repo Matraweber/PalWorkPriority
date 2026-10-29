@@ -90,7 +90,10 @@ panel.toggle(); panel.refresh(cfg)
 -- Key hints: both close keys, the host-only recheck and the mouse line.
 assert(rendered('ESC / ALT+F1'), 'close key hint missing')
 assert(rendered('ALT+F2 RECHECK NOW'), 'host recheck hint missing')
-assert(rendered('Left click a limit to type it, right click to lower it one step. Delete removes. Alt+F2 rechecks now.'))
+-- The keys too (round 2): the arrows were never hinted. It fits the row.
+local FOOT='Up/Down move, Left/Right or right click step, Enter or click types, Delete removes.'
+local foot=assert(rendered(FOOT..' Alt+F2 rechecks now.'), 'keyboard and mouse footer missing')
+assert(#foot.text<=104, 'footer longer than its row: '..#foot.text)
 local esc,close=rendered('ESC / ALT+F1'),rendered('CLOSE')
 assert(esc.Slot.position.X+#esc.text*12*0.76<=close.Slot.position.X-9, 'close key hint runs into CLOSE')
 local dm0=package.loaded.darnmenu
@@ -101,7 +104,7 @@ package.loaded.darnmenu=dm0
 caps.is_client=true
 panel.refresh(cfg)
 assert(not rendered('ALT+F2 RECHECK NOW'), 'client shown a recheck it cannot do')
-assert(rendered('Left click a limit to type it, right click to lower it one step. Delete removes.'))
+assert(rendered(FOOT), 'client footer missing')
 caps.is_client=nil
 panel.refresh(cfg)
 

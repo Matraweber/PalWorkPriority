@@ -139,6 +139,13 @@ function overlay.hide()
     overlay.generation = overlay.generation + 1
 end
 package.loaded.overlay = overlay
+-- A clock the tests can move (review round 2): a confirm sooner than
+-- RB.CONFIRM_MIN_S after its arm is a double-click and does nothing, so two
+-- clicks a test means as two decisions call later() between them. Tests
+-- that replace os.clock themselves move their own `now` instead.
+local real_clock, skew = os.clock, 0
+os.clock = function() return real_clock() + skew end
+local function later(s) skew = skew + (s or 0.5) end
 local panel = require("panel")
 local function rules(n)
     data = {}
@@ -152,7 +159,8 @@ end
 rules(1)
 panel.refresh(cfg)
 panel.toggle()
-assert(panel.open and rendered("Group limit"))
+-- One line per job cell (round 2): a group row is its job, no sub-label.
+assert(panel.open and rendered("Mining") and not rendered("Group limit"))
 assert(rendered("No count yet"), "missing scheduler evidence claimed work was active")
 rules(0)
 for _,entry in ipairs({{'ready','Click "Add a limit" below to start.'},
@@ -365,6 +373,7 @@ caps.clear=function() return false end
 caps.error="Disk write failed; retry pending"
 local remove={kind="drop",rule={work="Mining",item="Stone01",amount=700}}
 panel.apply(cfg,remove,1,true)
+later()
 assert(not panel.apply(cfg,remove,1,true),"failed removal reported success")
 panel.refresh(cfg)
 assert(rendered("Disk write failed; retry pending"),"removal failure invented a guild-ownership explanation")
@@ -407,7 +416,9 @@ assert(not rb.pending, "unavailable catalogue started a fast retry loop")
 panel.command(cfg, "filter")
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
-assert(rendered("Storage unavailable - choose Show all to browse items   |   Under each item: what a click does"))
+-- Says how to get a count (round 2), not "choose Show all": nothing can
+-- be added from Show all either until storage is counted.
+assert(rendered("Storage not counted yet. Alt+F2 rechecks now.   |   Under each item: what a click does"))
 -- A click after the last draw is valid when dispatch reacquires this tree.
 -- The old 150ms draw-age gate rejected it despite successful current lookup.
 local toggle=assert(rendered("Show all items a base can make"))

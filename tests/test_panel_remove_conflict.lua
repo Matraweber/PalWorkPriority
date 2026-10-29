@@ -15,6 +15,7 @@ data.Stone01=202
 assert(not drop(101),'stale removal accepted a changed rule')
 assert(clears==0 and data.Stone01==202)
 assert(drop(202) and clears==0,'changed rule did not require a new first click')
+later()
 assert(drop(202) and clears==1 and data.Stone01==nil,'fresh confirmed removal failed')
 data.Stone01=101; panel.refresh(cfg)
 assert(drop(101)); panel.close(); panel.toggle(); panel.refresh(cfg)
@@ -25,6 +26,7 @@ assert(drop(101) and clears==1,'tab navigation retained removal confirmation')
 package.loaded.palapi.my_guild=function() return 'other-guild' end
 assert(drop(101) and clears==1,'old guild confirmation deleted a new guild rule')
 -- Same rule/value, stable scope: two current clicks still remove exactly once.
+later()
 assert(drop(101) and clears==2)
 data.Stone01=101; panel.refresh(cfg)
 assert(drop(101))

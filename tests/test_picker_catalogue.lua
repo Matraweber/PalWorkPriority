@@ -31,10 +31,15 @@ state='ready'; list,all,status=pick(stock)
 assert(status==nil and #list==1 and list[1]=='Ore' and searches==1)
 assert(names.Decoration==nil, 'localized a non-job item before filtering')
 assert(pick(stock)==list and searches==1, 'complete result was not reused')
--- The stock table and the selected base are part of the key (review B6,
--- 2026-10-28): another base, or a new pass's totals, is a new list.
-assert(pick(stock,'camp-b')~=list and searches==2, 'another base reused the first base list')
-assert(pick({},'camp-b') and searches==3, 'a new stock table reused the old list')
+-- The selected base and the set of ids in storage are the key (review B6,
+-- 2026-10-28; round 2): another base is a new list, but a pass that only
+-- publishes a new totals table with the same items is not. Keying on the
+-- table re-sorted the tiles under the pointer on every pass.
+local b=pick(stock,'camp-b')
+assert(b~=list and searches==2, 'another base reused the first base list')
+assert(pick({},'camp-b')==b and searches==2, 'a new totals table with the same items rebuilt the list')
+assert(pick({Ore=1},'camp-b')~=b and searches==3, 'an item appearing did not rebuild the list')
+assert(pick({Stone=1},'camp-b') and searches==4, 'a different item set of the same size reused the list')
 -- World reset while the query is unchanged must gate even an old cache.
 state='pending'; local pending=select(3,pick({})); assert(pending=='pending')
 env.search_text,env.show_all='',true
@@ -48,4 +53,10 @@ env.show_all=false; state='unavailable'; before=prepares+captures
 list,all,status=pick({Stone=3,Ore=1})
 assert(not all and status==nil and list[1]=='Stone' and list[2]=='Ore')
 assert(prepares+captures==before)
+-- The next pass's totals: same items, new numbers, a new table. The order
+-- holds still (round 2); only an item appearing or running out re-sorts.
+local held=pick({Stone=1,Ore=5})
+assert(held==list and held[1]=='Stone', 'tiles re-sorted under the pointer on a new pass')
+held=pick({Stone=1,Ore=5,Wood=9})
+assert(held~=list and held[1]=='Wood' and held[2]=='Ore', 'a new item did not re-sort the list')
 print('real picker: bounded preparation, complete caches, IDs-only browsing, cheap rejection passed')

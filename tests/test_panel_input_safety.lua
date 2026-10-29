@@ -84,6 +84,7 @@ assert(not rendered('Sure?'), 'raise armed a Remove')
 
 -- B2: removing a limit lands the cursor on a limit, never on Remove.
 assert(panel.row_action(cfg,'drop')); panel.refresh(cfg)
+later()
 assert(panel.row_action(cfg,'drop') and data.Stone02==nil, 'Remove did not delete on the second press')
 panel.refresh(cfg)
 assert(selected().kind=='rule', 'cursor landed on '..tostring(selected().kind)..' after a removal')
@@ -134,8 +135,10 @@ assert(rendered('page 4 of 4') and notice()=='This is the last page.', 'spent Ne
 -- not move the grid.
 panel.set_screen('item'); panel.refresh(cfg); panel.refresh(cfg)
 local box=assert(search_box(), 'no search box')
+-- Focus is recorded by the draw (round 2): the key runs later and must not
+-- ask a wrapper kept from an earlier callback.
+box.focus=true; panel.refresh(cfg)
 local was=selected()
-box.focus=true
 assert(not panel.nav(cfg,'enter') and not rb.armed and writes==before, 'Enter in the search box acted on a tile')
 assert(not panel.nav(cfg,'right') and selected()==was, 'arrow in the search box moved the grid')
 box.focus=false
@@ -167,6 +170,7 @@ assert(rendered('Click again to add'), 'armed tile does not say the next click a
 panel.nav(cfg,'right'); panel.refresh(cfg)
 assert(not rendered('Click again to add') and not rb.armed, 'moving away kept the tile armed')
 assert(panel.apply(cfg,tile,-1,true) and writes==before, 'a disarmed tile created on one click')
+later()
 assert(panel.apply(cfg,tile,-1,true) and writes==before+1 and data.StoneNew==100, 'second click did not create')
 panel.refresh(cfg)
 assert(notice()=='Saved: Mining limit 100 for StoneNew, just above storage. Click the number to change it.',
@@ -179,6 +183,7 @@ panel.set_screen('item'); panel.refresh(cfg)
 assert(panel.apply(cfg,{kind='item',item='Wood'},-1,true)); panel.refresh(cfg)
 assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Click again to add a limit of 100.',
     'group first click notice: '..tostring(notice()))
+later()
 assert(panel.apply(cfg,{kind='item',item='Wood'},-1,true)); panel.refresh(cfg)
 assert(notice()=='Saved: Lumbering limit 100 for Wood, just above storage. Click the number to change it.')
 data.Wood, stock.Wood=nil, nil
@@ -188,7 +193,7 @@ data.Wood, stock.Wood=nil, nil
 data.StoneNew, stock.StoneNew=nil, 1500
 panel.set_screen('item'); panel.refresh(cfg)
 before=writes
-assert(panel.apply(cfg,tile,-1,true)); assert(panel.apply(cfg,tile,-1,true))
+assert(panel.apply(cfg,tile,-1,true)); later(); assert(panel.apply(cfg,tile,-1,true))
 assert(data.StoneNew==10000 and writes==before+1, 'big stock seeded '..tostring(data.StoneNew))
 data.StoneNew, stock.StoneNew=nil, 9999999
 panel.set_screen('item'); panel.refresh(cfg)
@@ -235,10 +240,11 @@ assert(notice()=='Remove timed out. The limit is kept.', 'timeout not said: '..t
 assert(data.Stone02==102)
 -- A click after the timeout arms again; it never deletes.
 assert(panel.apply(cfg,remove,-1,true) and data.Stone02==102)
--- On a controller the confirming press is X.
+-- On a controller the confirming press is X. X reaches Remove through
+-- row_action, which applies without from_mouse.
 panel.escape(); panel.refresh(cfg)
 package.loaded.palapi.last_input_type=1
-assert(panel.apply(cfg,remove,-1,true)); panel.refresh(cfg)
+assert(panel.apply(cfg,remove,-1)); panel.refresh(cfg)
 assert(notice()=='Press X again to delete the Mining limit for Stone02.', 'pad prompt: '..tostring(notice()))
 package.loaded.palapi.last_input_type=nil
 assert(writes==0 and stale==0)
