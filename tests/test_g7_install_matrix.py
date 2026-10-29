@@ -135,6 +135,31 @@ class NoAsserts(unittest.TestCase):
         self.assertIn("close the game first", r.stderr)
 
 
+class G1GameClosed(unittest.TestCase):
+    """tools/g1_workshop_route.py's game-closed guard (round 3: it was an
+    assert, which python -O removes)."""
+
+    def run_closed(self, stdout, code=0):
+        script = ("import sys, subprocess; sys.path.insert(0, %r); import g1_workshop_route as g1; "
+                  "subprocess.run = lambda a, **k: subprocess.CompletedProcess(a, %d, stdout=%r, stderr='broke'); "
+                  "g1.closed()" % (str(ROOT / "tools"), code, stdout))
+        return subprocess.run([sys.executable, "-O", "-c", script], capture_output=True, text=True)
+
+    def test_running_game_refused_under_python_O(self):
+        r = self.run_closed("Palworld-Win64-Shipping.e 1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("close the game first", r.stderr)
+
+    def test_failed_tasklist_refused(self):
+        r = self.run_closed("", code=1)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("cannot be confirmed closed", r.stderr)
+
+    def test_closed_game_passes(self):
+        r = self.run_closed("INFO: No tasks are running which match the specified criteria.")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
 class Closed(Fixture):
     def test_running_game_refused_with_message(self):
         with mock.patch.object(g7.subprocess, "run", tasklist(running=True)):

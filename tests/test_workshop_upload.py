@@ -346,7 +346,7 @@ class DriverNoteCheck(unittest.TestCase):
 
 class NoAsserts(unittest.TestCase):
     def test_no_assert_statements(self):
-        for name in ("tools/workshop_upload.py", "tools/g7_install_matrix.py"):
+        for name in ("tools/workshop_upload.py", "tools/g7_install_matrix.py", "tools/g1_workshop_route.py"):
             tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
             self.assertEqual([n.lineno for n in ast.walk(tree) if isinstance(n, ast.Assert)], [], name)
 

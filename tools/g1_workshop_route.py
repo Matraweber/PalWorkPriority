@@ -13,6 +13,9 @@ Phases (game closed for every phase):
   restore            undo everything and verify the dev install's hashes
 State lives in D:/PalWorkPriority-backups/g1-workshop-<time>/ (path printed by
 prepare, passed back with --state).
+
+Every guard is an explicit check that exits with a message, so python -O
+cannot switch one off.
 """
 import hashlib, json, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
@@ -24,6 +27,13 @@ PAK = GAME / 'Pal/Content/Paks/LogicMods/PalWorkPriority.pak'
 SETTINGS = GAME / 'Mods/PalModSettings.ini'
 MANAGED = GAME / 'Mods/ManagedMods'
 WS = Path('D:/Steam/steamapps/workshop/content/1623730/3786408856')
+GAME_EXE = 'Palworld-Win64-Shipping'
+
+
+def die(message):
+    """Stop with a message and exit code 1 (instead of assert, which python -O
+    removes)."""
+    raise SystemExit('g1_workshop_route: ' + message)
 
 
 def sha(p):
@@ -36,8 +46,12 @@ def tree(root):
 
 
 def closed():
-    out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq Palworld-Win64-Shipping.exe'], capture_output=True, text=True).stdout
-    assert 'Palworld-Win64-Shipping' not in out, 'close the game first'  # tasklist truncates the name
+    """Refuse every phase while the game runs."""
+    r = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq %s.exe' % GAME_EXE], capture_output=True, text=True)
+    if r.returncode != 0:
+        die('tasklist failed, so the game cannot be confirmed closed: %s' % (r.stderr or '').strip())
+    if GAME_EXE in r.stdout:  # tasklist truncates the name, so match the stem
+        die('close the game first (%s is running)' % GAME_EXE)
 
 
 def rows(path):
@@ -48,6 +62,9 @@ def rows(path):
 
 
 def prepare():
+    # Checked before anything is copied or moved.
+    if b'ActiveModList=PalWorkPriority' in SETTINGS.read_bytes():
+        die('PalModSettings.ini already activates the Workshop item; restore an earlier run first')
     b = Path('D:/PalWorkPriority-backups') / time.strftime('g1-workshop-%Y%m%d-%H%M%S')
     b.mkdir(parents=True)
     for src, name in [(SETTINGS, 'PalModSettings.ini'), (MODS / 'mods.txt', 'mods.txt')]:
@@ -60,7 +77,6 @@ def prepare():
     shutil.move(str(PAK), str(b / 'dev-LogicMods/PalWorkPriority.pak'))
     text = SETTINGS.read_bytes()
     nl = b'\r\n' if b'\r\n' in text else b'\n'
-    assert b'ActiveModList=PalWorkPriority' not in text
     SETTINGS.write_bytes(text.rstrip(b'\r\n') + nl + b'ActiveModList=PalWorkPriority' + nl)
     (b / 'state.json').write_text(json.dumps(state))
     print(b)
@@ -68,12 +84,14 @@ def prepare():
 
 def seed(b, src):
     src = Path(src)
-    assert MOD.is_dir(), 'the loader has not installed the Workshop item yet'
+    if not MOD.is_dir():
+        die('the loader has not installed the Workshop item yet')
     for name in ('priorities.txt', 'caps.txt'):
         shutil.copy2(src / name, MOD / name)
     cfg = MOD / 'Scripts/config.lua'
     text = cfg.read_text(encoding='utf-8')
-    assert 'interval_seconds = 10' in text, 'unexpected 0.4.1 config'
+    if 'interval_seconds = 10' not in text:
+        die('unexpected 0.4.1 config (no interval_seconds = 10)')
     cfg.write_text(text.replace('interval_seconds = 10', 'interval_seconds = 11', 1), encoding='utf-8')
     state = json.loads((b / 'state.json').read_text())
     state['seeded'] = {n: rows(MOD / n) for n in ('priorities.txt', 'caps.txt')}
@@ -84,10 +102,19 @@ def seed(b, src):
 
 
 def update(b, archive):
+    # Read the whole zip before the Workshop folder is deleted.
+    try:
+        with zipfile.ZipFile(archive) as z:
+            damaged = z.testzip()
+    except (zipfile.BadZipFile, OSError) as err:
+        die('%s cannot be read as a zip (%s); nothing was changed' % (archive, err))
+    if damaged:
+        die('%s: member %s is damaged; nothing was changed' % (archive, damaged))
     keep = (WS / '.workshop.json').read_bytes()
     shutil.rmtree(WS)
     WS.mkdir()
-    zipfile.ZipFile(archive).extractall(WS)
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(WS)
     (WS / '.workshop.json').write_bytes(keep)
     print('Workshop item now holds', json.loads((WS / 'Info.json').read_text())['Version'])
 
