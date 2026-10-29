@@ -143,6 +143,18 @@ function M.forget()
     classes = {}
 end
 
+-- End of a pass: drops the memo of every camp the pass did not reach
+-- (`visited`: camp key -> true), so unloaded camps do not stay until the
+-- next world reset (review 2026-10-29). Only a cache: a camp that comes back
+-- reads its classes again. The shared slot without a camp key stays.
+function M.prune(visited)
+    if type(visited) ~= 'table' then return end
+    for slot in pairs(classes) do
+        if slot ~= '' and not visited[slot] then classes[slot] = nil end
+    end
+end
+
+
 -- Number of fishing ponds and Handiwork research labs in `works` that are
 -- built and Workable. One seat each. `keys[i]`, when given, is works[i]'s
 -- work id, so its class is read once; `camp_key` names the camp the works

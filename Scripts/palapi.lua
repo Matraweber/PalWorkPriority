@@ -1397,10 +1397,22 @@ function M.work_suitability(w)
     local kw = cls and workdefs.from_text(cls) or nil
     if kw then return workdefs.value(kw) end
 
+    -- Named, because a host saw this at every join with nothing to go on
+    -- (review 2026-10-29). The likely one is Construction (BuildWork_0,
+    -- PalWorkProgress, untyped while a blueprint stands: g4-old-reports
+    -- 2026-10-27), but no discover dump has confirmed it, so it is not put
+    -- in WORK_IGNORE: whether Pals' building is gated by a suitability is
+    -- not known.
     if not M._suitability_warned then
         M._suitability_warned = true
-        log.warn("some work could not be typed. Run '!pwp discover' and read " ..
-            "the UNRESOLVED list")
+        local seen = {}
+        if work_name then seen[#seen + 1] = work_name end
+        if assign then seen[#seen + 1] = assign end
+        if cls then seen[#seen + 1] = cls end
+        log.warn("some work could not be typed and is not counted: " ..
+            (#seen > 0 and table.concat(seen, ", ") or "no readable name") ..
+            ". That is expected for Construction, a building not finished yet. " ..
+            "'!pwp discover' lists every untyped work")
     end
     return nil
 end

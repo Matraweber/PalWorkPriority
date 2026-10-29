@@ -100,7 +100,9 @@ package.loaded.caps = { state = "saved", decided = true, any = function() return
     all = function() return rules end, for_work = function(_, name) return rules[name] end, offer_adopt = noop }
 package.loaded.demand = { live = function() return demand_live end,
     for_camp = function() local out = {}; for v, n in pairs(required) do out[v] = n end; return out, 0, {} end }
-package.loaded.stations = { KINDS = { { value = MINING, needing = function(list) return #list end } } }
+local pruned = nil
+package.loaded.stations = { KINDS = { { value = MINING, needing = function(list) return #list end } },
+    prune = function(visited) pruned = visited end }
 package.loaded.log = { info = noop, debug = noop, warn = noop }
 package.loaded.trace = { at = noop, done = noop }
 package.loaded.item_sources, package.loaded.scheduler = nil, nil
@@ -168,6 +170,16 @@ assert(typed_calls == 3, "first pass typed " .. typed_calls .. " works for 3")
 works_calls, typed_calls = {}, 0
 scheduler.run_pass(cfg)
 assert(works_calls.A == 1 and works_calls.B == 1 and typed_calls == 0, "remembered works typed again")
+-- A limit edit (forget_policy) cannot change a work's type: nothing is
+-- typed again. A world reset (forget) starts over (review 2026-10-29).
+scheduler.forget_policy()
+typed_calls = 0
+scheduler.run_pass(cfg)
+assert(typed_calls == 0, "a limit edit typed " .. typed_calls .. " works again")
+scheduler.forget()
+typed_calls = 0
+scheduler.run_pass(cfg)
+assert(typed_calls == 3, "forget kept the typing memo")
 -- The same with the pulse index off (estimated fallback demand).
 setup()
 demand_live = false
@@ -187,11 +199,26 @@ works_override.A = function() return {}, "WorkCollection has no WorkIds" end
 scheduler.run_pass(cfg)
 assert(off("A"), "a failed works read gave Mining back at the stone-only base")
 assert(sources.count("A") == 1 and state("A", 1) == 2, "a failed works read forgot a held rock")
--- With no earlier decision, the group rule decides (Ore short: Mining on).
+-- A settings change under the same Mining limits keeps that decision: a
+-- read that fails right after an edit must not flip Mining (review
+-- 2026-10-29).
 scheduler.forget_policy()
 scheduler.run_pass(cfg)
-assert(not off("A"), "no earlier decision should fall back to the group rule")
+assert(off("A"), "forget_policy dropped the base's Mining decision")
+-- A decision made under other Mining limits is not used: the group rule
+-- decides (Ore short: Mining on).
+rules.Mining.Stone = 20
+scheduler.forget_policy()
+scheduler.run_pass(cfg)
+assert(not off("A"), "a decision made under other limits was used")
 assert(sources.count("A") == 1, "forget_policy dropped held rocks")
+-- With no earlier decision at all (world reset), the group rule decides.
+setup()
+scheduler.run_pass(cfg)
+works_override.A = function() return {}, "WorkCollection has no WorkIds" end
+scheduler.forget()
+scheduler.run_pass(cfg)
+assert(not off("A"), "no earlier decision should fall back to the group rule")
 
 -- A4(a): a partial list carries held rocks it did not reach; once the
 -- limit is removed a complete list releases them.
@@ -239,6 +266,14 @@ assert(sources.count("A") == 1)
 component = false
 stats = scheduler.restore(cfg)
 assert(stats.blocked and state("A", 1) == 1 and sources.count("A") == 0, "restore without a component kept rocks")
+-- Nothing held (after a world change drops the old list): the early restore
+-- paths do not sweep for camps at all (performance review 2026-10-29).
+local camp_sweeps, real_base_camps = 0, api.base_camps
+api.base_camps = function() camp_sweeps = camp_sweeps + 1; return camps end
+sources.forget_world()
+scheduler.restore(cfg)
+api.base_camps = real_base_camps
+assert(camp_sweeps == 0, "restore swept for camps with no rock held")
 component = true
 
 -- A2: a test-mode pass releases held rocks instead of freezing them, and
@@ -305,6 +340,60 @@ api.latch_authority = function() return true end
 caps_mock.state = "saved"
 assert(state("A", 1) == 2 and sources.count("A") == 1, "a non-authority wrote a rock")
 
+-- An unreadable base guild is unknown ownership: the guild's own Mining
+-- limits are missing from rules(), not gone. Held rocks stay held, at a base
+-- with Pals and at one without, and nothing new is switched off; test mode
+-- still gives them back (review 2026-10-29, P2). The caps stub scopes rows
+-- by guild here, as caps.all does: no guild, no guild rows.
+local unscoped_all, real_guild = caps_mock.all, api.camp_guild
+caps_mock.all = function(_, guild) if guild then return rules end; return {} end
+for _, how in ipairs({ "pals", "no_pals", "dry_run" }) do
+    setup()
+    scheduler.run_pass(cfg)
+    assert(sources.count("A") == 1 and state("A", 1) == 2)
+    works_of.A[3] = rock("a-stone2", "Stone")
+    api.camp_guild = function(camp) if camp.id == "A" then return nil end; return "guild" end
+    if how == "no_pals" then pals_of.A = {} end
+    if how == "dry_run" then cfg.dry_run = true end
+    stats = scheduler.run_pass(cfg)
+    api.camp_guild, cfg.dry_run = real_guild, false
+    pals_of.A = { miner("a") }
+    if how == "dry_run" then
+        assert(state("A", 1) == 1 and sources.count("A") == 0, how .. ": test mode kept a held rock")
+    else
+        assert(state("A", 1) == 2 and sources.count("A") == 1, how .. ": an unknown owner released a held rock")
+        assert((stats.rocks_started or 0) == 0 and stats.rocks_held == 1, how .. ": wrong rock counts")
+        assert(state("A", 3) == 1 and (stats.rocks_stopped or 0) == 0, how .. ": an unknown owner switched a rock off")
+    end
+    -- Once the guild reads again, the pass decides as before.
+    stats = scheduler.run_pass(cfg)
+    assert(state("A", 1) == 2 and state("A", 3) == 2, how .. ": guild readable again, rocks not held")
+end
+caps_mock.all = unscoped_all
+
+-- Restore under the settings fence (recovery in progress, or locked until a
+-- restart) still leaves the Pals alone but gives held rocks back: that needs
+-- only the authority (engine review 2026-10-29, P3-2). Not on a machine that
+-- is not the authority.
+local gate = require("settings_gate")
+setup()
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 1)
+local token = assert(gate.acquire())
+stats = scheduler.restore(cfg)
+assert(stats.blocked and stats.blocked_reason == "settings recovery is in progress", "fence reason lost")
+assert(state("A", 1) == 1 and sources.count("A") == 0 and stats.rocks_started == 1, "the settings fence kept a held rock off")
+assert(stats.toggles == 0, "restore changed Pals under the settings fence")
+gate.release(token)
+setup()
+scheduler.run_pass(cfg)
+token = assert(gate.acquire())
+api.latch_authority = function() return false end
+scheduler.restore(cfg)
+api.latch_authority = function() return true end
+gate.release(token)
+assert(state("A", 1) == 2 and sources.count("A") == 1, "a non-authority wrote a rock under the fence")
+
 -- A base whose rocks are all mined out has no Mining source. That is not
 -- "every limit reached": the group rule decides (Ore short: Mining stays),
 -- also after an earlier per-item "not wanted" (review 2026-10-29).
@@ -365,6 +454,23 @@ scheduler.run_pass(cfg)
 works_override.A = function() return { works_of.A[2] }, nil, { "a-pit" }, 1 end
 scheduler.restore(cfg)
 assert(sources.count("A") == 1, "restore read skipped entries as a complete list")
+-- ... including the keyless work of another type: a rock mined out since
+-- the last pass is dropped as gone, and "pwp off" does not warn that it
+-- could not be released (review 2026-10-29).
+works_override.A = function() return { bench, works_of.A[2] }, nil, { [2] = "a-pit" }, 0 end
+local held_warned, warn_before = 0, package.loaded.log.warn
+package.loaded.log.warn = function(msg) if msg:find("still held off", 1, true) then held_warned = held_warned + 1 end end
+stats = scheduler.restore(cfg)
+package.loaded.log.warn = warn_before
+assert(sources.count("A") == 0 and (stats.rocks_held or 0) == 0, "restore kept a mined-out rock held")
+assert(held_warned == 0, "restore warned about a rock that is gone")
+-- A keyless Mining work still makes the restore list partial.
+setup()
+scheduler.run_pass(cfg)
+local keyless_rock = rock(nil, "Stone")
+works_override.A = function() return { keyless_rock, works_of.A[2] }, nil, { [2] = "a-pit" }, 0 end
+scheduler.restore(cfg)
+assert(sources.count("A") == 1, "restore read a keyless Mining work as a complete list")
 works_override.A = nil
 
 -- A base with no Pals gives held rocks back in test mode and with per-item
@@ -389,9 +495,11 @@ end
 setup()
 scheduler.run_pass(cfg)
 assert(scheduler.last_capped_by_camp.B ~= nil)
+assert(pruned and pruned.A and pruned.B, "stations were not pruned with the visited camps")
 camps = { { id = "A" } }
 scheduler.run_pass(cfg)
 assert(scheduler.last_capped_by_camp.B == nil, "an unloaded camp's verdict was kept")
+assert(pruned.A and not pruned.B, "the station memo prune kept an unloaded camp")
 -- A failed read still keeps the visited camp's decision across passes.
 works_override.A = function() return {}, "WorkCollection has no WorkIds" end
 scheduler.run_pass(cfg)
