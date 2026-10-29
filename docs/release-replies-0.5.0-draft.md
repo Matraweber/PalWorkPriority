@@ -7,6 +7,8 @@ status: history
 
 Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [comment-ledger-2026-09-11](comment-ledger-2026-09-11.md)
 
+**Recheck before posting (2026-10-29):** written against 252c0e3, before the round-2 and round-3 fixes. Check every claim against the final 0.5.0 build and the current README before any of it is posted.
+
 **Superseded 2026-10-28.** Replies are not needed (user's decision 2026-10-27), and two claims here are false for the final build: new limits can be added (Mining per item), and the controller was a virtual XInput pad, not an Xbox controller. Do not post these without a rewrite.
 
 Rewritten 2026-10-27 against the candidate at 252c0e3, from the gate evidence

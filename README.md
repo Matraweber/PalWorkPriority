@@ -2,14 +2,14 @@
 
 Work priorities for your base Pals in Palworld. You set them on the Monitoring Stand. A separate Production Limits panel stops work once you have enough of an item.
 
-The mod is made for the Steam version of Palworld on Windows. It was only tested there.
+The mod is made for the Steam version of Palworld on Windows. It was only tested there. The Xbox and PC Game Pass versions are not supported.
 
 ## Quick start
 
-1. **Open a Monitoring Stand.** Every job cell shows a number. 1 is the highest priority, 5 the lowest, and X means the Pal never does that job. Left click a cell to raise it toward 1, right click to lower it toward X. A left click on 1 wraps around to X.
+1. **Open a Monitoring Stand.** Unlock it in the Technology menu and build it in your base. Every job cell shows a number. 1 is the highest priority, 5 the lowest, and X means the Pal never does that job. Left click a cell to raise it toward 1, right click to lower it toward X. A left click on 1 wraps around to X.
 2. **Equal numbers are left to the game.** If every job a Pal may do has the same number, the mod does not steer that Pal and the game picks its work. X jobs stay off. A fresh install starts from the game's ticks. A ticked job becomes 1 and an unticked job becomes X. Give one job a different number and the mod steers that Pal.
 3. **Press Alt+F1 for Production Limits.** Click an item once and the panel shows what the limit will stop and the amount. Click it again a moment later to add the limit. A Mining limit stops only the rocks that mainly give that item. Every other limit stops its whole job.
-4. **Change settings** in ESC > Darn Mod Options (needs the optional [DarnMenu](#settings)) or in `config.lua` in the mod folder. Restart the game after a change.
+4. **Change settings** in ESC > Options > Mod Options (needs the optional [DarnMenu](#settings)) or in `config.lua` in the mod folder. Restart the game after a change.
 
 Updating from 0.4.1? Read "Before you update" in the [changelog](CHANGELOG.md) first.
 
@@ -40,7 +40,7 @@ When you update, extract the new zip over the old one. Your priorities, limits a
 
 Vortex puts the Nexus zip into the same folders as the manual install. Before you install, open Vortex's Settings > Mods and turn off "Manage modding requirements (UE4SS, Unreal Pak Tool) automatically". Otherwise Vortex adds a second UE4SS under `<Palworld>\Pal\Binaries\Win64`. If Palworld is on another drive than Vortex, put the staging folder on that drive (Vortex offers it with "Suggest"). UE4SS itself still comes from the game's Mod Management, as in step 1 above.
 
-Updating from 0.4.1 in Vortex? Install 0.5.0 next to it, start the game once, then remove 0.4.1. Your `config.lua` edits are kept. If you remove 0.4.1 before 0.5.0 has run once, they are lost.
+Updating from 0.4.1 in Vortex? Install 0.5.0 next to it, start the game once, then remove 0.4.1. Your `config.lua` edits are kept. If you remove 0.4.1 before 0.5.0 has run once, they are lost. Vortex's Update or Replace button removes 0.4.1's files before it installs 0.5.0, so your `config.lua` edits are lost that way too (this route was not tested yet). Your priorities and limits stay, and the panel says default settings are in use. Write your edits down before you update that way.
 
 ### Dedicated server (Windows)
 
@@ -48,13 +48,15 @@ The server needs UE4SS too. On GPortal you switch it on in the server panel's mo
 
 1. Stop the server. Back up the world and the old `PalWorkPriority` folder if there is one.
 2. From the manual zip, take the folder `Mods/NativeMods/UE4SS/Mods/PalWorkPriority`. It goes into the server's UE4SS Mods folder. On hosts like GPortal that is `Pal/Binaries/Win64/ue4ss/Mods/`. The pak is not needed on the server.
-3. Upload it. Copy the folder with the host's file manager or FTP. If your host takes zip uploads, upload the `Scripts` folder as a zip into `PalWorkPriority` and unpack it there into a folder named `Scripts`. Some unzip buttons make a folder named after the zip, so name the zip `Scripts.zip`. Afterwards `.../ue4ss/Mods/PalWorkPriority/Scripts/main.lua` must exist.
+3. Upload it. Copy the whole folder with the host's file manager or FTP, including the empty file `enabled.txt` in it. UE4SS starts a mod only when its folder has `enabled.txt` or `ue4ss/Mods/mods.txt` lists it. A line `PalWorkPriority : 1` in `mods.txt` should work too, but that was not tested on a server.
+   - If your host takes zip uploads: on a first install, create the folder `PalWorkPriority` and upload `enabled.txt` from the zip into it. Then make a zip of the files inside `Scripts`, not of the folder itself, and name it `Scripts.zip`. Upload it into `PalWorkPriority` and unpack it with the panel's plain unzip. On GPortal that makes a folder named after the zip, so you get `PalWorkPriority/Scripts`. If your panel unpacks into the current folder instead, create `Scripts` and upload and unpack the zip in there.
+   - Afterwards `.../ue4ss/Mods/PalWorkPriority/Scripts/main.lua` and `.../ue4ss/Mods/PalWorkPriority/enabled.txt` must exist. `Scripts/Scripts/main.lua` means the zip held the folder. Move the files up one level.
 4. When you update, copy the new files over the old ones. Do not delete the old `Scripts` folder first. The old settings are read from it once.
-5. Start the server. The mod writes `priority.log` in the `PalWorkPriority` folder. That log and the server's UE4SS log should show `Pal Work Priority 0.5.0 loaded` and a line starting with `PWP_READY` that contains `role=authority`.
+5. Start the server. The mod writes `priority.log` in the `PalWorkPriority` folder. That log and the server's UE4SS log should show `Pal Work Priority 0.5.0 loaded` and a line starting with `PWP_READY` that contains `role=authority`. No `priority.log` after the restart? `enabled.txt` is missing or the folder is wrong.
 
 Server settings live in `config.lua` inside that `PalWorkPriority` folder on the server. Restart the server after a change. The in-game options page has no effect on a server.
 
-The server and every player need exactly 0.5.0. Mixed versions are refused and nothing is written. A 0.4.1 player gets a chat message asking them to update, and a 0.5.0 player on an older server sees "Server version incompatible" in the panel. On a server with another Pal Work Priority version, or one whose settings are locked, the stand stays read-only. Its cells show `?` and the legend says to update both. Workshop players get updates on their own, so update the server first or on the same day. A player with the mod on a server without it gets the normal Monitoring Stand back after about a minute.
+The server and every player need exactly 0.5.0. Mixed versions are refused and nothing is written. A 0.4.1 player gets a chat message asking them to update, and a 0.5.0 player on an older server sees "Server version incompatible" in the panel. On a server with another Pal Work Priority version, or one whose settings are locked, the stand stays read-only. Its cells show `?` and the legend says why. Workshop players get updates on their own and cannot go back to 0.4.1, so update the server first or on the same day. A player with the mod on a server without it gets the normal Monitoring Stand back after about a minute. A player without the mod can still join a modded server and sees the game's normal stand. The server keeps steering the Pals, so it may undo ticks that player changes (not tested).
 
 To remove the mod from a server, set `enabled = false` in the server's `config.lua` and restart the server. Check that its `priority.log` says the work permissions were verified, then stop the server and delete the folder.
 
@@ -67,7 +69,7 @@ left click:   X → 5 → 4 → 3 → 2 → 1 → X
 right click:  1 → 2 → 3 → 4 → 5 → X → 1
 ```
 
-You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5. The legend under the stand lists the clicks and keys. It also reminds you that 1 wraps to X and that a Pal with all jobs equal is left to the game. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
+You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5 or X. The legend under the stand lists the clicks and keys. It also reminds you that 1 wraps to X and that a Pal with all jobs equal is left to the game. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
 
 A dash means the Pal cannot do that job at all. It is not a priority.
 
@@ -101,7 +103,7 @@ The mod does not start crafting for you. A limit only stops work.
 
 Settings come from two places.
 
-- **The options page.** With [DarnMenu](https://www.nexusmods.com/palworld/mods/4245) installed (also on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3769456391)), open ESC > Darn Mod Options. DarnMenu is optional. Its values are saved in `<Palworld>\Mods\NativeMods\UE4SS\Mods\shared\PalWorkPriority_user.lua` and win over `config.lua`.
+- **The options page.** With [DarnMenu](https://www.nexusmods.com/palworld/mods/4245) installed (also on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3769456391)), open ESC > Options > Mod Options. DarnMenu is optional. Its values are saved in `<Palworld>\Mods\NativeMods\UE4SS\Mods\shared\PalWorkPriority_user.lua` and win over `config.lua`.
 - **`config.lua`** in `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\`. The mod creates it on the first start. Leave `Scripts\default_config.lua` alone. An update replaces it.
 
 Restart the game after a change. `!pwp reload` also reads `config.lua` again, but a restart is the safe way.
@@ -123,7 +125,7 @@ If an upgrade had to reset `config.lua`, the panel tells you. The notice stays u
 | `priorities.txt` | Your priorities, X included |
 | `caps.txt` | Your limits |
 | `config.lua` | Your settings |
-| `config.migration.bak` | The old `Scripts\config.lua` from a manual upgrade (defaults after a Workshop update) |
+| `config.migration.bak` | A copy made once, on 0.5.0's first start, of the settings it started from: your 0.4.1 `Scripts\config.lua` after a manual upgrade, otherwise the defaults (a Workshop update deletes the old file first) |
 | `priority.log` | Command replies and warnings |
 
 The `.tmp`, `.pending` and `.bak` files next to them are recovery copies. Do not edit any of these files while the game runs.
@@ -136,6 +138,7 @@ The `.tmp`, `.pending` and `.bak` files next to them are recovery copies. Do not
 | Alt+F2 | Recheck now. Runs a pass and counts storage (not on a client) |
 | Alt+F3 | Write base storage to `priority.log` |
 | Alt+F5 | Write `Discovery.txt` to the mod folder (useful for bug reports) |
+| Alt+F9 | Connection test with the server, like `!pwp net` |
 | Alt+F10 | Switch between spread and fill until you restart |
 | Alt+F11 | Change the most Pals per job until you restart |
 | Alt+F12 | Change how storage is counted until you restart |
@@ -144,7 +147,7 @@ The `.tmp`, `.pending` and `.bak` files next to them are recovery copies. Do not
 | Delete twice | Remove the selected limit |
 | Escape | Cancel an amount or an armed remove, then close the panel |
 
-Only the six Alt keys F1, F2, F3, F10, F11 and F12 can be changed on the options page.
+Only the six Alt keys F1, F2, F3, F10, F11 and F12 can be changed on the options page. The NVIDIA overlay uses Alt+F1 to Alt+F3 too, see [Troubleshooting](#troubleshooting).
 
 **Controller.** Tested with a virtual XInput pad on the release candidate. No physical controller or Steam Input run was done, and the latest input fixes were checked only by the mod's automated tests. Plug the pad in before you start the game. On the stand, the D-pad moves, LB or A step toward 1, RB toward X, X sets X and View opens Production Limits (Y stays the game's view switch). In the panel, the D-pad moves, Y opens or raises, X twice removes, LB and RB switch tabs, LT and RT turn pages and B closes the panel. A does nothing in the panel.
 
@@ -160,21 +163,26 @@ Commands go into chat. Their replies are written to `priority.log` in the mod fo
 | `!pwp reload` | Read `config.lua` again |
 | `!pwp mode` / `!pwp cap` | Staffing mode, most Pals per job |
 | `!pwp limit` / `!pwp stock` | List limits, list storage |
+| `!pwp scope` | Count storage per base or across loaded bases, until you restart |
+| `!pwp adopt` | Move limits an older version shared with every guild to your guild (host or server) |
 | `!pwp rocks` | Rocks held back by limits and who mines what (host or server) |
+| `!pwp assignments` | Which job each Pal is on (host or server) |
 | `!pwp net` | Connection check with the server |
+| `!pwp discover` / `!pwp guilds` | Write `Discovery.txt` or `Guilds.txt` to the mod folder (for bug reports) |
 | `!pwp perf [on\|off\|reset]` | Timing report |
 
 ## Troubleshooting
 
 1. **Is UE4SS on?** Look for `<Palworld>\Mods\NativeMods\UE4SS\UE4SS.dll`. After a game start `UE4SS.log` is next to it. An empty `UE4SS` folder is not enough. If the files are missing, switch Experimental UE4SS for Palworld on in the game's Mod Management and start the game once.
 2. **Is the mod in the right place?** You need `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\Scripts\main.lua` and `<Palworld>\Pal\Content\Paks\LogicMods\PalWorkPriority.pak`. If they sit in an extra folder named after the zip, extract again with exactly `<Palworld>` as the target.
-3. **Did it load?** Open `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log`. It should say `Pal Work Priority 0.5.0 loaded`.
+3. **Did it load?** Open `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log`. It should say `Pal Work Priority 0.5.0 loaded`. If it says `did not start`, the line before it names the setting or the problem. Fix that value in `config.lua`, or delete `config.lua` and restart the game to get the defaults back. Stopped loading right after a game update? UE4SS may need an update for the new game version first. Wait for Experimental UE4SS for Palworld to update, then start the game again.
 4. **No numbers on the stand?** The mod is not running. Go through steps 1 to 3.
 5. **Numbers, but the stand cannot be edited and the legend says the pak is missing?** Copy `PalWorkPriority.pak` back to `<Palworld>\Pal\Content\Paks\LogicMods\` or reinstall.
 6. **Two copies?** Use either the Workshop or the manual zip. The mod warns when it finds a switched-on Workshop copy of another version. It also warns when it finds `<Palworld>\Pal\Binaries\Win64\dwmapi.dll`. If that is an old UE4SS, for example one Vortex added, remove it or switch off UE4SS in Vortex.
-7. **"Server version incompatible"?** The server and every player need exactly 0.5.0. Until then the stand is read-only, its cells show `?` and the legend says to update both.
+7. **"Server version incompatible"?** The server and every player need exactly 0.5.0. Ask the host to update the server to 0.5.0. Workshop copies update on their own and cannot go back to 0.4.1. Until then the stand is read-only, its cells show `?` and the legend says why.
 8. **A Pal ignores its numbers?** If all its jobs have the same number, it is left to the game. Also check the panel does not say "Mod off" or "Test mode".
-9. **A setting does nothing?** Restart the game. On a server, change the server's `config.lua`. Settings changed with Alt+F10, Alt+F11 or Alt+F12 last only until you restart.
+9. **A setting does nothing?** Restart the game. A value saved on the options page (DarnMenu) wins over `config.lua`, so change it there. On a server, change the server's `config.lua`. Settings changed with Alt+F10, Alt+F11 or Alt+F12 last only until you restart.
+10. **Alt+F1 takes a screenshot or does nothing?** The NVIDIA overlay uses Alt+F1 to Alt+F3 too. Change the key on the options page or switch off those overlay shortcuts.
 
 For a bug report, send `priority.log` and, if you can, the `Discovery.txt` from Alt+F5.
 
@@ -193,16 +201,16 @@ With chat you can use `!pwp off` instead of step 1. For a server, see [Dedicated
 ## Known limits
 
 - Not tested: two real players in two guilds at the same time, players without the mod editing on a modded server, Steam Deck, a physical controller.
-- Checked only by the mod's automated tests, not in the game: the cap of 500 limits per guild, the stand on a server without the mod or with another version, the warnings for a missing pak and a second UE4SS, the config reset notice, and controller input after the latest fixes.
+- Checked only by the mod's automated tests, not in the game: the cap of 500 limits per guild, the stand on a server without the mod or with another version, the warnings for a missing pak and a second UE4SS, the config reset notice, old 0.4.1 config values and a BOM in `config.lua`, rocks after a respawn, and controller input after the latest fixes.
 - Limits per item for buildings (Stone Pit, Logging Site, furnaces) and for work other than Mining are not there yet.
 
 ## For developers
 
-The project notes are an Obsidian vault, start at [docs/Home.md](docs/Home.md). Test steps are in [docs/testing.md](docs/testing.md), the release record in [docs/RELEASE-0.5.0.md](docs/RELEASE-0.5.0.md) and the decisions in [docs/DECISIONS.md](docs/DECISIONS.md). Public reports are tracked in the [comment census](docs/comment-ledger-2026-09-11.md).
+The project notes are in the `docs` folder of the [GitHub repository](https://github.com/Matraweber/PalWorkPriority), not in the mod download, so the `docs/` links below work only on GitHub. They are an Obsidian vault, start at [docs/Home.md](docs/Home.md). Test steps are in [docs/testing.md](docs/testing.md), the release record in [docs/RELEASE-0.5.0.md](docs/RELEASE-0.5.0.md) and the decisions in [docs/DECISIONS.md](docs/DECISIONS.md). Public reports are tracked in the [comment census](docs/comment-ledger-2026-09-11.md).
 
 Evidence for the claims above:
 
-- Clean installs, the 0.4.1 upgrade and the server: [g7-final-build-2026-10-28](docs/g7-final-build-2026-10-28.md). The install checks are run again on the final archives.
+- Clean installs, the 0.4.1 upgrade and the server: [g7-final-build-2026-10-28](docs/g7-final-build-2026-10-28.md) (an earlier 0.5.0 build). They will be rerun on the shipped archives; results in [RELEASE-0.5.0](docs/RELEASE-0.5.0.md), gate G7.
 - Workshop update (priorities and limits kept, old `Scripts/config.lua` edits lost): [g1-workshop-2026-10-20](docs/g1-workshop-2026-10-20.md).
 - Vortex 1.15.2 and 2.9.1: [vortex-2026-10-28](docs/vortex-2026-10-28.md).
 - Server folder and restarts on GPortal (UE4SS 3.0.1): [restart-persistence-2026-10-11](docs/restart-persistence-2026-10-11.md).
@@ -210,7 +218,7 @@ Evidence for the claims above:
 - Per-item Mining limits: [per-item-limits-2026-10-27](docs/per-item-limits-2026-10-27.md).
 - Frame costs: [g5-performance-2026-10-19](docs/g5-performance-2026-10-19.md).
 - Mixed versions: [g6-version-mismatch-2026-10-19](docs/g6-version-mismatch-2026-10-19.md).
-- The 0.5.0 audit: [review-2026-10-28](docs/review-2026-10-28.md) and [review-round2-2026-10-29](docs/review-round2-2026-10-29.md). Fixes retested: [retest-2026-10-29](docs/retest-2026-10-29.md).
+- The 0.5.0 audit: [review-2026-10-28](docs/review-2026-10-28.md) and [review-round2-2026-10-29](docs/review-round2-2026-10-29.md). Fixes retested: [retest-2026-10-29](docs/retest-2026-10-29.md) and [retest-r2-2026-10-29](docs/retest-r2-2026-10-29.md).
 
 `tools/release.py` builds both archives from one commit and checks the pak hash. Run the Lua and Python tests from [docs/testing.md](docs/testing.md) before a build.
 
