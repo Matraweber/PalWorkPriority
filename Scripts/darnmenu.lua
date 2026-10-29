@@ -73,7 +73,7 @@ return {
       title = "Running",
       options = {
         { path = "enabled", label = "Assign Pals to jobs", kind = "bool",
-          help = "Off gives every Pal its work back and stops steering." },
+          help = "Off gives back every job the mod switched off and stops steering. Jobs set to X stay off." },
         { path = "dry_run", label = "Test mode", kind = "bool",
           dependsOn = "enabled",
           help = "Works everything out and changes nothing. priority.log says what it would have done." },
@@ -100,7 +100,7 @@ return {
         { path = "min_suitability_rank", label = "Lowest work level to dedicate", kind = "number",
           integer = true, min = 1, max = 5, step = 1,
           help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Below it a Pal is not dedicated to that job, but it may still do it." },
-        { path = "leave_unordered_pals_to_game", label = "Leave unranked Pals to the game", kind = "bool",
+        { path = "leave_unordered_pals_to_game", label = "Leave Pals with equal numbers to the game", kind = "bool",
           help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
       },
     },
@@ -121,7 +121,7 @@ return {
       title = "Hotkeys",
       options = {
         { path = "key_panel", label = "Production Limits panel", kind = "keychord",
-          help = "Opens and closes Production Limits, where you set how much of an item a base keeps." },
+          help = "Opens and closes Production Limits, where you set when Pals stop making an item." },
         { path = "key_pass", label = "Recheck now", kind = "keychord",
           help = "Rechecks every base now instead of waiting for the next timed recheck." },
         { path = "key_stock", label = "Print base storage", kind = "keychord",
@@ -156,13 +156,24 @@ function M.schema()
 end
 
 -- Mods/shared/, found from this file rather than hardcoded, so a non-standard
--- install still resolves.
-local function shared_dir()
+-- install still resolves. On M so a test can point it at a stubbed folder.
+function M.shared_dir()
     if debug == nil or debug.getinfo == nil then return nil end
     local src = debug.getinfo(1, "S").source
     if type(src) ~= "string" or src:sub(1, 1) ~= "@" then return nil end
     local here = src:sub(2):match("^(.*[\\/])")
     return here and (here .. "..\\..\\shared\\") or nil
+end
+
+-- The whole file, or nil. Every failure is nil: a half-read file must never
+-- be mistaken for the shared index.
+local function read_all(path)
+    local ok, f = pcall(io.open, path, "rb")
+    if not ok or not f then return nil end
+    local read_ok, text = pcall(f.read, f, "*a")
+    local close_ok, closed = pcall(f.close, f)
+    if not read_ok or type(text) ~= "string" or not close_ok or not closed then return nil end
+    return text
 end
 
 local function read_table(path)
@@ -178,61 +189,99 @@ local function read_table(path)
     -- and it does - but only AFTER the file has already run. Both of these are
     -- supposed to be a literal table, so "t" refuses the bytecode outright and
     -- {} means the chunk has nothing to reach even if it tries.
-    local chunk = loadfile(path, "t", {})
+    --
+    -- Read with io and loaded as text, so a leading UTF-8 byte order mark (an
+    -- editor's, which loadfile skips and load does not) is dropped first.
+    local text = read_all(path)
+    if text == nil then return nil end
+    if text:sub(1, 3) == "\239\187\191" then text = text:sub(4) end
+    local chunk = load(text, "=" .. path, "t", {})
     if chunk == nil then return nil end
     local ok, value = pcall(chunk)
     return (ok and type(value) == "table") and value or nil
 end
 
+-- Written, flushed by close, and both results checked. file:write returns
+-- nil, err on a full disk instead of raising, so a pcall alone saw success.
+local function write_checked(path, source)
+    local ok, f = pcall(io.open, path, "wb")
+    if not ok or not f then return false end
+    local write_ok, wrote = pcall(f.write, f, source)
+    local close_ok, closed = pcall(f.close, f)
+    return write_ok and wrote ~= nil and close_ok and closed ~= nil and closed ~= false
+end
+
 -- Only when the bytes differ, so a launch that changes nothing does not
 -- rewrite two files for no reason.
+--
+-- One of the two files is SHARED: DarnMenu_schema_index.lua lists every mod
+-- that has registered a settings page. Ours is the only thing entitled to
+-- break when ours breaks, so (review round 2):
+--   1. the new bytes go to .tmp and are read back and compared;
+--   2. the old file is renamed to .bak, never removed (os.rename will not
+--      replace a file on Windows, so it has to move first);
+--   3. .tmp is renamed into place; if that fails, .bak is moved back.
+-- A crash between 2 and 3 leaves .tmp and .bak, and M.register recovers the
+-- index from them. At no point is the only copy of the old list deleted.
 local function write_if_changed(path, source)
-    local f = io.open(path, "rb")
-    if f then
-        local had = f:read("*a")
-        f:close()
-        if had == source then return true end
-    end
+    local had = read_all(path)
+    if had == source then return true end
 
-    -- Temp file then rename, because one of the two files this writes is
-    -- SHARED. DarnMenu_schema_index.lua lists every mod that has registered a
-    -- settings page, and opening it "wb" truncates it before a single byte is
-    -- written - so a failure or a crash in the middle left it empty and took
-    -- every other mod's page with it. Ours is the only thing entitled to
-    -- break when ours breaks.
-    local tmp = path .. ".tmp"
-    f = io.open(tmp, "wb")
-    if not f then return false end
-    local ok = pcall(function() f:write(source) end)
-    f:close()
-
-    if not ok then
-        os.remove(tmp)
+    local tmp, bak = path .. ".tmp", path .. ".bak"
+    if not write_checked(tmp, source) or read_all(tmp) ~= source then
+        pcall(os.remove, tmp)
         return false
     end
 
-    -- If the rename cannot happen, put the content back by hand.
-    --
-    -- os.rename will not replace an existing file on Windows, so the real file
-    -- has to go first - and that inverted the very protection this was written
-    -- for. M.register treats a PRESENT but unreadable index as "leave it
-    -- alone" and an ABSENT one as "start fresh", so dying between the remove
-    -- and the rename left the shared index missing, and the next launch
-    -- rewrote it containing only this mod. Every other mod's settings page
-    -- would have gone - the exact harm the temp file was meant to prevent.
-    --
-    -- Absent is the one state that must not be left behind, so a failed rename
-    -- falls back to writing in place. That is no worse than the old behaviour
-    -- and strictly better than a missing file.
-    os.remove(path)
-    if os.rename(tmp, path) then return true end
+    if had ~= nil then
+        pcall(os.remove, bak)
+        local ok, moved = pcall(os.rename, path, bak)
+        if not ok or not moved then
+            pcall(os.remove, tmp)
+            return false
+        end
+    end
 
-    local back = io.open(path, "wb")
-    if not back then return false end
-    local ok_back = pcall(function() back:write(source) end)
-    back:close()
-    os.remove(tmp)
-    return ok_back
+    local ok, renamed = pcall(os.rename, tmp, path)
+    if ok and renamed then return true end
+
+    -- Put the old file back. Should that fail too, .tmp and .bak both stay
+    -- for the next register to recover from.
+    if had ~= nil then
+        local back_ok, back = pcall(os.rename, bak, path)
+        if back_ok and back then pcall(os.remove, tmp) end
+    end
+    return false
+end
+
+-- A plain list of names, or nil. Anything else in the table (a non-string,
+-- a key outside the list) would be lost by a rewrite, so it is not a list.
+local function names_of(value)
+    if type(value) ~= "table" then return nil end
+    local out, count = {}, 0
+    for _ in pairs(value) do count = count + 1 end
+    for _, n in ipairs(value) do
+        if type(n) ~= "string" then return nil end
+        out[#out + 1] = n
+    end
+    return #out == count and out or nil
+end
+
+-- The index is absent: an interrupted write leaves .tmp (the new list) and
+-- .bak (the old one). Both are merged, so no other mod's page is lost.
+local function recover_index(index_path)
+    local merged, seen, found = {}, {}, false
+    for _, suffix in ipairs({ ".tmp", ".bak" }) do
+        local names = names_of(read_table(index_path .. suffix))
+        if names then
+            found = true
+            for _, n in ipairs(names) do
+                if not seen[n] then seen[n] = true; merged[#merged + 1] = n end
+            end
+        end
+    end
+    if found then log.warn("darnmenu: options index was missing, rebuilt from its .tmp/.bak copy") end
+    return merged
 end
 
 local function serialize_index(names)
@@ -248,14 +297,14 @@ end
 -- appears without a restart. Failing is not worth shouting about: DarnMenu may
 -- simply not be installed, in which case both files are inert.
 function M.register()
-    local shared = shared_dir()
+    local shared = M.shared_dir()
     if shared == nil then return false end
 
     local schema = shared .. "DarnMenu_schema_" .. SCHEMA_NAME .. ".lua"
     if not write_if_changed(schema, SCHEMA_SOURCE) then return false end
 
     local index_path = shared .. "DarnMenu_schema_index.lua"
-    local names = read_table(index_path)
+    local names, recovered = names_of(read_table(index_path)), false
 
     if names == nil then
         -- Present but unreadable is not the same as absent. Overwriting it
@@ -266,14 +315,15 @@ function M.register()
             log.debug("darnmenu: index unreadable, left as it is")
             return false
         end
-        names = {}
+        names, recovered = recover_index(index_path), true
     end
 
+    local listed = false
     for _, n in ipairs(names) do
-        if n == SCHEMA_NAME then return true end
+        if n == SCHEMA_NAME then listed = true end
     end
-
-    names[#names + 1] = SCHEMA_NAME
+    if listed and not recovered then return true end
+    if not listed then names[#names + 1] = SCHEMA_NAME end
     if not write_if_changed(index_path, serialize_index(names)) then
         return false
     end
@@ -315,7 +365,7 @@ local MODS = { CONTROL = true, ALT = true, SHIFT = true }
 -- What the player saved, or nil. On M so a test can hand in a file's
 -- contents without a Mods/shared/ folder on disk.
 function M.user_settings()
-    local shared = shared_dir()
+    local shared = M.shared_dir()
     return shared and read_table(shared .. USER_NAME .. ".lua") or nil
 end
 
@@ -328,16 +378,25 @@ function M.binding(name, default_key, default_mods)
     local changed = false
 
     if type(saved) == "table" and type(saved.key) == "string" then
-        if Key ~= nil and Key[saved.key] ~= nil then
-            key_name = saved.key
-            mod_names = {}
-            if type(saved.modifiers) == "table" then
-                for _, m in ipairs(saved.modifiers) do
-                    if type(m) == "string" and MODS[m] then
-                        mod_names[#mod_names + 1] = m
-                    end
-                end
+        -- An unknown modifier is refused as a whole, never dropped: dropping
+        -- it turned Alt+F1 into a plain F1 (review round 2).
+        local wanted, unknown = {}, nil
+        if saved.modifiers ~= nil and type(saved.modifiers) ~= "table" then
+            unknown = tostring(saved.modifiers)
+        end
+        for _, m in ipairs(type(saved.modifiers) == "table" and saved.modifiers or {}) do
+            if type(m) == "string" and MODS[m] and ModifierKey ~= nil and ModifierKey[m] ~= nil then
+                wanted[#wanted + 1] = m
+            else
+                unknown = unknown or tostring(m)
             end
+        end
+        if unknown ~= nil then
+            log.warn("darnmenu: " .. name .. " uses the modifier '" .. unknown ..
+                "', which this UE4SS has no key for. Using the default.")
+        elseif Key ~= nil and Key[saved.key] ~= nil then
+            key_name = saved.key
+            mod_names = wanted
             changed = true
         else
             log.warn("darnmenu: " .. name .. " is bound to '" ..
@@ -349,13 +408,16 @@ function M.binding(name, default_key, default_mods)
     local key = Key and Key[key_name] or nil
     if key == nil then return nil, nil, false end
 
+    -- A default modifier this UE4SS lacks binds nothing rather than a plain
+    -- key; main.lua then warns that the action has no hotkey.
     local mods = nil
-    if #mod_names > 0 and ModifierKey ~= nil then
+    if #mod_names > 0 then
         mods = {}
         for _, m in ipairs(mod_names) do
-            if ModifierKey[m] ~= nil then mods[#mods + 1] = ModifierKey[m] end
+            local value = ModifierKey ~= nil and ModifierKey[m] or nil
+            if value == nil then return nil, nil, false end
+            mods[#mods + 1] = value
         end
-        if #mods == 0 then mods = nil end
     end
 
     -- What to call it in a log line, so a rebound key still reads clearly.

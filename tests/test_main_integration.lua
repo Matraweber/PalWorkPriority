@@ -15,6 +15,8 @@ local failures = {}
 -- Set by a test to boot with the real darnmenu reading this as the player's
 -- saved Mods/shared/PalWorkPriority_user.lua; nil boots with a stub.
 local darnmenu_user = nil
+-- Set by a test to boot on a UE4SS whose ModifierKey has no ALT.
+local without_alt = false
 
 local function upvalue(fn, wanted)
     for i=1,100 do
@@ -56,7 +58,11 @@ local function boot(authority,empty_caps,prepare,expected_error)
         state.hooks[path]={before=before,after=after}
         return 1,2
     end
-    RegisterKeyBind=function(key,mods,fn) state.keys[key]=fn or mods end
+    -- Stored as {fn, mods} so a test can see which keys carry Alt.
+    RegisterKeyBind=function(key,mods,fn)
+        if fn==nil then mods,fn=nil,mods end
+        state.keys[key]={fn=fn,mods=mods}
+    end
     LoopInGameThreadWithDelay=function(ms,fn) state.loops[ms]=fn end
     ExecuteInGameThread=function(fn) fn() end
     FindAllOf=function() return {} end
@@ -65,12 +71,14 @@ local function boot(authority,empty_caps,prepare,expected_error)
     LoadAsset=function() return nil end
     FName=function(value) return value end
     -- Only names UE4SS really has: a made-up one (DELETE, 2026-10-28) bound
-    -- nothing in game while this stub happily answered for it.
+    -- nothing in game while this stub happily answered for it. ALT is a
+    -- ModifierKey, not a Key.
     Key=setmetatable({}, {__index=function(_,key)
-        if key:match("^F%d+$") or ({ALT=1,ESCAPE=1,RETURN=1,DEL=1,BACKSPACE=1,TAB=1,
+        if key:match("^F%d+$") or ({ESCAPE=1,RETURN=1,DEL=1,BACKSPACE=1,TAB=1,
             UP_ARROW=1,DOWN_ARROW=1,LEFT_ARROW=1,RIGHT_ARROW=1,SPACE=1})[key] then return key end
     end})
     ModifierKey={ALT="ALT",CONTROL="CONTROL",SHIFT="SHIFT"}
+    if without_alt then ModifierKey.ALT=nil end
 
     -- Use real persistence, configuration, transport/protocol, session and
     -- measurement modules; only native/UI adapters and the scheduler engine
@@ -245,7 +253,7 @@ test("native Escape ownership suppresses only the duplicate raw panel action",fu
     local panel,overlay=package.loaded.panel,package.loaded.overlay
     local cancelled=0
     panel.open=true; panel.escape=function() cancelled=cancelled+1 end
-    local function escape() s.keys.ESCAPE(); s.session.drain() end
+    local function escape() s.keys.ESCAPE.fn(); s.session.drain() end
     overlay.native_cancel=true
     escape()
     assert(cancelled==0,'raw Escape duplicated the native widget request')
@@ -463,7 +471,7 @@ test("queued keys drain on the first 100ms beat without accelerating maintenance
     end
     assert(s.keys.ONE==nil and s.keys.TWO==nil and s.keys.X==nil,
         'global number observer bypasses native stand keyboard ownership')
-    s.keys.UP_ARROW(); s.keys.DOWN_ARROW()
+    s.keys.UP_ARROW.fn(); s.keys.DOWN_ARROW.fn()
     assert(#values==0 and s.store.get("PAL-A",1)==false,"key callback executed game-thread work inline")
     assert(s.timers.ui.ms==100)
     s.now=s.now+0.1; s:ui_beat()
@@ -1272,10 +1280,10 @@ test("Delete asks the open panel to remove the selected limit and leaves the wor
     local panel=package.loaded.panel
     local calls={}
     panel.row_action=function(cfg,kind) calls[#calls+1]=kind; assert(cfg==s.cfg()) return true end
-    assert(type(s.keys.DEL)=="function","Delete is not bound")
-    panel.open=false; s.keys.DEL(); s.session.drain()
+    assert(s.keys.DEL and type(s.keys.DEL.fn)=="function","Delete is not bound")
+    panel.open=false; s.keys.DEL.fn(); s.session.drain()
     assert(#calls==0,"Delete acted with the panel closed")
-    panel.open=true; s.keys.DEL(); s.session.drain()
+    panel.open=true; s.keys.DEL.fn(); s.session.drain()
     assert(#calls==1 and calls[1]=="drop","Delete did not ask for drop")
 end)
 
@@ -1292,6 +1300,61 @@ test("chat help and the load line are in player words",function()
         "give every Pal all its work back (do this before removing the mod)"}) do
         assert(help:find(want,1,true),"help lacks "..want)
     end
+end)
+
+test("Alt hotkeys carry Alt and the panel keys carry no modifier",function()
+    local s=boot(true)
+    for _,key in ipairs({"F1","F2","F3","F5","F9","F10","F11","F12"}) do
+        local bound=s.keys[key]
+        assert(bound and type(bound.fn)=="function",key.." is not bound")
+        assert(type(bound.mods)=="table" and #bound.mods==1 and bound.mods[1]=="ALT",
+            key.." is bound without Alt")
+    end
+    for _,key in ipairs({"UP_ARROW","DOWN_ARROW","LEFT_ARROW","RIGHT_ARROW","RETURN","DEL","ESCAPE"}) do
+        local bound=s.keys[key]
+        assert(bound and type(bound.fn)=="function",key.." is not bound")
+        assert(bound.mods==nil,key.." needs a modifier")
+    end
+end)
+
+test("without an Alt modifier the Alt keys are not bound as plain keys",function()
+    without_alt=true
+    local ok,s=pcall(boot,true)
+    without_alt=false
+    assert(ok,s)
+    for _,key in ipairs({"F1","F2","F3","F5","F9","F10","F11","F12"}) do
+        assert(s.keys[key]==nil,key.." was bound as a plain key")
+    end
+    assert(s.keys.ESCAPE and s.keys.DEL,"the panel keys went with the Alt keys")
+    local said=table.concat(s.console," | ")
+    assert(said:find("no modifier key for it",1,true),"the missing hotkeys were not reported")
+end)
+
+test("chat help says rocks works on the host too",function()
+    local s=boot(true)
+    s.console={}; s.commands.help()
+    local help=table.concat(s.console,"\n")
+    assert(help:find("who mines what (host or server)",1,true),help)
+end)
+
+test("limit listing on a client asks the server and follows its Mining setting",function()
+    local s=boot(false); s.timers.role.fn()
+    s.api.my_guild=function() return 'guild-local' end
+    local requested=0
+    s.net.epoch=s.net.epoch or 7
+    s.net.request_stock=function(guild) assert(guild=='guild-local'); requested=requested+1 end
+    s.net.storage_view=function(guild)
+        return {guild=guild,choices={'camp-1'},totals={Stone=50},label='Base 1 of 1',
+            epoch=s.net.epoch,verified=true,scope='camp',camp='camp-1',expires_at=s.now+30}
+    end
+    s.net.server_item_limits=false
+    s.caps.remote={['guild-local']={Mining={Stone=100}}} -- the server's rules, as a client holds them
+    s.console={}; s.commands.limit('')
+    local output=table.concat(s.console,'\n')
+    assert(requested==1,'the client never asked the server for stock: '..output)
+    assert(output:find('50 / 100',1,true) and not output:find('unavailable',1,true),output)
+    assert(output:find('each limit can switch its entire work type',1,true),
+        'the client used its own Mining setting instead of the server\'s: '..output)
 end)
 
 io.open,io.popen=original_io.open,original_io.popen

@@ -32,9 +32,8 @@ return {
     -- Recheck every base as soon as a world finishes loading.
     run_on_world_load = true,
 
-    -- Used only by installs upgraded from 0.4.1: 1 is highest, 5 lowest,
-    -- false is X. A new install starts from the game's own ticks instead
-    -- (ticked = 1, unticked = X). Values saved per Pal win over this table.
+    -- Only true/number versus false matters here. A number means managed,
+    -- false means X for every Pal. Rank Pals on the stand.
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.
@@ -69,11 +68,10 @@ return {
     -- that is what you actually want.
     assignment_mode = "spread",
 
-    -- Maximum automatic eligibility per type. Verified manual assignments
-    -- and unreadable existing assignments can cause a reported conflict;
-    -- permission counts alone do not prove actual worker occupancy.
+    -- The most Pals the mod puts on one job. A Pal you put on a job by hand
+    -- keeps it even past this number, and priority.log says so.
     -- Set to false for no limit. Combines with either mode: spread with a
-    -- cap of 3 means one each, then seconds, then thirds, and no more.
+    -- limit of 3 means one each, then seconds, then thirds, and no more.
     max_pals_per_work_type = 3,
 
     -- A Pal whose allowed jobs all have the same number (a fresh install's
@@ -147,10 +145,11 @@ return {
     -- produces something without a limit or below it. Stone Pits and other
     -- buildings cannot be stopped on their own and keep producing until then.
     --
-    -- Per-guild edits override these inherited groups. Clearing an inherited
-    -- group item stores an OFF mask for that guild without changing others.
-    -- Use the item's StaticId, as reported by !pwp stock. Command output is
-    -- written to priority.log, not echoed into the game chat.
+    -- A limit you change in the panel wins over the one here, for your guild
+    -- only. Removing one of these items in the panel turns it off for your
+    -- guild; other guilds keep it. Name items the way Alt+F3 or !pwp stock
+    -- writes them to priority.log (Stone, Wood, ...), not as the game shows
+    -- them. Those commands write to priority.log, not to the game chat.
     -- work_caps = { Mining = { Stone = 3000, Ore = 2000 } },
     work_caps = {},
 

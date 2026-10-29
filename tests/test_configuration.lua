@@ -49,7 +49,7 @@ do
     assert(loaded and is_fresh == false, why)
     assert(upgraded.upgrade_reset == true, 'removed config.lua went unnoticed')
     assert(#warned == 1 and warned[1]:find('Your earlier config.lua was not found', 1, true)
-        and warned[1]:find('options-menu settings are kept', 1, true), 'no upgrade warning')
+        and warned[1]:find('options page settings are kept', 1, true), 'no upgrade warning')
     -- The next launch reads the copy it made and says nothing more.
     assert(upgraded.load('up/', 'upScripts/') and #warned == 1)
 
