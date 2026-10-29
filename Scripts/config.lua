@@ -5,14 +5,15 @@
 -- first load. Release packages name these defaults default_config.lua.
 
 return {
-    -- Master switch. false leaves the game completely untouched.
+    -- false gives back every job the mod switched off and stops the mod.
+    -- Jobs set to X stay off.
     enabled = true,
 
-    -- true  = work out every assignment and log it, send nothing to the server
+    -- true  = test mode: work out every assignment and log it, change nothing
     -- false = actually assign pals
     --
     -- Set this to true to watch a session before letting the mod touch a
-    -- base. Every recheck then logs what it would change and sends nothing.
+    -- base. Every recheck then logs what it would change and changes nothing.
     dry_run = false,
 
     -- Seconds between rechecks (5 or more).
