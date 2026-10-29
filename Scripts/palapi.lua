@@ -65,6 +65,12 @@ local pc_walk_misses = 0
 local pc_walk_next = 0
 local PC_WALK_PATIENCE = 5
 local PC_WALK_GAP = 10.0
+local PC_WALK_GAP_MAX = 120.0
+
+-- Whether UEHelpers.GetGameInstance (a FindFirstOf on its first call) has
+-- already come back empty in this world. headless_game_instance explains it;
+-- declared up here because M.reset clears it.
+local gi_search_missed = false
 
 -- The owned base camp component, remembered by NAME between resolutions.
 --
@@ -243,6 +249,7 @@ function M.reset()
     -- last one.
     pc_walk_misses = 0
     pc_walk_next = 0
+    gi_search_missed = false
     M.game_ui_active = nil
 
     cdo_cache = {}
@@ -419,6 +426,46 @@ function M.local_player_controller()
     return pc
 end
 
+-- The game instance, as a world context on a machine with no screen.
+--
+-- A headless server has no GameViewport, so every chain above throws there,
+-- and the only other world context the mod knew was a player controller -
+-- which an empty server does not have. The search for one read the whole
+-- object array every pass to find nothing (2026-10-29: 20.5 ms on the GPortal
+-- server for the authority probe, 20.5 ms again for the work manager). The
+-- game instance exists for the whole process, and any UObject whose GetWorld
+-- answers is a valid world context for a PalUtility call.
+--
+-- nil wherever a viewport exists: a client, a listen host and singleplayer
+-- keep their own paths exactly as they were. Read fresh, nothing kept here.
+-- UGameEngine.GameInstance is one pointer read. UEHelpers.GetGameInstance is
+-- a FindFirstOf on its first call (UEHelpers keeps the answer, as it keeps
+-- the engine), so after one miss it is not asked again in this world: a
+-- failing route must not add a walk of its own to every pass.
+-- The name check is the TrivialObject guard used for GameMode below.
+local function headless_game_instance()
+    local gi
+    pcall(function()
+        local ue = require("UEHelpers")
+        local engine = ue.GetEngine()
+        if not valid(engine) or valid(engine.GameViewport) then return end
+        local function named(o)
+            if not valid(o) then return false end
+            local name
+            pcall(function() name = o:GetFullName() end)
+            return type(name) == "string" and name:find("GameInstance", 1, true) ~= nil
+        end
+        local candidate
+        pcall(function() candidate = engine.GameInstance end)
+        if named(candidate) then gi = candidate; return end
+        if gi_search_missed or type(ue.GetGameInstance) ~= "function" then return end
+        log.count("api: game instance search")
+        pcall(function() candidate = ue.GetGameInstance() end)
+        if named(candidate) then gi = candidate else gi_search_missed = true end
+    end)
+    return gi
+end
+
 function M.player_controller()
     if pc_memo ~= nil then return pc_memo end
     if local_pc_memo ~= nil then return local_pc_memo end
@@ -442,8 +489,14 @@ function M.player_controller()
             if valid(pc) then
                 pc_walk_misses = 0
             else
+                -- The gap doubles with every miss past the patience, up to
+                -- two minutes. A fixed 10 s never engaged on the GPortal
+                -- server (2026-10-29): its passes are 11.5 s apart, so every
+                -- pass walked the whole array to find no player. A hit resets
+                -- it, and so does a world change.
                 pc_walk_misses = pc_walk_misses + 1
-                pc_walk_next = now + PC_WALK_GAP
+                local over = math.max(0, math.min(pc_walk_misses - PC_WALK_PATIENCE, 8))
+                pc_walk_next = now + math.min(PC_WALK_GAP * 2 ^ over, PC_WALK_GAP_MAX)
             end
         else
             log.count("api: pc walk skipped")
@@ -756,12 +809,37 @@ local function authority_via_world()
     return answer
 end
 
+-- The same GetPalGameMode question on a machine with no screen, asked with
+-- the game instance as its world context (headless_game_instance). Same
+-- one-way contract: a GameMode-ish object is a yes, anything else is nil and
+-- the walk decides. Never false - a dedicated server is the authority, and a
+-- client never reaches this (it has a viewport).
+local function authority_via_instance()
+    local gi = headless_game_instance()
+    if gi == nil then return nil end
+    local answer = nil
+    pcall(function()
+        local util = M.cdo("/Script/Pal.Default__PalUtility")
+        if util == nil then return end
+        local gm
+        pcall(function() gm = util:GetPalGameMode(gi) end)
+        if gm == nil then return end
+        local name
+        pcall(function() name = gm:GetFullName() end)
+        if type(name) == "string" and name:lower():find("gamemode", 1, true) then
+            answer = true
+        end
+    end)
+    return answer
+end
+
 -- Probe once and remember. Always probes, never reads the memo, so a second
 -- call can correct a first one taken before the world was fully up - and
 -- so a stale "yes" carried from hosting into joining (world_key may not
 -- differ) survives at most one interval. The probe stays fresh; what changed
--- is its price: the pointer chain answers where it can, and the full
--- FindFirstOf walk remains the fallback for anything the chain cannot see.
+-- is its price: the pointer chain answers where it can (the game instance
+-- on a headless server), and the full FindFirstOf walk remains the fallback
+-- for anything the chain cannot see.
 function M.latch_authority()
     -- A local autonomous proxy belongs to the current client connection.
     -- Global object enumeration may still find a retiring world's GameMode;
@@ -772,7 +850,8 @@ function M.latch_authority()
     if role == 2 then auth = false; return false end
     -- Free evidence first: a demand pulse newer than this spawn can only
     -- have been produced by this machine running the authority's scheduler.
-    -- The hint abstains with nil; only an explicit true is believed.
+    -- The hint abstains with nil; only an explicit true is believed. main.lua
+    -- currently wires no hint at all, so this costs nothing and says nothing.
     if authority_hint ~= nil then
         local yes
         pcall(function() yes = authority_hint() end)
@@ -786,6 +865,16 @@ function M.latch_authority()
     local via = authority_via_world()
     if via == true then
         log.count("api: authority via world chain")
+        auth = true
+        return auth
+    end
+
+    -- A headless server: no viewport, so the chain above threw, and with the
+    -- pulse hint unwired (main.lua) the walk below ran on every pass, every
+    -- remote ClientRestart, client push and storage refresh. Asked fresh on
+    -- every call like the rest (N-pass caching was rejected 2026-08-27).
+    if authority_via_instance() == true then
+        log.count("api: authority via game instance")
         auth = true
         return auth
     end
@@ -1102,15 +1191,32 @@ end
 -- Works in a base
 -- ---------------------------------------------------------------------------
 
+-- The controller is only a world context here. It used to come from
+-- player_controller(), whose walk fallback is what a headless server always
+-- got: no viewport, so the walk ran every pass, and with nobody online it
+-- found nothing. No manager meant no works, so on an empty server the
+-- station counters and per-item rock limits silently did nothing
+-- (2026-10-29). The local controller (any machine with a screen) or the game
+-- instance (a headless server) answers without a search. The walk stays only
+-- as the last resort, for a server build where the game instance is refused
+-- as a context; its rationing then keeps the cost down.
 function M.work_progress_manager()
     local util = M.cdo("/Script/Pal.Default__PalUtility")
-    local pc = M.player_controller()
-    if not (util and pc) then return nil end
+    if not util then return nil end
 
-    local wpm
-    pcall(function() wpm = util:GetWorkProgressManager(pc) end)
-    if valid(wpm) then return wpm end
-    return nil
+    local function ask(ctx)
+        if ctx == nil then return nil end
+        local wpm
+        pcall(function() wpm = util:GetWorkProgressManager(ctx) end)
+        if valid(wpm) then return wpm end
+        return nil
+    end
+
+    local local_pc = M.local_player_controller()
+    if local_pc ~= nil then return ask(local_pc) end
+    local wpm = ask(headless_game_instance())
+    if wpm ~= nil then return wpm end
+    return ask(M.player_controller())
 end
 
 -- The camp channel: BaseCampModel -> WorkCollection.WorkIds -> GetWork(id).
