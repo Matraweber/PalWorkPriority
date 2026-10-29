@@ -132,7 +132,11 @@ M.SILENT_HANDIWORK_CLASSES = { PalWorkFishPond = true, PalWorkLabResearch = true
 -- work key -> class name, for the Handiwork works handed to the counter
 -- below. A work's class never changes, and GetFullName is a native string
 -- call per work per pass otherwise. Plain strings only; the work itself is
--- never kept. Cleared on a world change (forget).
+-- never kept. Per camp (camp key -> {work key -> class}) and rebuilt by every
+-- call from the keys it was handed, like the scheduler's work_types, so works
+-- that are gone (mined-out rocks, removed buildings) drop out instead of
+-- growing the memo for the whole session (review 2026-10-29). Cleared on a
+-- world change (forget).
 local classes = {}
 
 function M.forget()
@@ -141,17 +145,21 @@ end
 
 -- Number of fishing ponds and Handiwork research labs in `works` that are
 -- built and Workable. One seat each. `keys[i]`, when given, is works[i]'s
--- work id, so its class is read once.
-function M.ponds_and_labs_needing(works, keys)
+-- work id, so its class is read once; `camp_key` names the camp the works
+-- belong to (one shared slot without it).
+function M.ponds_and_labs_needing(works, keys, camp_key)
     local n = 0
+    local slot = camp_key or ''
+    local known, fresh = classes[slot] or {}, {}
     for i, w in ipairs(works or {}) do
         local key = type(keys) == 'table' and keys[i] or nil
-        local class = key and classes[key] or nil
+        local class = key and known[key] or nil
         if class == nil then
             class = (api.work_full_name(w) or ''):match('^(%S+)')
             -- "<unknown work>" is a failed read, asked again next pass.
-            if key and class and class:sub(1, 1) ~= '<' then classes[key] = class end
+            if class and class:sub(1, 1) == '<' then class = nil end
         end
+        if key and class then fresh[key] = class end
         if class and M.SILENT_HANDIWORK_CLASSES[class]
             and api.work_suitability(w) == M.HANDIWORK
             and api.as_int(api.prop(w, 'CurrentState')) == M.WORKABLE then
@@ -161,6 +169,7 @@ function M.ponds_and_labs_needing(works, keys)
             end
         end
     end
+    if type(keys) == 'table' then classes[slot] = next(fresh) and fresh or nil end
     return n
 end
 

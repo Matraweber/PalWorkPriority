@@ -39,4 +39,25 @@ stations.forget()
 names = 0
 stations.ponds_and_labs_needing(works, keys)
 assert(names == 4, 'forget kept remembered classes')
-print('stations: pond/lab class read once per work id, failed reads asked again, forget starts over')
+
+-- The memo is per camp and rebuilt from the keys of each call, like the
+-- scheduler's work_types: works that are gone drop out instead of growing
+-- it for the whole session (review 2026-10-29, performance).
+stations.forget()
+stations.ponds_and_labs_needing(works, keys, 'c1')
+stations.ponds_and_labs_needing(works, keys, 'c2')
+names = 0
+assert(stations.ponds_and_labs_needing({ works[1] }, { 'pond' }, 'c1') == 1 and names == 0)
+names = 0
+stations.ponds_and_labs_needing(works, keys, 'c1')
+assert(names == 3, 'gone works stayed remembered: ' .. names .. ' reads (lab, bench, blank expected)')
+names = 0
+stations.ponds_and_labs_needing(works, keys, 'c2')
+assert(names == 1, "one camp's call rebuilt another camp's memo: " .. names)
+-- Without keys the memo is left alone.
+names = 0
+stations.ponds_and_labs_needing(works, nil, 'c2')
+names = 0
+stations.ponds_and_labs_needing(works, keys, 'c2')
+assert(names == 1, 'a call without keys dropped the memo')
+print('stations: pond/lab class read once per work id, failed reads asked again, forget starts over, memo per camp shrinks with the works')

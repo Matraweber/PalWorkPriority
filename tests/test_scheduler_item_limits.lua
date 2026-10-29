@@ -128,6 +128,9 @@ local function setup(scope)
     scheduler.assignment_reader = function() return { state = "ready", manual = false } end
     scheduler.prepare_pal = nil
     scheduler.forget()
+    -- forget() keeps held rocks (a respawn must not lose them), so each
+    -- case starts from an empty list by hand.
+    sources.blocked = {}
 end
 local function off(camp) return pals_of[camp][1].off[MINING] == true end
 local function state(camp, i) return works_of[camp][i].CurrentState end
@@ -258,13 +261,174 @@ cfg.item_limits_on_rocks = false
 stats = scheduler.run_pass(cfg)
 assert(state("A", 1) == 1 and sources.count("A") == 0 and not off("A"), "config switch kept the rock or the item rule")
 
--- forget() (world change) clears held rocks; forget_policy() keeps them.
+-- forget() is main's ClientRestart reset, which runs on every local
+-- respawn and same-map reconnect, where the rocks still read NotWorkable.
+-- It keeps held rocks, like forget_policy(), so a limit removed after a
+-- respawn still releases them (review 2026-10-29, P1).
 setup()
 scheduler.run_pass(cfg)
 scheduler.forget_policy()
 assert(sources.count("A") == 1, "forget_policy dropped held rocks")
 scheduler.forget()
-assert(sources.count("A") == 0, "forget kept held rocks")
+assert(sources.count("A") == 1 and state("A", 1) == 2, "forget dropped held rocks")
+rules = {}
+stats = scheduler.run_pass(cfg)
+assert(state("A", 1) == 1 and sources.count("A") == 0, "a respawn left a held rock off for good")
+assert(stats.rocks_started == 1)
+-- The same through off/restore after a respawn.
+setup()
+scheduler.run_pass(cfg)
+scheduler.forget()
+scheduler.restore(cfg)
+assert(state("A", 1) == 1 and sources.count("A") == 0, "restore after a respawn left a rock off")
+
+-- Restore releases held rocks while settings cannot be saved: undoing the
+-- mod's own rock writes needs no saved settings, only the authority. The
+-- Pals still wait (review 2026-10-29).
+setup()
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 1)
+local caps_mock = package.loaded.caps
+caps_mock.state = "error"
+stats = scheduler.restore(cfg)
+caps_mock.state = "saved"
+assert(stats.blocked and stats.blocked_reason:find("not durable", 1, true), "restore did not report the settings gate")
+assert(state("A", 1) == 1 and sources.count("A") == 0, "settings in error kept a held rock off")
+assert(stats.rocks_started == 1 and stats.toggles == 0, "restore changed Pals without saved settings")
+-- Not on a machine that is not the authority.
+setup()
+scheduler.run_pass(cfg)
+caps_mock.state = "error"
+api.latch_authority = function() return false end
+scheduler.restore(cfg)
+api.latch_authority = function() return true end
+caps_mock.state = "saved"
+assert(state("A", 1) == 2 and sources.count("A") == 1, "a non-authority wrote a rock")
+
+-- A base whose rocks are all mined out has no Mining source. That is not
+-- "every limit reached": the group rule decides (Ore short: Mining stays),
+-- also after an earlier per-item "not wanted" (review 2026-10-29).
+setup()
+works_of.A = {}
+scheduler.run_pass(cfg)
+assert(not off("A"), "a base with no Mining source lost Mining")
+setup()
+scheduler.run_pass(cfg)
+assert(off("A"))
+works_of.A = {}
+scheduler.run_pass(cfg)
+assert(not off("A"), "an earlier decision outlived the base's last rock")
+
+-- A partial list that sees a source still short proves "wanted"; it cannot
+-- prove "not wanted" (review 2026-10-29).
+setup()
+scheduler.run_pass(cfg)
+assert(off("A"))
+local short_ore = rock("a-ore", "CopperOre")
+works_override.A = function() return { short_ore }, "WorkIds sweep threw", { "a-ore" } end
+scheduler.run_pass(cfg)
+assert(not off("A"), "a partial list that saw a short source kept Mining off")
+-- ... and the partial list that sees only reached sources keeps the last answer.
+setup()
+scheduler.run_pass(cfg)
+works_override.A = function() return { works_of.A[1] }, "WorkIds sweep threw", { "a-stone" } end
+scheduler.run_pass(cfg)
+assert(off("A"), "a partial list proved not wanted")
+
+-- Entries the sweep skipped (camp_works' fourth value) and works without an
+-- id make the list partial: the held rock among them is not dropped as gone
+-- while it still reads NotWorkable (review 2026-10-29, engine P2-3).
+setup()
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 1 and state("A", 1) == 2)
+works_override.A = function() return { works_of.A[2] }, nil, { "a-pit" }, 1 end
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 1, "skipped entries read as a complete list")
+works_override.A = function() return { works_of.A[1], works_of.A[2] }, nil, { [2] = "a-pit" }, 0 end
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 1, "a work without an id read as a complete list")
+-- A keyless work of another type cannot be a held rock: the list stays
+-- complete, so the held rock it no longer lists is dropped as gone.
+local bench = { value = LUMBERING, class = "PalWorkProgress", CurrentState = 1 }
+works_override.A = function() return { bench, works_of.A[2] }, nil, { [2] = "a-pit" }, 0 end
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 0, "a keyless work of another type made the list partial")
+works_of.A[1].CurrentState = 2
+sources.blocked.A = { ["a-stone"] = true }
+works_override.A = nil
+rules = {}
+scheduler.run_pass(cfg)
+assert(sources.count("A") == 0 and state("A", 1) == 1)
+-- restore uses the same rule.
+setup()
+scheduler.run_pass(cfg)
+works_override.A = function() return { works_of.A[2] }, nil, { "a-pit" }, 1 end
+scheduler.restore(cfg)
+assert(sources.count("A") == 1, "restore read skipped entries as a complete list")
+works_override.A = nil
+
+-- A base with no Pals gives held rocks back in test mode and with per-item
+-- switched off; with the limit still there they wait for its Pals.
+for _, how in ipairs({ "dry_run", "per_item_off", "limit_kept" }) do
+    setup()
+    scheduler.run_pass(cfg)
+    assert(sources.count("A") == 1)
+    pals_of.A = {}
+    if how == "dry_run" then cfg.dry_run = true end
+    if how == "per_item_off" then cfg.item_limits_on_rocks = false end
+    stats = scheduler.run_pass(cfg)
+    cfg.dry_run, cfg.item_limits_on_rocks = false, nil
+    if how == "limit_kept" then
+        assert(sources.count("A") == 1 and state("A", 1) == 2 and stats.rocks_held == 1, how .. ": released early")
+    else
+        assert(sources.count("A") == 0 and state("A", 1) == 1, how .. ": an empty base kept a held rock")
+    end
+end
+
+-- Per-camp memos of camps no longer visited are pruned at the end of a pass.
+setup()
+scheduler.run_pass(cfg)
+assert(scheduler.last_capped_by_camp.B ~= nil)
+camps = { { id = "A" } }
+scheduler.run_pass(cfg)
+assert(scheduler.last_capped_by_camp.B == nil, "an unloaded camp's verdict was kept")
+-- A failed read still keeps the visited camp's decision across passes.
+works_override.A = function() return {}, "WorkCollection has no WorkIds" end
+scheduler.run_pass(cfg)
+scheduler.run_pass(cfg)
+assert(off("A"), "the prune dropped a visited camp's Mining decision")
+works_override.A = nil
+
+-- main's restore_all calls restore up to twelve times in one go: a rock
+-- that cannot be released is reported once per run, not once per call. A
+-- later run says it again (review 2026-10-29).
+setup()
+scheduler.run_pass(cfg)
+local raw = works_of.A[1]
+raw.CurrentState = 2
+works_of.A[1] = setmetatable({}, { __index = raw, __newindex = function() end }) -- writes do not stick
+local warned, real_warn, real_clock = 0, package.loaded.log.warn, os.clock
+package.loaded.log.warn = function(msg) if msg:find("still held off", 1, true) then warned = warned + 1 end end
+local now = 100
+os.clock = function() return now end
+for _ = 1, 3 do scheduler.restore(cfg) end
+assert(warned == 1, "one restore run warned " .. warned .. " times about the same rocks")
+now = now + 30
+scheduler.restore(cfg)
+os.clock, package.loaded.log.warn = real_clock, real_warn
+assert(warned == 2, "a later restore run did not say the rock is still held")
+works_of.A[1] = raw
+
+-- One caps.all copy per camp, not one per work type.
+setup()
+local all_calls, real_all = 0, caps_mock.all
+caps_mock.all = function(...) all_calls = all_calls + 1; return real_all(...) end
+local for_work_calls, real_for_work = 0, caps_mock.for_work
+caps_mock.for_work = function(...) for_work_calls = for_work_calls + 1; return real_for_work(...) end
+scheduler.run_pass(cfg)
+caps_mock.all, caps_mock.for_work = real_all, real_for_work
+assert(for_work_calls == 0 and all_calls <= 2 * 2, "caps copied per work type: all " .. all_calls ..
+    ", for_work " .. for_work_calls)
 
 -- Only Mining touches rocks: a Lumbering limit with a rock-shaped tree work
 -- leaves it Workable, beside an active Mining limit.

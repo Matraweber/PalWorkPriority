@@ -44,6 +44,9 @@ local works = {
 local keys = { 'stone', 'ore', 'crystal', 'pit' }
 local values = { stone = MINING, ore = MINING, crystal = MINING, pit = MINING }
 local function limits(t) return function(v) if v == MINING then return t end end end
+-- A clean slate between sections. forget() keeps the held list (see the
+-- respawn test at the end), so it is emptied here by hand.
+local function fresh() src.forget(); src.blocked = {} end
 
 -- Main drop: the largest entry.
 assert(src.product(works[1], 'stone').item == 'Stone' and src.product(works[1], 'stone').rock)
@@ -99,7 +102,7 @@ assert(own.CurrentState == 2, 'released a rock it never switched off')
 -- still reads NotWorkable goes back, one the game already reset is just
 -- dropped, a rock the game holds itself is never touched, and the list is
 -- empty afterwards.
-src.forget()
+fresh()
 local a, b = rock({ { 'Stone', 50 } }), rock({ { 'Stone', 50 } })
 local game_held = rock({ { 'Stone', 50 } }, 2)
 local three = { a, b, game_held }
@@ -123,7 +126,7 @@ assert(src.release_all('base', { stuck }, { 's' }, true) == 1 and src.count('bas
 
 -- Partial list: held rocks it did not reach stay held (release_all and
 -- apply), and are released once a complete list shows the limit gone.
-src.forget()
+fresh()
 local p1, p2 = rock({ { 'Stone', 50 } }), rock({ { 'Stone', 50 } })
 local pkeys, pvalues = { 'p1', 'p2' }, { p1 = MINING, p2 = MINING }
 src.apply('base', { p1, p2 }, pkeys, pvalues, limits({ Stone = 10 }), { Stone = 50 }, true)
@@ -136,7 +139,7 @@ assert(p1.CurrentState == 1 and p2.CurrentState == 1 and src.count('base') == 0,
 
 -- A held rock whose type is unknown this pass (values has no entry): no
 -- error on wanted[nil], and the rock goes back.
-src.forget()
+fresh()
 local u = rock({ { 'Stone', 50 } })
 src.apply('base', { u }, { 'u' }, { u = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
 assert(src.count('base') == 1)
@@ -146,7 +149,7 @@ assert(u.CurrentState == 1 and src.count('base') == 0, 'a held rock of unknown t
 
 -- A product that cannot be read yet is not remembered as "no product", and
 -- under a limit it counts as wanted. Once it reads, the rock is handled.
-src.forget()
+fresh()
 local late, late_raw = rock({ { 'Stone', 50 } })
 late_raw.CachedOwnerMapObjectConcreteModel.invalid = true
 wanted = src.apply('base', { late }, { 'late' }, { late = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
@@ -156,7 +159,7 @@ wanted = src.apply('base', { late }, { 'late' }, { late = MINING }, limits({ Sto
 assert(not wanted[MINING] and late.CurrentState == 2, 'the product was cached as missing after a failed read')
 -- An unreadable model class is unknown too; a confirmed "None" product is
 -- remembered and yields nothing.
-src.forget()
+fresh()
 local noclass = rock({ { 'Stone', 50 } }, 1, false)
 noclass.CachedOwnerMapObjectConcreteModel.class = nil
 assert(src.product(noclass, 'nc', {}) == nil, 'unreadable model class read as a product')
@@ -170,7 +173,7 @@ assert(not wanted[MINING], 'a work with no product made Mining wanted')
 
 -- A PalWorkCollectResource on an unexpected owner model is counted but
 -- never written (engine review P3-6).
-src.forget()
+fresh()
 local odd = rock({ { 'Stone', 50 } }, 1, 'SomeOtherModel')
 local p = src.product(odd, 'odd', {})
 assert(p.item == 'Stone' and not p.rock)
@@ -180,23 +183,71 @@ assert(writes == 0 and odd.CurrentState == 1 and src.count('base') == 0, 'a non-
 
 -- Only Mining's limits reach rocks: a Lumbering limit with a rock-shaped
 -- work typed Lumbering leaves it Workable.
-src.forget()
+fresh()
 local tree = rock({ { 'Wood', 50 } })
 writes = 0
 src.apply('base', { tree }, { 't' }, { t = LUMBERING }, limits({ Wood = 1 }), { Wood = 50 }, true)
 assert(writes == 0 and tree.CurrentState == 1, 'a Lumbering work was written')
 
 -- A product read once is remembered for the next pass.
-src.forget()
+fresh()
 local fresh_pit = pit('Stone')
 model_reads = 0
 src.apply('base', { fresh_pit }, { 'fp' }, { fp = MINING }, limits({ Stone = 1000 }), { Stone = 1 }, true)
 src.apply('base', { fresh_pit }, { 'fp' }, { fp = MINING }, limits({ Stone = 1000 }), { Stone = 1 }, true)
 assert(model_reads == 1, 'a seen work was read again: ' .. model_reads)
 
--- forget (world change) clears the held list.
-src.apply('base', { a }, { 'a' }, { a = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
-assert(src.count('base') == 1)
+-- forget (main's ClientRestart reset: every respawn and same-map reconnect,
+-- not only a world change) keeps the held list and drops only products. The
+-- rock still reads NotWorkable after a respawn and must still be released
+-- (review 2026-10-29, P1).
+fresh()
+local kept = rock({ { 'Stone', 50 } })
+src.apply('base', { kept }, { 'k' }, { k = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(src.count('base') == 1 and kept.CurrentState == 2)
 src.forget()
-assert(src.count('base') == 0 and not src.item_stopped('Stone'))
-print('item sources: main drop, rocks only, release on below/removed/release_all, partial lists, unknown type, unreadable products, model class')
+assert(src.count('base') == 1, 'forget dropped the held list: the rock stays off for good')
+assert(src.release_all('base', { kept }, { 'k' }, true) == 1 and kept.CurrentState == 1, 'held rock not released after forget')
+-- After a real reload the rock reads Workable again: a stale entry is
+-- dropped by the next complete pass and nothing is written.
+src.apply('base', { kept }, { 'k' }, { k = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
+src.forget()
+kept.CurrentState = 1 -- the reload reset it
+writes = 0
+src.apply('base', {}, {}, {}, limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(src.count('base') == 0 and writes == 0, 'a stale held entry survived a complete pass')
+
+-- A drop list with one unreadable entry is unreadable as a whole: the entry
+-- it missed may be the largest. Not cached, so it is read again (review
+-- 2026-10-29).
+fresh()
+local bad_entry = false
+local mixed_list = { ForEach = function(_, fn)
+    fn(1, { get = function() return { ItemId = { StaticId = name('Pal_crystal_S') }, Num = 5 } end })
+    fn(2, { get = function()
+        if bad_entry then return { ItemId = { StaticId = nil }, Num = 50 } end
+        return { ItemId = { StaticId = name('Stone') }, Num = 50 }
+    end })
+end }
+local mixed = { class = 'PalWorkCollectResource', CurrentState = 1,
+    CachedOwnerMapObjectConcreteModel = { class = ROCK_MODEL, DropItemInfos = mixed_list } }
+bad_entry = true
+local mcache = {}
+assert(src.product(mixed, 'm', mcache) == nil, 'a partly unreadable drop list named a main drop')
+assert(mcache.m == nil, 'a partly unreadable drop list was cached')
+bad_entry = false
+assert(src.product(mixed, 'm', mcache).item == 'Stone', 'the list was not read again')
+
+-- apply reports which work types had a source naming a product. A base with
+-- no Mining source (rocks mined out) or only idle pits has none, so the
+-- scheduler leaves Mining to the group rule (review 2026-10-29).
+fresh()
+local _, _, _, sourced = src.apply('base', {}, {}, {}, limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(type(sourced) == 'table' and sourced[MINING] == nil, 'no source reported as a source')
+_, _, _, sourced = src.apply('base', { pit('None') }, { 'idle' }, { idle = MINING },
+    limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(sourced[MINING] == nil, 'an idle pit counted as a source')
+_, _, _, sourced = src.apply('base', { rock({ { 'Stone', 50 } }) }, { 'r' }, { r = MINING },
+    limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(sourced[MINING] == true, 'a stone rock was not reported as a Mining source')
+print('item sources: main drop, rocks only, release on below/removed/release_all, partial lists, unknown type, unreadable products, model class, held list kept by forget, sources reported')
