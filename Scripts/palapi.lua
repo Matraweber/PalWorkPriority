@@ -466,6 +466,16 @@ local function headless_game_instance()
     return gi
 end
 
+-- A player just spawned on this machine (main.lua's ClientRestart hook on a
+-- dedicated server), so a controller exists now: the next walk is not held
+-- back by misses earned while the server was empty. Without this, the first
+-- player after a long empty spell waited up to the two-minute cap before
+-- the pass could find a controller, and so a write route.
+function M.pc_walk_retry()
+    pc_walk_misses = 0
+    pc_walk_next = 0
+end
+
 function M.player_controller()
     if pc_memo ~= nil then return pc_memo end
     if local_pc_memo ~= nil then return local_pc_memo end
@@ -1432,6 +1442,14 @@ M.WORK_IGNORE = {
     ["Idle"] = true,
 }
 
+-- The same, keyed by the station id without its _N suffix, for jobs whose
+-- display name says nothing. The egg incubator's hatch timer is a work
+-- object ("Busy" | HatchingPalEgg_0 | PalWorkProgress, GPortal server
+-- 2026-10-29) but no Pal works it: the egg hatches on its own.
+M.ASSIGN_IGNORE = {
+    ["HatchingPalEgg"] = true,
+}
+
 M._unknown_worktype = {}
 M._suitability_warned = false
 
@@ -1492,6 +1510,7 @@ function M.work_suitability(w)
     -- 3. Station identity, for the generic PalWorkProgress objects.
     local assign = work_text(w, "prop", "AssignDefineDataId")
     if assign then
+        if M.ASSIGN_IGNORE[assign:match("^(.-)_%d+$") or assign] then return nil, "ignored" end
         local mapped = M.STATION_SUIT[assign]
         if mapped then return workdefs.value(mapped) end
         local kw = workdefs.from_text(assign)
@@ -1517,8 +1536,8 @@ function M.work_suitability(w)
         if cls then seen[#seen + 1] = cls end
         log.warn("some work could not be typed and is not counted: " ..
             (#seen > 0 and table.concat(seen, ", ") or "no readable name") ..
-            ". That is expected for Construction, a building not finished yet. " ..
-            "'!pwp discover' lists every untyped work")
+            ". The game still assigns it as usual; a building not finished yet " ..
+            "is one known case. '!pwp discover' lists every untyped work")
     end
     return nil
 end

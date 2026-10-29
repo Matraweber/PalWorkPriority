@@ -37,6 +37,17 @@ local ok, err = pcall(function()
     for _ = 1, 5 do api.player_controller(); now = now + 11.5 end
     assert(walks == 5, 'a hit did not reset the backoff')
 
+    -- So does a remote player's spawn (main.lua ClientRestart on a server):
+    -- the first player after a long empty spell is found on the next call.
+    for _ = 1, 30 do api.player_controller(); now = now + 11.5 end
+    walks = 0
+    api.player_controller()
+    assert(walks == 0, 'expected the backoff to hold here')
+    api.pc_walk_retry()
+    found = live({})
+    assert(api.player_controller() == found and walks == 1, 'a spawn did not lift the backoff')
+    found = nil
+
     -- So does a world change.
     for _ = 1, 30 do api.player_controller(); now = now + 11.5 end
     api.reset()
