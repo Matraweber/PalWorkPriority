@@ -39,7 +39,9 @@ local function check_geometry()
   ['37']={595.52,3.315},['0']={607.76,3.315},
   ['101']={725.28,3.315},['102']={725.28,3.315},
   ['No count yet']={810,3.315},Remove={1002.67,3.315},
-  JOB={38,4.34},ITEM={210,4.34},LIMIT={728.4,4.34},
+  -- Headings at 13pt since round 3 (accessibility P3-4), right-aligned LIMIT
+  -- moves left with its width.
+  JOB={38,3.535},ITEM={210,3.535},LIMIT={724.6,3.535},
   ['Production Limits']={18,4.29}}
  for text,xy in pairs(expected) do
   local w=rendered(text)

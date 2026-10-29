@@ -163,7 +163,7 @@ panel.toggle()
 assert(panel.open and rendered("Mining") and not rendered("Group limit"))
 assert(rendered("No count yet"), "missing scheduler evidence claimed work was active")
 rules(0)
-for _,entry in ipairs({{'ready','Click "Add a limit" below to start.'},
+for _,entry in ipairs({{'ready','Choose "Add a limit" below to start.'},
     {'connecting','Limits unavailable; check the status above.'}})do
     caps.view_status=function()return entry[1] end
     panel.refresh(cfg)
@@ -177,7 +177,7 @@ panel.refresh(cfg)
 assert(rendered("Saving..."))
 caps.state, caps.error = "error", "Disk write failed; retry pending"
 panel.refresh(cfg)
-assert(rendered("Save failed - changes need attention"))
+assert(rendered("Save failed - see the line below"))
 assert(rendered("Disk write failed; retry pending"))
 caps.state, caps.error = "saved", nil
 for _, entry in ipairs({{"connecting","Connecting to server..."},
@@ -192,7 +192,7 @@ for _, entry in ipairs({{"connecting","Connecting to server..."},
 end
 caps.view_status=function() return "applied_unsaved", "save_failed" end
 panel.refresh(cfg)
-assert(rendered("Applied - not saved"),"applied_unsaved has no truthful human label")
+assert(rendered("Applied, not saved - see below"),"applied_unsaved has no truthful human label")
 assert(rendered("The server applied this change but could not save it; it may be lost after a restart."),
     "save_failed has no actionable explanation")
 assert(not rendered("Saved") and not rendered("Limits saved") and not rendered("Confirmed by server"),"unsaved changes claimed durable acceptance")
@@ -246,11 +246,11 @@ for _, n in ipairs({ 0, 1, 13, 14, 26, 27 }) do
     rules(n)
     panel.refresh(cfg)
     if n==0 then
-        assert(rendered('Click "Add a limit" below to start.'))
+        assert(rendered('Choose "Add a limit" below to start.'))
         caps.view_status=function() return "connecting" end
         panel.refresh(cfg)
         assert(rendered("Limits unavailable; check the status above."))
-        assert(not rendered('Click "Add a limit" below to start.'), "unknown snapshot presented as no rules")
+        assert(not rendered('Choose "Add a limit" below to start.'), "unknown snapshot presented as no rules")
         caps.view_status=nil
     end
     if n > 13 then

@@ -56,7 +56,7 @@ local source=file:read('*a'); file:close()
 local first=assert(source:find('local INTERNAL =',1,true))
 local last=assert(source:find('local function draw_item_picker',first,true))
 local rejected_icons={}
-local env=setmetatable({items=items, search_text='wood', show_all=false,
+local env=setmetatable({RB={}, items=items, search_text='wood', show_all=false,
     icons={gave_up_n=0, gave_up=function(id) return rejected_icons[id] end},
     workdefs={work_for_item=function(id)
         if id:find('Decoration',1,true) then return nil end

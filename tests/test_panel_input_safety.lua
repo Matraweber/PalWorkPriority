@@ -163,7 +163,7 @@ stock.StoneNew=95 -- first on the page: sorted by quantity
 panel.set_screen('item'); panel.refresh(cfg)
 assert(panel.apply(cfg,tile,-1,true) and writes==before, 'the first click created a limit')
 panel.refresh(cfg)
-assert(notice()=='StoneNew: stops only the rocks that mainly give it once reached. Click again to add a limit of 100.',
+assert(notice()=='StoneNew: stops its rocks once reached; Stone Pits keep producing. Click again to add a limit of 100.',
     'first click notice: '..tostring(notice()))
 assert(rendered('Click again to add'), 'armed tile does not say the next click adds')
 -- Any other input in between disarms.
@@ -241,12 +241,12 @@ assert(data.Stone02==102)
 -- A click after the timeout arms again; it never deletes.
 assert(panel.apply(cfg,remove,-1,true) and data.Stone02==102)
 -- On a controller the confirming press is X. X reaches Remove through
--- row_action, which applies without from_mouse.
+-- row_action, which applies without from_mouse. The pad is known from a pad
+-- press (round 3), not from the game flag, which is frozen in the panel.
 panel.escape(); panel.refresh(cfg)
-package.loaded.palapi.last_input_type=1
+panel.native_pad(1)
 assert(panel.apply(cfg,remove,-1)); panel.refresh(cfg)
 assert(notice()=='Press X again to delete the Mining limit for Stone02.', 'pad prompt: '..tostring(notice()))
-package.loaded.palapi.last_input_type=nil
 assert(writes==0 and stale==0)
 ]=], '@panel-remove-timer-fixture'))()
 print('PASS panel input safety: text-box keys, identity selection, no guessed limits, two clicks, Remove timer, notices')

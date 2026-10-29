@@ -80,7 +80,7 @@ status.verdict=verdict
 -- C: uncounted texts, host and client.
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.' or
-    notice():find('Mining stops by item',1,true), 'host help: '..tostring(notice()))
+    notice():find('Mining stops rocks by item, Stone Pits keep producing',1,true), 'host help: '..tostring(notice()))
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.', 'host uncounted: '..tostring(notice()))
@@ -95,8 +95,8 @@ scheduler.last_storage_by_camp.base1.sampled_at=os.clock()
 -- C: empty list.
 rules(0)
 panel.refresh(cfg)
-assert(notice()=="No limits yet. Mining limits stop only that item's rocks; others stop their whole job.")
-assert(rendered('Click "Add a limit" below to start.'))
+assert(notice()=="No limits yet. Mining limits stop only that item's rocks, not pits; others stop their whole job.")
+assert(rendered('Choose "Add a limit" below to start.'))
 rules(2)
 
 -- E: the selected rules row: the darker fill and a 3 px cyan rail.
@@ -155,18 +155,20 @@ assert(rendered('Show all items a base can make'))
 
 stock.Stone01=37
 -- E: a controller: no keyboard keys in the header, Left/Right in the hint,
--- and the editor says Y and B.
-local api=package.loaded.palapi
-api.last_input_type=1
+-- and the editor says Y and B. Driven by a pad button, not by setting the
+-- game's flag (round 3: that flag is frozen while the panel is open).
 panel.set_screen('list'); panel.refresh(cfg)
+panel.native_pad(2); panel.refresh(cfg)
 assert(not rendered('ALT+F2 RECHECK NOW') and not rendered('ESC / ALT+F1') and rendered('B'),
     'controller header still names keyboard keys')
-assert(rendered('Controller: Up/Down move, Left/Right step a limit, Y opens or raises, X removes, LB/RB tabs, LT/RT pages, B closes.'))
+assert(rendered('Controller: Up/Down move, Y (top)/Right raise, Left lowers, X (left) removes, LB/RB tabs, LT/RT pages, B closes.'))
+-- Only the mouse opens the editor; a pad press inside it is the pad again.
 assert(panel.apply(cfg,{kind='rule',rule={work='Mining',item='Stone01',amount=101},row=4},-1,true))
 panel.refresh(cfg)
+assert(notice()=='Set Stone01: whole number. Confirm saves, Esc cancels.', 'mouse editor hint: '..tostring(notice()))
+panel.native_pad(1); panel.refresh(cfg)
 assert(notice()=='Set Stone01: whole number. Y saves, B cancels.', 'pad editor hint: '..tostring(notice()))
 panel.escape(); panel.refresh(cfg)
-api.last_input_type=nil
 cfg.item_limits_on_rocks=false
 
 -- C: an upgrade that reset config.lua is said once, on opening.

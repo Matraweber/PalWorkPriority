@@ -90,12 +90,18 @@ panel.toggle(); panel.refresh(cfg)
 -- Key hints: both close keys, the host-only recheck and the mouse line.
 assert(rendered('ESC / ALT+F1'), 'close key hint missing')
 assert(rendered('ALT+F2 RECHECK NOW'), 'host recheck hint missing')
--- The keys too (round 2): the arrows were never hinted. It fits the row.
-local FOOT='Up/Down move, Left/Right or right click step, Enter or click types, Delete removes.'
-local foot=assert(rendered(FOOT..' Alt+F2 rechecks now.'), 'keyboard and mouse footer missing')
+-- The keys too (round 2): the arrows were never hinted. One footer per
+-- device since round 3 (P1-1), each true to its input
+-- (test_panel_round3.lua drives them); each fits the row.
+local MOUSE='Click a limit to type a number, right click lowers it a step, Remove asks first.'
+local FOOT='Up/Down move, Right/Enter raise a step, Left lowers, Delete removes, click types.'
+local foot=assert(rendered(MOUSE..' Alt+F2 rechecks now.'), 'mouse footer missing')
+assert(#foot.text<=104, 'footer longer than its row: '..#foot.text)
+panel.nav(cfg,'down'); panel.refresh(cfg)
+foot=assert(rendered(FOOT..' Alt+F2 rechecks now.'), 'keyboard footer missing')
 assert(#foot.text<=104, 'footer longer than its row: '..#foot.text)
 local esc,close=rendered('ESC / ALT+F1'),rendered('CLOSE')
-assert(esc.Slot.position.X+#esc.text*12*0.76<=close.Slot.position.X-9, 'close key hint runs into CLOSE')
+assert(esc.Slot.position.X+#esc.text*13*0.76<=close.Slot.position.X-9, 'close key hint runs into CLOSE')
 local dm0=package.loaded.darnmenu
 package.loaded.darnmenu={labels={key_panel='ALT+F7',key_pass='ALT+F8'}}
 panel.refresh(cfg)
@@ -109,7 +115,13 @@ caps.is_client=nil
 panel.refresh(cfg)
 
 -- P1-6: a version mismatch is amber and says what to do, on both screens.
-local MISMATCH='The server runs a different Pal Work Priority version. Install the same version as the server.'
+-- Round 3 (onboarding P2-1): it sends the player to the host, and names
+-- this mod's version from ui.MOD_VERSION, not a copy of "0.5.0".
+local ui0=package.loaded.ui
+package.loaded.ui={MOD_VERSION='9.8.7'}
+local MISMATCH='This server runs another Pal Work Priority version, which controls work here. '
+    ..'Ask the host to update the server to 9.8.7.'
+assert(#MISMATCH<=125, 'mismatch text longer than the notice row')
 caps.view_status=function() return 'incompatible','server_requires_matching_mod' end
 panel.refresh(cfg)
 local label=assert(rendered('Server version incompatible'))
@@ -122,6 +134,11 @@ assert(same(why.tint,0.94,0.74,0.36) and why.parent==overlay.parts.Notice)
 caps.view_status=nil
 panel.refresh(cfg)
 assert(not rendered(MISMATCH))
+package.loaded.ui=nil
+assert(require('panel_status').plain_reason('schema_or_work_width')
+    =='This server runs another Pal Work Priority version, which controls work here. Ask the host to update the server.',
+    'mismatch without a version: '..tostring(require('panel_status').plain_reason('schema_or_work_width')))
+package.loaded.ui=ui0
 -- P2-5: an unlisted code never reaches the notice row raw.
 local status=require('panel_status')
 assert(select(3,status.save({state='error',error='session_not_admitting'}))

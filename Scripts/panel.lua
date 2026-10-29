@@ -2020,8 +2020,11 @@ function RB.saving_done()
     if saving == nil or RB.save_state == "saving" then return end
     RB.saving = nil
     if notice ~= saving.text then return end
+    -- "unavailable" too (round 3, P3-3): a save state that could not be
+    -- read is not proof that the save worked.
     local failed = RB.save_state == "error" or RB.save_state == "rejected"
         or RB.save_state == "applied_unsaved" or RB.save_state == "incompatible"
+        or RB.save_state == "unavailable"
     announce(failed and (RB.save_error or "The change was not saved. Check the limit.") or saving.done)
 end
 
@@ -2060,21 +2063,69 @@ function RB.item_stopped(item)
     return ok and held == true
 end
 
--- A controller is what the player last used (palapi records it).
-function RB.pad_in_use()
-    return api.last_input_type == 1
-end
-
 -- Which input a prompt should name (review round 2, P2): the game reports
--- mouse and keyboard as one type, so the panel keeps its own "keys" or
--- "mouse" from the last action it handled. "Click again" read wrong after an
--- Enter, and "Click Sure?" after a Delete.
+-- mouse and keyboard as one type, so the panel keeps its own "mouse", "keys"
+-- or "pad" from the last action it handled. That comes first (round 3,
+-- P2-1): the game's flag is only refreshed while the stand is open, so it
+-- froze while the panel was up and named the wrong buttons. The flag decides
+-- only until the panel has handled an input since it opened.
 function RB.device(from_mouse)
     if from_mouse then return "mouse" end
-    if RB.pad_in_use() then return "pad" end
     if from_mouse == false then return "keys" end
-    return RB.last_device or "mouse"
+    if RB.last_device then return RB.last_device end
+    return api.last_input_type == 1 and "pad" or "mouse"
 end
+function RB.pad_in_use()
+    return RB.device() == "pad"
+end
+
+-- The words after "Storage: ", built from the view's shape rather than its
+-- label, so a client's view from net reads the same as the host's (round 3,
+-- newcomer P1-1, P3-1, P3-2). An older panel_status has no scope_label.
+function RB.scope_text()
+    local fn = RB.status.scope_label
+    if type(fn) == "function" then
+        local ok, text = pcall(fn, RB.stock)
+        if ok and type(text) == "string" then return text end
+    end
+    return RB.stock and RB.stock.label or "not counted yet"
+end
+
+-- The job column's text, at most RB.JOB_CHARS (round 3, accessibility
+-- P2-6). The column is about 15 characters at 17pt before ITEM starts, and
+-- "Medicine Production" ran into the item name. The long labels get a short
+-- word of their own; anything else that grows past it is shortened.
+RB.JOB_CHARS = 15
+RB.SHORT_JOB = { ProductMedicine = "Medicine", GenerateElectricity = "Electricity" }
+function RB.job_cell(work, item_row)
+    local label = workdefs.label(work)
+    if item_row then label = label .. " (rocks)" end
+    if #label > RB.JOB_CHARS and RB.SHORT_JOB[work] then label = RB.SHORT_JOB[work] end
+    return fit_name(label, RB.JOB_CHARS)
+end
+-- What changes a limit the panel has just moved the selection to, by
+-- device (round 3, P2-4): "Click the number" was said after Enter and Y too.
+RB.CHANGE = { mouse = "Click the number to change it.", keys = "Left/Right now step it.",
+    pad = "Left/Right now step it." }
+-- The picker's help row by device (round 3, P2-3). Enter and Y open an Edit
+-- tile's limit as a click does.
+RB.PICK_HELP = {
+    mouse = "Click an item to add a limit. Items saying Edit already have one: click to open it.",
+    keys = "Press Enter on an item to add a limit. Items saying Edit already have one: Enter opens it.",
+    pad = "Press Y on an item to add a limit. Items saying Edit already have one: Y opens it." }
+-- How a limit row changes, for the rules help row (round 3, P2-2). Only the
+-- mouse can type a number; Enter and Y raise one step (DECISIONS 2026-10-21).
+RB.RULE_HELP = { mouse = "Click a limit to type a new number.",
+    keys = "Right/Enter raises a limit, Left lowers.", pad = "Y or Right raises a limit, Left lowers." }
+-- The footer by device, each saying what that input really does on a limit
+-- (round 3, P1-1): the keyboard one said Enter types, but Enter raises one
+-- step and saves. Y and X are named by position as well, since PlayStation
+-- pads print other symbols there. About 104 characters fit with the
+-- recheck, 115 without it (a controller has no recheck key).
+RB.FOOT = {
+    mouse = "Click a limit to type a number, right click lowers it a step, Remove asks first.",
+    keys = "Up/Down move, Right/Enter raise a step, Left lowers, Delete removes, click types.",
+    pad = "Controller: Up/Down move, Y (top)/Right raise, Left lowers, X (left) removes, LB/RB tabs, LT/RT pages, B closes." }
 -- The second press that confirms an armed tile, by device: a notice
 -- sentence and the tile's own label (21 characters at most).
 RB.AGAIN = { mouse = "Click again", pad = "Press Y again", keys = "Press Enter again" }
@@ -2115,12 +2166,13 @@ function RB.ident(what)
     return what.kind
 end
 
--- Where "the first row" is: past the tab bar, and past "change base", which
--- is reachable by keyboard and pad but is not what opening a screen is for.
+-- Where "the first row" is: past the tab bar, and past "change base" and the
+-- search row, which the keyboard and pad reach but are not what opening a
+-- screen is for.
 function RB.first_row()
     for i = tab_hits + 1, #order do
         local what = hits[order[i]]
-        if not (what and what.kind == "stock_scope") then return i end
+        if not (what and (what.kind == "stock_scope" or what.kind == "search")) then return i end
     end
     return tab_hits + 1
 end
@@ -2863,7 +2915,7 @@ local function draw_tabs(active)
     -- CLOSE, so a longer binding grows leftward instead of into the word.
     -- On a controller B closes, and keyboard keys mean nothing (review E).
     local esc_text = pad and "B" or ("ESC / " .. RB.key_label("key_panel", "ALT+F1"))
-    local esc_x = right_x(W - 100, esc_text, 12, CAPS_W)
+    local esc_x = right_x(W - 100, esc_text, 13, CAPS_W)
     -- Wide enough to include the key label.
     --
     -- The hit box started at W-102 while the word ESC is drawn about 45px
@@ -2880,14 +2932,14 @@ local function draw_tabs(active)
     -- Drop 4, not 6: 12pt beside 20pt shares a top edge at the same drop, not a
     -- baseline. Measured off the drawn panel, 6 put ESC two pixels below
     -- CLOSE'''s baseline.
-    line("tab_esc", 0, esc_x, esc_text, "faint", 12, 4)
+    line("tab_esc", 0, esc_x, esc_text, "faint", 13, 4)
     line("tab_close", 0, W - 90, "CLOSE", "dim", 20)
     -- Host only: a client's Alt+F2 does not count anything (the server does).
     -- A hint, not a button; the pass belongs to main.lua. Not on a
     -- controller either, which has no Alt+F2.
     if not caps.is_client and not pad then
         local pass_text = RB.key_label("key_pass", "ALT+F2") .. " RECHECK NOW"
-        line("tab_pass", 0, right_x(esc_x - 28, pass_text, 12, CAPS_W), pass_text, "faint", 12, 4)
+        line("tab_pass", 0, right_x(esc_x - 28, pass_text, 13, CAPS_W), pass_text, "faint", 13, 4)
     end
 
     -- What this is and what it does, which the panel never said. Opening it
@@ -2909,12 +2961,16 @@ local function draw_tabs(active)
     line("save_state", 0, W - 460, RB.save_label == "Saved" and "Limits saved" or RB.save_label,
         -- Amber for a version mismatch too: in dim 12pt it was easy to miss,
         -- and nothing can be changed until the versions match (review P1-6).
+        -- 14pt, the notice row's size (round 3, accessibility P2-5): this
+        -- carries "not saved" and the rejections, and 12pt was the smallest
+        -- text on screen.
         (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "applied_unsaved"
             or RB.save_state == "incompatible")
-            and "over" or "dim", 12, TITLE_DROP + 8)
+            and "over" or "dim", 14, TITLE_DROP + 6)
 
     RB.use_row("Sub")
-    if RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp" then
+    local choose = RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp"
+    if choose then
         hit("stock_scope", { kind = "stock_scope" })
     end
     -- A Workshop copy switched on next to a manual install (install_check)
@@ -2922,11 +2978,13 @@ local function draw_tabs(active)
     local conflict = require("install_check").current
     -- The legacy clause moved to the rows and the notice (review P1-5), which
     -- also keeps camp scope plus the install warning on one line (P2-8).
-    line("stock_scope", 0, PAD, "Storage: " .. (RB.stock and RB.stock.label or "unavailable")
-        .. ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and " - change base" or "")
+    -- The keyboard and pad selection shows here as on a row (round 3,
+    -- accessibility P2-1): a caret and the hover tone; it was invisible.
+    local here = choose and row_is_current("stock_scope")
+    line("stock_scope", 0, PAD, (here and "> " or "") .. "Storage: " .. RB.scope_text()
+        .. (choose and " - change base" or "")
         .. (conflict and (". " .. conflict.short) or ""),
-        conflict and "over"
-            or ((RB.stock and #RB.stock.choices > 1 and RB.stock.scope == "camp") and "action" or "dim"), 14, RB.SUB_DROP)
+        conflict and "over" or (here and "hover") or (choose and "action" or "dim"), 14, RB.SUB_DROP)
 
     RB.done_row()
 
@@ -3086,7 +3144,7 @@ local function draw_list(cfg, totals)
         line("edit_save", 0, W - 215, "Confirm", "action", 14)
         line("edit_cancel", 0, W - 115, "Cancel", "action", 14)
     elseif RB.save_error then
-        line("why", 0, PAD, fit_name(RB.save_error, 104),
+        line("why", 0, PAD, fit_name(RB.save_error, 125),
             (RB.save_state == "error" or RB.save_state == "rejected" or RB.save_state == "incompatible"
                 or RB.save_state == "applied_unsaved")
                 and "over" or "dim", 14)
@@ -3094,12 +3152,15 @@ local function draw_list(cfg, totals)
         -- Below the editing caption on purpose: while a number is being typed
         -- the instruction for typing it is the more useful of the two.
         line("why", 0, PAD, notice, "action", 14)
+        -- The upgrade notice counts as seen only once a draw has shown it
+        -- (round 3, engine P3-3); refresh acknowledges it after the unveil.
+        if notice == RB.upgrade_ack then RB.upgrade_drawn = true end
     elseif #all_rules == 0 then
         -- Said before anyone adds one (P1-1): what a limit switches. Mining
         -- limits stop only their own item's rocks (review C, 2026-10-28).
         line("why", 0, PAD, per_item
-            and "No limits yet. Mining limits stop only that item's rocks; others stop their whole job."
-            or "No limits yet. A limit switches its whole work type off once reached.", "dim", 14)
+            and "No limits yet. Mining limits stop only that item's rocks, not pits; others stop their whole job."
+            or "No limits yet. A limit switches its whole job off once reached.", "dim", 14)
     elseif uncounted then
         -- A client's verdict is the server's (panel_status); until it
         -- arrives there is nothing it could recheck by itself.
@@ -3112,9 +3173,12 @@ local function draw_list(cfg, totals)
     elseif others then
         line("why", 0, PAD, "Others below: this item is reached; the job waits for its other limits.", "dim", 14)
     else
-        line("why", 0, PAD, per_item
-            and "Click a limit to type a new number. Mining stops by item, other limits stop their whole job."
-            or "Click a limit to type a new number. Each limit switches its whole work type.", "dim", 14)
+        -- By device (round 3, accessibility P2-2), and Stone Pits named
+        -- (newcomer P2-1): "Rocks stopped" while pits kept making stone
+        -- read as the limit not working.
+        line("why", 0, PAD, (RB.RULE_HELP[RB.device()] or RB.RULE_HELP.mouse) .. (per_item
+            and " Mining stops rocks by item, Stone Pits keep producing; others stop the whole job."
+            or " Each limit switches its whole job."), "dim", 14)
     end
     RB.done_row()
 
@@ -3129,8 +3193,8 @@ local function draw_list(cfg, totals)
         -- two spaces at 12pt are not two spaces at 17pt, so the heading came
         -- out five pixels left of the data it headed.
         RB.use_row("Head")
-        line("h_job",  0, PAD + MARK_W, "JOB",    "faint", 12, RB.HEAD_DROP)
-        line("h_item", 0, COL_ITEM, "ITEM",       "faint", 12, RB.HEAD_DROP)
+        line("h_job",  0, PAD + MARK_W, "JOB",    "faint", 13, RB.HEAD_DROP)
+        line("h_item", 0, COL_ITEM, "ITEM",       "faint", 13, RB.HEAD_DROP)
         -- Numeric headings are CENTRED over their column, not set from its
         -- right edge.
         --
@@ -3152,13 +3216,13 @@ local function draw_list(cfg, totals)
         -- label having drifted off its column. The picker right-aligns the
         -- same kind of heading and lands within 3px.
         line("h_have", 0,
-            right_x(COL2_R, "IN STORAGE", 12, CAPS_W),
-            "IN STORAGE", "faint", 12, RB.HEAD_DROP)
+            right_x(COL2_R, "IN STORAGE", 13, CAPS_W),
+            "IN STORAGE", "faint", 13, RB.HEAD_DROP)
         line("h_cap",  0,
-            right_x(COL_CAP - WELL_INSET + WELL_W, "LIMIT", 12, CAPS_W),
-            "LIMIT", "faint", 12, RB.HEAD_DROP)
+            right_x(COL_CAP - WELL_INSET + WELL_W, "LIMIT", 13, CAPS_W),
+            "LIMIT", "faint", 13, RB.HEAD_DROP)
         -- Evidence describes the limit decision, not a Pal's actual activity.
-        line("h_st", 0, COL_DONE, "LIMIT STATE", "faint", 12, RB.HEAD_DROP)
+        line("h_st", 0, COL_DONE, "LIMIT STATE", "faint", 13, RB.HEAD_DROP)
         RB.done_row()
         row = row + 1
     end
@@ -3167,7 +3231,8 @@ local function draw_list(cfg, totals)
         local known = RB.save_state == "saved" or RB.save_state == "missing"
             or RB.save_state == "ready" or RB.save_state == "applied" or RB.save_state == "accepted"
         local in_row=RB.use_row("Head")
-        line("empty", in_row and 0 or row, PAD, known and 'Click "Add a limit" below to start.'
+        -- "Choose", not "Click": Enter and Y reach it too (round 3, P2-2).
+        line("empty", in_row and 0 or row, PAD, known and 'Choose "Add a limit" below to start.'
             or "Limits unavailable; check the status above.", "dim")
         RB.done_row()
         row = row + 2
@@ -3228,8 +3293,7 @@ local function draw_list(cfg, totals)
             -- cramped to read. A group row is just its job; a per-item
             -- Mining row says that it stops rocks, which is what it switches
             -- (P1-5), and the help row and picker say the rest.
-            line(key, row, PAD + MARK_W,
-                item_row and (workdefs.label(rule.work) .. " (rocks)") or workdefs.label(rule.work),
+            line(key, row, PAD + MARK_W, RB.job_cell(rule.work, item_row),
                 choosable and "action" or "item", ROW_PT)
             -- The same words the picker used to offer it. This column showed
             -- the raw id, so an item chosen from a list reading "Baked
@@ -3483,9 +3547,10 @@ local function draw_list(cfg, totals)
     -- The keys as well (round 2): the arrows were never hinted. At most
     -- about 104 characters with the recheck, which is what fits the row at
     -- 13pt (the old mouse-only line was 100 and filled it).
-    line("foot_hint", 1, PAD, RB.pad_in_use()
-        and "Controller: Up/Down move, Left/Right step a limit, Y opens or raises, X removes, LB/RB tabs, LT/RT pages, B closes."
-        or ("Up/Down move, Left/Right or right click step, Enter or click types, Delete removes."
+    -- One line per device (round 3, P1-1): see RB.FOOT.
+    local by = RB.device()
+    line("foot_hint", 1, PAD, by == "pad" and RB.FOOT.pad
+        or ((RB.FOOT[by] or RB.FOOT.mouse)
         .. (caps.is_client and "" or (" " .. RB.key_prose("key_pass", "ALT+F2") .. " rechecks now."))),
         "dim", 13)
     RB.done_row()
@@ -3622,6 +3687,9 @@ local function producible(id)
     -- leftovers, none of which a player can ever hold.
     if items.real_name then
         local real = items.real_name(id)
+        -- nil is "cannot say yet" (catalogue or controller missing), not
+        -- "no such item": the list built now is not cached (round 3, P3-2).
+        if real == nil then RB.names_missing = true end
         if real == nil or real:match("^%a[%a%-]* Text$") then return false end
     end
     -- An id the icon loader has exhausted every route for is not an item the
@@ -3743,7 +3811,14 @@ local function picker_source(totals, camp)
         return picker_hit[1], picker_hit[2]
     end
 
+    RB.names_missing = false
     local list, everything = build_picker_source(totals, catalogue)
+    -- Filtered while some names could not be read: shown, never kept, so
+    -- the next draw tries again once the names are back.
+    if RB.names_missing then
+        picker_key, picker_hit = nil, nil
+        return list, everything
+    end
     -- A reset may rebuild the index under an unchanged query/count. Its
     -- scalar table identity prevents reusing matches from the old catalogue.
     local ids, n = {}, 0
@@ -3779,8 +3854,13 @@ local function draw_item_picker(cfg, totals)
     -- it was holding. That is where the column headings now sit, and the
     -- panel is no taller than it was.
     RB.pf.pre_search = os.clock()
-    ensure_search(3)
+    -- A row the arrows reach (round 3, accessibility P2-4): the box took the
+    -- keyboard only when clicked, so search was mouse-only. Enter on it asks
+    -- the next draw to focus the box (M.apply "search"); the typing guards
+    -- (RB.typing, RB.search_dirty) then work as for a click.
+    if ensure_search(3) then hit("search", { kind = "search" }) end
     RB.pf.post_search = os.clock()
+    local on_search = row_is_current("search")
 
     -- Ours, in a colour the panel controls, and only while the field is
     -- empty. The bar was otherwise flat dark with no border and no words,
@@ -3801,8 +3881,11 @@ local function draw_item_picker(cfg, totals)
     RB.use_row("Search")
     text_at("hint", ROW_INSET + 13,
         (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
-        search_text == "" and "Search items" or "",
+        search_text == "" and (on_search and (RB.device() == "pad" and "Search items (needs a keyboard)"
+            or "Search items: press Enter, then type") or "Search items") or "",
         "hint_on_field", ROW_PT, true)
+    -- The selection on the search row, the cyan rail a row gets.
+    if on_search then slab("selrail_search", ROW_INSET - 7, 4, RAIL_W, SEARCH_H, ACCENT) end
     RB.done_row()
 
     -- The placeholder, ours rather than UMG's. Cleared the moment anything is
@@ -3853,13 +3936,15 @@ local function draw_item_picker(cfg, totals)
     if RB.save_state == "incompatible" and RB.save_error then
         -- The version mismatch is why nothing here works; say it on this
         -- screen too, not only on RULES (P1-6).
-        line("why", 0, PAD, fit_name(RB.save_error, 104), "over", 14)
+        line("why", 0, PAD, fit_name(RB.save_error, 125), "over", 14)
     elseif notice and (os.clock() - notice_at) < NOTICE_FOR then
         line("why", 0, PAD, notice, "action", 14)
+        if notice == RB.upgrade_ack then RB.upgrade_drawn = true end
     else
         -- Said in words, not colour (review E): "Green items" failed for
-        -- anyone who cannot tell that green from the others.
-        line("why", 0, PAD, "Click an item to add a limit. Items saying Edit already have one: click to open it.", "dim", 14)
+        -- anyone who cannot tell that green from the others. By device
+        -- (round 3, newcomer P2-3).
+        line("why", 0, PAD, RB.PICK_HELP[by] or RB.PICK_HELP.mouse, "dim", 14)
     end
     RB.done_row()
 
@@ -3888,10 +3973,10 @@ local function draw_item_picker(cfg, totals)
     else
         for c = 0, LIST_COLS - 1 do
             local cx = ROW_INSET + c * (LIST_W + LIST_GUTTER)
-            line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 12, RB.HEAD_DROP)
+            line("h_it" .. c, 0, cx + LIST_NAME_X, "ITEM", "faint", 13, RB.HEAD_DROP)
             line("h_st" .. c,
-                0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 12, CAPS_W),
-                "IN STORAGE", "faint", 12, RB.HEAD_DROP)
+                0, cx + right_x(LIST_COUNT_R, "IN STORAGE", 13, CAPS_W),
+                "IN STORAGE", "faint", 13, RB.HEAD_DROP)
         end
     end
     RB.done_row()
@@ -4260,17 +4345,18 @@ function M.pad_tick()
     -- without rebuilding them.
     if RB.pad_actions == nil then
         RB.pad_actions = {
-            nav      = function(verb) M.nav(RB.pad_cfg, verb) end,
+            nav      = function(verb) M.nav(RB.pad_cfg, verb, "pad") end,
             close    = function()
                 -- The native binding consumes B/Escape before Lua closes.
                 -- Polling B here would deactivate it before routing finishes.
                 if overlay.native_cancel ~= true then M.escape() end
             end,
-            tab_prev = function() M.tab_step(RB.pad_cfg, -1) end,
-            tab_next = function() M.tab_step(RB.pad_cfg, 1) end,
-            remove   = function() M.row_action(RB.pad_cfg, "drop") end,
-            page_prev = function() M.page_step(RB.pad_cfg, -1) end,
-            page_next = function() M.page_step(RB.pad_cfg, 1) end,
+            -- A controller, so the prompts name its buttons (round 3, P2-1).
+            tab_prev = function() RB.last_device = "pad" M.tab_step(RB.pad_cfg, -1) end,
+            tab_next = function() RB.last_device = "pad" M.tab_step(RB.pad_cfg, 1) end,
+            remove   = function() M.row_action(RB.pad_cfg, "drop", "pad") end,
+            page_prev = function() RB.last_device = "pad" M.page_step(RB.pad_cfg, -1) end,
+            page_next = function() RB.last_device = "pad" M.page_step(RB.pad_cfg, 1) end,
         }
     end
     pcall(function() RB.pad.drive(RB.pad_actions) end)
@@ -4285,13 +4371,16 @@ function M.native_pad(code)
     if not M.open then return false end
     local cfg = RB.pad_cfg or RB.cfg
     if cfg == nil then return false end
+    -- Every route here is a controller (round 3, P2-1). Stamped "keys", the
+    -- prompts named Enter and Delete to a pad player.
+    if code >= 1 and code <= 11 then RB.last_device = "pad" end
     if code >= 1 and code <= 5 then
-        return M.nav(cfg, ({ "up", "down", "left", "right", "enter" })[code])
+        return M.nav(cfg, ({ "up", "down", "left", "right", "enter" })[code], "pad")
     end
     -- Y confirms as well: in the panel the game's own UI confirm takes A
     -- before any binding (measured 2026-10-22, the "Jump" binding never fired).
-    if code == 7 then return M.nav(cfg, "enter") end
-    if code == 6 then return M.row_action(cfg, "drop") end
+    if code == 7 then return M.nav(cfg, "enter", "pad") end
+    if code == 6 then return M.row_action(cfg, "drop", "pad") end
     if code == 8 or code == 9 then return M.tab_step(cfg, code == 8 and -1 or 1) end
     if code == 10 or code == 11 then return M.page_step(cfg, code == 10 and -1 or 1) end
     return false
@@ -4324,6 +4413,7 @@ function M.refresh(cfg)
     -- in each five second window, once, with where the time went.
     local t0 = os.clock()
     frame_id = frame_id + 1
+    RB.upgrade_drawn = nil -- set by this draw only
     icon_budget = ICONS_PER_FRAME
 
     -- Kept so fill_tick can carry a half drawn page on without the clock. It
@@ -4593,14 +4683,31 @@ function M.refresh(cfg)
     if RB.unveiled == false then
         -- Never longer than RB.UNVEIL_S, though (round 2, P3): a page that
         -- keeps filling kept the whole panel invisible until it was done.
-        local want = (RB.laid_out or os.clock() >= (RB.unveil_by or 0)) and 1.0 or 0.0
+        -- Counted from the first hidden frame, not from toggle (round 3,
+        -- P3-4): a first draw slower than that showed the unlaid frame.
+        local want = (RB.laid_out or (RB.unveil_by ~= nil and os.clock() >= RB.unveil_by)) and 1.0 or 0.0
         local ok = pcall(function() root:SetRenderOpacity(want) end)
         if not ok or want == 1.0 then
             RB.unveiled = true
         else
             RB.laid_out = not RB.pending
+            RB.unveil_by = RB.unveil_by or (os.clock() + RB.UNVEIL_S)
         end
     end
+
+    -- The upgrade notice is acknowledged (config.reset.txt removed) only by
+    -- a visible draw that showed it (round 3, engine P3-3, persistence
+    -- P3-6). It was removed in toggle, before any frame, so a deferred draw
+    -- or a notice replaced at once lost it for good. A dedicated server
+    -- never draws a panel and keeps its marker.
+    if RB.upgrade_drawn and RB.upgrade_ack ~= nil and RB.unveiled then
+        RB.upgrade_ack, RB.upgrade_said = nil, true
+        local configuration = package.loaded.configuration
+        if type(configuration) == "table" and type(configuration.ack_upgrade_reset) == "function" then
+            pcall(configuration.ack_upgrade_reset)
+        end
+    end
+    RB.upgrade_drawn = nil
 
     -- The breakdown of the WORST refresh, captured when it happens.
     --
@@ -4696,6 +4803,10 @@ function M.close()
     -- An old notice must not greet the next opening (review B6).
     notice, RB.armed, RB.saving = nil, nil, nil
     RB.search_dirty, RB.search_focused = nil, false
+    -- The search box goes with the widgets, so its text goes too (round 3,
+    -- P3-1): kept, the next opening drew one stale "Matching" grid and the
+    -- empty new box then swallowed the next Enter as a search commit.
+    search_text = ""
     pcall(function() scheduler.want_totals = false end)
     return true
 end
@@ -4774,23 +4885,27 @@ function M.toggle()
     want_first_row = true
     -- The panel stays invisible until a frame has laid it out (review E,
     -- screenshot 02a: the first frame drew every row on top of the others).
-    RB.unveiled, RB.laid_out, RB.unveil_by = false, false, os.clock() + RB.UNVEIL_S
+    -- The cap starts at the first hidden frame (refresh), not here.
+    RB.unveiled, RB.laid_out, RB.unveil_by = false, false, nil
+
+    -- Prompts name the input the player is on (round 3, P2-1): the game's
+    -- flag asked once now, since nothing refreshes it while the panel is
+    -- open, and the panel's own record starts again with the first input.
+    RB.last_device = nil
+    if type(api.input_is_gamepad) == "function" then pcall(api.input_is_gamepad) end
 
     -- A Workshop or Vortex update that removed config.lua (configuration
-    -- reports it once). Said on the first opening, in the notice row.
+    -- reports it once). Said on an opening, in the notice row, until a
+    -- visible draw has shown it (refresh acknowledges it then).
     if not RB.upgrade_said then
         local configuration = package.loaded.configuration
         if type(configuration) == "table" and configuration.upgrade_reset == true then
-            RB.upgrade_said = true
             -- configuration words it: a hand-deleted file is not blamed on
             -- the Workshop (round 2).
-            announce(configuration.upgrade_message or configuration.UPGRADE_MESSAGE
+            RB.upgrade_ack = configuration.upgrade_message or configuration.UPGRADE_MESSAGE
                 or ("Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
-                .. "Default settings are in use; options page settings are kept."))
-            -- Kept across sessions until shown (round 2); now it has been.
-            if type(configuration.ack_upgrade_reset) == "function" then
-                pcall(configuration.ack_upgrade_reset)
-            end
+                .. "Default settings are in use; options page settings are kept.")
+            announce(RB.upgrade_ack)
         end
     end
 
@@ -4857,7 +4972,7 @@ function M.reset()
     RB.runtime.phase = "closed"
     RB.clear_widgets()
     pcall(function() scheduler.want_totals = false end)
-    RB.stock, RB.stock_camp = nil, nil
+    RB.stock, RB.stock_camp, RB.stock_picked = nil, nil, nil
     search_text, want_focus, grid_from, grid_count = "", false, 0, 0
     mode, page, show_all = "list", 0, false
     ftext_mode, warned = nil, {}
@@ -5003,11 +5118,12 @@ end
 -- the selection passes through, so a controller needs a way to ask for it
 -- directly. This finds the entry of the given kind belonging to the row the
 -- selection is on.
-function M.row_action(cfg, kind)
+function M.row_action(cfg, kind, origin)
     if not M.open then return false end
     -- Delete (and X) inside a text box edits the text, never the row (B1).
     if RB.typing() then return false end
-    RB.last_device = "keys"
+    -- Delete, or X when a controller route passes "pad" (round 3, P2-1).
+    RB.last_device = origin == "pad" and "pad" or "keys"
 
     local r = rows[sel]
     if r == nil then return false end
@@ -5069,7 +5185,9 @@ end
 -- the rules while left and right raise and lower the ceiling. In the picker
 -- every arrow moves, because a grid has two dimensions and there is nothing
 -- to raise, and Enter is what picks.
-function M.nav(cfg, what)
+-- origin is "pad" from the controller routes (native_pad, pad_actions); the
+-- keyboard binds in main.lua pass none (round 3, P2-1).
+function M.nav(cfg, what, origin)
     if not M.open then return false end
 
     -- A text box with the keyboard keeps its keys (review B1). In the amount
@@ -5086,7 +5204,7 @@ function M.nav(cfg, what)
         return false
     end
     RB.input()
-    RB.last_device = "keys"
+    RB.last_device = origin == "pad" and "pad" or "keys"
 
     -- The Enter that committed the search box (review round 2, P1). Its
     -- focus is already gone when this runs, so RB.typing says no; the
@@ -6195,7 +6313,24 @@ function M.apply(cfg, what, dir, from_mouse)
         want_first_row = true
         -- Not "type to filter": the search box takes the keyboard only when
         -- clicked, on purpose (arrow keys must keep moving the grid). P2-7.
-        announce("Click an item to add a limit. Click the search box to search by name.")
+        -- Named for the input (round 3, accessibility P2-2); the keyboard
+        -- reaches the box as a row above the items (P2-4).
+        local by = RB.device(from_mouse)
+        announce(by == "pad" and "Press Y on an item to add a limit."
+            or (by == "keys" and "Press Enter on an item to add a limit. Up from the items reaches the search box.")
+            or "Click an item to add a limit. Click the search box to search by name.")
+        return true
+    end
+
+    -- The search row (round 3, accessibility P2-4): the next draw gives the
+    -- box the keyboard, as a click on it does. A controller cannot type
+    -- there without a keyboard, and a focused box would hold its buttons.
+    if what.kind == "search" then
+        if RB.device(from_mouse) == "pad" then
+            announce("Searching needs a keyboard. Show all lists every item a base can make.")
+            return false
+        end
+        want_focus = true
         return true
     end
 
@@ -6231,6 +6366,9 @@ function M.apply(cfg, what, dir, from_mouse)
         stock_totals(cfg)
         if not RB.stock or #RB.stock.choices < 2 then return false end
         RB.stock_camp = RB.stock.choices[(RB.stock.index or 1) % #RB.stock.choices + 1]
+        -- The player chose this base, so a new limit may be seeded from it
+        -- (round 3, newcomer P1-1; see the "item" branch).
+        RB.stock_picked = RB.stock_camp
         page = 0
         return true
     end
@@ -6269,9 +6407,10 @@ function M.apply(cfg, what, dir, from_mouse)
         local capability = RB.picker.describe(caps, caps.all(cfg, guild), work, what.item, guild, cfg)
         if capability.state == "existing" then
             RB.armed = nil
-            announce(string.format(
-                "%s, now %s. Click the limit to change it.",
-                capability.detail, group_digits(capability.amount)))
+            -- The selection follows to the limit; what changes it there
+            -- depends on the input (round 3, P2-4).
+            announce(string.format("%s, now %s. %s", capability.detail, group_digits(capability.amount),
+                RB.CHANGE[RB.device(from_mouse)] or RB.CHANGE.mouse))
             mode = "list"
             RB.reveal_rule = { work = work, item = what.item, guild = guild }
             want_first_row = true
@@ -6307,6 +6446,24 @@ function M.apply(cfg, what, dir, from_mouse)
         -- until the player chooses a real number. Past the top rung it was
         -- the top rung, a limit already reached; RB.seed_for goes above.
         local have = (RB.stock.totals or {})[what.item] or 0
+        -- Not from a base the player did not choose (round 3, newcomer
+        -- P1-1). With per-base counting and two or more bases the panel
+        -- opens on one sorted by id, and palapi cannot say which base the
+        -- player or the stand is at. Seeded from that base, a limit could
+        -- already be reached at another and stop the job there at once. So
+        -- the seed is above the fullest base, which needs every base
+        -- counted (the host); otherwise the player picks the base first.
+        local fullest = false
+        if RB.stock.scope == "camp" and #RB.stock.choices > 1 and RB.stock_picked ~= RB.stock.camp then
+            local most = not caps.is_client and type(RB.status.highest) == "function"
+                and RB.status.highest(scheduler, guild, RB.stock.choices, what.item) or nil
+            if type(most) ~= "number" then
+                RB.armed = nil
+                announce(name .. ": not added. Each base is counted alone; choose one with change base first.")
+                return false
+            end
+            have, fullest = math.max(have, most), true
+        end
         local seed = RB.seed_for(have)
         if seed == nil then
             RB.armed = nil
@@ -6341,8 +6498,14 @@ function M.apply(cfg, what, dir, from_mouse)
             local again = RB.AGAIN[by]
             local said
             if RB.per_item(cfg) and work == "Mining" then
-                said = string.format("%s: stops only the rocks that mainly give it once reached. %s to add a limit of %s.",
+                -- Stone Pits named (round 3, newcomer P2-1): stone kept
+                -- rising after "Rocks stopped", which read as broken.
+                said = string.format("%s: stops its rocks once reached; Stone Pits keep producing. %s to add a limit of %s.",
                     name, again, group_digits(seed))
+                if #said > 125 then
+                    said = string.format("%s: stops its rocks once reached; pits go on. %s to add a limit of %s.",
+                        name, again, group_digits(seed))
+                end
             elseif capability.group ~= nil then
                 -- The job already has another group limit (review round 2,
                 -- P1): this one joins it, and the job stops only once every
@@ -6373,9 +6536,14 @@ function M.apply(cfg, what, dir, from_mouse)
             announce(select(3, RB.status.save(caps)) or RB.not_confirmed(work, what.item, seed))
             return false
         end
-        local done = string.format(
-            "%s: %s limit %s for %s, just above storage. Click the number to change it.",
-            caps.is_client and "Sent to the server" or "Saved", job, group_digits(seed), name)
+        -- What changes it next, by device (round 3, newcomer P2-4), and
+        -- which storage the seed is above. The second sentence gives way
+        -- past the notice row's ~125 characters.
+        local done = string.format("%s: %s limit %s for %s, just above %s.",
+            caps.is_client and "Sent to the server" or "Saved", job, group_digits(seed), name,
+            fullest and "your fullest base" or "storage")
+        local change = RB.CHANGE[RB.device(from_mouse)] or RB.CHANGE.mouse
+        if #done + 1 + #change <= 125 then done = done .. " " .. change end
         if pending then RB.saving_said("Saving change...", done) else announce(done) end
         -- Follow it, like opening an existing limit does (review B6).
         mode = "list"
@@ -6388,7 +6556,7 @@ function M.apply(cfg, what, dir, from_mouse)
     -- producer is unsupported, persistence fails, or a network edit is
     -- rejected. Keep the source until a validated atomic migration exists.
     if what.kind == "job" then
-        announce("The work type of a limit cannot be changed in 0.5.0. The limit is kept.")
+        announce("The job of a limit cannot be changed in this version. The limit is kept.")
         return false
     end
 

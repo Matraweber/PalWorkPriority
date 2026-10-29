@@ -38,11 +38,11 @@ local function stable()
 end
 assert(panel.apply(cfg,{kind='item',item='Stone14'},-1,true))
 panel.refresh(cfg); stable()
-assert(help.text:find('Click the limit to change it',1,true), 'existing-rule notice missing')
+assert(help.text:find('Click the number to change it',1,true), 'existing-rule notice missing')
 -- A notice stays until the next input, not 7 seconds (review B6, 2026-10-28),
 -- with a long upper bound for a panel left open.
 now=108; panel.refresh(cfg); stable()
-assert(help.text:find('Click the limit to change it',1,true), 'notice expired before any input')
+assert(help.text:find('Click the number to change it',1,true), 'notice expired before any input')
 panel.nav(cfg,'down'); panel.refresh(cfg); stable()
 assert(help.text==HELP, 'an input did not clear the notice')
 assert(panel.apply(cfg,{kind='item',item='Stone14'},-1,true))
