@@ -2,16 +2,29 @@
 local M = {}
 local stock_snapshot = require('storage_snapshot')
 local empty = {}
-local labels = {saving='Saving...', saved='Saved', error='Save failed - changes need attention',
+-- The two failures point at the reason under them (round 3, newcomer P3-6).
+local labels = {saving='Saving...', saved='Saved', error='Save failed - see the line below',
     missing='No saved limits yet', connecting='Connecting to server...', pending='Sending changes...',
     acknowledged='Server accepted - awaiting data', applied='Confirmed by server', accepted='Confirmed by server',
-    applied_unsaved='Applied - not saved', ready='Synced with server',
+    applied_unsaved='Applied, not saved - see below', ready='Synced with server',
     rejected='Server rejected changes', incompatible='Server version incompatible', unavailable='Settings unavailable'}
 -- Every reason code that can reach the panel's notice row, in plain words
 -- (2026-10-21 review, P2-5/P2-6). net.lua, protocol.lua, caps.lua and the
 -- settings writers each add their own codes; anything code-shaped that is
 -- not listed falls back to plain_fallback below, never the raw code.
-local MISMATCH='The server runs a different Pal Work Priority version. Install the same version as the server.'
+-- A version mismatch (round 3, onboarding P2-1). "Install the same version
+-- as the server" sent Workshop players to a version they cannot get back;
+-- the server's copy is what controls work there, so the host is who can fix
+-- it. The version named is this mod's own (ui.MOD_VERSION), not a copy.
+local MISMATCH='This server runs another Pal Work Priority version, which controls work here. '
+    ..'Ask the host to update the server to %s.'
+local function mismatch()
+    local ui=package.loaded.ui
+    local version=type(ui)=='table' and type(ui.MOD_VERSION)=='string' and ui.MOD_VERSION or nil
+    if version then return string.format(MISMATCH,version) end
+    return (MISMATCH:gsub(' to %%s%.$','.'))
+end
+M.mismatch_text=mismatch
 local RESYNC='Waiting for fresh data from the server.'
 local NO_NEW='This item cannot have a limit.'
 local NO_RULE='There is no such limit to remove for your guild.'
@@ -33,8 +46,8 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     queue_timeout='The change waited too long and was not sent. Try again.',
     timed_out='The change was not confirmed in time.',
     save_failed='The server applied this change but could not save it; it may be lost after a restart.',
-    schema_or_work_width=MISMATCH,
-    server_requires_matching_mod=MISMATCH,
+    schema_or_work_width=mismatch,
+    server_requires_matching_mod=mismatch,
     settings_restart_required='Server settings are locked. The host must restart the game or server before editing can resume.',
     settings_recovering='The server is loading saved settings. Editing is temporarily locked.',
     activation_busy='Settings are being loaded. Try again in a moment.',
@@ -49,12 +62,14 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     ['No active legacy rule for this guild']=NO_RULE,
     ['ceiling out of range']='Enter a whole number from 1 to 9,999,999.',
     ['invalid item id']='This item cannot have a limit.',
-    ['unknown work type']='This work type cannot have a limit.'}
+    ['unknown work type']='This job cannot have a limit.'}
 -- A code nobody listed is still not shown raw.
 local plain_fallback='Limits are not confirmed right now. Try again in a moment.'
 local function plain(err)
     if err==nil then return nil end
-    if reasons[err] then return reasons[err] end
+    local said=reasons[err]
+    if type(said)=='function' then return said() end
+    if said then return said end
     if type(err)=='string' and err:match('^[%l%d_]+$') then return plain_fallback end
     return err
 end
@@ -110,8 +125,55 @@ function M.submission(caps,written,why,receipt,guild,work,item,amount,epoch)
     return true,true
 end
 
+-- The words after "Storage: " for a view, from its shape alone, so a
+-- client's view (built by net) reads like the host's (round 3, newcomer).
+-- Which base the player is in is not known (palapi has no player or camp
+-- position), so with two or more the shown one is only "Base N of M" and the
+-- line says each is counted alone. One base is just "your base" (P3-2).
+-- Nothing counted is "not counted yet": "Storage: Storage unavailable"
+-- said the word twice (P3-1).
+function M.scope_label(view)
+    if type(view)~='table' then return 'not counted yet' end
+    if view.scope=='guild' then return 'All loaded bases in your guild' end
+    local n=type(view.choices)=='table' and #view.choices or 0
+    if view.scope=='camp' and math.type(view.index)=='integer' and view.index>=1 and view.index<=n then
+        if n==1 then return 'your base' end
+        return 'Base '..view.index..' of '..n..', counted alone'
+    end
+    return 'not counted yet'
+end
+
+-- One camp's totals, only while its evidence is this pass's, this guild's,
+-- complete and fresh: the same test the panel's own view passes.
+local function camp_totals(scheduler,guild,camp)
+    local evidence=(scheduler.last_storage_by_camp or {})[camp]
+    local totals=(scheduler.last_totals_by_camp or {})[camp]
+    if type(evidence)=='table' and evidence.verified==true and evidence.pass==scheduler.pass_id
+        and evidence.scope=='camp' and evidence.guild==guild and (evidence.unknown_scope or 0)==0
+        and type(totals)=='table' and stock_snapshot.fresh(evidence,os.clock())~=nil then
+        return totals
+    end
+end
+
+-- The most of an item that any of these bases holds, or nil unless every
+-- one of them is counted (host only; a client gets one base's count). A new
+-- limit is seeded from this while the player has not chosen the base shown
+-- (round 3, newcomer P1-1): seeded from one base, it could already be
+-- reached at another and stop the job there the moment it was made.
+function M.highest(scheduler,guild,choices,item)
+    if type(scheduler)~='table' or type(choices)~='table' or #choices==0 then return nil end
+    local best=0
+    for _,camp in ipairs(choices) do
+        local totals=camp_totals(scheduler,guild,camp)
+        if not totals then return nil end
+        local n=totals[item]
+        if type(n)=='number' and n>best then best=n end
+    end
+    return best
+end
+
 function M.stock(cfg,scheduler,guild,selected,is_client,remote)
-    local view={verified=false, guild=guild, choices={}, label='Storage unavailable', totals=empty}
+    local view={verified=false, guild=guild, choices={}, label='not counted yet', totals=empty}
     if not guild then return view end
     if is_client then
         if remote and remote.request_stock and remote.storage_view then
@@ -155,7 +217,6 @@ function M.stock(cfg,scheduler,guild,selected,is_client,remote)
         index=index or (#view.choices>0 and 1 or nil)
         if index then
             view.camp=view.choices[index]; view.index=index
-            view.label='Base '..index..' of '..#view.choices
             evidence=(scheduler.last_storage_by_camp or {})[view.camp]
             totals=(scheduler.last_totals_by_camp or {})[view.camp]
         end
@@ -166,6 +227,7 @@ function M.stock(cfg,scheduler,guild,selected,is_client,remote)
         and (evidence.unknown_scope or 0)==0 and type(totals)=='table'
         and stock_snapshot.fresh(evidence,os.clock())~=nil
     if view.verified then view.totals=totals end
+    view.label=M.scope_label(view)
     return view
 end
 
@@ -234,8 +296,19 @@ local function scoped_verdicts(scheduler,guild,view,rules)
             end
         end
         local names={}
-        for camp in pairs(camps) do
-            for name in pairs(works(camp) or {}) do if judged(name) then names[name]=true end end
+        if rules~=nil then
+            -- Only the asked work types (round 3, performance P3-1): the
+            -- panel asks one per row, up to 26 times a draw, and walking
+            -- every job of every camp for each was the cost.
+            for name in pairs(rules) do
+                for camp in pairs(camps) do
+                    if (works(camp) or empty)[name]~=nil then names[name]=true break end
+                end
+            end
+        else
+            for camp in pairs(camps) do
+                for name in pairs(works(camp) or {}) do names[name]=true end
+            end
         end
         for name in pairs(names) do
             local v={camps=n, capped=0, unknown=0}
@@ -271,7 +344,8 @@ function M.verdict(scheduler,work,view)
         -- The host judges its own panel's scope per camp, as a client's
         -- reply does: host_seen alone gave nil in camp scope with two or
         -- more bases (the default), so every group row said "No count yet".
-        seen=scoped_verdicts(scheduler,view.guild,view)[work]
+        -- Judged for this work type alone (round 3, performance P3-1).
+        seen=scoped_verdicts(scheduler,view.guild,view,{[work]=true})[work]
         if type(seen)~='table' or seen.unknown~=0 then return nil end
     end
     -- Third value: how many bases the partial count is out of ("Reached 2/3").

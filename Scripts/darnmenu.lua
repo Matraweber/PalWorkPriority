@@ -46,7 +46,7 @@ return {
   tab = "Pal Work Priority",
   order = 100,
   target = "PalWorkPriority_user",
-  note = "Changes here apply after you restart Palworld. Priorities are set on the Monitoring Stand, limits in Production Limits (Alt+F1). On a server only the host's settings count.",
+  note = "Applies after you restart Palworld. Set priorities on the Monitoring Stand, limits in Production Limits (Alt+F1). In co-op the host's settings count; a dedicated server uses its own config.lua.",
   applyNote = "Saved. Restart Palworld to apply.",
   live = false,
   defaults = {

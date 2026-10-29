@@ -78,7 +78,9 @@ function M.describe(caps, rules, work, item, guild, cfg)
     local unsupported = ok and supported == false
     return {state='unavailable', label=unsupported and 'Cannot be limited' or 'Support unknown',
         detail=unsupported and NO_LIMIT
-            or 'Unavailable: item limit support could not be checked.'}
+            -- With a next step (round 3, newcomer P3-7). describe runs on
+            -- every draw, so a later draw asks again by itself.
+            or 'Item limit support could not be checked yet. Try again in a moment.'}
 end
 
 return M

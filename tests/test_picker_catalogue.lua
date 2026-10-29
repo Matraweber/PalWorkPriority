@@ -6,7 +6,7 @@ local first = assert(source:find('local function drop_numbered_variants', 1, tru
 local last = assert(source:find('local function draw_item_picker', first, true))
 local state, prepares, searches, names, captures = 'pending', 0, 0, {}, 0
 local ready_catalogue = {'Ore','Stone'}
-local env = setmetatable({search_text='ore', show_all=false,
+local env = setmetatable({RB={}, search_text='ore', show_all=false,
     looks_internal=function() return false end,
     items={
         prepare_picker=function(eligible, n, ms) assert(n==128 and ms==2); prepares=prepares+1

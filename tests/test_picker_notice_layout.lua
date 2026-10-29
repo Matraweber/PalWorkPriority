@@ -40,8 +40,8 @@ stable()
 -- Kept until the next input (review B6), then the help comes back in place.
 now=108; panel.refresh(cfg)
 assert(rendered('This item cannot have a limit.')==help, 'notice expired before any input')
-panel.nav(cfg,'right'); panel.refresh(cfg)
-assert(rendered('Click an item to add a limit. Items saying Edit already have one: click to open it.')==help,
+panel.nav(cfg,'right'); panel.refresh(cfg) -- a key, so the help names Enter (round 3)
+assert(rendered('Press Enter on an item to add a limit. Items saying Edit already have one: Enter opens it.')==help,
     'input did not restore help in place')
 stable()
 assert(not panel.apply(cfg,{kind='item',item='StoneAB'},-1,true))

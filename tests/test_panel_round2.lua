@@ -157,11 +157,20 @@ assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Pr
 assert(rendered('Press Enter to add'), 'armed tile does not name Enter')
 assert(caption():find('Under each item: what Enter does',1,true), 'caption still says click: '..tostring(caption()))
 panel.escape(); panel.refresh(cfg)
-api.last_input_type=1
-assert(panel.nav(cfg,'enter')); panel.refresh(cfg)
+-- The pad's Y through its own route, with the game's flag unset (round 3,
+-- P2-1: the flag is frozen while the panel is open, and setting it by hand
+-- here hid that).
+api.last_input_type=nil
+assert(panel.native_pad(7)); panel.refresh(cfg)
 assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Press Y again to add a limit of 100.',
     'pad tile prompt: '..tostring(notice()))
 assert(rendered('Press Y to add') and caption():find('what Y does',1,true), 'pad label or caption')
+panel.escape(); panel.refresh(cfg)
+-- And a key after the pad, with the flag still saying controller.
+api.last_input_type=1
+assert(panel.nav(cfg,'enter')); panel.refresh(cfg)
+assert(notice()=='Wood: stops all Lumbering once reached, not only this item. Press Enter again to add a limit of 100.',
+    'keyboard after pad: '..tostring(notice()))
 panel.escape(); panel.refresh(cfg)
 api.last_input_type=nil
 assert(panel.apply(cfg,{kind='item',item='Wood'},-1,true)); panel.refresh(cfg)
