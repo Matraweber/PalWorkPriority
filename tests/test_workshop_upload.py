@@ -6,7 +6,9 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -221,42 +223,125 @@ class ChangeNoteBudget(unittest.TestCase):
         for parts, body, name_len in [(12, 700, 55), (20, 380, 60), (14, 600, 60), (30, 240, 60)]:
             with self.subTest(parts=parts, body=body, name_len=name_len):
                 text = long_changelog(parts, body, name_len)
-                note, left_out = self.note(text)
+                note, left_out, cut = self.note(text)
                 size = len(note.encode("utf-8"))
                 self.assertLessEqual(size, wu.NOTE_MAX)
                 self.assertGreaterEqual(len(left_out), 5, "the case needs a long footer")
-                self.assertIn("Not shown here for length: %s. Full changelog" % ", ".join(left_out), note)
+                footer = ("Shortened here: %s. " % ", ".join(cut) if cut else "") + \
+                    "Not shown here for length: %s. Full changelog" % ", ".join(left_out)
+                self.assertIn(footer, note)
                 self.assertTrue(any("fix %02d.0" % n in note for n in range(parts)), "something was kept")
+                # Priority order: whole groups, then at most one shortened
+                # group, then only left-out groups. Never a later group in
+                # the place of an earlier one.
+                states = []
                 for n in range(parts):
-                    shown = "fix %02d.0" % n in note
+                    whole = "fix %02d.3" % n in note
+                    short = any(item.startswith("Group %02d " % n) for item in cut)
                     named = any(item.startswith("Group %02d " % n) for item in left_out)
-                    self.assertNotEqual(shown, named, "group %d is either shown or named as left out" % n)
-                # As much as possible: no left-out group would have fitted in
-                # the room left, even counting the footer entry it frees.
-                chunk = text[text.index("**Group 00"):text.index("**Group 01")]
-                group_bytes = len(wu.bbcode(chunk, "0.5.0").encode("utf-8")) + 2
-                room = wu.NOTE_MAX - size
-                for item in left_out:
-                    if item.startswith("Group "):
-                        self.assertLess(room + len(item) + 2, group_bytes, item)
+                    self.assertEqual(whole + short + named, 1, "group %d is shown, shortened or left out" % n)
+                    if short:
+                        self.assertIn("fix %02d.0" % n, note, "a shortened group keeps its first bullet")
+                    states.append("whole" if whole else "short" if short else "out")
+                self.assertEqual(states, sorted(states, key=["whole", "short", "out"].index), states)
+                self.assertLessEqual(states.count("short"), 1)
+                # As much as possible: a shortened group could not keep one
+                # more bullet in the room left.
+                if cut:
+                    bullet = len(("[*]fix 00.0 " + "x" * (body // 4) + "\n").encode("utf-8"))
+                    self.assertLess(wu.NOTE_MAX - size, bullet)
 
     def test_footer_longer_than_the_old_fixed_reserve_still_fits(self):
         # 2026-10-29: the old fixed 150-byte reserve gave 8081 bytes once five
         # long names were left out. The budget now measures the footer.
-        note, left_out = self.note(long_changelog(20, 380, 60))  # the old code: 8369 bytes, refused
+        note, left_out, _ = self.note(long_changelog(20, 380, 60))  # the old code: 8369 bytes, refused
         footer = note[note.index("Not shown here for length"):note.index("Full changelog")]
         self.assertGreater(len(footer.encode("utf-8")), 150)
         self.assertLessEqual(len(note.encode("utf-8")), wu.NOTE_MAX)
 
     def test_short_changelog_keeps_everything(self):
-        note, left_out = self.note(CHANGELOG)
-        self.assertEqual(left_out, [])
+        note, left_out, cut = self.note(CHANGELOG)
+        self.assertEqual((left_out, cut), ([], []))
         self.assertNotIn("Not shown here", note)
+        self.assertNotIn("Shortened here", note)
+
+    def test_high_priority_part_is_shortened_not_skipped_for_smaller_ones(self):
+        # 2026-10-29 (round 3, release-truth P2-1): the largest Fixed group
+        # (the panel fixes) was dropped whole while the smaller, lower
+        # Installation group was kept.
+        def bullets(tag, n, size):
+            return ["- %s %d %s" % (tag, k, "z" * size) for k in range(n)]
+        text = "\n".join(
+            ["# Changelog", "", "## 0.5.0", "", "Intro.", "", "### Before you update", ""]
+            + bullets("before", 4, 600) + ["", "### Fixed", "", "**Settings**", ""]
+            + bullets("settings", 3, 400) + ["", "**Production Limits panel and Monitoring Stand**", ""]
+            + bullets("panel", 14, 400) + ["", "**Installation**", ""]
+            + bullets("install", 2, 150) + ["", "### Vortex", ""] + bullets("vortex", 1, 100)
+            + ["", "## 0.4.1", "", "- old", ""])
+        note, left_out, cut = self.note(text)
+        self.assertLessEqual(len(note.encode("utf-8")), wu.NOTE_MAX)
+        self.assertEqual(cut, ["Production Limits panel and Monitoring Stand fixes"])
+        self.assertIn("panel 0 ", note)
+        self.assertNotIn("panel 13 ", note)
+        self.assertIn("[*]More in the full changelog (link below).", note)
+        self.assertEqual(left_out, ["Installation fixes", "Vortex"])
+        self.assertNotIn("install 0", note, "a smaller, lower part does not take the panel's room")
+        self.assertIn("Shortened here: Production Limits panel and Monitoring Stand fixes. "
+                      "Not shown here for length: Installation fixes, Vortex. Full changelog", note)
+
+    def test_shortened_versions_cut_whole_bullets(self):
+        md = "**Group**\n\n- one\n  more of one\n- two\n- three\n"
+        self.assertEqual(list(wu.shortened(md)), [
+            "**Group**\n\n- one\n  more of one\n- two\n" + wu.MORE + "\n",
+            "**Group**\n\n- one\n  more of one\n" + wu.MORE + "\n"])
+        self.assertEqual(list(wu.shortened("- only one\n")), [])
 
     def test_production_limits_outranks_installation_and_controller(self):
         rank = [k for k in wu.KEEP if k.startswith("Fixed/")]
         self.assertLess(rank.index("Fixed/Production Limits"), rank.index("Fixed/Installation"))
         self.assertLess(rank.index("Fixed/Production Limits"), rank.index("Fixed/Controller"))
+
+
+# Loads only the NoteProblem function from the driver (no UI Automation, no
+# uploader) and prints its answer for the texts in two files.
+NOTE_PROBLEM_PS = r"""
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:PWP_PS1, [ref]$null, [ref]$null)
+$f = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'NoteProblem' }, $true)
+if (-not $f) { [Console]::Out.Write('NO FUNCTION'); exit 3 }
+. ([scriptblock]::Create($f.Extent.Text))
+$r = NoteProblem ([IO.File]::ReadAllText($env:PWP_HELD)) ([IO.File]::ReadAllText($env:PWP_WANT)) ([int]$env:PWP_MAX)
+if ($r) { [Console]::Out.Write($r) } else { [Console]::Out.Write('OK') }
+"""
+
+
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell required")
+class DriverNoteCheck(unittest.TestCase):
+    """tools/workshop-upload.ps1 compares the note the uploader holds with
+    the file exactly (CRs included) and counts UTF-8 bytes, as Steam does."""
+
+    def problem(self, held, want, limit=8000):
+        with tempfile.TemporaryDirectory() as directory:
+            held_file, want_file = Path(directory) / "held.txt", Path(directory) / "want.txt"
+            held_file.write_bytes(held.encode("utf-8"))
+            want_file.write_bytes(want.encode("utf-8"))
+            env = dict(os.environ, PWP_PS1=str(ROOT / "tools/workshop-upload.ps1"), PWP_HELD=str(held_file),
+                       PWP_WANT=str(want_file), PWP_MAX=str(limit))
+            r = REAL_RUN(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", NOTE_PROBLEM_PS],
+                         capture_output=True, text=True, encoding="utf-8", env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def test_cases(self):
+        note = "[h1]0.5.0[/h1]\n[list]\n[*]Fixed\n[/list]\n"
+        self.assertEqual(self.problem(note, note), "OK")
+        self.assertIn("changed the line ends", self.problem(note.replace("\n", "\r\n"), note))
+        self.assertIn("did not go in completely", self.problem(note[:10], note))
+        self.assertIn("did not go in completely", self.problem(note.upper(), note), "case counts")
+        # 4001 characters, 8002 bytes: within a character count, over Steam's byte limit.
+        wide = "\u00e9" * 4001
+        self.assertIn("8002 bytes; Steam allows 8000", self.problem(wide, wide))
+        crlf = "x\r\n" * 2667  # 8001 bytes with the CRs, 5334 without
+        self.assertIn("8001 bytes", self.problem(crlf, crlf.replace("\r", "")))
 
 
 class NoAsserts(unittest.TestCase):
@@ -318,6 +403,14 @@ class Prepare(Fixture):
     def test_bad_subscribed_item_refused(self):
         json_write(self.subscribed / ".workshop.json", {"publishedfileid": "1", "last_published_version": "0.4.1"})
         self.assertIn("not %s" % ITEM, self.refused(wu.prepare, "0.5.0"))
+
+    def test_change_note_size_is_reported_in_bytes(self):
+        text = CHANGELOG.replace("TAGGED FIX TEXT", "Fixed f\u00fcr \u00e9t\u00e9")
+        with mock.patch.object(wu, "changelog_at_tag", lambda version: text):
+            out = self.prepare()
+            note = wu.change_note("0.5.0")[0]
+        self.assertGreater(len(note.encode("utf-8")), len(note))
+        self.assertIn("%d of %d bytes" % (len(note.encode("utf-8")), wu.NOTE_MAX), out)
 
     def test_change_note_from_tag_not_working_tree(self):
         (self.repo / "CHANGELOG.md").write_text(CHANGELOG.replace("TAGGED FIX TEXT", "WORKTREE ONLY"),
@@ -461,6 +554,21 @@ class Upload(Fixture):
         self.assertEqual((self.uploader.parent / "workshop_path.txt").read_text(encoding="utf-8"),
                          str(self.root / "stage"))
 
+    def test_old_workshop_path_is_kept_and_printed(self):
+        path = self.uploader.parent / "workshop_path.txt"
+        path.write_text("C:\\Program Files (x86)\\Steam\\steamapps\\workshop\\content\\1623730", encoding="utf-8")
+        old = path.read_bytes()
+        code, out = self.upload("DryRun", None)
+        self.assertEqual(code, 0)
+        kept = list(self.root.glob("workshop_path-before-*.txt"))
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].read_bytes(), old)
+        self.assertIn(str(kept[0]), out)
+        self.assertEqual(path.read_text(encoding="utf-8"), str(self.root / "stage"))
+        # A second run finds the stage already there: nothing more to keep.
+        self.upload("DryRun", None)
+        self.assertEqual(len(list(self.root.glob("workshop_path-before-*.txt"))), 1)
+
     def test_submit_with_warning_is_published(self):
         code, out = self.upload("Submit", WARNINGS[0])
         self.assertEqual(code, 0)
@@ -501,6 +609,18 @@ class Upload(Fixture):
         new = self.move_tag(push=True)
         self.build_release("0.5.0", new, marker="-- rebuilt\n")
         self.assertIn("the tag moved", self.refused_without_powershell())
+
+    def test_refuses_when_the_public_tag_moved_after_prepare(self):
+        # Local tag unchanged, but origin's tag now names another commit.
+        other = self.move_tag()
+        git(self.repo, "tag", "-f", "-a", "v0.5.0", "-m", "back", head(self.repo) + "~1")
+        git(self.repo, "push", "-q", "--force", "origin", "%s:refs/tags/v0.5.0" % other)
+        msg = self.refused_without_powershell()
+        self.assertIn("public tag v0.5.0 on origin is %s" % other[:12], msg)
+
+    def test_refuses_when_the_public_tag_was_deleted(self):
+        git(self.repo, "push", "-q", "origin", ":refs/tags/v0.5.0")
+        self.assertIn("not on origin", self.refused_without_powershell())
 
     def test_refuses_when_the_manifest_lists_another_archive(self):
         self.build_release("0.5.0", head(self.repo), marker="-- rebuilt\n")

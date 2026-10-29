@@ -12,6 +12,7 @@ param(
     [Parameter(Mandatory)][string]$NotesFile,
     [string]$Directory = 'PalWorkPriority',
     [string]$StatusFile,
+    [int]$NoteMax = 8000,
     [switch]$Submit,
     [switch]$DryRun
 )
@@ -64,6 +65,20 @@ function CellAt($row, [int]$col) {
         if ($c.TryGetCurrentPattern([System.Windows.Automation.GridItemPattern]::Pattern, [ref]$p) -and $p.Current.Column -eq $col) { return $c }
     }
     if ($col -lt $cells.Count) { return $cells[$col] }
+}
+# What is wrong with the change note the uploader holds, or $null. The
+# compare is exact (CRs and case count): Steam stores what the box holds, and
+# counts its UTF-8 bytes against NoteMax (k_cchPublishedDocumentChangeDescriptionMax).
+function NoteProblem([string]$held, [string]$want, [int]$max) {
+    $bytes = [Text.Encoding]::UTF8.GetByteCount($held)
+    if ($bytes -gt $max) { return "The uploader holds a change note of $bytes bytes; Steam allows $max." }
+    if ($held -cne $want) {
+        if ($held.Replace("`r", '') -ceq $want.Replace("`r", '')) {
+            return "The uploader changed the line ends of the change note ($bytes bytes held, $([Text.Encoding]::UTF8.GetByteCount($want)) in the file)."
+        }
+        return "The change note did not go in completely ($($held.Length) of $($want.Length) characters)."
+    }
+    return $null
 }
 function CellTexts($cell) {
     if (-not $cell) { return @() }
@@ -133,8 +148,9 @@ $dialog = WaitFor {
 $box = ById $dialog 'ChangeNotesTextBox'
 $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($notes)
 $typed = Value $box
-if ($typed.Replace("`r", '') -ne $notes.Replace("`r", '')) { throw "The change note did not go in completely ($($typed.Length) of $($notes.Length) characters)." }
-Say "Change note filled in ($($notes.Length) characters)."
+$problem = NoteProblem $typed $notes $NoteMax
+if ($problem) { throw $problem }
+Say "Change note filled in ($([Text.Encoding]::UTF8.GetByteCount($typed)) bytes)."
 
 $buttons = $dialog.FindAll($Scope::Descendants, (Cond $AE::ControlTypeProperty $CT::Button))
 $ok = $buttons | Where-Object { $_.Current.Name -eq 'OK' } | Select-Object -First 1
