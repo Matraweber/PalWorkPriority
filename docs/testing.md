@@ -147,7 +147,7 @@ Same modes as the singleplayer macro except `--return-title-only`, `-select` and
 
 - **The developer channel must be on before launch**: `remote.txt` must exist when the game starts (`--check` also requires it). The macro uses it to send `pwp status` / `pwp net` after a fresh `world key: World` line.
 - Readiness needs `synchronization: client; ready`, `authority: client; server owns assignments` and the exact configured guild. The title screen can report authority, so it is not readiness. Unavailable guild data waits; a different confirmed guild stops without sending the stand key. A truncated log is refused.
-- **The guild id is not in the repo** (since 2026-10-29). Set it once as a user environment variable, then start the macro from a new shell or Explorer: `setx PWP_SERVER_GUILD "<guild id>"`. The id is the `server guild:` line of `pwp net` on a client joined to the server (or the `guild=` of an earlier `SERVER_READY` line in `restart-server-last-run.log`). Without the variable the macro still runs, logs `NOTICE: PWP_SERVER_GUILD is not set, so the guild check is off`, accepts any confirmed guild and logs `guild=unchecked`; then it can act in another server's world, so set it before edit runs.
+- **The guild id is not in the macro** (since 2026-10-29; it is not a secret and is still in older commits and in [g6-guild-isolation-2026-10-19](g6-guild-isolation-2026-10-19.md)). Set it once as a user environment variable, then start the macro from a new shell or Explorer: `setx PWP_SERVER_GUILD "<guild id>"`. The id is the `server guild:` line of `pwp net` on a client joined to the server (or the `guild=` of an earlier `SERVER_READY` line in `restart-server-last-run.log`). Without the variable the macro stops before any key (`STOPPED: PWP_SERVER_GUILD is not set ...`). `--any-guild` after the mode runs it anyway: it logs `NOTICE: --any-guild and PWP_SERVER_GUILD is not set, so the guild check is off`, accepts any confirmed guild and logs `guild=unchecked`, so it can act in another server's world. `--self-test` also prints `PASS 3 guild gate cases`.
 - After joining it opens and closes the vanilla pause menu once (900 ms each) before holding V. That round trip restores the missing interaction prompts seen after joining; it is a workaround, not a fix (release-gates §3).
 - It logs to `restart-server-last-run.log` next to the script. `SERVER_READY` there proves only the connection checks. The accepted run on 2026-09-25 took about two minutes; slow connections take longer. Keep other input idle.
 
@@ -172,8 +172,9 @@ python tools/workshop_upload.py check              # after Steam's download: sub
 
 - `prepare` reads `build/release-<version>/` (the default output of `tools/release.py`). It refuses when tag `v<version>` is not the commit in the release manifest, and when the **public** tag differs: `git ls-remote origin refs/tags/v<version>^{}` must be the local tag's commit, because the change note links to GitHub at that tag. After a moved tag, force-push it first.
 - `prepare` refuses a version that is not newer than the live one. The live version is the newest of the subscribed copy's `Info.json` and the `last_published_version` the uploader wrote into an earlier stage (it does that right after a successful upload, before Steam has downloaded anything). The subscribed `.workshop.json` is one release behind and is not used for this. The live version goes into the staged `.workshop.json` as `last_published_version`. The change note comes from `git show v<version>:CHANGELOG.md`, so it matches the tagged archive, not the working tree.
-- `upload` and `check` re-check the stage before anything else: tag `v<version>` must still be the `source_commit` recorded at prepare, the release manifest's Workshop sha256 must still be the staged one, and no newer version may be live (`upload` also needs the staged version to be newer than the live one). A retag or rebuild after `prepare` therefore refuses with "run prepare again"; PowerShell is not started.
-- The change note keeps parts in a fixed order (Production Limits fixes before Installation and Controller) and measures the whole note, footer included, for every part it adds, so it always fits Steam's 8,000 bytes.
+- `upload` and `check` re-check the stage before anything else: tag `v<version>`, local and on origin, must still be the `source_commit` recorded at prepare, the release manifest's Workshop sha256 must still be the staged one, and no newer version may be live (`upload` also needs the staged version to be newer than the live one). A retag or rebuild after `prepare` therefore refuses with "run prepare again"; PowerShell is not started.
+- The change note adds parts in a fixed priority order (Production Limits fixes before Installation and Controller) and measures the whole note, footer included, for every part it adds, so it always fits Steam's 8,000 bytes. The first part that does not fit whole is shortened to its first bullets plus "More in the full changelog (link below).", and every later part is left out; the footer names both ("Shortened here: ...", "Not shown here for length: ..."). `prepare` prints the size in bytes and both lists.
+- `upload` keeps the uploader's old `workshop_path.txt` value in `D:\PalWorkPriority-workshop\workshop_path-before-<time>.txt` and prints it before pointing the uploader at the stage. The driver compares the note the uploader holds with the file exactly (CRs and case count) and refuses one over 8,000 UTF-8 bytes.
 - `upload` waits until the uploader's Workshop directory box shows the stage path, then selects the row whose **Directory** cell is `PalWorkPriority`.
 - `upload --submit` presses OK itself and classifies the uploader's final status: "Workshop item submitted successfully." and "Submitted, but ..." (a step after the upload failed) are published and exit 0, the second with a warning; anything else exits 1. Publishing is the user's action, so agents run only `prepare` and `--dry-run`.
 - `check` defaults to the staged version. It refuses when the stage changed since `prepare`, and compares Steam's copy with the hashes recorded then (`.workshop.json` excluded, the uploader rewrites it).
@@ -189,12 +190,14 @@ python tools/g7_install_matrix.py manual build/release-0.5.0/PalWorkPriority-0.5
 python tools/g7_install_matrix.py manual <0.4.1 zip> --sha256 <hash>  # an archive without a release manifest
 python tools/g7_install_matrix.py workshop-content build/release-0.5.0/PalWorkPriority-0.5.0-workshop.zip
 python tools/g7_install_matrix.py workshop on|off
-python tools/g7_install_matrix.py wipe | status
+python tools/g7_install_matrix.py wipe --state <state folder>
+python tools/g7_install_matrix.py status
 python tools/g7_install_matrix.py restore --state <state folder>
 ```
 
-- `manual` checks the archive's sha256 against the release manifest next to it, so a stale archive from an older tag is refused before anything is extracted.
-- `restore` checks the backup (dev install tree, dev pak, Workshop copy, `PalModSettings.ini`, `mods.txt`) against `state.json` **before** it wipes or replaces anything; a mismatch changes nothing.
+- `manual` and `workshop-content` run one shared check before anything is extracted or deleted: the archive's sha256 must be the one in the release manifest next to it, and the manifest's `source_commit` must be the commit tag `v<version>` points at (printed). A moved-aside older build (for example `build/release-0.5.0-old/`) is refused. An archive without a manifest (the 0.4.1 zip) needs `--sha256`. The zip is read in full before the game or Workshop folder is touched.
+- `wipe` needs `--state` and refuses unless that prepare backup matches its `state.json` (before `prepare` or after `restore` the folder is the dev install itself).
+- `restore` checks the backup (dev install tree, dev pak, Workshop copy, ManagedMods, `PalModSettings.ini`, `mods.txt`) against `state.json` **before** it wipes or replaces anything; a mismatch changes nothing. It puts ManagedMods back (the copy found there is kept in the state folder) and moves the manual archive's `INSTALL.txt` out of the game root into the state folder.
 - Offline tests: `python -m unittest tests.test_g7_install_matrix -v` (temporary folders, a fake tasklist).
 
 ### `tools/remote.py`
@@ -347,7 +350,7 @@ Independent frames come from PresentMon 2.5.1 through `tools/capture_frames.py` 
 - [ ] Vortex remains uncertified until deployment/update/removal passes.
 - [ ] Restore permissions and preserve backups before removal; verify game state.
 
-`tools/release.py` validates inputs/builds archives. It does not establish native compatibility or publish. All applicable release blockers still need acceptance.
+`tools/release.py` validates inputs/builds archives. It does not establish native compatibility or publish. All applicable release blockers still need acceptance. It packages the tracked files as committed at HEAD (git's blobs), not the working copy, and prints a note when disk bytes differ (for example CRLF line endings, which `git status` does not show under `eol=lf`). It never overwrites a different build in its output folder; the refusal prints the `Rename-Item` command that moves the old folder aside. Order for a retag: move the old build aside, commit, move and force-push the tag, build, then `workshop_upload.py prepare`.
 
 ## Evidence record template
 

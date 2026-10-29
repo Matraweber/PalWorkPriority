@@ -6,10 +6,21 @@ Lua/asset bytes. Native widget compatibility remains a separate acceptance gate.
 
   python tools/release.py --pak LogicMods/PalWorkPriority.pak --pak-sha256 <hash>
 
+The tracked sources are packaged as committed at HEAD (git's blobs, read
+with git cat-file), not as they sit on disk: with eol=lf, git status does not
+report a working copy whose line endings differ, so disk bytes need not be the
+commit's bytes. The archive layout is the same either way. The pak is the
+file --pak names, bound by --pak-sha256 and the committed asset contract.
+
 The default output is build/release-<version>, the folder
 tools/workshop_upload.py prepare reads. A folder that already holds a
 different build of the same version is refused, never overwritten: move it
-aside first.
+aside first (the refusal prints the rename command).
+
+Order for a retag: move the old build aside, commit, move the tag, push the
+tag (git push --force origin v<version>), build, then
+tools/workshop_upload.py prepare. prepare refuses until the public tag is the
+commit the build came from.
 """
 from __future__ import annotations
 
@@ -55,6 +66,51 @@ def git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def git_bytes(root: Path, *args: str, stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(["git", "-C", str(root), *args], input=stdin, capture_output=True)
+    if result.returncode:
+        raise ReleaseFailure(result.stderr.decode("utf-8", "replace").strip() or "git command failed")
+    return result.stdout
+
+
+def committed_files(root: Path, revision: str, names: list[str]) -> dict[str, bytes]:
+    """Each path's bytes as committed at revision: the blob itself, without
+    checkout filters, so a CRLF working copy of an eol=lf file cannot slip
+    into the archive. Only regular files (mode 100644/100755) count."""
+    listing = git_bytes(root, "ls-tree", "-r", "-z", "--full-tree", revision, "--", *names)
+    found = {}
+    for record in listing.split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, kind, oid = meta.decode("ascii").split()
+        found[path.decode("utf-8")] = (mode, kind, oid)
+    for name in names:
+        mode, kind, _ = found.get(name, ("", "", ""))
+        if kind != "blob" or mode not in ("100644", "100755"):
+            raise ReleaseFailure(f"required regular source file is missing: {name}")
+    # One git process for every blob: "<oid> blob <size>\n<bytes>\n" per object.
+    output = git_bytes(root, "cat-file", "--batch",
+                       stdin="".join(found[name][2] + "\n" for name in names).encode("ascii"))
+    files, at = {}, 0
+    for name in names:
+        end = output.index(b"\n", at)
+        oid, kind, size = output[at:end].decode("ascii").split()
+        if oid != found[name][2] or kind != "blob":
+            raise ReleaseFailure(f"git returned another object for {name}")
+        start = end + 1
+        files[name] = output[start:start + int(size)]
+        at = start + int(size) + 1
+    return files
+
+
+def working_copy_drift(root: Path, committed: dict[str, bytes]) -> list[str]:
+    """Tracked files whose disk bytes are not the committed bytes (for
+    example CRLF line endings, which git status does not report)."""
+    return sorted(name for name, data in committed.items()
+                  if not (root / name).is_file() or (root / name).read_bytes() != data)
+
+
 def clean_revision(root: Path) -> str:
     if git(root, "status", "--porcelain", "--untracked-files=normal"):
         raise ReleaseFailure("release source is dirty; commit the reviewed source and tests first")
@@ -83,8 +139,8 @@ def validate_pak(data: bytes, expected_sha256: str) -> dict:
     }
 
 
-def tracked_lua(root: Path) -> list[str]:
-    paths = git(root, "ls-files", "--", "Scripts").splitlines()
+def tracked_lua(root: Path, revision: str) -> list[str]:
+    paths = git(root, "ls-tree", "-r", "--name-only", "--full-tree", revision, "--", "Scripts").splitlines()
     lua = sorted(path for path in paths if re.fullmatch(r"Scripts/[A-Za-z0-9_]+\.lua", path))
     if "Scripts/main.lua" not in lua:
         raise ReleaseFailure("tracked Scripts/main.lua missing")
@@ -94,17 +150,19 @@ def tracked_lua(root: Path) -> list[str]:
     return lua
 
 
-def reviewed_asset_contract(root: Path, data: bytes) -> dict:
+def reviewed_asset_contract(root: Path, revision: str, data: bytes) -> dict:
     """Bind asset expectations to reviewed bytes, not a caller's arbitrary hash.
 
     Widget versions are review declarations, not claims of binary introspection
     or present-build native acceptance. Changing the pak requires contract review.
+    The contract is read as committed at revision.
     """
-    path = root / ASSET_CONTRACT
-    if not path.is_file() or path.is_symlink():
-        raise ReleaseFailure("reviewed asset contract is missing")
     try:
-        contract = json.loads(path.read_text(encoding="utf-8-sig"))
+        text = committed_files(root, revision, [ASSET_CONTRACT])[ASSET_CONTRACT]
+    except ReleaseFailure as exc:
+        raise ReleaseFailure("reviewed asset contract is missing") from exc
+    try:
+        contract = json.loads(text.decode("utf-8-sig"))
     except (ValueError, UnicodeError) as exc:
         raise ReleaseFailure("invalid reviewed asset contract") from exc
     if not isinstance(contract, dict) or contract.get("schema") != 2:
@@ -121,14 +179,9 @@ def collect_payload(root: Path, pak: Path, expected_sha256: str, revision: str) 
         raise ReleaseFailure(f"required pak is absent: {pak}")
     pak_data = pak.read_bytes()
     contract = validate_pak(pak_data, expected_sha256)
-    contract["reviewed_contract"] = reviewed_asset_contract(root, pak_data)
-    required = ["Info.json", "README.md", "CHANGELOG.md", "LICENSE", "thumbnail.png"] + tracked_lua(root)
-    payload = {}
-    for relative in required:
-        path = root / relative
-        if not path.is_file() or path.is_symlink():
-            raise ReleaseFailure(f"required regular source file is missing: {relative}")
-        payload[relative] = path.read_bytes()
+    contract["reviewed_contract"] = reviewed_asset_contract(root, revision, pak_data)
+    required = ["Info.json", "README.md", "CHANGELOG.md", "LICENSE", "thumbnail.png"] + tracked_lua(root, revision)
+    payload = committed_files(root, revision, required)
     try:
         info = json.loads(payload["Info.json"].decode("utf-8-sig"))
     except (ValueError, UnicodeError) as exc:
@@ -205,7 +258,9 @@ def archive_entries(payload: dict[str, bytes], manifest: dict, kind: str) -> dic
             "   No stand yet? Alt+F1 opens the Production Limits panel, which proves\n"
             "   the mod loaded.\n\n"
             "Did it load? Open priority.log in the PalWorkPriority folder.\n"
-            "It should say \"Pal Work Priority " + manifest["version"] + " loaded\".\n\n"
+            "It should say \"Pal Work Priority " + manifest["version"] + " loaded\".\n"
+            "If it says \"did not start\", the line before it names the setting.\n"
+            "Fix it in config.lua, or delete config.lua and restart.\n\n"
             "Use one copy only. If the Steam Workshop copy is switched on in the game's\n"
             "mod list, switch it off or unsubscribe first.\n\n"
             "With Vortex, turn off in Settings > Mods \"Manage modding requirements (UE4SS,\n"
@@ -214,7 +269,9 @@ def archive_entries(payload: dict[str, bytes], manifest: dict, kind: str) -> dic
             "the game once, then remove 0.4.1. Your config.lua edits are kept.\n\n"
             "Multiplayer. The server and every player need exactly this version.\n"
             "A dedicated server must run Windows and needs UE4SS. From this zip it\n"
-            "needs only the PalWorkPriority folder. See README.md for the steps.\n\n"
+            "needs only the PalWorkPriority folder, including the empty enabled.txt\n"
+            "in it. Without that file UE4SS does not start the mod. See README.md\n"
+            "for the steps.\n\n"
             "More help is in README.md inside the PalWorkPriority folder.\n"
         ).encode("utf-8")
     return entries
@@ -275,10 +332,30 @@ def default_output(root: Path, version: str) -> Path:
     return root / "build" / f"release-{version}"
 
 
+def move_aside_command(output: Path, version: str) -> str:
+    """The PowerShell line that renames an existing release folder out of the
+    way, named after the commit its release.json records (else "-old")."""
+    suffix = "old"
+    try:
+        old = json.loads((output / f"{MOD}-{version}-release.json").read_text(encoding="utf-8"))
+        if re.fullmatch(r"[0-9a-f]{40}", str(old.get("source_commit", ""))):
+            suffix = old["source_commit"][:7]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return f"Rename-Item -LiteralPath '{output}' -NewName '{output.name}-{suffix}'"
+
+
 def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> dict:
     root, pak = root.resolve(), pak.resolve()
     revision = clean_revision(root)
     payload, manifest = collect_payload(root, pak, expected_sha256, revision)
+    sources = {name: data for name, data in payload.items() if name != PAK_LOGICAL}
+    if "Scripts/config.lua" in tracked_lua(root, revision):  # packaged as default_config.lua
+        sources["Scripts/config.lua"] = sources.pop("Scripts/default_config.lua")
+    drift = working_copy_drift(root, sources)
+    if drift:
+        print(f"note: packaged the committed bytes of {revision[:12]}; {len(drift)} working-copy file(s) "
+              f"differ (line endings?): {', '.join(drift[:5])}{' ...' if len(drift) > 5 else ''}", file=sys.stderr)
     # The version is known only from the validated Info.json.
     output = (output if output is not None else default_output(root, manifest["version"])).resolve()
     compile_gate(root)
@@ -300,7 +377,9 @@ def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> d
             write_archive(staged, entries)
             verify_archive(staged, entries)
             if destination.exists() and destination.read_bytes() != staged.read_bytes():
-                raise ReleaseFailure(f"refusing to overwrite a different release: {destination}")
+                raise ReleaseFailure(
+                    f"refusing to overwrite a different release: {destination}. Move the old folder aside "
+                    f"(rename it, never delete it), then build again:\n  {move_aside_command(output, manifest['version'])}")
             result["archives"][kind] = {"file": filename, "sha256": sha256(staged.read_bytes())}
         # Validate both distributions before publishing either file into the output folder.
         for record in result["archives"].values():

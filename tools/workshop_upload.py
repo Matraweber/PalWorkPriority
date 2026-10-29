@@ -11,8 +11,8 @@ that tag vV is the commit it was built from, and that the public tag on origin
 is the same commit (the change note links to GitHub at vV). It extracts it into D:/PalWorkPriority-workshop/stage/PalWorkPriority (an older
 stage is moved aside, never deleted), writes the uploader's .workshop.json
 (item 3786408856, last_published_version = the live version) and the change
-note (the CHANGELOG section at tag vV as Steam BBCode, at most 8000
-characters) next to the folder, not inside it: everything inside the folder
+note (the CHANGELOG section at tag vV as Steam BBCode, at most 8000 bytes
+in UTF-8) next to the folder, not inside it: everything inside the folder
 is uploaded.
 
 The live version is the newest of the subscribed copy's Info.json Version and
@@ -21,7 +21,9 @@ that file after a successful upload, before Steam has downloaded anything).
 prepare refuses a version that is not newer than the live one: no silent
 re-upload, no downgrade.
 
-upload starts the uploader with the stage as its Workshop directory, waits
+upload points the uploader's workshop_path.txt at the stage (an older value
+is kept in D:/PalWorkPriority-workshop/workshop_path-before-<time>.txt and
+printed), starts the uploader with the stage as its Workshop directory, waits
 until the tool shows that directory, selects the row whose Directory cell is
 PalWorkPriority, checks name and version, presses "Upload To Steam" and fills
 in the change note. By default it stops there: the Change Notes window stays
@@ -30,11 +32,12 @@ answer (classify_status: "Workshop item submitted successfully." and
 "Submitted, but ..." are published, anything else exits 1); --dry-run presses
 Cancel and closes the uploader (nothing is sent).
 
-upload and check first re-check the stage against the release: tag vV must
-still be the commit recorded at prepare, the release manifest's Workshop hash
-must still be the staged one, and no newer version may be live (upload also
-needs the staged version to be newer than the live one). A moved tag or a
-rebuilt archive therefore needs a new prepare before anything is uploaded.
+upload and check first re-check the stage against the release: tag vV, local
+and on origin, must still be the commit recorded at prepare, the release
+manifest's Workshop hash must still be the staged one, and no newer version
+may be live (upload also needs the staged version to be newer than the live
+one). A moved tag or a rebuilt archive therefore needs a new prepare before
+anything is uploaded.
 
 check compares Steam's copy with the hashes recorded at prepare and refuses
 when the stage itself changed since then.
@@ -55,15 +58,21 @@ STAGE = ROOT / 'stage'
 MOD = STAGE / 'PalWorkPriority'
 NOTE_MAX = 8000  # Steam: k_cchPublishedDocumentChangeDescriptionMax
 GITHUB = 'https://github.com/Matraweber/PalWorkPriority'
-# Changelog parts in the order they are kept when the note is too long
-# ("Section/Sub" is a bold sub-heading inside a section; '' is the intro).
-# Production Limits ranks above Installation and Controller: the panel is
-# what 0.5.0 adds, so its fixes are the last Fixed group to be cut.
+# Changelog parts in priority order ("Section/Sub" is a bold sub-heading
+# inside a section; '' is the intro). change_note adds them in this order
+# while the whole note fits. The first part that does not fit whole is
+# shortened to its first bullets plus a pointer to the full changelog, and
+# every later part is left out, so a smaller, lower part never takes the
+# place of a higher one. Production Limits ranks above Installation and
+# Controller: the panel is what 0.5.0 adds, so its fixes are the last Fixed
+# group to be cut.
 KEEP = ['', 'Before you update', 'Limits in', 'Fixed/Settings', 'Fixed/Scheduling', 'Fixed/Multiplayer',
         'Fixed/Production Limits', 'Fixed/Installation', 'Fixed/Controller', 'Not in', 'Vortex', 'Performance']
 # The uploader's StatusTextBlock after a successful SubmitItemUpdate
 # (PalworldModUploader MainWindow.xaml.cs, OnItemSubmitted).
 PUBLISHED = 'Workshop item submitted successfully.'
+# The last bullet of a shortened part.
+MORE = '- More in the full changelog (link below).'
 
 
 def die(message):
@@ -231,47 +240,73 @@ def changelog_at_tag(version):
     return r.stdout.decode('utf-8').replace('\r\n', '\n')
 
 
+def shortened(md):
+    """Shorter versions of a changelog part's markdown, longest first: whole
+    top-level bullets are cut from the end and MORE takes their place. The
+    first bullet always stays, so a part without a second bullet has none."""
+    lines = md.rstrip('\n').split('\n')
+    starts = [i for i, line in enumerate(lines) if line.startswith('- ')]
+    for cut in reversed(starts[1:]):
+        yield '\n'.join(lines[:cut]).rstrip() + '\n' + MORE + '\n'
+
+
 def change_note(version):
+    """(note, left_out, shortened): the CHANGELOG section at v<version> as
+    BBCode within NOTE_MAX bytes, with the names of the parts left out and
+    of the part shown shortened (KEEP explains the order)."""
     text = changelog_at_tag(version)
     m = re.search(r'^## %s\b.*?(?=^## |\Z)' % re.escape(version), text, re.S | re.M)
     if not m:
         die('CHANGELOG.md at v%s has no "## %s" section' % (version, version))
-    units = []  # (key, parent section or None, bbcode)
+    units = []  # (key, parent section or None, markdown)
     for part in re.split(r'(?m)^(?=### )', m.group(0).rstrip()):
         title = part.splitlines()[0][4:].strip() if part.startswith('### ') else ''
         chunks = re.split(r'(?m)^(?=\*\*[^*\n]+\*\*$)', part)
-        units.append((title, None, bbcode(chunks[0], version)))
+        units.append((title, None, chunks[0]))
         for chunk in chunks[1:]:
-            units.append((title + '/' + chunk.splitlines()[0].strip('* '), title, bbcode(chunk, version)))
+            units.append((title + '/' + chunk.splitlines()[0].strip('* '), title, chunk))
     rank = lambda key: next((i for i, k in enumerate(KEEP) if key.startswith(k) and (k or not key)), len(KEEP))
+    name = lambda u: u[0].split('/', 1)[1] + ' fixes' if u[1] == 'Fixed' else u[0]
     link = 'Full changelog: [url=%s/blob/v%s/CHANGELOG.md]CHANGELOG.md[/url] (also in the mod folder).' % (GITHUB, version)
 
-    def render(keep):
-        """The whole note for a set of kept units, with the footer that names
-        exactly the parts left out: sizes are measured, not estimated."""
-        left_out = [u[0].split('/', 1)[1] + ' fixes' if u[1] == 'Fixed' else u[0]
-                    for i, u in enumerate(units) if i not in keep]
-        note = '\n\n'.join(u[2] for i, u in enumerate(units) if i in keep and u[2].strip())
-        footer = 'Not shown here for length: %s. %s' % (', '.join(left_out), link) if left_out else link
-        return note + '\n\n' + footer, left_out
+    def render(kept, short):
+        """The whole note for the kept units ({index: markdown}), with the
+        footer that names exactly the parts shortened and left out: sizes
+        are measured, not estimated."""
+        left_out = [name(u) for i, u in enumerate(units) if i not in kept]
+        cut = [name(units[i]) for i in sorted(short)]
+        body = (bbcode(kept[i], version) for i in sorted(kept))
+        note = '\n\n'.join(b for b in body if b.strip())
+        footer = (['Shortened here: %s.' % ', '.join(cut)] if cut else []) + \
+                 (['Not shown here for length: %s.' % ', '.join(left_out)] if left_out else [])
+        return note + '\n\n' + ' '.join(footer + [link]), left_out, cut
 
-    # In KEEP order, a part (with its section heading) is kept when the whole
-    # note, footer included, still fits. Each accepted set was measured, so
-    # the final note always fits; a later, smaller part can still use the
-    # room a larger one left.
-    keep = set()
+    def fits(kept, short):
+        return len(render(kept, short)[0].encode('utf-8')) <= NOTE_MAX
+
+    # Every accepted set was measured with its footer, so the note fits.
+    kept, short = {}, set()
     for i in sorted(range(len(units)), key=lambda i: rank(units[i][0])):
         parent = units[i][1]
         need = {i} | {j for j, u in enumerate(units) if parent is not None and u[0] == parent}
-        if need <= keep:
+        if need <= kept.keys():
             continue
-        if len(render(keep | need)[0].encode('utf-8')) <= NOTE_MAX:
-            keep |= need
-    note, left_out = render(keep)
+        trial = dict(kept)
+        trial.update({j: units[j][2] for j in need if j not in kept})
+        if fits(trial, short):
+            kept = trial
+            continue
+        for md in shortened(units[i][2]):
+            trial[i] = md
+            if fits(trial, short | {i}):
+                kept, short = trial, short | {i}
+                break
+        break  # nothing after the first part that did not fit whole
+    note, left_out, cut = render(kept, short)
     size = len(note.encode('utf-8'))
     if size > NOTE_MAX:
         die('the change note is %d bytes; Steam allows %d' % (size, NOTE_MAX))
-    return note, left_out
+    return note, left_out, cut
 
 
 def release_manifest(version):
@@ -306,17 +341,32 @@ def public_tag_commit(version):
     return refs.get(ref + '^{}') or refs.get(ref, '')
 
 
+def check_public_tag(version, tag):
+    """The change note links to GitHub at v<version>: the public tag must be
+    the same commit as the local one, or the links show another CHANGELOG."""
+    public = public_tag_commit(version)
+    if not public:
+        die('tag v%s is not on origin; push it first (git push origin v%s), the change note links to it'
+            % (version, version))
+    if public != tag:
+        die('the public tag v%s on origin is %s, the local tag is %s, so the change-note links would show '
+            'another CHANGELOG. Push the moved tag first (git push --force origin v%s)'
+            % (version, public[:12], tag[:12], version))
+
+
 def check_stage_release(state, uploading):
-    """The stage still belongs to the release: tag v<version> is the commit
-    recorded at prepare, the release manifest still lists the staged Workshop
-    archive, and nothing newer is live. Uploading also needs the staged
-    version to be newer than the live one. After a successful upload the live
-    version equals the staged one, so check accepts equal."""
+    """The stage still belongs to the release: tag v<version>, local and on
+    origin, is the commit recorded at prepare, the release manifest still
+    lists the staged Workshop archive, and nothing newer is live. Uploading
+    also needs the staged version to be newer than the live one. After a
+    successful upload the live version equals the staged one, so check
+    accepts equal."""
     version = state['version']
     tag = tag_commit(version)
     if tag != state['source_commit']:
         die('tag v%s is now %s, but the stage was prepared from %s: the tag moved. '
             'Rebuild with tools/release.py and run prepare again' % (version, tag[:12], state['source_commit'][:12]))
+    check_public_tag(version, tag)
     manifest = release_manifest(version)
     entry = manifest['archives']['workshop']
     if entry['sha256'] != state['sha256'] or manifest.get('source_commit') != state['source_commit']:
@@ -344,16 +394,7 @@ def prepare(version):
     tag = tag_commit(version)
     if tag != manifest['source_commit']:
         die('tag v%s is not the commit the archive was built from' % version)
-    # The change note links to GitHub at v<version>: the public tag must be
-    # the same commit, or the links show another CHANGELOG.
-    public = public_tag_commit(version)
-    if not public:
-        die('tag v%s is not on origin; push it first (git push origin v%s), the change note links to it'
-            % (version, version))
-    if public != tag:
-        die('the public tag v%s on origin is %s, the local tag is %s, so the change-note links would show '
-            'another CHANGELOG. Push the moved tag first (git push --force origin v%s)'
-            % (version, public[:12], tag[:12], version))
+    check_public_tag(version, tag)
 
     # The version guard runs before the stage is touched: a refusal leaves it as it is.
     published = read_json(SUBSCRIBED / '.workshop.json', "the subscribed copy's .workshop.json")
@@ -364,7 +405,7 @@ def prepare(version):
     if version_key(version) <= version_key(live):
         die('version %s is not newer than the live version %s (%s); no re-upload, no downgrade'
             % (version, live, sources))
-    note, left_out = change_note(version)
+    note, left_out, cut = change_note(version)
 
     if MOD.exists():
         aside = ROOT / time.strftime('stage-before-%Y%m%d-%H%M%S')
@@ -397,8 +438,26 @@ def prepare(version):
         'source_commit': manifest['source_commit'], 'live_version': live, 'files': tree(MOD)}, indent=2))
     print('staged %d files of %s in %s' % (len(tree(MOD)) - 1, entry['file'], MOD))
     print('live version: %s (%s); item %s' % (live, sources, ITEM))
-    print('change note (CHANGELOG.md at v%s): %d of %d characters%s' % (version, len(note), NOTE_MAX,
-          '; left out (linked instead): ' + ', '.join(left_out) if left_out else ''))
+    print('change note (CHANGELOG.md at v%s): %d of %d bytes%s%s' % (
+        version, len(note.encode('utf-8')), NOTE_MAX, '; shortened: ' + ', '.join(cut) if cut else '',
+        '; left out (linked instead): ' + ', '.join(left_out) if left_out else ''))
+
+
+def point_uploader_at_stage():
+    """Write the stage into the uploader's workshop_path.txt. An older value
+    is kept in ROOT/workshop_path-before-<time>.txt and printed, so it can
+    be put back."""
+    path = UPLOADER.parent / 'workshop_path.txt'
+    old = path.read_bytes() if path.is_file() else None
+    if old is not None and old.decode('utf-8', 'replace').strip() != str(STAGE):
+        ROOT.mkdir(parents=True, exist_ok=True)
+        kept = ROOT / time.strftime('workshop_path-before-%Y%m%d-%H%M%S.txt')
+        kept.write_bytes(old)
+        if kept.read_bytes() != old:
+            die('could not keep the old %s in %s; nothing was changed' % (path, kept))
+        print("the uploader's Workshop directory was %r; kept in %s (copy it back to %s to restore it)"
+              % (old.decode('utf-8', 'replace').strip(), kept, path))
+    path.write_text(str(STAGE), encoding='utf-8')
 
 
 def upload(mode):
@@ -409,7 +468,7 @@ def upload(mode):
     tasks = subprocess.run(['tasklist'], capture_output=True, text=True).stdout.lower()
     if 'steam.exe' not in tasks:
         die('start Steam and log in first')
-    (UPLOADER.parent / 'workshop_path.txt').write_text(str(STAGE), encoding='utf-8')
+    point_uploader_at_stage()
     args = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
             str(REPO / 'tools/workshop-upload.ps1'), '-Exe', str(UPLOADER), '-Stage', str(STAGE),
             '-Version', state['version'], '-NotesFile', str(STAGE / ('changenote-%s.txt' % state['version']))]
