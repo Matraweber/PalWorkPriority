@@ -47,7 +47,7 @@ already lost cannot be brought back.
 **Settings** live in `config.lua` in the mod folder
 (`<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority`), or on the options
 page with the optional [DarnMenu](https://steamcommunity.com/sharedfiles/filedetails/?id=3769456391)
-(ESC > Options > Mod Options). A value saved on the options page wins over
+(ESC > Darn Mod Options). A value saved on the options page wins over
 `config.lua`. Restart the game after a change.
 
 **Multiplayer:** the server and every player need exactly 0.5.0. Mixed

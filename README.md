@@ -9,7 +9,7 @@ The mod is made for the Steam version of Palworld on Windows. It was only tested
 1. **Open a Monitoring Stand.** Unlock it in the Technology menu and build it in your base. Every job cell shows a number. 1 is the highest priority, 5 the lowest, and X means the Pal never does that job. Left click a cell to raise it toward 1, right click to lower it toward X. A left click on 1 wraps around to X.
 2. **Equal numbers are left to the game.** If every job a Pal may do has the same number, the mod does not steer that Pal and the game picks its work. X jobs stay off. A fresh install starts from the game's ticks. A ticked job becomes 1 and an unticked job becomes X. Give one job a different number and the mod steers that Pal.
 3. **Press Alt+F1 for Production Limits.** Click an item once and the panel shows what the limit will stop and the amount. Click it again a moment later to add the limit. A Mining limit stops only the rocks that mainly give that item. Every other limit stops its whole job.
-4. **Change settings** in ESC > Options > Mod Options (needs the optional [DarnMenu](#settings)) or in `config.lua` in the mod folder. Restart the game after a change.
+4. **Change settings** in ESC > Darn Mod Options (needs the optional [DarnMenu](#settings)) or in `config.lua` in the mod folder. Restart the game after a change.
 
 Updating from 0.4.1? Read "Before you update" in the [changelog](CHANGELOG.md) first.
 
@@ -103,7 +103,7 @@ The mod does not start crafting for you. A limit only stops work.
 
 Settings come from two places.
 
-- **The options page.** With [DarnMenu](https://www.nexusmods.com/palworld/mods/4245) installed (also on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3769456391)), open ESC > Options > Mod Options. DarnMenu is optional. Its values are saved in `<Palworld>\Mods\NativeMods\UE4SS\Mods\shared\PalWorkPriority_user.lua` and win over `config.lua`.
+- **The options page.** With [DarnMenu](https://www.nexusmods.com/palworld/mods/4245) installed (also on the [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3769456391)), open ESC > Darn Mod Options. DarnMenu is optional. Its values are saved in `<Palworld>\Mods\NativeMods\UE4SS\Mods\shared\PalWorkPriority_user.lua` and win over `config.lua`.
 - **`config.lua`** in `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\`. The mod creates it on the first start. Leave `Scripts\default_config.lua` alone. An update replaces it.
 
 Restart the game after a change. `!pwp reload` also reads `config.lua` again, but a restart is the safe way.

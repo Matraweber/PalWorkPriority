@@ -56,7 +56,7 @@ respawn, and controller input after the latest fixes.
   which value, and no Pal is assigned until you fix it.
 - A `caps.txt` or `priorities.txt` edited by hand or saved by 0.4.1 is used,
   not an older backup.
-- The options page (ESC > Options > Mod Options, needs the optional DarnMenu)
+- The options page (ESC > Darn Mod Options, needs the optional DarnMenu)
   uses clearer names. Restart the game after a change there.
 
 **Scheduling**
