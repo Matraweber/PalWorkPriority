@@ -1,7 +1,7 @@
 ---
 date: 2026-10-29
 tags: [release, testing, records]
-status: current
+status: history
 ---
 # Second strict review round after the audit fixes (2026-10-29)
 
