@@ -401,22 +401,36 @@ end
 -- the player reached through the same component -> transmitter -> owner chain
 -- as guild_via. Only names are kept between calls. Any failure is silent apart
 -- from the log and never blocks the Incompatible reply itself.
-M.OLD_CLIENT_NOTICE = "Pal Work Priority: this server runs a newer version of the mod (0.5.0). " ..
-    "Your copy is older, so your priority and limit changes are not applied here. " ..
-    "Please update Pal Work Priority."
+-- The version comes from main.lua's VERSION through set_version, so it cannot
+-- go stale in the next release (round 3: it was a hardcoded "(0.5.0)").
+local function old_client_notice(version)
+    return "Pal Work Priority: this server runs a newer version of the mod"
+        .. (version and (" (" .. version .. ")") or "") .. ". " ..
+        "Your copy is older, so your priority and limit changes are not applied here. " ..
+        "Please update Pal Work Priority."
+end
+M.OLD_CLIENT_NOTICE = old_client_notice(nil)
+function M.set_version(version)
+    M.MOD_VERSION = version
+    M.OLD_CLIENT_NOTICE = old_client_notice(version)
+end
 -- A client whose Hello names a higher schema is the newer one (round 2,
 -- 2026-10-29): telling it to update was wrong advice.
 M.NEWER_CLIENT_NOTICE = "Pal Work Priority: this server runs an older Pal Work Priority. " ..
     "Your copy is newer, so your priority and limit changes are not applied here. " ..
     "Ask the host to update the server."
-local told_old = {}
+local told_old, told_count = {}, 0
 
 -- newer: the client's Hello named a higher schema than this server's.
 function M.notify_old_client(comp, newer)
     if api.has_authority() ~= true or not api.valid(comp) then return false end
     local name = full_name(comp)
     if not name or told_old[name] then return false end
-    told_old[name] = true
+    -- Bounded (round 3). An old client never confirms, so there is no peer
+    -- to notice it leave; forget them all once the list is long. At worst a
+    -- player who is still on an old copy is told a second time.
+    if told_count >= 64 then told_old, told_count = {}, 0 end
+    told_old[name], told_count = true, told_count + 1
     local ok, why = pcall(function()
         local outer = comp:GetOuter()
         if not api.valid(outer) then error("no transmitter") end
@@ -613,6 +627,7 @@ function M.enable_deferred(enabled)
     return true
 end
 local hello_at, hello_tries = nil, 0
+local hello_failures = 0 -- sends that failed this session; see hello()
 local ACK_TIMEOUT, COALESCE = 8, 0.10
 local durable_ack = { P = 0, R = 0 }
 M.SCHEMA = wire.SCHEMA
@@ -629,7 +644,8 @@ local recovery_retry_at,recovery_retries=nil,0
 -- Schema 3 already has a reason field. Only known codes may cross the wire;
 -- handler errors and old peers' unknown reasons collapse to generic rejection.
 local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,too_many_limits=true,
-    rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true}
+    rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true,
+    rate_limited=true}
 local function rejection_reason(reason)
     return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'
 end
@@ -676,8 +692,8 @@ function M.begin_session(epoch)
     unavailable_reason=nil
     recovery_retry_at,recovery_retries=nil,0
     command_context = nil
-    told_old = {}
-    stock = { open=false, serial=0, jobs={}, order={} }
+    told_old, told_count = {}, 0
+    stock = { open=false, serial=0, jobs={}, order={}, later={} }
     nonce_serial = nonce_serial + 1
     M.epoch = epoch
     M.local_nonce = string.format("%x-%x-%x", os.time(), math.floor(now() * 1000000), nonce_serial)
@@ -686,7 +702,7 @@ function M.begin_session(epoch)
     M.clients, M.pals, M.rules = {}, {}, {}
     M.pals_gen, M.pending_gen = M.pals_gen + 1, M.pending_gen + 1
     receiver, requests, cells, offers, sequence = nil, {}, {}, {}, 0
-    hello_at, hello_tries = nil, 0
+    hello_at, hello_tries, hello_failures = nil, 0, 0
     M.revisions = { P = 0, R = 0 }
     M.save_failures, durable_ack = {}, { P = 0, R = 0 }
     set_status("connecting", "awaiting_handshake")
@@ -702,17 +718,52 @@ end
 -- main owns the epoch and may call reset after begin_session in its reset list.
 function M.reset() return M.begin_session(M.epoch) end
 
+-- Main sets this to "the role is decided and this is a client". A Hello sent
+-- before that was answered with an R snapshot that on_snapshot had to refuse,
+-- which threw the stream away and spent one of the server's announcements
+-- (round 3). Standalone transport fixtures leave it nil.
+M.may_hello = nil
+
 function M.hello()
     if api.has_authority() ~= false or M.status == "incompatible" then return false end
+    if M.may_hello and M.may_hello() ~= true then return false end
     local t = now()
     if hello_at and t - hello_at < 2 then return false end
+    local tries = hello_tries
     hello_at, hello_tries = t, math.min(6, hello_tries + 1)
     -- 0.4.1 recognizes Hello and replies in its old format. Seeing that reply
     -- explicitly reports incompatibility; it never enters our snapshot parser.
     local sent = send_up(table.concat({ PREFIX .. "Hello", M.SCHEMA, M.WORKS,
         M.local_nonce }, "|"), 0)
-    if not sent then set_status("connecting", "transport_unavailable") end
+    if not sent then
+        -- Nothing left this machine, so the server has not been asked yet.
+        -- Keep the 5 s retry instead of backing off towards "no mod on this
+        -- server" while the network component is still resolving (up to
+        -- about 18 s into a join). Six of those, then the usual backoff.
+        hello_failures = hello_failures + 1
+        if hello_failures <= 6 then hello_tries = tries end
+        set_status("connecting", "transport_unavailable")
+    end
     return sent
+end
+
+-- The stand grid asking again for the full pal table: a pal caught after the
+-- join, or a guild whose camps had not streamed in yet.
+--
+-- The handshake is not the grid's business. It asked from the first second
+-- of a join, before the role was decided, and the 18 s announce asked again,
+-- so an ordinary join spent the server's announcement budget and was told
+-- off for it (round 3, "too many at once" in the 2026-10-29 retest). poll
+-- owns the handshake now; this only asks a client that is already connected,
+-- and an answer that is already on its way counts as asked.
+-- true: a Hello went up. "pending": one went up in the last ASK_RECENT
+-- seconds and its answer is a full table, so count the ask as made.
+-- false: nothing sent; try again later.
+local ASK_RECENT = 10
+function M.ask_pals()
+    if not can_edit() then return false end
+    if hello_at and now() - hello_at < ASK_RECENT then return "pending" end
+    return M.hello()
 end
 
 function M.to_server(command, value)
@@ -773,14 +824,16 @@ local function stock_soon()
     return math.max(now() + COALESCE, (stock.last_sent or -STOCK_SPACING) + STOCK_SPACING)
 end
 
--- The guild's limits changed (an R snapshot committed or a Set/Clear was
--- acknowledged). The server's verdict in the cached count described the
--- old limits: drop it, keep the totals, and ask for a fresh count soon
--- (round 2, 2026-10-29: the panel showed a stale "Limit reached" for up to
--- ten seconds after an edit). A count already in flight is kept whole,
--- verdict included: it is usually built after the edit, and dropping it
--- left the panel at "No count yet" for a whole extra round (live
--- 2026-10-29). Another count follows it soon instead.
+-- The guild's limits changed (an R snapshot with other rows committed or a
+-- Set/Clear was acknowledged). The server's verdict in the cached count
+-- described the old limits: drop it, keep the totals, and ask for a fresh
+-- count soon (round 2, 2026-10-29: the panel showed a stale "Limit reached"
+-- for up to ten seconds after an edit). A count already in flight keeps its
+-- totals, and its verdict for REFRESH_VERDICT seconds only: it may have been
+-- built before the edit (round 3), and the count that follows it soon
+-- replaces it. Dropping that verdict at once left the panel at "No count
+-- yet" for a whole extra round (live 2026-10-29).
+local REFRESH_VERDICT = 2
 local function limits_changed()
     if stock.view and stock.view.storage then stock.view.storage.limits = nil end
     if stock.pending then stock.pending.refresh = true end
@@ -843,7 +896,7 @@ function M.storage_view(guild, selected)
         -- sorted/search cache by this identity, so never copy on a UI read.
         out.totals = view.totals
         -- The server's verdicts describe this count and expire with it.
-        out.limits = view.limits
+        if not event.limits_until or now() < event.limits_until then out.limits = view.limits end
     end
     return out
 end
@@ -855,6 +908,7 @@ function M.limit_state()
         or event.guild ~= M.guild or event.session ~= M.server_nonce
         or event.client_session ~= M.local_nonce or event.storage.verified ~= true
         or now() >= event.expires_at then return nil end
+    if event.limits_until and now() >= event.limits_until then return nil end
     return event.storage.limits
 end
 
@@ -866,6 +920,7 @@ function M.item_stopped(item)
     return limits.stopped[item] == true
 end
 
+local admit_stock
 local function receive_stock(comp, p)
     if #p ~= 7 or not wire.token(p[6], 10) or not p[6]:match('^[1-9]%d*$')
         or not wire.integer(p[6], 1, 2147483647)
@@ -885,16 +940,47 @@ local function receive_stock(comp, p)
     end
     if not current() or p[3] ~= peer.server or p[4] ~= peer.client or p[5] ~= peer.guild then return false end
     local id, t = tonumber(p[6]), now()
-    if id <= (peer.stock_high or 0) or (peer.stock_at and t-peer.stock_at < 1) then return false end
+    if id <= (peer.stock_high or 0) then return false end
+    if peer.stock_at and t-peer.stock_at < 1 then
+        -- Under 1 s after the last one: keep the newest and serve it once the
+        -- second has passed (storage_tick), instead of dropping it unanswered.
+        -- A save or pass on this thread delays handling a request, not its
+        -- arrival, so a client spacing by its own send times could not avoid
+        -- this; it then waited the 20 s timeout plus a 10 s poll (round 3).
+        -- Plain values only. The guild is proven again when it is served.
+        peer.stock_next = {request=p[6], selected=p[7], id=id, at=t}
+        state.later[name] = peer
+        return true
+    end
+    return admit_stock(name, peer, p[6], p[7], t, comp)
+end
+
+-- Queue one storage request. comp is the component it arrived on, or nil for a
+-- request kept by receive_stock: that one was matched to this peer by name and
+-- nonce, and stock_recipient proves the guild again before anything is sent.
+admit_stock = function(name, peer, request, selected, t, comp)
+    local state, epoch, server = stock, M.epoch, M.local_nonce
+    local function active() return stock == state and M.epoch == epoch and M.local_nonce == server
+        and api.has_authority() == true end
+    local id = tonumber(request)
+    local current_peer = peer_current(peer)
+    local attempt
+    local function current()
+        return active() and current_peer() and (not attempt or peer.stock_attempt==attempt)
+    end
+    if not current() then return false end
     local count = 0
     for _ in pairs(state.jobs) do count = count + 1 end
     if not state.jobs[name] and count >= 8 then return false end
     -- Debit before the transmitter census, including failed ownership probes.
     -- A nested request supersedes this invocation even before a job exists.
     attempt = {}
-    peer.stock_attempt, peer.stock_at = attempt, t
-    local guild = push_phase('network storage: request guild',M.guild_of_sender,comp,current)
-    if not current() or guild ~= peer.guild then return false end
+    peer.stock_attempt, peer.stock_at, peer.stock_next = attempt, t, nil
+    local guild = peer.guild
+    if comp then
+        guild = push_phase('network storage: request guild',M.guild_of_sender,comp,current)
+        if not current() or guild ~= peer.guild then return false end
+    end
     -- Native ownership resolution may have admitted other peers reentrantly.
     -- Recount immediately before insertion, with no native/callback boundary.
     count = 0
@@ -902,7 +988,7 @@ local function receive_stock(comp, p)
     local added = state.jobs[name] == nil
     if added and count >= 8 then return false end
     peer.stock_high = id
-    local job = {name=name, peer=peer, request=p[6], selected=p[7] ~= '-' and p[7] or nil,
+    local job = {name=name, peer=peer, request=request, selected=selected ~= '-' and selected or nil,
         queued=t, epoch=epoch, server=server, client=peer.client, guild=guild}
     if not state.jobs[name] or state.active == state.jobs[name] then state.order[#state.order+1] = name end
     state.jobs[name] = job
@@ -923,6 +1009,27 @@ local function receive_stock(comp, p)
         end
     end
     return true
+end
+
+-- Requests kept by receive_stock, served once their peer's second has passed.
+-- Plain Lua over the few peers that have one; no engine call until admitted.
+local function serve_later()
+    local state, t, names = stock, now(), {}
+    -- Listed first: admitting can reenter receive_stock, which adds to later.
+    for name in pairs(state.later) do names[#names+1] = name end
+    for _, name in ipairs(names) do
+        local peer = state.later[name]
+        local wanted = peer and peer.stock_next
+        if not wanted or M.clients[name] ~= peer or peer.server ~= M.local_nonce
+            or wanted.id <= (peer.stock_high or 0) or t - wanted.at >= wire.TIMEOUT then
+            state.later[name] = nil
+            if peer then peer.stock_next = nil end
+        elseif not peer.stock_at or t - peer.stock_at >= 1 then
+            state.later[name] = nil
+            admit_stock(name, peer, wanted.request, wanted.selected, t, nil)
+            if stock ~= state then return end
+        end
+    end
 end
 
 local function stock_recipient(job, current)
@@ -1054,7 +1161,10 @@ function M.storage_tick()
         local state = stock
         if state.pumping then return end
         state.pumping = true
-        local ok, err = pcall(pump_stock)
+        local ok, err = pcall(function()
+            if next(state.later) ~= nil then serve_later() end
+            pump_stock()
+        end)
         state.pumping = false
         if not ok then error(err) end
         return
@@ -1062,7 +1172,16 @@ function M.storage_tick()
     if api.has_authority() ~= false or not stock.open or unavailable_reason then return end
     local t, interest = now(), stock.interest
     if stock.receiver then
-        if wire.expire(stock.receiver,t) then clear_stock_view(true); stock.due=t+10 end
+        local aged = stock.view and stock.view.storage.verified and t >= stock.view.expires_at
+        if wire.expire(stock.receiver,t) then
+            clear_stock_view(true)
+            -- A count that only aged out keeps the poll already due for it.
+            -- It can expire just before that poll, and putting the poll off
+            -- by another 10 s left the panel with no count for that long
+            -- (round 3). No extra request: it is the same poll. A broken or
+            -- timed out transfer still backs off 10 s.
+            stock.due = aged and math.min(stock.due or t+10, t+10) or t+10
+        end
     end
     if stock.pending then
         if t-stock.pending.started < 20 then return end
@@ -1112,7 +1231,12 @@ local function receive_stock_state(message)
     state.metadata = {epoch=event.epoch, guild=event.guild, session=event.session,
         client_session=event.client_session, storage={scope=view.scope,camp=view.camp,choices=view.choices}}
     state.view, state.pending, state.due = event, nil, now()+10
-    if pending.refresh then state.due = stock_soon() end
+    if pending.refresh then
+        state.due = stock_soon()
+        -- Possibly built before the edit: its verdict lives only until the
+        -- count that follows it is due back.
+        if view.limits ~= nil then event.limits_until = now() + REFRESH_VERDICT end
+    end
     return true
 end
 
@@ -1807,8 +1931,19 @@ function M.receive_state(message)
             set_status("connecting", "snapshot_apply_failed")
             return false
         end
+        -- Every edit in any guild sends every peer a fresh R snapshot, most
+        -- of them with the rows they already had. Only a real change drops
+        -- the verdict and asks for a count; otherwise every open panel on the
+        -- server flickered and re-requested at once (round 3, about 50 ms of
+        -- server walks per panel per edit).
+        local changed = #event.rows ~= #M.rules
+        for i = 1, #event.rows do
+            if changed then break end
+            local a, b = event.rows[i], M.rules[i]
+            changed = a.work ~= b.work or a.item ~= b.item or a.amount ~= b.amount
+        end
         M.rules = event.rows
-        limits_changed()
+        if changed then limits_changed() end
     end
     if wire.ready(receiver) then set_status("ready") end
     for _, entry in pairs(requests) do settle(entry) end

@@ -12,6 +12,10 @@ os.clock = function() return time end
 local LATENCY = 0.15
 local sample_at, sample_ttl = 0, 40
 local limit_state
+-- Seconds the server's Set handler takes: main.lua saves caps.txt and runs a
+-- pass in that callback, measured on GPortal at 712 ms mean and 2.5 s worst
+-- (docs/save-flush-2026-09-29.md). Zero handles every message instantly.
+local busy = 0
 
 local function setup(latency_up)
     time, up, down = 0, {}, {}
@@ -44,6 +48,7 @@ local function setup(latency_up)
             rules = {[p[2]] = {[p[3]] = tonumber(p[4])}}
             assert(server.push_rules({all=function() return rules end}, {}, nil))
             limit_state = {per_item=true, verdicts={Deforest={capped=0, camps=1, unknown=0}}, stopped={}}
+            time = time + busy
             return true
         end
         assert(server.push_rules({all=function() return rules end}, {}, c))
@@ -141,6 +146,41 @@ for _, phase in ipairs({0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, 2, 5, 9.5, 9.9}) d
             phase, tostring(jitter), good, total))
     end
 end
+-- Round 3: an edit while the server is busy saving. The client's 10 s poll T
+-- arrives during the Set handler's stall, so it is handled late; the request
+-- that follows the reply is then under 1 s after it on the server's clock.
+-- The server dropped that one unanswered, and the client went without a count
+-- for 20 s plus a 10 s poll. It keeps the newest early request now and serves
+-- it once the second has passed (phase 7.6 failed without that). At other
+-- phases the stall moved the count's expiry just before the 10 s poll, and the
+-- client then waited another 10 s; an aged count is asked for soon now (phase
+-- 1.4 failed without that).
+busy = 1.0
+for step = 0, 50 do local phase = step / 5
+    setup()
+    sample_at = 0
+    connect()
+    pump(phase, function() view() end)
+    assert(client.request('set', 'Deforest', 'Wood', 9999999))
+    local seen_at
+    pump(12, function()
+        view()
+        local counted, verdict = shown()
+        if not seen_at and counted and verdict == false then seen_at = time end
+    end)
+    assert(seen_at, string.format('busy server, phase %.2f: no verified count with the new verdict '
+        .. 'within 12 s of the edit', phase))
+    local good, total = 0, 0
+    pump(60, function()
+        view()
+        local counted, verdict = shown()
+        total = total + 1
+        if counted and verdict == false then good = good + 1 end
+    end)
+    assert(good >= total * 0.9, string.format('busy server, phase %.2f: count shown only %d/%d beats',
+        phase, good, total))
+end
+busy = 0
 -- Each part on its own. A chat or console read with no base selected
 -- (`pwp limit`) must not throw away the panel's base, count and request.
 setup()

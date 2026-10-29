@@ -17,6 +17,8 @@ local failures = {}
 local darnmenu_user = nil
 -- Set by a test to boot on a UE4SS whose ModifierKey has no ALT.
 local without_alt = false
+-- Set by a test to boot with the real stand grid (ui.lua and its helpers).
+local real_ui = false
 
 local function upvalue(fn, wanted)
     for i=1,100 do
@@ -126,12 +128,17 @@ local function boot(authority,empty_caps,prepare,expected_error)
     end
     state.ui=ui
     package.loaded.ui=ui
+    if real_ui then
+        for _,name in ipairs({"ui","ui_tree","ui_render","stand_input","stand_pointer","stand_lifecycle"}) do
+            package.loaded[name]=nil
+        end
+    end
     package.loaded.panel={open=false,refresh=ui.refresh,hover_tick=ui.refresh,fill_tick=ui.refresh,reset=noop}
     state.panel=package.loaded.panel
     state.panel.refresh=function() state.ui_calls=state.ui_calls+1 end
     package.loaded.overlay={host=noop,reset=noop}
     package.loaded.icons={get=noop}
-    package.loaded.pad={drive=noop}
+    package.loaded.pad={drive=noop,forget=noop}
     package.loaded.items={reset=noop}
     package.loaded.discover={}
     package.loaded.reload={}
@@ -155,6 +162,7 @@ local function boot(authority,empty_caps,prepare,expected_error)
     }
     local loaded,why=pcall(assert(load(main_source,"@"..ROOT.."Scripts/main.lua","t",_G)))
     assert(loaded,"main.lua did not load: "..tostring(why))
+    if real_ui then state.ui=package.loaded.ui end
     state.store,state.caps,state.net,state.session,state.log=package.loaded.store,package.loaded.caps,
         package.loaded.net,package.loaded.session,package.loaded.log
     state.commands=upvalue(upvalue(package.loaded.remote.command,"handle_command"),"COMMANDS")
@@ -1376,21 +1384,227 @@ end)
 test("limit listing on a client asks the server and follows its Mining setting",function()
     local s=boot(false); s.timers.role.fn()
     s.api.my_guild=function() return 'guild-local' end
-    local requested=0
+    -- As real net: storage requests only while the panel's interest is open,
+    -- and an unverified view until the server's reply has arrived.
+    local open,replied,requested=false,false,0
     s.net.epoch=s.net.epoch or 7
-    s.net.request_stock=function(guild) assert(guild=='guild-local'); requested=requested+1 end
+    s.net.set_storage_open=function(value) open=value==true end
+    s.net.request_stock=function(guild)
+        assert(guild=='guild-local')
+        if not open then return false end
+        requested=requested+1; return true
+    end
     s.net.storage_view=function(guild)
+        if not open or not replied then
+            return {verified=false,guild=guild,epoch=s.net.epoch,choices={},label='Storage unavailable',totals={}}
+        end
         return {guild=guild,choices={'camp-1'},totals={Stone=50},label='Base 1 of 1',
             epoch=s.net.epoch,verified=true,scope='camp',camp='camp-1',expires_at=s.now+30}
     end
     s.net.server_item_limits=false
     s.caps.remote={['guild-local']={Mining={Stone=100}}} -- the server's rules, as a client holds them
-    s.console={}; s.commands.limit('')
-    local output=table.concat(s.console,'\n')
+    local function listing()
+        s.timers["storage transport"].fn()
+        s.console={}; s.commands.limit('')
+        return table.concat(s.console,'\n')
+    end
+    -- Panel closed: no count can come, and the listing says how to get one
+    -- (round 3: it said "unavailable" and never why).
+    s.panel.open=false
+    local output=listing()
+    assert(output:find("open the panel (Alt+F1) to see the server's counts",1,true),output)
+    assert(not output:find('unavailable',1,true) and not output:find('50 /',1,true),output)
+    -- Panel open, reply not back yet: asked, and says it is waiting.
+    s.panel.open=true
+    output=listing()
     assert(requested==1,'the client never asked the server for stock: '..output)
+    assert(output:find("waiting for the server's count",1,true) and not output:find('unavailable',1,true),output)
+    replied=true
+    output=listing()
     assert(output:find('50 / 100',1,true) and not output:find('unavailable',1,true),output)
     assert(output:find('each limit can switch its entire work type',1,true),
         'the client used its own Mining setting instead of the server\'s: '..output)
+end)
+
+-- Round 3 (multiplayer P2-1, test-coverage P2-2): a real server and a real
+-- client composition root, joined through their real transports. The client
+-- runs its ClientRestart, role timers, 100 ms beats with net.poll and the
+-- real stand grid; the server runs main.lua's own Hello handler and budget.
+-- An ordinary join used to send three Hellos (the grid's ask before the role
+-- was decided, poll, the 18 s announce) and the server refused the third with
+-- "too many at once", so a reconnect within the minute was never served.
+local function join_fixture()
+    local server=boot(true); server.timers.role.fn()
+    server.api.camps_available=true
+    server.api.base_camps=function() return {{}} end
+    server.api.camp_guild=function() return 'guild-A' end
+    server.api.camp_pals=function() return {{key='PAL-A',param={}}} end
+    server.api.suitability_rank=function() return 1 end
+    local j={server=server, up={}, down={}, hellos={}, answered=0}
+    -- The sender's guild, as the transmitter walk would prove it.
+    server.net.guild_of_sender=function() return 'guild-A' end
+    local on_command=server.net.on_command
+    server.net.on_command=function(command,...)
+        local before=server.net.revisions.R
+        local result={on_command(command,...)}
+        if command=='PWP_Hello' and server.net.revisions.R>before then j.answered=j.answered+1 end
+        return table.unpack(result)
+    end
+    j.link={GetFullName=function() return 'BaseCampComponent of player 1' end,
+        Notify_RequestClient_int32=function(_,_,msg) j.down[#j.down+1]={at=j.client.now+0.15,msg=msg} end}
+    -- Booted second, so the shared clock and console are the client's.
+    real_ui=true
+    local ok,client=pcall(boot,false)
+    real_ui=false
+    assert(ok,client)
+    j.client=client
+    client.viewport=true
+    function j.restart()
+        client.hooks["/Script/Engine.PlayerController:ClientRestart"].before({get=function() return {} end})
+    end
+    function j.step()
+        local c=client
+        c.now=c.now+0.1
+        server.now=c.now
+        for _,m in ipairs(c.outgoing) do
+            if m.name:sub(1,9)=='PWP_Hello' then j.hellos[#j.hellos+1]=c.now end
+            j.up[#j.up+1]={at=c.now+0.15,name=m.name,value=m.value}
+        end
+        c.outgoing={}
+        local keep={}
+        for _,m in ipairs(j.up) do
+            if m.at<=c.now then server.net.receive_command(j.link,m.name,m.value) else keep[#keep+1]=m end
+        end
+        j.up=keep
+        local batch=j.down; j.down={}
+        for _,m in ipairs(batch) do
+            if m.at<=c.now then c.net.receive_state(m.msg) else j.down[#j.down+1]=m end
+        end
+        -- One-shots run when due; their delay counts from when they were set.
+        for _,entry in ipairs(c.once) do
+            entry.due=entry.due or c.now+entry.ms/1000
+            if not entry.done and c.now>=entry.due-1e-9 then entry.done=true; entry.fn() end
+        end
+        c.timers["storage transport"].fn()
+        if math.floor(c.now*10+0.5)%20==0 then c.timers.role.fn() end
+        c:ui_beat()
+    end
+    function j.run(seconds) for _=1,math.floor(seconds*10+0.5) do j.step() end end
+    function j.warned()
+        return table.concat(client.console,"\n"):find("too many at once",1,true)~=nil
+    end
+    return j
+end
+
+test("a join sends one Hello and a reconnect within the minute is still served",function()
+    local j=join_fixture()
+    local c=j.client
+    j.restart()
+    j.run(1.5)
+    assert(#j.hellos==0,'a Hello went up before the role was decided')
+    j.run(4)
+    assert(c.net.status=='ready','the join did not connect: '..tostring(c.net.status)..' '
+        ..tostring(c.net.status_reason))
+    assert(c.net.pals['PAL-A'],'the stand data did not arrive')
+    j.run(50)
+    assert(#j.hellos==1 and j.answered==1,'an ordinary join sent '..#j.hellos..' Hellos')
+    assert(not j.warned(),'an ordinary join was refused as too many announcements')
+    -- Reconnect (or a respawn that resets) 40 s after the join: a new nonce.
+    j.restart()
+    assert(c.net.status=='connecting')
+    j.run(6)
+    assert(c.net.status=='ready','a reconnect within the minute was not served: '
+        ..tostring(c.net.status_reason))
+    assert(j.answered==2 and not j.warned())
+    j.run(30)
+    assert(#j.hellos==2,'the reconnect sent '..(#j.hellos-1)..' Hellos')
+end)
+
+test("a join whose network component resolves late connects without a handshake timeout",function()
+    local j=join_fixture()
+    local c=j.client
+    local resolved=c.api.owned_network_component
+    local late=c.now+25
+    c.api.owned_network_component=function() if c.now>=late then return resolved() end end
+    j.restart()
+    local timed_out=false
+    for _=1,320 do
+        j.step()
+        if c.net.status_reason=='handshake_timeout' then timed_out=true end
+    end
+    assert(not timed_out,'a component still resolving was taken for a server without the mod')
+    assert(c.net.status=='ready','the late join did not connect: '..tostring(c.net.status_reason))
+    assert(#j.hellos==1 and j.answered==1 and not j.warned())
+end)
+
+test("hello budget: a new client nonce is served, a loop is refused with one warning",function()
+    local s=boot(true); s.timers.role.fn()
+    local may_announce=upvalue(s.net.on_command,'may_announce')
+    local comp={GetFullName=function() return 'component-1' end}
+    local function hello(nonce)
+        s.net.clients['component-1']={client=nonce}
+        return may_announce(comp)
+    end
+    assert(hello('a') and hello('a') and hello('a'),'one client nonce could not ask three times')
+    assert(not hello('a'),'one client nonce asked a fourth time in a minute')
+    assert(hello('b'),'a reconnect with a new nonce was refused')
+    assert(not hello('c'),'new nonces were not capped')
+    local said=table.concat(s.console,"\n")
+    local _,warnings=said:gsub("too many at once","")
+    assert(warnings==1,'the refusal was logged '..warnings..' times')
+    s.now=s.now+61
+    assert(hello('c'),'the window never reset')
+    -- Players who stopped sending are forgotten, not kept for the session.
+    local budget=upvalue(may_announce,'hello_budget')
+    budget['gone']={at=s.now-61,n=1,nonces={}}
+    assert(hello('c'))
+    assert(budget['gone']==nil,'an expired budget was kept')
+    local may_change=upvalue(s.net.on_command,'may_change')
+    local rules=upvalue(may_change,'rule_budget')
+    rules['gone']={at=s.now-11,n=3}
+    may_change(comp)
+    assert(rules['gone']==nil,'an expired rule budget was kept')
+end)
+
+test("ten limit changes in ten seconds; the eleventh is refused with a reason the panel shows",function()
+    local s=boot(true); s.timers.role.fn()
+    s.api.my_guild=function() return 'guild-local' end
+    s.net.guild_of_sender=function() return 'guild-local' end
+    local peer={server=s.net.local_nonce,client='client-1',guild='guild-local',
+        acks={},order={},high=0,revisions={P=1,R=1},next_revision={P=1,R=1}}
+    s.net.clients['component-1']=peer
+    local comp={GetFullName=function() return 'component-1' end}
+    local acks={}
+    s.net.to_client=function(_,msg)
+        local p=require('protocol').parts(msg)
+        if p[2]=='A' then acks[#acks+1]={id=tonumber(p[6]),outcome=p[7],reason=p[8]} end
+        return true
+    end
+    s.net.push_rules=function() return true end
+    local wire=require('protocol')
+    for i=1,11 do
+        s.now=s.now+0.5
+        local msg=wire.envelope('Q',peer.server,peer.client,peer.guild)..'|'..i..'|Set|Mining|Stone|'..(100+i)
+        s.net.receive_command(comp,msg,0)
+    end
+    assert(#acks==11,'not every change was answered: '..#acks)
+    for i=1,10 do assert(acks[i].outcome=='1','change '..i..' was refused') end
+    assert(acks[11].outcome=='0' and acks[11].reason=='rate_limited',
+        'the eleventh change was not refused as too many: '..tostring(acks[11].reason))
+    assert(s.caps.all({},'guild-local').Mining.Stone==110,'the refused change was applied')
+    -- What the client's panel says for it.
+    local text=require('panel_status').plain_reason('rate_limited')
+    assert(text:find('not applied',1,true) and not text:find('_',1,true),text)
+    s.now=s.now+11
+    local msg=wire.envelope('Q',peer.server,peer.client,peer.guild)..'|12|Set|Mining|Stone|120'
+    s.net.receive_command(comp,msg,0)
+    assert(acks[12].outcome=='1','the budget never refilled')
+end)
+
+test("the old-client notice names this build's version",function()
+    local s=boot(true)
+    local version=main_source:match('local%s+VERSION%s*=%s*"([^"]+)"')
+    assert(version and s.net.OLD_CLIENT_NOTICE:find('('..version..')',1,true),s.net.OLD_CLIENT_NOTICE)
 end)
 
 io.open,io.popen=original_io.open,original_io.popen

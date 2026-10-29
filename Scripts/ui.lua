@@ -92,6 +92,9 @@ local ask_gap = 10             -- seconds until the next ask, doubling
 local asked_gen = nil          -- net.pals_gen at the moment of the last ask
 local missing_gen = nil        -- generation we last asked about a missing pal
 local missing_key = nil        -- which pal that was, so it is asked about once
+local missing_at = nil         -- when; re-armed if no pal data follows in missing_wait
+local MISSING_WAIT = 10
+local missing_wait = MISSING_WAIT -- doubles while asks go unanswered, to ASK_GAP_MAX
 local ASK_GAP_MAX = 120
 local last_hook_try = -math.huge
 local menu_likely_open = false
@@ -378,6 +381,8 @@ function M.reset()
     said_none = false
     missing_gen = nil
     missing_key = nil
+    missing_at = nil
+    missing_wait = MISSING_WAIT
 end
 
 -- ---------------------------------------------------------------------------
@@ -1519,7 +1524,9 @@ function M.refresh(cfg,flush_receipt)
             -- does not run, so a freshly launched process that reconnects
             -- never announces itself and never receives anything. The grid
             -- then draws nothing, for the rest of the session, and looks
-            -- exactly like the feature being switched off.
+            -- exactly like the feature being switched off. (Since round 3
+            -- net.poll sends the handshake on every session, and this ask is
+            -- left for a connected client whose table came back empty.)
             --
             -- Only while there is nothing to draw, and at most once every ten
             -- seconds, so a server that genuinely has no pals for this guild
@@ -1551,7 +1558,7 @@ function M.refresh(cfg,flush_receipt)
             -- registered either and no later data could have drawn anyway.
             --
             -- The backoff is the brake: it doubles to two minutes and the
-            -- server allows two hellos a minute per sender, so a client that
+            -- server answers three hellos a minute per join, so a client that
             -- genuinely has nothing costs almost nothing while still
             -- recovering on its own when its camps load.
             if asked_gen ~= nil and net.pals_gen ~= asked_gen and not said_none then
@@ -1566,22 +1573,30 @@ function M.refresh(cfg,flush_receipt)
             --
             -- These three were set before the send was attempted and never
             -- rolled back, so while the network component was still resolving
-            -- - the first eighteen seconds, which is exactly why the announce
-            -- waits that long - the client burned 10, 20, 40, 80 seconds of
-            -- backoff without a single message leaving, and armed asked_gen
+            -- - up to the first eighteen seconds of a join - the client
+            -- burned 10, 20, 40, 80 seconds of backoff without a single
+            -- message leaving, and armed asked_gen
             -- for an answer that could never come.
+            --
+            -- net.ask_pals asks only a client that is already connected; the
+            -- handshake is net.poll's (round 3: this asked from the first
+            -- second of a join, before the role was decided, and spent the
+            -- server's announcement budget). "pending" means a Hello went up
+            -- moments ago and its full table is on the way: that counts as
+            -- this ask, so the backoff starts from the join's own answer.
             local now = os.clock()
             if now - last_ask > ask_gap then
                 local sent = false
                 pcall(function()
-                    sent = net.to_server(net.PREFIX .. "Hello", 1)
+                    sent = net.ask_pals()
                 end)
 
                 if sent then
                     last_ask = now
                     ask_gap = math.min(ask_gap * 2, ASK_GAP_MAX)
                     asked_gen = net.pals_gen
-                    log.debug("stand: asked the server for pal data")
+                    log.debug(sent == "pending" and "stand: pal data already on its way"
+                        or "stand: asked the server for pal data")
                 end
             end
         end
@@ -1630,6 +1645,19 @@ function M.refresh(cfg,flush_receipt)
         -- client is the side that can actually see the discrepancy. Once per
         -- generation: if the answer arrives and the key is still missing,
         -- net.pals_gen has moved and this will not fire again for it.
+        -- An ask the server refused (its announcement budget) or that never
+        -- arrived gets no answer, and nothing else pushes a full table, so
+        -- the pal kept plain checkboxes for good in a quiet session (round
+        -- 3). No pal data within missing_wait seconds re-arms the ask; the
+        -- wait doubles while the asks stay unanswered.
+        if missing_at then
+            if missing_gen ~= net.pals_gen then
+                missing_at, missing_wait = nil, MISSING_WAIT
+            elseif os.clock() - missing_at >= missing_wait then
+                missing_gen, missing_key, missing_at = nil, nil, nil
+                missing_wait = math.min(missing_wait * 2, ASK_GAP_MAX)
+            end
+        end
         if next(net.pals) ~= nil and missing_gen ~= net.pals_gen then
             local absent = nil
             for _, pal in pairs(row_pal) do
@@ -1657,13 +1685,14 @@ function M.refresh(cfg,flush_receipt)
                 -- "asking once" on a path where nothing was sent.
                 local sent = false
                 pcall(function()
-                    sent = net.to_server(net.PREFIX .. "Hello", 1)
+                    sent = net.ask_pals()
                 end)
 
                 if sent then
                     missing_gen = net.pals_gen
                     missing_key = absent
                     last_ask = os.clock()
+                    missing_at = last_ask
                     log.debug("stand: no data for " .. absent .. ", asked once")
                 end
             end

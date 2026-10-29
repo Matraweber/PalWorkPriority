@@ -1766,8 +1766,19 @@ local function stock_across_camps()
     -- A client asks the server through net, as the panel does; without it a
     -- client's listing always said "unavailable" (review round 2).
     local status = require("panel_status")
+    local client = api.has_authority() ~= true
+    -- A client's counts come with the panel's storage requests, which run
+    -- only while the panel is open (round 3: with it closed this said
+    -- "unavailable" and never why).
+    local remote = client and store.is_client == true
+    if remote and not panel.open then
+        return {}, false, "open the panel (Alt+F1) to see the server's counts", true
+    end
     local view = status.stock(cfg, scheduler, api.my_guild(), nil,
-        api.has_authority() ~= true, package.loaded.net)
+        client, package.loaded.net)
+    if remote and not view.verified then
+        return {}, false, "waiting for the server's count; try again in a moment", true
+    end
     return view.verified and view.totals or {}, view.verified, view.label
 end
 
@@ -1798,9 +1809,9 @@ local function show_limits()
     end
 
     run_now(function()
-        local totals, verified, scope = stock_across_camps()
+        local totals, verified, scope, explained = stock_across_camps()
 
-        log.say("limits; " .. scope .. (verified and "" or " (stock unavailable)"))
+        log.say("limits; " .. scope .. ((verified or explained) and "" or " (stock unavailable)"))
         for _, work in ipairs(works) do
             local items = {}
             for item in pairs(all[work]) do items[#items + 1] = item end
@@ -1810,7 +1821,8 @@ local function show_limits()
                 local ceiling = all[work][item]
                 local have = verified and (totals[item] or 0) or nil
                 log.say(string.format("  %-22s %-24s %s / %d%s",
-                    workdefs.label(work), item, have and tostring(have) or "unavailable", ceiling,
+                    workdefs.label(work), item, have and tostring(have)
+                        or (explained and "?" or "unavailable"), ceiling,
                     have and have >= ceiling and "   limit reached" or ""))
             end
         end
@@ -2103,39 +2115,59 @@ local rule_budget = {}
 -- rank calls per pal. Roughly 40-60ms of game thread each on a populated
 -- server, so a client sending them in a loop freezes the game for everyone.
 --
--- A legitimate client sends exactly one, once per spawn. Two per minute is
--- generous for that and still refuses a loop outright.
-local HELLO_MAX = 2
+-- A client's transport sends one per join (net.poll, once the role is
+-- decided), and its stand grid may ask again for a pal caught later or for
+-- camps that had not streamed in. Each join or reconnect starts a new client
+-- nonce. The first answered Hello of a new nonce is always served, so a
+-- reconnect soon after a join is not left "connecting" for up to a minute
+-- (round 3). HELLO_PER_CLIENT bounds one nonce; HELLO_CAP bounds a player who
+-- keeps making new ones. Either way a loop is refused outright.
+local HELLO_PER_CLIENT = 3
+local HELLO_CAP = 4
 local HELLO_WINDOW = 60.0
 local hello_budget = {}
 
+-- Budgets of players who stopped sending are dropped, not kept for the
+-- session (round 3). An expired window counts the same as no entry at all.
+local function prune_budget(budget, window, now)
+    for who, b in pairs(budget) do
+        if now - b.at > window then budget[who] = nil end
+    end
+end
+
 local function may_announce(comp)
     local who = net.who and net.who(comp) or "unknown"
+    local peer = net.clients and net.clients[who]
+    local nonce = peer and peer.client or "?"
     local now = os.clock()
+    prune_budget(hello_budget, HELLO_WINDOW, now)
     local b = hello_budget[who]
 
-    if b == nil or (now - b.at) > HELLO_WINDOW then
-        hello_budget[who] = { at = now, n = 1 }
+    if b == nil then
+        hello_budget[who] = { at = now, n = 1, nonces = { [nonce] = 1 } }
         return true
     end
 
-    b.n = b.n + 1
-    if b.n > HELLO_MAX then
-        if b.n == HELLO_MAX + 1 then
+    local mine = b.nonces[nonce] or 0
+    if b.n >= HELLO_CAP or mine >= HELLO_PER_CLIENT then
+        if not b.warned then
+            b.warned = true
             log.warn("ignoring repeated announcements from one player, " ..
                 "too many at once")
         end
         return false
     end
+    b.n, b.nonces[nonce] = b.n + 1, mine + 1
     return true
 end
 
 local function may_change(comp)
     local who = net.who and net.who(comp) or "unknown"
     local now = os.clock()
+    prune_budget(rule_budget, RULE_WINDOW, now)
     local b = rule_budget[who]
 
-    if b == nil or (now - b.at) > RULE_WINDOW then
+    if b == nil then
         rule_budget[who] = { at = now, n = 1 }
         return true
     end
@@ -2326,10 +2358,9 @@ net.on_command = function(command, _, comp, command_token)
         end
 
         -- Budget spent only on a hello that will actually be answered.
-        -- Charged before the guild check, a normal join - which sends one
-        -- from the world-load one-shot and one or two from the grid while it
-        -- waits - could burn the allowance on requests that were refused
-        -- anyway, and then be told off for it.
+        -- Charged before the guild check, a join whose guild had not
+        -- replicated yet could burn the allowance on requests that were
+        -- refused anyway, and then be told off for it.
         if not may_announce(comp) then return end
 
         -- A modded client announced itself, so send it the world as it
@@ -2360,7 +2391,7 @@ net.on_command = function(command, _, comp, command_token)
     -- the six things a cell can hold. A client naming a pal it cannot see
     -- would otherwise write priorities for somebody else's base.
     if verb == net.PREFIX .. "Prio" and #parts >= 4 then
-        if not may_change(comp) then return end
+        if not may_change(comp) then return false, "rate_limited" end
 
         local key = parts[2]
         local value = tonumber(parts[3])
@@ -2483,7 +2514,7 @@ net.on_command = function(command, _, comp, command_token)
     end
 
     if verb == net.PREFIX .. "Set" and #parts >= 4 then
-        if not may_change(comp) then return end
+        if not may_change(comp) then return false, "rate_limited" end
         local guild = net.guild_of_sender(comp)
         local saved, state, receipt = caps.apply_set(parts[2], parts[3], parts[4], guild)
         if not saved then
@@ -2503,7 +2534,7 @@ net.on_command = function(command, _, comp, command_token)
     end
 
     if verb == net.PREFIX .. "Clear" and #parts >= 3 then
-        if not may_change(comp) then return end
+        if not may_change(comp) then return false, "rate_limited" end
         local saved, state, receipt = caps.apply_clear(parts[2], parts[3], net.guild_of_sender(comp))
         if not saved then
             if state == "pending" then return false, state, receipt end
@@ -2522,6 +2553,11 @@ net.on_command = function(command, _, comp, command_token)
         return true
     end
 end
+
+-- Hellos wait for the role decision: an R snapshot answering one sent before
+-- it was refused by on_snapshot below and thrown away (round 3).
+net.may_hello = function() return store.decided == true and store.is_client == true end
+if net.set_version then net.set_version(VERSION) end
 
 -- Only complete, negotiated snapshots reach this callback.
 net.on_snapshot = function(rows, metadata)
@@ -2809,25 +2845,12 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
     -- The authority answer cannot change without a world change, and its
     -- warning is the one a client sees; unguarded it printed on every death.
     if switched then
-        -- A client announces itself so the server knows to push rules to it,
-        -- and gets the current set back in reply. Delayed with everything
-        -- else, because the network component does not exist the instant a
-        -- world loads.
-        --
-        -- Behind the guard now. It used to run on every spawn, which cost the
-        -- host a full object-array walk plus one RPC per rule on every death,
-        -- and it was left that way on purpose for one commit: the register
-        -- dropped a client after two minutes of silence, so this accidental
-        -- re-announce was the only thing putting a player back on the list.
-        -- The register keeps anyone who still resolves now, so the crutch can
-        -- go with the thing it was propping up.
-        clock.once(18000, session.guard(function()
-            if not api.has_authority() then
-                if net.to_server(net.PREFIX .. "Hello", 1) then
-                    log.debug("announced to the server, waiting for the rules")
-                end
-            end
-        end))
+        -- No announce here. An 18 s one-shot used to send a Hello on every
+        -- spawn, even after net.poll had already connected, and it was the
+        -- third Hello of an ordinary join that the server refused with "too
+        -- many at once" (round 3). net.poll sends the handshake as soon as
+        -- the role is decided and retries every 5 s while the network
+        -- component is still resolving.
 
         if cfg.run_on_world_load then
             -- Base camps and their worker slots are not populated the instant

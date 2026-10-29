@@ -26,6 +26,7 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     invalid_edit='The server rejected an invalid change.',
     request_id_reused='The server rejected a repeated change. Try again.',
     stale_request='The server rejected an expired change. Try again.',
+    rate_limited='Too many changes at once; this one was not applied. Wait a moment and try again.',
     not_authorized='The server did not allow this change.',
     awaiting_snapshots='Waiting for complete server data.', awaiting_snapshot='Waiting for confirmed server data.',
     transport_unavailable='Server connection unavailable; changes are not confirmed.',
