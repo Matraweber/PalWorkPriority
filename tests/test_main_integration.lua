@@ -1637,8 +1637,8 @@ test("a refused config.lua still brings up Alt+F1 with the reason and schedules 
         fs.files[ROOT.."Scripts/default_config.lua"]=defaults
     end,"invalid interval_seconds")
     local output=table.concat(s.console,"\n")
-    local notice="config.lua rejected: invalid interval_seconds. Fix that value, or delete config.lua and "
-        .."restart to get the defaults."
+    local notice="config.lua rejected: invalid interval_seconds. Fix it, or delete config.lua and restart. "
+        .."No Pals are assigned until then."
     assert(output:find(notice,1,true),output)
     assert(not output:find("did not start",1,true),output)
     assert(output:find("loaded (config.lua rejected, nothing is scheduled",1,true),output)

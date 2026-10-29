@@ -168,6 +168,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("Alt+F1", install)
             # A server copy without enabled.txt is never started by UE4SS.
             self.assertIn("including the empty enabled.txt\nin it.", install)
+            self.assertIn('If it says "config.lua rejected"', install)
             self.assertIn('If it says "did not start"', install)
             self.assertIn("delete config.lua and restart", install)
             self.assertNotIn("Scripts/config.lua", w.namelist())

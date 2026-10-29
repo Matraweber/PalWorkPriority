@@ -320,8 +320,10 @@ local config_rejected = nil
 local function refused_config(why)
     -- The chunk name is the whole install path; the line number is enough.
     local reason = tostring(why):gsub("^@?[^\n]-config%.lua:(%d+):", "line %1:")
-    config_rejected = "config.lua rejected: " .. reason .. ". Fix that value, or delete config.lua and " ..
-        "restart to get the defaults. Pals are not assigned until then."
+    -- Short enough for the panel's notice row (retest 2026-10-29: the
+    -- longer text ran past the panel's edge).
+    config_rejected = "config.lua rejected: " .. reason .. ". Fix it, or delete config.lua and restart. " ..
+        "No Pals are assigned until then."
     configuration.show_rejection(config_rejected)
     log.error(config_rejected)
 end
