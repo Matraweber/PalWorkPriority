@@ -52,11 +52,16 @@ panel.refresh(cfg)
 assert(rendered('Mining (rocks)') and not rendered('Item limit, rocks'), 'per-item Mining row job cell')
 assert(not rendered('Reached 1/2') and rendered('Below limit'), 'per-item row showed the whole-Mining verdict')
 assert(notice()~='Reached 1/2: this job is off at 1 of your 2 bases.')
--- Its own item first: held rocks, then storage against the limit.
-package.loaded.item_sources={item_stopped=function(item) return item=='Stone01' end}
+-- Its own item first: held rocks, then storage against the limit. The panel
+-- asks panel_status for the base it shows (round 2: a host with two bases
+-- said "Rocks stopped" for the wrong one); scoping itself is tested in
+-- test_panel_status_limits.lua.
+local asked_view
+status.item_stopped=function(item, view) asked_view=view; return item=='Stone01' end
 panel.refresh(cfg)
 assert(rendered('Rocks stopped'), 'held rocks not said')
-package.loaded.item_sources=nil
+assert(type(asked_view)=='table', 'panel did not pass the shown storage view')
+status.item_stopped=nil
 status.item_stopped=function(item) return item=='Stone02' end
 data.Stone01=30
 panel.refresh(cfg)
@@ -166,7 +171,7 @@ cfg.item_limits_on_rocks=false
 
 -- C: an upgrade that reset config.lua is said once, on opening.
 local UPGRADE='Your earlier config.lua was not found (the Workshop or Vortex update removed it). '
-    ..'Default settings are in use; options-menu settings are kept.'
+    ..'Default settings are in use; options page settings are kept.'
 package.loaded.configuration={upgrade_reset=true}
 panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(notice()==UPGRADE, 'upgrade reset not said: '..tostring(notice()))
@@ -182,6 +187,14 @@ panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(notice()==UPGRADE and acked==1, 'shown upgrade notice not acknowledged')
 panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(acked==1, 'upgrade notice acknowledged twice')
+-- The text comes from configuration: a hand-deleted config.lua is not blamed
+-- on an update.
+rb.upgrade_said=nil
+package.loaded.configuration={upgrade_reset=true,
+    upgrade_message='config.lua was missing, defaults are in use. Options page settings are kept.'}
+panel.close(); panel.toggle(); panel.refresh(cfg)
+assert(notice()=='config.lua was missing, defaults are in use. Options page settings are kept.',
+    'configuration wording not used: '..tostring(notice()))
 package.loaded.configuration=nil
 assert(writes==0 and stale==0)
 ]=], '@panel-item-wording-fixture'))()

@@ -7,7 +7,7 @@ Logs are historical/unbound observations, even when their timestamps are recent.
 
   python tools/fingerprint.py
   python tools/fingerprint.py --server
-  python tools/fingerprint.py --candidate build/release/PalWorkPriority-0.5.0-rc1-manual.zip
+  python tools/fingerprint.py --candidate build/release-0.5.0/PalWorkPriority-0.5.0-manual.zip
   python tools/fingerprint.py --game-root D:/Games/Palworld --workshop-root D:/Steam/steamapps/workshop/content/1623730
 """
 from __future__ import annotations

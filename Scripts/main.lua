@@ -818,7 +818,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " net       connection state, and a test message")
     log.say("  " .. p .. " discover  write Discovery.txt (for bug reports)")
     log.say("  " .. p .. " guilds    write Guilds.txt (for bug reports)")
-    log.say("  " .. p .. " assignments  which job each Pal is on (server only)")
+    log.say("  " .. p .. " assignments  which job each Pal is on (host or server)")
     log.say("  " .. p .. " rocks     Mining rocks stopped by limits, and who mines what (host or server)")
     log.say("  " .. p .. " icons     check the panel icons")
     log.say("  " .. p .. " perf      how often the mod runs and writes files " ..
@@ -1453,7 +1453,7 @@ COMMANDS.rocks = function()
     -- Server-only reads: on a client the works are replicated proxies, and a
     -- UFunction on one is an access violation (LESSONS). Review A7.
     if api.latch_authority() ~= true then
-        log.say("rocks: only the server can see this; ask the server.")
+        log.say("rocks: only the host or server can see this; run it there.")
         return
     end
     run_now(function()

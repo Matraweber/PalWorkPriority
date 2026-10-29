@@ -163,6 +163,17 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Scheduling and limits
 
+- **2026-10-29 - The held-rock list survives `scheduler.forget()`.**
+  `ClientRestart` also fires on a respawn and on a same-map reconnect, so it is
+  not a world change. After a real reload the rocks read Workable and the stale
+  keys drop out on the next pass.
+  - **Restore order:** restore releases held rocks before the settings gate.
+    Undoing the mod's own writes needs no saved settings.
+  - **No Mining source:** a base without one leaves Mining to the group rule.
+  - **Partial reads:** a partial works read can prove "wanted" but never "not
+    wanted". Entries that `camp_works` skipped make the read partial.
+  *Evidence:* [review-round2-2026-10-29](review-round2-2026-10-29.md).
+
 - **2026-10-28 - Per-item Mining is decided per base, and the mod gives back
   what it switched off.** These came out of the audit, see
   [review-2026-10-28](review-2026-10-28.md).
@@ -392,6 +403,17 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Multiplayer and network
 
+- **2026-10-29 - Only a server without the mod gives the base-game stand
+  back.** That case is a handshake timeout, after about a minute. On another
+  Pal Work Priority version (`incompatible`) or locked settings (`unavailable`)
+  the stand stays read-only with an honest legend. A 0.4.1 server rewrites the
+  flags on every pass, so base-game clicks there would undo themselves.
+  This supersedes part of the 2026-10-28 entry.
+- **2026-10-29 - The host's limit verdict uses the same per-camp code as the
+  server's schema-5 answer.** "Rocks stopped" is scoped to the shown base and
+  guild. A limit edit drops the client's cached verdict and asks for a fresh
+  count. A newer client on an older server is told to ask the host to update.
+
 - **2026-10-28 - Protocol schema 5 carries the server's limit state.** A
   storage reply now also carries:
   - the per-work-type verdict for the client's guild and scope;
@@ -435,6 +457,30 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   versions under Release and scope.)
 
 ## UI and input
+
+- **2026-10-29 - Panel input after the second review.**
+  - **Confirm delay:** a confirm less than 0.4 s after arming does nothing, so
+    a double-click neither adds nor removes.
+  - **Enter after typing:** the first Enter after typing in the search box only
+    ends the typing.
+  - **Picker order:** the order is cached by base plus the set of item ids, so
+    tiles do not move under the pointer when counts change.
+  - **Job column:** one line ("Mining (rocks)" for per-item rows).
+  - **Backdrop:** Lua sets the panel backdrop fully opaque, because the cooked
+    pak default was 0.92 alpha.
+  - **Prompts:** they follow the input used: Click, Enter or Y, and Click
+    Sure?, Delete again or X again.
+- **2026-10-29 - 0.4.1 configs are read with 0.4.1's leniency.** This applies
+  to the legacy `Scripts/config.lua`, or a root copy still byte-identical to
+  `config.migration.bak`.
+  - **Leniency:** bad values are clamped or dropped with a warning. A user's
+    own later edit is checked strictly.
+  - **BOM:** a UTF-8 BOM is accepted.
+  - **Reset notice:** it survives restarts through `config.reset.txt` until
+    the panel has shown it.
+  - **DarnMenu index:** the shared `DarnMenu_schema_index.lua` is written
+    through a verified temp file and a `.bak`, and rebuilt from them if it is
+    lost.
 
 - **2026-10-28 - Adding a limit takes two clicks, and keyboard or pad
   selection follows what it points at.**

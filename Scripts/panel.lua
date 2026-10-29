@@ -4782,8 +4782,11 @@ function M.toggle()
         local configuration = package.loaded.configuration
         if type(configuration) == "table" and configuration.upgrade_reset == true then
             RB.upgrade_said = true
-            announce("Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
-                .. "Default settings are in use; options-menu settings are kept.")
+            -- configuration words it: a hand-deleted file is not blamed on
+            -- the Workshop (round 2).
+            announce(configuration.upgrade_message or configuration.UPGRADE_MESSAGE
+                or ("Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
+                .. "Default settings are in use; options page settings are kept."))
             -- Kept across sessions until shown (round 2); now it has been.
             if type(configuration.ack_upgrade_reset) == "function" then
                 pcall(configuration.ack_upgrade_reset)

@@ -1271,7 +1271,7 @@ test("pwp rocks refuses on a client before touching base works",function()
     s.api.base_camps=function() camps=camps+1; return {} end
     s.console={}; s.commands.rocks(); s.session.drain()
     local output=table.concat(s.console,"\n")
-    assert(output:find("rocks: only the server can see this; ask the server.",1,true),output)
+    assert(output:find("rocks: only the host or server can see this; run it there.",1,true),output)
     assert(camps==0,"client rocks read base camps")
 end)
 

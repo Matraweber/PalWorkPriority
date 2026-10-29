@@ -237,6 +237,26 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Tooling traps
 
+- **A reset named after a world change also ran on a respawn.** `ClientRestart`
+  fires on death and on reconnect. Clearing the held-rock list there left rocks
+  off for the rest of the session (round-2 review, 2026-10-29). Check every
+  caller of a "world changed" path.
+- **A test that set focus at the moment of the key press hid a real bug.** UE4SS
+  binds run on a later beat (`session.enqueue`), and Enter clears a UMG text
+  box's focus first. So the guard read "not typing" in game while the test
+  passed. Tests must model when the engine does things, not only what it does
+  (2026-10-29).
+- **A cooked pak default was never overwritten by Lua.** The panel backdrop
+  kept the pak's 0.92 alpha, so the stand showed through. If Lua relies on a
+  value, set it from Lua (2026-10-29).
+- **`file:write` returns nil and an error; it does not raise.** A `pcall` around
+  it reported success on a full disk (DarnMenu index, 2026-10-29). Check the
+  return values and read the file back.
+- **The first in-game retest of a feature only proved the transport.** A
+  per-item Mining row never reads the server verdict, so "Limit reached" on the
+  client came from the client's own count. Retest the path that the claim is
+  about (2026-10-29).
+
 - `luacheck.py` only balances blocks. Lua can still reject what it passes.
   Check the reload's own reply.
 - `panel.lua` sat at 198 of Lua's 200 top-level locals (194 on 2026-10-20,

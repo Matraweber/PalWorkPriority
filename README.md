@@ -108,7 +108,7 @@ Restart the game after a change. `!pwp reload` also reads `config.lua` again, bu
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `enabled` | `true` | `false` gives every Pal its work back and stops the mod |
+| `enabled` | `true` | `false` gives back every job the mod switched off and stops the mod (jobs set to X stay off) |
 | `dry_run` | `false` | Test mode. Logs what it would change and changes nothing |
 | `assignment_mode` | `"spread"` | `"spread"` or `"fill"`, see above |
 | `max_pals_per_work_type` | `3` | Most Pals on one job, `false` for no limit |
@@ -155,8 +155,8 @@ Commands go into chat. Their replies are written to `priority.log` in the mod fo
 | `!pwp help` / `!pwp status` | List the commands, show the mod's state |
 | `!pwp run` | Ask for a pass now |
 | `!pwp dry` / `!pwp live` | Test mode on or off |
-| `!pwp on` / `!pwp off` | Turn the mod on, or off and give every Pal its work back |
-| `!pwp restore` | Give every Pal its work back before you remove the mod |
+| `!pwp on` / `!pwp off` | Turn the mod on, or off and give back every job the mod switched off (X stays off) |
+| `!pwp restore` | Give back every job the mod switched off before you remove the mod (X stays off) |
 | `!pwp reload` | Read `config.lua` again |
 | `!pwp mode` / `!pwp cap` | Staffing mode, most Pals per job |
 | `!pwp limit` / `!pwp stock` | List limits, list storage |
