@@ -50,7 +50,12 @@ respawn, and controller input after the latest fixes.
 - If an upgrade had to reset `config.lua`, the panel says so until you have
   opened it.
 - Old 0.4.1 values out of 0.5.0's range are moved into range with a warning
-  instead of stopping the mod. A BOM in `config.lua` is fine now.
+  instead of stopping the mod, while you leave that value as it was. A BOM
+  in `config.lua` is fine now.
+- A wrong value in `config.lua` no longer makes the mod vanish: Alt+F1 says
+  which value, and no Pal is assigned until you fix it.
+- A `caps.txt` or `priorities.txt` edited by hand or saved by 0.4.1 is used,
+  not an older backup.
 - The options page (ESC > Options > Mod Options, needs the optional DarnMenu)
   uses clearer names. Restart the game after a change there.
 
@@ -84,7 +89,10 @@ respawn, and controller input after the latest fixes.
   installed (reports by DarkWyrmReaper and NoMo).
 - A guild can hold at most 500 limits. More left its players stuck
   connecting.
-- The stand legend says what clicks and keys do.
+- The stand legend says what clicks, Enter and keys do, that every job
+  starts at 1, and how many Pals the mod steers.
+- With several bases the panel says which base it counts, and a new limit
+  starts above your fullest base.
 
 **Installation**
 - A manual install running next to a switched-on Steam Workshop copy of a
@@ -114,7 +122,10 @@ respawn, and controller input after the latest fixes.
   yet". This is why the server and every player need exactly 0.5.0.
 - A player with the mod on a server without it gets the normal Monitoring
   Stand back after about a minute, instead of a grid of "?". On a server with
-  another version, or with its settings locked, the stand stays read-only.
+  another version, or with its settings locked, the stand stays read-only
+  and says who has to update.
+- A join or reconnect is no longer refused as "too many at once", and one
+  player's limit edit no longer resets the other players' panels.
 
 ### Limits in 0.5.0
 
