@@ -2,23 +2,27 @@
 
 ## 0.5.0 - 2026-10-28
 
-A reliability release. It fixes the problems reported most since 0.4.1:
-priorities and X lost after a restart, a second or stuck panel, and Pals that
-stopped mining and chopping. Every fix below was tested in the game
-(singleplayer, and on a dedicated server where it concerns multiplayer).
+A reliability release. It fixes the problems reported most since 0.4.1, such
+as priorities and X lost after a restart, a second or stuck panel, and Pals
+that stopped mining and chopping. Most fixes below were tested in the game, in
+singleplayer and on a dedicated server. Only the mod's automated tests checked
+the cap of 500 limits per guild, the stand on a server without the mod or with
+another version, the warnings for a missing pak and a second UE4SS, the config
+reset notice, and controller input after the latest fixes.
 
 ### Before you update
 
 - **Back up your mod folder first.** It is
   `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority` (in Steam,
   right-click Palworld > Manage > Browse local files). Your priorities and
-  limits carry over on the Workshop, Vortex and manual routes.
-- **Steam Workshop and Vortex: write down any changes you made in
-  `Scripts\config.lua`** in that folder. A Workshop update, and removing 0.4.1
-  in Vortex, delete that file before 0.5.0 can carry it over. Enter the
-  changes again in the new `config.lua` in the mod folder. Settings changed on
-  the in-game options page are kept. Extracting the manual zip over 0.4.1
-  keeps your changes.
+  limits carry over on every route.
+- **Steam Workshop: write down any changes you made in
+  `Scripts\config.lua`** in that folder. A Workshop update deletes that file
+  before 0.5.0 can carry it over. Enter the changes again in the new
+  `config.lua` in the mod folder. Settings changed on the in-game options page
+  are kept. Extracting the manual zip over 0.4.1 keeps your changes. In
+  Vortex, install 0.5.0 next to 0.4.1, start the game once, then remove 0.4.1.
+  Your `config.lua` edits are kept that way.
 - **Old Mining limits now stop only their own rocks.** A Stone limit from
   0.4.1 stops the stone rocks, and your Pals keep mining ore. Set
   `item_limits_on_rocks = false` in `config.lua` to keep the old behaviour,
@@ -35,16 +39,16 @@ stopped mining and chopping. Every fix below was tested in the game
 - Your editable settings move to `config.lua` in the mod folder. With a
   manual install the old file is kept as `config.migration.bak`.
 - **Pals you never ranked are now left to the game.** A Pal whose jobs all
-  have the same number (for example everything at 1, which is what a fresh
-  install starts with) is no longer steered: the game picks its work, X and
-  production limits still apply. The 1-5 ranking in `config.lua`'s
-  `work_priority` no longer applies to Pals you never edited. Give a job a
-  different number to steer that Pal, or set
-  `leave_unordered_pals_to_game = false` to steer every Pal as 0.4.1 did.
+  have the same number is no longer steered. The game picks its work, and X
+  and production limits still apply. `work_priority` in `config.lua` no
+  longer ranks these Pals. Give a job a different number to steer that Pal,
+  or set `leave_unordered_pals_to_game = false` to steer every Pal as 0.4.1
+  did.
 - **Use one copy: Workshop or manual, not both.** If the Steam Workshop copy
   is switched on in the game's mod list, the game installs it over a manual
   install on the next start. Switch it off or unsubscribe before installing
-  by hand. 0.5.0 says so in the Production Limits panel when it finds both.
+  by hand. 0.5.0 says so in the panel when it finds a switched-on Workshop
+  copy of another version.
 
 ### Fixed
 
@@ -56,7 +60,11 @@ stopped mining and chopping. Every fix below was tested in the game
   patch by like in the Steam discussions).
 - Many quick edits are saved once, not once per click.
 - A settings file that cannot be read is never replaced with defaults.
-- If an upgrade had to reset `config.lua`, the mod tells you once.
+- If an upgrade had to reset `config.lua`, the panel tells you, and the notice
+  stays until you have opened the panel.
+- Old `config.lua` values that 0.4.1 accepted but 0.5.0 does not are moved
+  into range with a warning instead of stopping the mod. A BOM in the file is
+  fine now.
 - The options page (ESC > Darn Mod Options, needs the optional DarnMenu mod)
   uses clearer names. Restart the game after a change there.
 
@@ -71,13 +79,12 @@ stopped mining and chopping. Every fix below was tested in the game
   priority for that work back to it (the game never announces this work).
 - Ranches: a Pal with a high Farming priority goes to an empty ranch again
   instead of being kept on other work (report by Rey: "Lamball reports
-  insufficient ranch skill"). The mod counts one Pal per ranch, and more Pals can
-  graze when they have nothing higher to do.
+  insufficient ranch skill"). More Pals can still graze when they have nothing
+  higher to do.
 - Berry and crop harvests count as Gathering work, not ranch work.
 - Fishing ponds: a Pal with a high Handiwork priority is sent to a waiting
-  pond (report by poiman). The pond's job had no type the mod understood, so it never counted
-  as work. It is Handiwork, and an empty pond with bait counts as one free
-  seat, as does a research lab running Handiwork research.
+  pond (report by poiman). A pond with bait and a lab running Handiwork
+  research now count as Handiwork work.
 - The staffing limit holds (a maximum of 3 keeps 3 working, not 4).
 - Turning the mod off and `!pwp restore` give back the rocks held for Mining
   limits right away.
@@ -97,14 +104,11 @@ stopped mining and chopping. Every fix below was tested in the game
   even when the list redraws in between.
 - Limits are shown in full up to the 9,999,999 maximum. Only storage counts
   above a million are shortened (12.3M).
-- Adding a limit takes two clicks. The first click on an item shows what the
-  limit will stop and the amount, the second adds it. For a Mining item only
-  the rocks that mainly give that item stop. For other work the whole work
-  type stops, and a second item in the same work type joins that group.
-  Status words are plain and fit their column, and Mining rows show their own
+- Status words are plain and fit their column. The job column shows one line,
+  "Mining (rocks)" for a per-item Mining limit, and Mining rows show their own
   item's state first.
-- Delete removes the selected limit. Keys and pad buttons no longer add or
-  remove a limit by accident while you type in a box or the list changes.
+- Keys and pad buttons no longer add or remove a limit by accident while you
+  type in a box or the list changes.
 - A guild can hold at most 500 limits. More used to leave every member of
   that guild stuck connecting.
 - Escape with an armed Remove ("Sure?") cancels it instead of closing the
@@ -117,9 +121,11 @@ stopped mining and chopping. Every fix below was tested in the game
   on the options page), plus a mouse line under the limits. Confirmations name the
   item and say "Saved" or "Sent to the server", and warn when storage already
   holds the new limit. A search with no results says so.
-- The Monitoring Stand legend says what left and right click do, the number
-  keys, the marks (* sending, ! not saved, ? unknown) and Alt+F1. It now has
-  a dark backing, so it stays readable on grass.
+- The Monitoring Stand legend says what left and right click do, that 1
+  wraps to X, the number keys, that a Pal with all jobs equal is left to the
+  game, and Alt+F1. It now has a dark backing, so it stays readable on grass.
+  The 1-5 scale and the marks (* sending, ! not saved, ? unknown) are in the
+  tooltip of every cell.
 - The item list no longer counts Pal souls, Ancient Civilization Parts, AI
   Core, Carbon Fiber and similar items as Mining or Lumbering products.
 - The item search and "Show all" no longer crash the game with item mods
@@ -131,17 +137,19 @@ stopped mining and chopping. Every fix below was tested in the game
   different version is named in the log and on the Production Limits panel
   ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
   replace or delete the manual files when that copy updates.
-- The mod warns when its pak is missing (then the stand shows no numbers)
-  and when it finds a second UE4SS copy.
+- The mod warns when its pak is missing and when it finds a second UE4SS.
+  Without the pak the stand still shows numbers, but it cannot be edited and
+  the legend says the pak is missing.
 
 **Controller**
 - The Monitoring Stand and the Production Limits panel work with a
   controller. On the stand: D-pad moves, LB or A toward 1, RB toward X, X
   sets X, View opens Production Limits (Y stays the game's view switch). In
-  the panel: D-pad moves, Y opens or raises, X removes, LB/RB switch tabs,
-  LT/RT turn pages, B closes only the panel. The hints on screen switch to
-  the controller version while you play with one. A in the panel is taken by
-  the game itself, so use Y there. Tested with a virtual XInput pad.
+  the panel: D-pad moves, Y opens or raises, LB/RB switch tabs,
+  LT/RT turn pages, B closes only the panel. X twice removes a limit. The
+  hints on screen switch to the controller version while you play with one.
+  A in the panel is taken by the game itself, so use Y there. Tested with a
+  virtual XInput pad on the release candidate.
 
 **Multiplayer**
 - An edit made by a player survives a server restart.
@@ -150,19 +158,26 @@ stopped mining and chopping. Every fix below was tested in the game
 - Players now see the server's limit status in the panel instead of "No count
   yet". This is why the server and every player need exactly 0.5.0.
 - A player with the mod on a server without it gets the normal Monitoring
-  Stand back instead of a grid of "?".
+  Stand back after about a minute, instead of a grid of "?". On a server with
+  another version, or with its settings locked, the stand stays read-only.
 
 ### Limits in 0.5.0
 
 You can add, change and remove limits as in 0.4.1, and the ones you already
 have carry over.
 
+- **Adding a limit takes two clicks.** The first click on an item shows what
+  the limit will stop and the amount. A second click a moment later adds it,
+  so a very fast double click adds nothing. Enter in the search box never
+  adds a limit. A second item in the same work type joins that group.
+- **Removing asks first.** Delete, the remove button or X on a pad arms it
+  and shows "Sure?". Press it again to remove the limit. If you wait too
+  long, the limit is kept.
 - **Mining limits now work per item.** A reached Stone limit stops only the
-  rocks that mainly give stone, and your Pals keep mining ore and crystals. A rock
-  counts as what it mainly drops (a stone rock that drops a little ore is a
-  stone rock). Mining stops as a whole only when nothing left to mine is still
-  wanted. Stone Pits and other mining buildings cannot be stopped on their own
-  yet: they keep producing while other mining goes on. Switch this off with
+  rocks that mainly give stone, and your Pals keep mining ore and crystals. A
+  rock counts as what it mainly drops. Mining stops as a whole only when nothing left to mine is still
+  wanted. Stone Pits and other mining buildings keep producing
+  while other mining goes on. Switch this off with
   `item_limits_on_rocks = false` (or on the options page) to get the old
   behaviour. Nothing is saved into your world: rocks forget it on a reload.
 - **Other limits are group limits:** each one switches its whole work type.
@@ -202,7 +217,9 @@ Tested with the release candidate and the Palworld extension 0.5.0 on Vortex
 UE4SS comes from the game's mod loader or the Steam Workshop, turn off
 "Manage modding requirements (UE4SS, Unreal Pak Tool) automatically" in
 Vortex's Settings > Mods, or Vortex installs a second UE4SS. If the game is on another drive than Vortex, use "Suggest" for
-the staging folder in the same place.
+the staging folder in the same place. To update from 0.4.1, install 0.5.0
+next to it, start the game once, then remove 0.4.1. Your `config.lua` edits
+are kept.
 
 Developer notes, decisions and test evidence: [docs/Home.md](docs/Home.md).
 
