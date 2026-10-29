@@ -186,8 +186,10 @@ end
 edited('ack')
 edited('snapshot')
 
--- A count already in flight when the limits changed may predate the edit:
--- its verdict is dropped on arrival and another count follows soon.
+-- A count already in flight when the limits changed is kept whole (live
+-- 2026-10-29: dropping its verdict cost a whole extra round, and that round's
+-- request could be refused by the server's 1 s gate), and another count
+-- follows it soon in case it predates the edit.
 setup()
 fetch()
 time = time + 11
@@ -198,7 +200,7 @@ assert(server.push_rules({all=function() return {Mining={Stone=9}} end}, {}, com
 time = time + 0.1; server.storage_tick(); deliver()
 for _ = 1, 40 do time = time + 0.1; server.storage_tick(); deliver() end
 view = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
-assert(view.verified and status.verdict({}, 'Mining', view) == nil, 'verdict from before the edit shown')
+assert(view.verified and status.verdict({}, 'Mining', view) == true, 'in-flight count lost its verdict')
 time = time + 1.1
 client.storage_tick()
 assert(#up == 1, 'no fresh count after a count that predates the edit')

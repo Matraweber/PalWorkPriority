@@ -763,16 +763,28 @@ local function clear_stock_view(keep_metadata)
     if stock.receiver then wire.invalidate(stock.receiver, 'S') end
 end
 
+-- When the next storage request may go. The server refuses a request that
+-- ARRIVES under 1 s after the previous one (receive_stock) and says nothing,
+-- so the client then waits out the 20 s pending timeout plus a 10 s poll.
+-- Spacing sends by exactly 1 s lost that race to ordinary link jitter
+-- (live 2026-10-29: no count for 45 s after a limit edit); keep a margin.
+local STOCK_SPACING = 1.5
+local function stock_soon()
+    return math.max(now() + COALESCE, (stock.last_sent or -STOCK_SPACING) + STOCK_SPACING)
+end
+
 -- The guild's limits changed (an R snapshot committed or a Set/Clear was
 -- acknowledged). The server's verdict in the cached count described the
--- old limits: drop it, keep the totals, and ask for a fresh count soon. A
--- count already in flight may have been built before the edit, so its
--- verdict is dropped on arrival too (round 2, 2026-10-29: the panel showed
--- a stale "Limit reached" for up to ten seconds after an edit).
+-- old limits: drop it, keep the totals, and ask for a fresh count soon
+-- (round 2, 2026-10-29: the panel showed a stale "Limit reached" for up to
+-- ten seconds after an edit). A count already in flight is kept whole,
+-- verdict included: it is usually built after the edit, and dropping it
+-- left the panel at "No count yet" for a whole extra round (live
+-- 2026-10-29). Another count follows it soon instead.
 local function limits_changed()
     if stock.view and stock.view.storage then stock.view.storage.limits = nil end
-    if stock.pending then stock.pending.stale_limits = true end
-    if stock.open then stock.due = math.max(now() + COALESCE, (stock.last_sent or -1) + 1) end
+    if stock.pending then stock.pending.refresh = true end
+    if stock.open then stock.due = stock_soon() end
 end
 
 function M.set_storage_open(open)
@@ -787,6 +799,10 @@ function M.request_stock(guild, selected)
         or guild ~= M.guild or unavailable_reason then return false end
     local old = stock.interest
     if old and old.guild == guild and old.selected == selected then return true end
+    -- No base asked for (a chat or console read such as `pwp limit`) is
+    -- answered by whatever base is already chosen. Treating it as a new
+    -- selection threw away the panel's count and request mid-flight.
+    if old and old.guild == guild and selected == nil then return true end
     -- The UI adopts a server-selected default after the first complete reply.
     -- That is not a new selection and must not discard its just-received data.
     local view = stock.view or stock.metadata
@@ -797,7 +813,7 @@ function M.request_stock(guild, selected)
     end
     stock.interest = {guild=guild, selected=selected}
     clear_stock_view()
-    stock.due = math.max(now() + COALESCE, (stock.last_sent or -1) + 1)
+    stock.due = stock_soon()
     return true
 end
 
@@ -1091,14 +1107,12 @@ local function receive_stock_state(message)
     -- known for this session after the count expires.
     if view.limits and view.limits.per_item ~= nil then M.server_item_limits = view.limits.per_item end
     event.epoch = M.epoch
-    local stale = pending.stale_limits == true
-    if stale then view.limits = nil end
     -- Retain only plain selector metadata across count expiry/timeouts, never
     -- a reference to the expired totals. Lifecycle/selection clears both.
     state.metadata = {epoch=event.epoch, guild=event.guild, session=event.session,
         client_session=event.client_session, storage={scope=view.scope,camp=view.camp,choices=view.choices}}
     state.view, state.pending, state.due = event, nil, now()+10
-    if stale then state.due = math.max(now() + COALESCE, (state.last_sent or -1) + 1) end
+    if pending.refresh then state.due = stock_soon() end
     return true
 end
 
