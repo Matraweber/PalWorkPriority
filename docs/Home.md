@@ -28,11 +28,11 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Retest of the round-3 fixes (2026-10-29)](retest-r3-2026-10-29.md) · 2026-10-29
 - [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md) · 2026-10-29
 - [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md) · 2026-10-29
+- [Performance check of the 0.5.0 build (2026-10-29)](perf-final-2026-10-29.md) · 2026-10-29
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
 - [Reliability candidate testing](testing.md) · 2026-10-28
 - [Twelve-reviewer audit of 0.5.0 (2026-10-28)](review-2026-10-28.md) · 2026-10-28
-- [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-28
 
 ## Release and reports
 
@@ -65,6 +65,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Performance
 
+- [Performance check of the 0.5.0 build (2026-10-29)](perf-final-2026-10-29.md)
 - [G5: performance, 2026-10-19](g5-performance-2026-10-19.md)
 - [Stand edit latency: root-cause investigation, September 29](edit-latency-root-cause-2026-09-29.md)
 - [PalPriority reference comparison and conditional transport lookup](palpriority-comparison-2026-09-26.md)

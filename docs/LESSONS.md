@@ -13,6 +13,11 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Engine and UE4SS: the rules that prevent crashes
 
+- **`GetCachedGeometry` comes back empty through UE4SS.** FGeometry's fields are not
+  reflected, so the Lua table reads position 0,0 and size 0x0. A hover map built on
+  it passed every Lua test (the stub returned real numbers) and never worked in game.
+  Use the panel's own layout numbers and `GetMousePositionOnViewport` (2026-10-29).
+
 - **A property you write may end up in the player's save.** A stone pit's
   work state set to NotWorkable came back NotWorkable after a reload, while a
   rock's did not (2026-10-28, [per-item-limits-2026-10-27](per-item-limits-2026-10-27.md)). Before a mod writes a game value,
@@ -86,6 +91,14 @@ discovers a new one, with the date and a link to the evidence.
   COSM_Ninja01). Check the id against the table's row names first.
 
 ## Evidence: how we fooled ourselves
+
+- **Two frame captures differed by 4.5 ms per frame for reasons that were not the
+  mod.** One ran at in-game night, the other had Chrome in front. With the game in
+  front and the same daylight the difference was gone. Capture both conditions with
+  the game focused, close in time and light (2026-10-29).
+- **A bug made the "fine" screen feel fine.** "Show all" felt smooth only because a
+  stuck fill redrew it at 60 Hz (about 400 ms of work per second). Measure the screen
+  that feels good too, not only the one that feels bad (2026-10-29).
 
 - **Three of round 3's P2s lived in test stubs that accepted what the real
   server refuses.** The fake server answered every Hello, handled a Set in
