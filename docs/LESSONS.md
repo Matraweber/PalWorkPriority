@@ -87,6 +87,15 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Evidence: how we fooled ourselves
 
+- **Three of round 3's P2s lived in test stubs that accepted what the real
+  server refuses.** The fake server answered every Hello, handled a Set in
+  zero time, and answered stock requests whether the panel was open or not.
+  A stub must enforce the same budgets and timing as the code it replaces
+  (2026-10-29).
+- **A wording fix said the opposite of the behaviour.** The round-2 footer
+  said "Enter types" while Enter raises a step and saves. Only the string was
+  pinned. Test a hint against the effect of the input it names (2026-10-29).
+
 - **The shipping game's cheat manager is a shell.** With UE4SS's cheat-manager
   enabler on, `AddPlayerExp`, `SpawnMonster` and both debug add-item calls
   ran without error and did nothing (2026-10-27). Real gameplay functions
@@ -236,6 +245,12 @@ discovers a new one, with the date and a link to the evidence.
   sender's current status, and tests must replay the real arrival order.
 
 ## Tooling traps
+
+- **`git status` hid CRLF on disk.** With `eol=lf`, 12 Lua files had CRLF in
+  the working copy, so `release.py` packaged bytes no commit holds. Package
+  from git blobs, not the disk (2026-10-29).
+- **"Reproducible" was measured on one disk copy.** Two builds from the same
+  working copy matched, but a fresh clone would not have (2026-10-29).
 
 - **A reset named after a world change also ran on a respawn.** `ClientRestart`
   fires on death and on reconnect. Clearing the held-rock list there left rocks

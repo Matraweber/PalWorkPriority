@@ -16,6 +16,14 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-29 - Release archives are packaged from git.** `release.py`
+  reads every tracked file as the revision's blob, so line endings on disk
+  cannot change the archive. G7 refuses an archive whose `release.json`
+  does not name the tag's commit.
+- **2026-10-29 - The change note fills by priority.** Parts go in KEEP
+  order; the first that does not fit is shortened, and everything after it
+  is left out.
+
 - **2026-10-29 - Round-2 findings: every P1 and P2 goes in before the upload
   (user's pick).** The left click keeps wrapping 1 to X, and the stand legend
   now says so. A clamp at 1 was rejected because it would change 0.4.1 behaviour.
@@ -111,6 +119,22 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Saving and settings
 
+- **2026-10-29 - 0.4.1 leniency is per value.** 0.4.1's rules apply to each
+  `config.lua` value that still equals its parsed `config.migration.bak`. A
+  value typed under 0.5 is checked strictly. This narrows the earlier
+  2026-10-29 entry, where any edit made the whole file strict.
+- **2026-10-29 - A refused `config.lua` keeps the mod up, scheduling
+  nothing.** main starts on the shipped defaults, every pass is refused, and
+  Alt+F1 shows "config.lua rejected: <reason>" once per session. A file that
+  cannot be read still stops the mod ("did not start"): unreadable is never
+  defaults. Chat was not used because singleplayer never shows system chat.
+- **2026-10-29 - A live data file changed outside 0.5 wins over an older
+  `.bak`.** 0.5 only ever installs a verified temp file, so a live file with
+  no envelope or a failed checksum came from 0.4.1 or a person. If it
+  decodes, it is used and marked recovered, with a warning. A repeated
+  rejected copy gets a free `.rejected.<gen>.<n>` name.
+  *Evidence:* [review-round3-2026-10-29](review-round3-2026-10-29.md).
+
 - **2026-10-11 - An interrupted settings cutover fences startup; the marker is
   only checked for presence.** `Scripts/main.lua` opens `.settings-cutover` in
   the mod folder before it loads priorities.txt/caps.txt or looks at
@@ -162,6 +186,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   Unknown is not "fresh install". See LESSONS.
 
 ## Scheduling and limits
+
+- **2026-10-29 - Unknown base owner changes nothing.** While a base's guild
+  cannot be read and limits exist, its held rocks stay held and no rock is
+  written. The held list is cleared only on a real world change (both world
+  keys read and different). Rocks of bases that are only out of range are
+  kept, because they stream back in with their rocks still off.
+- **2026-10-29 - Construction is not ignored yet.** The join warning now
+  names the untyped work. Nothing proved that Construction is the work seen
+  at the server join.
 
 - **2026-10-29 - The held-rock list survives `scheduler.forget()`.**
   `ClientRestart` also fires on a respawn and on a same-map reconnect, so it is
@@ -403,6 +436,17 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Multiplayer and network
 
+- **2026-10-29 - One Hello sender.** `net.poll` sends handshake Hellos after
+  the role decision. The 18 s one-shot is gone, and the stand grid asks only
+  when connected. The server allows 3 Hellos per client nonce and 4 per
+  player per 60 s, so a reconnect is served.
+- **2026-10-29 - Limits refresh only when the rows change.** A client drops
+  its count only when its guild's rows differ from the last snapshot. Early
+  storage requests are kept and served after 1 s, not dropped.
+- **2026-10-29 - The mismatch advice depends on which side is older.** The
+  server's schema in its Welcome or Incompatible reply decides: older server
+  "ask the host to update the server", newer server "update the mod".
+
 - **2026-10-29 - Only a server without the mod gives the base-game stand
   back.** That case is a handshake timeout, after about a minute. On another
   Pal Work Priority version (`incompatible`) or locked settings (`unavailable`)
@@ -457,6 +501,20 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   versions under Release and scope.)
 
 ## UI and input
+
+- **2026-10-29 - Per-base storage names its base by shape, not place.**
+  palapi has no player or base position, so "This base" is not possible.
+  The line says "Base N of M, counted alone", or "your base" with one. A new
+  limit is seeded above the guild's fullest base until the player picks one.
+  On a client, which only gets one base's count, the player picks a base
+  first.
+- **2026-10-29 - Footers per input.** Mouse, keyboard and controller each get
+  their own footer, tested against what the input does. The panel records
+  the last input itself, because the game's flag only updates while the
+  stand is open.
+- **2026-10-29 - The stand legend is built from parts.** It drops its least
+  needed part when a rebound key makes it too long. After a pass it shows
+  "Steering N of M Pals" (host and singleplayer only).
 
 - **2026-10-29 - Panel input after the second review.**
   - **Confirm delay:** a confirm less than 0.4 s after arming does nothing, so

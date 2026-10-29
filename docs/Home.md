@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md) · 2026-10-29
 - [Third strict review round after the round-2 fixes (2026-10-29)](review-round3-2026-10-29.md) · 2026-10-29
 - [Second strict review round after the audit fixes (2026-10-29)](review-round2-2026-10-29.md) · 2026-10-29
 - [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md) · 2026-10-29
@@ -32,10 +33,10 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [0.5.0 reply drafts (not posted)](release-replies-0.5.0-draft.md) · 2026-10-28
 - [Per-item limits: first research round (2026-10-27/28)](per-item-limits-2026-10-27.md) · 2026-10-28
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, server (2026-10-28)](g7-final-build-2026-10-28.md) · 2026-10-28
-- [0.5.0 release scope](RELEASE-0.5.0.md) · 2026-10-28
 
 ## Release and reports
 
+- [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md)
 - [Third strict review round after the round-2 fixes (2026-10-29)](review-round3-2026-10-29.md)
 - [Second strict review round after the audit fixes (2026-10-29)](review-round2-2026-10-29.md) (history)
 - [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md)

@@ -5,7 +5,7 @@ status: current
 ---
 # Store page text for 0.5.0 (draft, not posted)
 
-Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [README](../README.md) · [CHANGELOG](../CHANGELOG.md) · [vortex-2026-10-28](vortex-2026-10-28.md) · [g1-workshop-2026-10-20](g1-workshop-2026-10-20.md)
+Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [vortex-2026-10-28](vortex-2026-10-28.md) · [g1-workshop-2026-10-20](g1-workshop-2026-10-20.md) · [release-replies-0.5.0-draft](release-replies-0.5.0-draft.md)
 
 Written 2026-10-29 from the README on branch `fix/r3-docs` (round-3 review,
 onboarding P2-5). Players read the store page, not the README, so it carries
