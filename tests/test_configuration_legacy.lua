@@ -46,9 +46,95 @@ do
     assert(again and again.interval_seconds==5 and again.max_pals_per_work_type==false,
         'second launch stopped: '..tostring(again_why))
     assert(config.upgrade_reset==false,'the migrated copy was called a reset')
-    -- Once the user edits the copy, 0.5's own check applies.
+    -- Review round 3: leniency is per value. An edit to another key keeps
+    -- 0.4.1's rules for the untouched lines (interval still 5, Lumbering
+    -- still dropped beside a changed entry), while a value typed under 0.5
+    -- is checked strictly.
+    warned={}
+    fs.files['old/config.lua']=legacy:gsub('Deforest=2','Deforest=3'):gsub('}$',',dry_run=true}')
+    local edited,edited_why=config.load('old/','oldScripts/')
+    assert(edited,'an edit elsewhere stopped the mod: '..tostring(edited_why))
+    assert(edited.interval_seconds==5 and edited.max_pals_per_work_type==false and edited.dry_run==true)
+    assert(edited.work_priority.Deforest==3 and edited.work_priority.Lumbering==nil
+        and edited.work_priority.Mining==nil,'untouched entries lost their leniency')
+    assert(edited.work_caps.Mining.Wood==300 and edited.pal_overrides.Diggy.Cool==1)
+    assert(said('interval_seconds'),'the clamp was not said')
+    assert(config.refused==false)
+    fs.files['old/config.lua']=legacy:gsub('interval_seconds=2','interval_seconds=3')
+    local typed,typed_why=config.load('old/','oldScripts/')
+    assert(typed==nil and typed_why=='invalid interval_seconds','a newly typed 3 was accepted: '..tostring(typed_why))
+    assert(config.refused==true,'a refused value was not marked')
+    fs.files['old/config.lua']=legacy:gsub('Deforest=2','Deforest=2,Cool=9')
+    assert(config.load('old/','oldScripts/')==nil,'a new bad entry beside old ones was sanitized')
+    -- A torn backup: nothing is lenient any more, and the whole file is strict.
     fs.files['old/config.lua']=legacy..' '
-    assert(config.load('old/','oldScripts/')==nil,'an edited copy was sanitized')
+    fs.files['old/config.migration.bak']=legacy:sub(1,40)
+    assert(config.load('old/','oldScripts/')==nil,'a torn backup still allowed leniency')
+    fs.files['old/config.migration.bak']=legacy
+end
+
+-- P3 (round 3): 0.4.1 read the switches by truthiness, so 1 or "true" meant on.
+do
+    warned={}
+    local config=fresh_module()
+    fs.files['truthyScripts/config.lua']='return {dry_run=1,enabled="yes",run_on_world_load=0}'
+    local cfg,why=config.load('truthy/','truthyScripts/')
+    assert(cfg,'truthy switches stopped the mod: '..tostring(why))
+    assert(cfg.dry_run==true and cfg.enabled==true and cfg.run_on_world_load==true,'a truthy switch turned off')
+    assert(said('config.dry_run should be true or false. Using true for 1, as 0.4.1 did.'))
+    -- Typed under 0.5, the same value is refused.
+    fs.files['truthy/config.lua']='return {dry_run=2}'
+    assert(config.load('truthy/','truthyScripts/')==nil)
+end
+
+-- P3 (round 3): the backup goes through a temporary file. A failed rename
+-- leaves no torn config.migration.bak, and the next launch tries again.
+do
+    local config=fresh_module()
+    fs.files['bakScripts/config.lua']='return {interval_seconds=20}'
+    fs.fault=function(op,path) return op=='rename' and path=='bak/config.migration.bak.tmp>bak/config.migration.bak' end
+    local cfg,why=config.load('bak/','bakScripts/')
+    fs.fault=nil
+    assert(cfg==nil and why:find('config backup replacement failed',1,true),tostring(why))
+    assert(fs.files['bak/config.migration.bak']==nil and fs.files['bak/config.lua']==nil)
+    fs.fault=function(op,path) return op=='write' and path=='bak/config.migration.bak.tmp' end
+    cfg,why=config.load('bak/','bakScripts/')
+    fs.fault=nil
+    assert(cfg==nil and why:find('config backup failed',1,true) and fs.files['bak/config.migration.bak']==nil)
+    cfg,why=config.load('bak/','bakScripts/')
+    assert(cfg and cfg.interval_seconds==20,tostring(why))
+    assert(fs.files['bak/config.migration.bak']=='return {interval_seconds=20}'
+        and fs.files['bak/config.migration.bak.tmp']==nil)
+end
+
+-- P3 (round 3): the user-facing work_caps errors no longer say "legacy".
+do
+    local config=fresh_module()
+    local _,why=config.validate({work_caps={Mining={Stone=0}}})
+    assert(why=='invalid work_caps entry: Mining/Stone',tostring(why))
+    _,why=config.validate({work_caps={Nope={}}})
+    assert(why=='invalid work_caps entry: Nope',tostring(why))
+end
+
+-- Review round 3: a refused config.lua is shown in Production Limits through
+-- the reset notice slot; a reset notice still waiting keeps its marker.
+do
+    local config=fresh_module()
+    fs.files['rej/'..config.MARKER]=config.UPGRADE_MESSAGE..'\n'
+    fs.files['rej/config.lua']='return {interval_seconds=1}'
+    assert(config.load('rej/','rejScripts/')==nil and config.refused==true)
+    config.show_rejection('config.lua rejected: invalid interval_seconds.')
+    assert(config.upgrade_reset==true and config.upgrade_message=='config.lua rejected: invalid interval_seconds.')
+    assert(config.ack_upgrade_reset()==true and config.upgrade_reset==false)
+    assert(fs.files['rej/'..config.MARKER],'showing the rejection removed the waiting reset marker')
+    config.show_rejection('again')
+    config.clear_rejection()
+    assert(config.upgrade_reset==false and config.rejection==nil)
+    fs.files['rejScripts/default_config.lua']='return {interval_seconds=15}'
+    assert(config.defaults('rejScripts/').interval_seconds==15)
+    fs.files['devScripts/config.lua']='return {interval_seconds=25}'
+    assert(config.defaults('devScripts/').interval_seconds==25,'a source checkout has no defaults')
+    assert(config.defaults('noneScripts/')==nil)
 end
 
 -- P2: a UTF-8 byte order mark, root and legacy.

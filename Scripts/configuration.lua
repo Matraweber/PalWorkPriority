@@ -17,6 +17,10 @@ M.MISSING_MESSAGE = "config.lua was missing, defaults are in use. Options page s
 -- What the panel shows while upgrade_reset is true.
 M.upgrade_message = nil
 M.MARKER = 'config.reset.txt'
+-- True after load refused the root config.lua itself (a value or its
+-- syntax), not after a read error. main then comes up without scheduling and
+-- says why, instead of not starting at all (review round 3).
+M.refused = false
 local marker_path = nil
 local BOM = '\239\187\191'
 local MAX_INTEGER = 2147483647
@@ -46,10 +50,14 @@ function M.validate(c)
         end
     end
     for work, items in pairs(c.work_caps or {}) do
-        if not workdefs.is_known(work) or type(items) ~= 'table' then return nil, 'invalid legacy work limits' end
+        if not workdefs.is_known(work) or type(items) ~= 'table' then
+            return nil, 'invalid work_caps entry: ' .. tostring(work)
+        end
         for item, amount in pairs(items) do
             if type(item) ~= 'string' or item == '' or #item > 64 or item:find('[^%w_%.%-]')
-                or not integer(amount,1,9999999) then return nil, 'invalid legacy item limit' end
+                or not integer(amount,1,9999999) then
+                return nil, 'invalid work_caps entry: ' .. work .. '/' .. tostring(item)
+            end
         end
     end
     for _, key in ipairs({'uncounted_containers','counted_containers'}) do
@@ -76,9 +84,11 @@ end
 
 -- 0.4.1's own leniency, for the files 0.4.1 accepted (review round 2, P1).
 -- 0.4.1 warned and clamped or dropped a bad value where validate refuses the
--- whole file, so an upgrade that kept such a file stopped the mod. Only used
--- for the legacy Scripts/config.lua and for a root copy still byte-identical
--- to config.migration.bak; a file the user edits under 0.5 is checked strictly.
+-- whole file, so an upgrade that kept such a file stopped the mod. Used for
+-- the legacy Scripts/config.lua and, in the root copy, for each value that
+-- still equals config.migration.bak (review round 3: one edit elsewhere in the
+-- file stopped the mod over a line the player never touched). A value the
+-- player typed under 0.5 is checked strictly.
 local function whole(value)
     local n = tonumber(value)
     if n == nil or n ~= n or n == math.huge or n == -math.huge then return nil end
@@ -168,6 +178,16 @@ function M.lenient(c)
             end
         end
     end
+    -- 0.4.1 tested these for plain truthiness, so dry_run = 1 or "true" kept
+    -- test mode on. Dropping them made 0.5 assign Pals live (review round 3).
+    for _, key in ipairs({'enabled', 'dry_run', 'run_on_world_load'}) do
+        local value = c[key]
+        if value ~= nil and type(value) ~= 'boolean' then
+            log.warn('config.' .. key .. ' should be true or false. Using true for ' .. tostring(value)
+                .. ', as 0.4.1 did.')
+            c[key] = true
+        end
+    end
     -- Anything else validate refuses on its own falls back to its default.
     for key, value in pairs(c) do
         if not M.validate({[key] = value}) then
@@ -180,18 +200,120 @@ end
 
 -- loadfile, which 0.4.1 used, skips a leading UTF-8 byte order mark; load
 -- does not, and an editor that adds one stopped the mod (review round 2).
-local function parse(text, name, lenient)
+local function evaluate(text, name)
     if text:sub(1, 3) == BOM then text = text:sub(4) end
     local chunk, err = load(text, '@' .. name, 't', {})
     if not chunk then return nil, err end
     local ok, value = pcall(chunk)
     if not ok or type(value) ~= 'table' then return nil, 'configuration must return a table' end
-    if lenient then M.lenient(value) end
+    return value
+end
+
+local function same(a, b)
+    if type(a) ~= 'table' or type(b) ~= 'table' then return a == b end
+    for key, value in pairs(a) do
+        if not same(value, b[key]) then return false end
+    end
+    for key in pairs(b) do
+        if a[key] == nil then return false end
+    end
+    return true
+end
+
+-- The three tables are compared entry by entry, so changing one work
+-- priority keeps 0.4.1's rules for the untouched entries beside it.
+local BY_ENTRY = { work_priority = true, pal_overrides = true, work_caps = true }
+
+-- 0.4.1's rules for every value still equal to base (the parsed
+-- config.migration.bak), strict ones for the rest.
+local function lenient_where_unchanged(c, base)
+    local old, entries = {}, {}
+    for key, value in pairs(c) do
+        local before = base[key]
+        if BY_ENTRY[key] and type(value) == 'table' and type(before) == 'table' then
+            local kept, names = {}, {}
+            for entry, setting in pairs(value) do
+                if same(setting, before[entry]) then kept[entry], names[#names + 1] = setting, entry end
+            end
+            old[key], entries[key] = kept, names
+        elseif same(value, before) then
+            old[key] = value
+        end
+    end
+    local unchanged = {}
+    for key in pairs(old) do unchanged[#unchanged + 1] = key end
+    M.lenient(old)
+    for _, key in ipairs(unchanged) do
+        if entries[key] then
+            local fixed = old[key]
+            for _, entry in ipairs(entries[key]) do
+                if type(fixed) == 'table' then c[key][entry] = fixed[entry] else c[key][entry] = nil end
+            end
+        else
+            c[key] = old[key]
+        end
+    end
+    return c
+end
+
+-- lenient is true for the whole file, or the parsed backup to compare with.
+local function parse(text, name, lenient)
+    local value, err = evaluate(text, name)
+    if not value then return nil, err end
+    if lenient == true then M.lenient(value)
+    elseif type(lenient) == 'table' then lenient_where_unchanged(value, lenient) end
     return M.validate(value)
+end
+
+-- Written beside the target, read back, then renamed into place, so a crash
+-- never leaves a torn copy under the real name.
+local function install(path, text, what)
+    local saved, err = file.write_raw(path .. '.tmp', text)
+    if not saved then return nil, 'config ' .. what .. ' failed: ' .. tostring(err) end
+    if file.read_raw(path .. '.tmp') ~= text then return nil, 'config ' .. what .. ' verification failed' end
+    local moved, move_err = file.fs.rename(path .. '.tmp', path)
+    if not moved then return nil, 'config ' .. what .. ' replacement failed: ' .. tostring(move_err) end
+    return true
+end
+
+-- The shipped defaults, for a launch whose config.lua was refused: the mod
+-- still comes up so Production Limits can say why, and main schedules
+-- nothing (review round 3). A source checkout has only Scripts/config.lua.
+function M.defaults(scripts)
+    local source = scripts .. 'default_config.lua'
+    local text, _, code = file.read_raw(source)
+    if text == nil and code == 2 then
+        source = scripts .. 'config.lua'
+        text = file.read_raw(source)
+    end
+    if text == nil then return nil end
+    return parse(text, source, false)
+end
+
+-- Shown by the panel through upgrade_message like the reset notice. A reset
+-- notice still waiting keeps its marker and comes back on a later launch.
+M.rejection = nil
+local waiting = nil
+function M.show_rejection(text)
+    if M.rejection == nil then waiting = { M.upgrade_reset, M.upgrade_message } end
+    M.rejection = text
+    M.upgrade_reset, M.upgrade_message = true, text
+end
+
+function M.clear_rejection()
+    if M.rejection == nil then return end
+    M.rejection = nil
+    M.upgrade_reset, M.upgrade_message = waiting[1], waiting[2]
 end
 
 -- Called by the panel once it has shown the reset notice.
 function M.ack_upgrade_reset()
+    if M.rejection ~= nil then
+        -- The panel showed the rejection, not the reset notice.
+        M.clear_rejection()
+        M.upgrade_reset, M.upgrade_message = false, nil
+        return true
+    end
     M.upgrade_reset, M.upgrade_message = false, nil
     if marker_path == nil then return true end
     local removed, err, code = file.fs.remove(marker_path)
@@ -219,10 +341,15 @@ function M.load(root, scripts)
         M.upgrade_reset = true
         M.upgrade_message = (said == M.MISSING_MESSAGE) and said or M.UPGRADE_MESSAGE
     end
+    M.refused = false
     local text, err, code = file.read_raw(target)
     if text then
-        -- Still the migrated bytes: 0.4.1 accepted them, so 0.4.1's rules apply.
-        local cfg, why = parse(text, target, file.read_raw(backup) == text)
+        -- Values still as migrated: 0.4.1 accepted them, so 0.4.1's rules
+        -- apply to them. An unreadable or torn backup leaves every key strict.
+        local original = file.read_raw(backup)
+        local base = original ~= nil and evaluate(original, backup) or nil
+        local cfg, why = parse(text, target, original == text or base or false)
+        M.refused = cfg == nil
         return cfg, why, false
     end
     if code ~= 2 then return nil, 'cannot read user config: ' .. tostring(err) end
@@ -248,14 +375,11 @@ function M.load(root, scripts)
     end
     -- Preserve the exact original before creating the editable copy.
     if existing == nil and missing == 2 then
-        local saved, save_err = file.write_raw(backup, original)
-        if not saved then return nil, 'config backup failed: ' .. tostring(save_err) end
+        local saved, save_err = install(backup, original, 'backup')
+        if not saved then return nil, save_err end
     elseif existing == nil then return nil, 'config backup unavailable' end
-    local saved, save_err = file.write_raw(target .. '.tmp', original)
-    if not saved then return nil, 'config migration failed: ' .. tostring(save_err) end
-    if file.read_raw(target .. '.tmp') ~= original then return nil, 'config migration verification failed' end
-    local moved, move_err = file.fs.rename(target .. '.tmp',target)
-    if not moved then return nil, 'config migration replacement failed: ' .. tostring(move_err) end
+    local saved, save_err = install(target, original, 'migration')
+    if not saved then return nil, save_err end
     return cfg, nil, fresh
 end
 
