@@ -3,20 +3,32 @@ install while the Workshop item is active. Reversible; game closed for every ste
 
   prepare                      back up and move the dev install aside
   manual <manual.zip> [--sha256 H]
-                               extract the manual archive into the game root.
-                               The archive must match the manual sha256 in the
-                               release manifest next to it
-                               (PalWorkPriority-<V>-release.json); an archive
-                               without one (the 0.4.1 Nexus zip) needs --sha256.
-  workshop-content <zip>       put an archive's files into the Workshop item
+                               extract the manual archive into the game root
+  workshop-content <workshop.zip> [--sha256 H]
+                               replace the Workshop item's files with the
+                               archive's (.workshop.json kept)
   workshop on|off              add/remove ActiveModList=PalWorkPriority
-  wipe                         remove whatever PalWorkPriority install exists
+  wipe --state <folder>        remove whatever PalWorkPriority install exists;
+                               refused unless the prepare backup in <folder>
+                               matches its state.json (it holds the dev install)
   status                       report what is installed and from where
-  restore --state <folder>     undo everything, verify hashes. The backup is
-                               checked against its state.json first; nothing
-                               is wiped or replaced when it does not match.
+  restore --state <folder>     put back the dev install, pak, settings,
+                               mods.txt, ManagedMods and the Workshop item,
+                               and verify their hashes. The backup is checked
+                               against its state.json first; nothing is wiped
+                               or replaced when it does not match. An
+                               INSTALL.txt a manual archive left in the game
+                               root is moved into the state folder.
 State: D:/PalWorkPriority-backups/g7-install-<time>/ (printed by prepare,
 passed back with --state).
+
+Both archive commands run the same check before anything is changed. With a
+release manifest next to the archive (PalWorkPriority-<V>-release.json, as
+tools/release.py writes it), the archive's sha256 must be the one listed and
+the manifest's source_commit must be the commit tag v<V> points at in this
+repository: a moved-aside older build is refused. An archive without a
+manifest (the 0.4.1 Nexus zip) needs --sha256. The zip is then read in full
+(every member's CRC) before the game or Workshop folder is touched.
 
 Every guard is an explicit check that exits with a message, so python -O
 cannot switch one off.
@@ -24,6 +36,7 @@ cannot switch one off.
 import hashlib, json, re, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parent.parent
 GAME = Path('D:/Steam/steamapps/common/Palworld')
 MODS = GAME / 'Mods/NativeMods/UE4SS/Mods'
 MOD = MODS / 'PalWorkPriority'
@@ -66,8 +79,10 @@ def prepare():
     shutil.copy2(MODS / 'mods.txt', b / 'mods.txt')
     shutil.copytree(WS, b / 'workshop-3786408856')
     shutil.copytree(MANAGED, b / 'ManagedMods')
+    install_txt = GAME / 'INSTALL.txt'
     state = {'dev_tree': tree(MOD), 'pak': sha(PAK), 'workshop_tree': tree(WS),
-             'settings': sha(SETTINGS), 'mods_txt': sha(MODS / 'mods.txt')}
+             'settings': sha(SETTINGS), 'mods_txt': sha(MODS / 'mods.txt'), 'managed_tree': tree(MANAGED),
+             'install_txt': sha(install_txt) if install_txt.is_file() else None}
     shutil.move(str(MOD), str(b / 'dev-PalWorkPriority'))
     (b / 'dev-LogicMods').mkdir()
     shutil.move(str(PAK), str(b / 'dev-LogicMods/PalWorkPriority.pak'))
@@ -75,51 +90,96 @@ def prepare():
     print(b)
 
 
-def release_sha256(archive, kind):
-    """The sha256 the release manifest next to the archive lists for it, or
-    None when there is no manifest."""
+def release_entry(archive, kind):
+    """(version, manifest, entry) from the release manifest next to the
+    archive, or None when there is no manifest."""
     m = re.fullmatch(r'PalWorkPriority-(.+)-%s\.zip' % kind, archive.name)
     if not m:
         return None
-    manifest = archive.parent / ('PalWorkPriority-%s-release.json' % m.group(1))
-    if not manifest.is_file():
+    manifest_path = archive.parent / ('PalWorkPriority-%s-release.json' % m.group(1))
+    if not manifest_path.is_file():
         return None
     try:
-        entry = json.loads(manifest.read_text(encoding='utf-8'))['archives'][kind]
-    except (ValueError, KeyError, TypeError) as err:
-        die('the release manifest %s has no readable %s entry (%s)' % (manifest, kind, err))
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        entry = manifest['archives'][kind]
+        entry.get('file')
+    except (ValueError, KeyError, TypeError, AttributeError) as err:
+        die('the release manifest %s has no readable %s entry (%s)' % (manifest_path, kind, err))
     if entry.get('file') != archive.name:
-        die('the release manifest %s lists %r, not %s' % (manifest, entry.get('file'), archive.name))
-    return entry.get('sha256')
+        die('the release manifest %s lists %r, not %s' % (manifest_path, entry.get('file'), archive.name))
+    if manifest.get('version', m.group(1)) != m.group(1):
+        die('the release manifest %s is for version %r, not %s' % (manifest_path, manifest.get('version'), m.group(1)))
+    return m.group(1), manifest, entry
 
 
-def manual(archive, expected=None):
+def tag_commit(version):
+    """The commit tag v<version> points at in this repository."""
+    r = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--verify', '--quiet', 'v%s^{commit}' % version],
+                       capture_output=True, text=True)
+    commit = (r.stdout or '').strip()
+    if r.returncode != 0 or not commit:
+        die('tag v%s does not exist in %s, so the archive cannot be tied to it' % (version, REPO))
+    return commit
+
+
+def checked_archive(archive, kind, expected=None):
+    """The archive check both install routes share; it runs before anything
+    is changed (module docstring). Returns the member file names."""
     archive = Path(archive)
     if not archive.is_file():
         die('archive not found: %s' % archive)
-    listed = release_sha256(archive, 'manual')
-    if listed is None and expected is None:
+    release = release_entry(archive, kind)
+    if release is None and expected is None:
         die('no release manifest next to %s; pass --sha256 <hash> for an archive without one' % archive.name)
+    listed = str(release[2].get('sha256', '')).lower() if release else None
     if listed is not None and expected is not None and expected.lower() != listed:
         die('--sha256 differs from the release manifest for %s' % archive.name)
-    want = (expected or listed).lower()
+    want = listed if listed is not None else expected.lower()
     actual = sha(archive)
     if actual != want:
         die('%s has sha256 %s, expected %s (%s): not the archive that was built'
-            % (archive.name, actual[:12], want[:12], 'release manifest' if listed else '--sha256'))
-    z = zipfile.ZipFile(archive)
-    names = [n for n in z.namelist() if not n.endswith('/')]
-    z.extractall(GAME)
-    print('extracted %d files of %s (sha256 %s) into the game root' % (len(names), archive.name, actual[:12]))
+            % (archive.name, actual[:12], want[:12], 'release manifest' if release else '--sha256'))
+    if release:
+        version, manifest, _ = release
+        built, tag = manifest.get('source_commit'), tag_commit(version)
+        if built != tag:
+            die('%s was built from %s, but tag v%s is %s: an older or moved-aside build. '
+                'Use the build of the tag (tools/release.py writes build/release-%s)'
+                % (archive, str(built)[:12], version, tag[:12], version))
+        print('%s: sha256 %s, built from %s = tag v%s' % (archive.name, actual[:12], tag, version))
+    else:
+        print('%s: sha256 %s as given (no release manifest, not tied to a tag)' % (archive.name, actual[:12]))
+    try:
+        with zipfile.ZipFile(archive) as z:
+            damaged = z.testzip()
+            names = [n for n in z.namelist() if not n.endswith('/')]
+    except (zipfile.BadZipFile, OSError) as err:
+        die('%s cannot be read as a zip (%s); nothing was changed' % (archive, err))
+    if damaged:
+        die('%s: member %s is damaged; nothing was changed' % (archive, damaged))
+    return names
 
 
-def workshop_content(archive):
-    keep = (WS / '.workshop.json').read_bytes()
+def manual(archive, expected=None):
+    names = checked_archive(archive, 'manual', expected)
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(GAME)
+    print('extracted %d files of %s into the game root' % (len(names), Path(archive).name))
+
+
+def workshop_content(archive, expected=None):
+    names = checked_archive(archive, 'workshop', expected)
+    meta = WS / '.workshop.json'
+    if not meta.is_file():
+        die('the Workshop item has no .workshop.json (%s); nothing was changed' % meta)
+    keep = meta.read_bytes()
     shutil.rmtree(WS)
     WS.mkdir()
-    zipfile.ZipFile(archive).extractall(WS)
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(WS)
     (WS / '.workshop.json').write_bytes(keep)
-    print('Workshop item holds', json.loads((WS / 'Info.json').read_text())['Version'])
+    print('Workshop item holds %d files of %s, version %s'
+          % (len(names), Path(archive).name, json.loads((WS / 'Info.json').read_text())['Version']))
 
 
 def workshop(on):
@@ -133,13 +193,20 @@ def workshop(on):
     print('Workshop item', 'active' if on else 'inactive')
 
 
-def wipe():
+def remove_install():
     for p in (MOD, MANAGED / 'PalWorkPriority'):
         if p.exists():
             shutil.rmtree(p)
     if PAK.exists():
         PAK.unlink()
     print('no PalWorkPriority install left')
+
+
+def wipe(b):
+    """remove_install, only while a verified prepare backup holds the dev
+    install: before prepare or after restore, MOD is the dev install itself."""
+    verify_backup(b, 'wipe')
+    remove_install()
 
 
 def status():
@@ -160,11 +227,11 @@ def status():
     print(json.dumps(out, indent=1))
 
 
-def verify_backup(b):
+def verify_backup(b, command='restore'):
     """The backup folder holds exactly what prepare recorded. Runs before
-    restore wipes or replaces anything; returns the state."""
+    restore or wipe deletes or replaces anything; returns the state."""
     if b is None:
-        die('restore needs --state <the folder prepare printed>')
+        die('%s needs --state <the folder prepare printed>' % command)
     b = Path(b)
     if not (b / 'state.json').is_file():
         die('no state.json in %s; not a prepare backup' % b)
@@ -189,6 +256,11 @@ def verify_backup(b):
         problems.append('workshop-3786408856 is missing')
     elif tree(ws) != workshop_tree:
         problems.append('workshop-3786408856 differs from the recorded tree')
+    managed = b / 'ManagedMods'
+    if not managed.is_dir():
+        problems.append('ManagedMods is missing')
+    elif 'managed_tree' in state and tree(managed) != state['managed_tree']:  # states before 2026-10-29 lack it
+        problems.append('ManagedMods differs from the recorded tree')
     for name, key in (('PalModSettings.ini', 'settings'), ('mods.txt', 'mods_txt')):
         if not (b / name).is_file():
             problems.append('%s is missing' % name)
@@ -202,21 +274,35 @@ def verify_backup(b):
 def restore(b):
     state = verify_backup(b)
     b = Path(b)
-    wipe()
+    remove_install()
     # The loader renames a pak it did not install to <name>-<time>.pak.bak
     # before writing its own (scenario B, 2026-10-20); keep those with the state.
     for stray in PAK.parent.glob('PalWorkPriority-*.pak.bak'):
         shutil.move(str(stray), str(b / stray.name))
         print('moved loader backup', stray.name, 'into the state folder')
+    # A manual archive puts INSTALL.txt into the game root; it is not part of
+    # the install. Kept with the state, not deleted.
+    install_txt = GAME / 'INSTALL.txt'
+    if (install_txt.is_file() and sha(install_txt) != state.get('install_txt')
+            and install_txt.read_bytes().startswith(b'Pal Work Priority ')):
+        shutil.move(str(install_txt), str(b / 'INSTALL.txt-from-game-root'))
+        print('moved the manual archive\'s INSTALL.txt from the game root into the state folder')
     shutil.move(str(b / 'dev-PalWorkPriority'), str(MOD))
     shutil.move(str(b / 'dev-LogicMods/PalWorkPriority.pak'), str(PAK))
     shutil.copy2(b / 'PalModSettings.ini', SETTINGS)
     shutil.copy2(b / 'mods.txt', MODS / 'mods.txt')
+    # The loader may have changed ManagedMods during the matrix: keep that
+    # copy with the state and put the backup back.
+    if MANAGED.exists():
+        shutil.move(str(MANAGED), str(b / time.strftime('ManagedMods-after-%Y%m%d-%H%M%S')))
+    shutil.copytree(b / 'ManagedMods', MANAGED)
     if WS.exists():
         shutil.rmtree(WS)
     shutil.copytree(b / 'workshop-3786408856', WS)
-    ok = tree(MOD) == state['dev_tree'] and sha(PAK) == state['pak'] and tree(WS) == state['workshop_tree']
-    print('restored; dev install, pak and Workshop item identical:', ok)
+    managed = state.get('managed_tree', tree(b / 'ManagedMods'))
+    ok = (tree(MOD) == state['dev_tree'] and sha(PAK) == state['pak'] and tree(WS) == state['workshop_tree']
+          and tree(MANAGED) == managed)
+    print('restored; dev install, pak, Workshop item and ManagedMods identical:', ok)
     sys.exit(0 if ok else 1)
 
 
@@ -241,13 +327,13 @@ def main(argv):
     if cmd == 'prepare':
         prepare()
     elif cmd == 'wipe':
-        wipe()
+        wipe(st)
     elif cmd == 'status':
         status()
     elif cmd == 'manual':
         manual(argv[1], option(argv, '--sha256'))
     elif cmd == 'workshop-content':
-        workshop_content(argv[1])
+        workshop_content(argv[1], option(argv, '--sha256'))
     elif cmd == 'workshop':
         if argv[1] not in ('on', 'off'):
             die('workshop takes on or off')
