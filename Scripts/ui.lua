@@ -132,26 +132,41 @@ local legend_styled = {}
 -- 10, the same step toward 1 as a left click; the arrows move the selection.
 -- The parts are kept apart with " | " and joined by M.edit_legend, which
 -- drops the least needed part when a long rebound key would not fit.
-M.LEGEND_START = "All start at 1"
+--
+-- UX crowding P2-1 (round 3): the line never said what the numbers mean, and
+-- the game's own work levels run the other way (higher is better). It opens
+-- with the scale now, which edit_legend never drops. "All start at 1" was not
+-- true either (P3-8): a fresh install turns a job the player had unticked
+-- into X (scheduler.lua, store.capture_baseline), so the starting state is
+-- "all equal", which the equal-numbers rule covers in the same words.
+M.LEGEND_SCALE = "1 first, X never"
+M.LEGEND_START = M.LEGEND_SCALE .. " (all start equal: game picks)"
 M.LEGEND_CONTROLS = "Left click/Enter: toward 1 (1 wraps to X) | Right click: toward X | Arrows, keys 1-5, X"
-M.LEGEND_EQUAL = "All equal: game picks"
-M.LEGEND_PANEL = "ALT+F1: Production Limits"
-M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_EQUAL, M.LEGEND_PANEL}, " | ")
+M.LEGEND_PANEL = "ALT+F1: Limits panel"
+M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_PANEL}, " | ")
 -- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
 -- view switch, so the panel opens with View. Buttons are named as buttons:
 -- "X: off" read as "X means off", not "press X" (audit 2026-10-28). A and X
 -- also say where they sit, because on a PlayStation pad the button players
 -- call X (Cross) is the bottom one, not the left one (accessibility P3-1).
 -- A arrives as code 10 and LB as 11, both toward 1; RB is 12, toward X.
+-- "Limits", not "Limits panel": the pad line carries the same scale and
+-- starting state as the mouse line and has six characters less room.
 M.PAD_CONTROLS = "LB/A (bottom button): toward 1 (1 wraps to X) | RB: toward X | X (left button): set X"
-M.PAD_PANEL = "View button: Production Limits"
-M.PAD_LEGEND = table.concat({M.LEGEND_START, M.PAD_CONTROLS, M.LEGEND_EQUAL, M.PAD_PANEL}, " | ")
+M.PAD_PANEL = "View button: Limits"
+M.PAD_LEGEND = table.concat({M.LEGEND_START, M.PAD_CONTROLS, M.PAD_PANEL}, " | ")
 -- What the legend line no longer has room for, in each cell's tooltip.
 M.MARKS_HELP = "1 highest, 5 lowest, X off.  * sending  ! not saved  ? unknown"
 -- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
 -- on 2026-10-28: 152 characters drew 730 px wide, so 14 pt is about 5.6 px a
 -- character and 160 characters about 900 px with the backing's padding.
 M.LEGEND_MAX_CHARS = 160
+-- How far the legend sits above the bottom edge, in slate units. At 8 it
+-- covered the game's "You have unused Stat Points" bar, which starts about
+-- 35 px above the bottom of a 1280x720 screen (UX crowding P3-4, ScreenShot
+-- 00405). 47 lifts it 26 px there (39 units at 720p's 0.667 scale): the bar's
+-- text stays readable under it and the HUD's Build hint stays clear above.
+M.LEGEND_LIFT = 47
 -- The config reset notice (configuration.upgrade_message) used to appear
 -- only in the Production Limits panel, which a player who was updated by
 -- the Workshop may never open (onboarding P2-4). The stand shows it once
@@ -216,9 +231,10 @@ end
 
 -- The panel key as the player bound it in DarnMenu. main.lua records it in
 -- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
--- With a steering count, the count takes the place of "All start at 1" and
--- "All equal: game picks": "Steering 0 of 14 Pals: all jobs equal" says both
--- for the case they were written for, and the line has no room for all three.
+-- With a steering count, the count follows the scale in place of "(all start
+-- equal: game picks)". "Steering 0 of 14 Pals: all jobs equal" does not fit
+-- beside every control, and then the starting-state wording says the same
+-- thing without the number. The scale is never dropped.
 function M.edit_legend()
     local controls, panel = M.LEGEND_CONTROLS, M.LEGEND_PANEL
     if api.last_input_type == 1 then
@@ -236,10 +252,13 @@ function M.edit_legend()
     end
     local status, short = steering_status()
     if status then
-        return fit_legend({{status, controls, panel}, {short, controls, panel}, {controls, panel}})
+        local choices = {{M.LEGEND_SCALE, status, controls, panel}}
+        if status ~= short then choices[#choices + 1] = {M.LEGEND_START, controls, panel} end
+        choices[#choices + 1] = {M.LEGEND_SCALE, short, controls, panel}
+        choices[#choices + 1] = {M.LEGEND_SCALE, controls, panel}
+        return fit_legend(choices)
     end
-    return fit_legend({{M.LEGEND_START, controls, M.LEGEND_EQUAL, panel},
-        {controls, M.LEGEND_EQUAL, panel}, {controls, panel}})
+    return fit_legend({{M.LEGEND_START, controls, panel}, {M.LEGEND_SCALE, controls, panel}})
 end
 
 local function warn_once(key, message)
@@ -1126,12 +1145,13 @@ local function refresh_legend(menu)
             if not alive(slot) then return false end
             if kind=="CanvasPanel" then
                 write(slot:SetAnchors({Minimum={X=0.5,Y=1},Maximum={X=0.5,Y=1}}))
-                write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-8}))
+                write(slot:SetAlignment({X=0.5,Y=1})); write(slot:SetPosition({X=0,Y=-M.LEGEND_LIFT}))
                 write(slot:SetAutoSize(true)); write(slot:SetZOrder(20))
             else
                 write(slot:SetHorizontalAlignment(2))
                 if kind=="Overlay" then write(slot:SetVerticalAlignment(3)) end
-                write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=4}))
+                -- Bottom-aligned in an Overlay too, so lifted the same way.
+                write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=kind=="Overlay" and M.LEGEND_LIFT or 4}))
             end
             write(box:SetBrushColor(LEGEND_BACKING))
             write(box:SetPadding({Left=10,Top=3,Right=10,Bottom=3}))
