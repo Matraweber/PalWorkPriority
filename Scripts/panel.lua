@@ -132,6 +132,14 @@ local RB = {
     SLICE = 0.008,
     filled = {},           -- tile key -> the item id that tile is showing
     pending = false,       -- a page stopped mid fill and wants another frame
+    -- Tiles filled so far, ever. fill_tick compares it across its refreshes:
+    -- a pending page that fills nothing is not a fill, and gets
+    -- FILL_IDLE_MAX fast tries (about a second) before only the maintenance
+    -- refresh carries it on. Its next new tile lets the fast loop back in.
+    fill_mark = 0,
+    fill_seen = 0,
+    fill_idle = 0,
+    FILL_IDLE_MAX = 60,
     draw_t0 = 0,           -- when the current draw started
     cfg = nil,             -- last config handed to refresh, for fill_tick
     -- The shell's chrome rows, in the order the commandlet stacked them into
@@ -3755,10 +3763,11 @@ local function producible(id)
     -- 88 ids that answer this way are debug weapons, NPC-only gear and _Tmp
     -- leftovers, none of which a player can ever hold.
     if items.real_name then
-        local real = items.real_name(id)
-        -- nil is "cannot say yet" (catalogue or controller missing), not
-        -- "no such item": the list built now is not cached (round 3, P3-2).
-        if real == nil then RB.names_missing = true end
+        local real, unnamed = items.real_name(id)
+        -- A bare nil is "cannot say yet" (catalogue or controller missing),
+        -- not "no such item": the list built now is not cached (round 3,
+        -- P3-2). nil, "unnamed" is the game's answer and is kept.
+        if real == nil and unnamed == nil then RB.names_missing = true end
         if real == nil or real:match("^%a[%a%-]* Text$") then return false end
     end
     -- An id the icon loader has exhausted every route for is not an item the
@@ -4063,6 +4072,9 @@ local function draw_item_picker(cfg, totals)
     if not RB.reserve_rows("ItemList", 0, LIST_ROWS - 1, LIST_PITCH) then
         return 6 + math.ceil((LIST_ROWS * LIST_PITCH) / LINE) + 4
     end
+    -- Tiles shown for the first time in this draw, which is what the slice
+    -- rations. Not grid_count, which counts the settled tiles too.
+    local fresh = 0
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -4089,13 +4101,22 @@ local function draw_item_picker(cfg, totals)
             -- at 16ms a tile that is one or two frames of staleness against a
             -- guaranteed dropped frame, which is the better trade.
             --
-            -- grid_count > 0 keeps one tile of progress per frame, so a slice
-            -- too small for even one tile still cannot stall the fill.
-            if grid_count > 0 and (os.clock() - RB.draw_t0) > RB.SLICE then
+            -- fresh > 0 keeps one tile of progress per frame, so a slice too
+            -- small for even one tile still cannot stall the fill.
+            --
+            -- It was grid_count > 0, which counts the tiles already showing
+            -- their item as well (perf, 2026-10-29). Redrawing those is cheap
+            -- but not free, so once twenty of them had used up the slice the
+            -- loop broke at tile 21 before filling it, on every frame: the
+            -- page stayed at 20 of 27 and fill_tick redrew it at 60 Hz for as
+            -- long as the picker was open.
+            if fresh > 0 and (os.clock() - RB.draw_t0) > RB.SLICE then
                 RB.pending = true
                 break
             end
             RB.filled[key] = id
+            fresh = fresh + 1
+            RB.fill_mark = RB.fill_mark + 1
         end
 
         local work = workdefs.work_for_item(id) or workdefs.DEFAULT_WORK
@@ -4465,11 +4486,29 @@ end
 -- Continue incomplete pages on the existing game-thread loop. The tile slice
 -- is a soft budget; complete callback costs must be measured in the game.
 function M.fill_tick()
-    if not (M.open and RB.pending and RB.cfg) then return false end
+    if not (M.open and RB.pending and RB.cfg) then
+        RB.fill_idle = 0
+        return false
+    end
     -- Only continuation work yields. A normal maintenance refresh must still
     -- rediscover the current tree/data even immediately after a fill. This
     -- timestamp is a scheduling deadline, never evidence of widget lifetime.
     if RB.refreshing or (RB.fill_after and os.clock() < RB.fill_after) then return false end
+    -- Bounded (perf, 2026-10-29). A page that stays pending without filling
+    -- a tile - a row the engine will not host, a catalogue that never gets
+    -- ready, a slice that cannot be met - used to be redrawn at 60 Hz for
+    -- as long as the panel was open. Any new tile, from either loop, counts
+    -- as progress and resets the count.
+    if RB.fill_mark ~= RB.fill_seen then RB.fill_seen, RB.fill_idle = RB.fill_mark, 0 end
+    if RB.fill_idle >= RB.FILL_IDLE_MAX then
+        if RB.fill_idle == RB.FILL_IDLE_MAX then
+            RB.fill_idle = RB.fill_idle + 1
+            log.debug("panel: fill made no progress in " .. RB.FILL_IDLE_MAX
+                .. " frames, leaving it to the 100ms draw")
+        end
+        return false
+    end
+    RB.fill_idle = RB.fill_idle + 1
     M.refresh(RB.cfg)
     return true
 end
