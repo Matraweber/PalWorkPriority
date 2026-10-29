@@ -502,6 +502,13 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-10-29 - The stand legend states the scale again: "1 first, X never".**
+  Round 2 kept the scale in the cell tooltip only. The crowding review showed that
+  Palworld's own work levels run the other way (higher is better), so a newcomer can
+  read 5 as "most". The user picked the legend change. The panel keeps one help line
+  (what a limit does) and one footer (how to use it), with no repeats.
+  *Evidence:* [review-ux-crowding-2026-10-29](review-ux-crowding-2026-10-29.md).
+
 - **2026-10-29 - Per-base storage names its base by shape, not place.**
   palapi has no player or base position, so "This base" is not possible.
   The line says "Base N of M, counted alone", or "your base" with one. A new
