@@ -2800,6 +2800,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
       -- another player's restart must not discard this player's queued edits.
       if same ~= true then return end
   elseif api.latch_authority() == true then
+      -- A remote spawn proves a controller exists: let the next lookup walk.
+      if api.pc_walk_retry then api.pc_walk_retry() end
       return -- dedicated startup uses role_tick; a remote spawn is not a new server session.
   end
   -- Stop writers and invalidate queued work before resolving the new session.

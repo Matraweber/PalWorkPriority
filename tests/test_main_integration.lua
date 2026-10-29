@@ -241,6 +241,19 @@ test("unidentified and foreign restarts preserve the local session",function()
     end
 end)
 
+-- 2026-10-29: the controller walk backs off to two minutes on an empty
+-- server. A remote player's spawn proves a controller exists, so the backoff
+-- is lifted and the next pass finds a write route, without a new session.
+test("dedicated server: a remote spawn lifts the controller walk backoff",function()
+    local s=boot(true); s.timers.role.fn()
+    local retries=0
+    s.api.pc_walk_retry=function() retries=retries+1 end
+    local epoch=s.session.epoch
+    s.hooks['/Script/Engine.PlayerController:ClientRestart'].before({get=function() return {} end})
+    assert(retries==1,"a remote spawn left the walk backoff in place")
+    assert(s.session.epoch==epoch and s.store.decided,"a remote spawn reset the server session")
+end)
+
 test("identified local restart invalidates queued edits and resets writer roles",function()
     local s=boot(true); s.timers.role.fn()
     local pc={GetFullName=function() return "LocalController" end}

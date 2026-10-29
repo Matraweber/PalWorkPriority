@@ -466,6 +466,16 @@ local function headless_game_instance()
     return gi
 end
 
+-- A player just spawned on this machine (main.lua's ClientRestart hook on a
+-- dedicated server), so a controller exists now: the next walk is not held
+-- back by misses earned while the server was empty. Without this, the first
+-- player after a long empty spell waited up to the two-minute cap before
+-- the pass could find a controller, and so a write route.
+function M.pc_walk_retry()
+    pc_walk_misses = 0
+    pc_walk_next = 0
+end
+
 function M.player_controller()
     if pc_memo ~= nil then return pc_memo end
     if local_pc_memo ~= nil then return local_pc_memo end
