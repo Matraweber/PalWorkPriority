@@ -1107,6 +1107,8 @@ end
 for _,case in ipairs({
     {status='incompatible',reason='server_requires_matching_mod',says='another Pal Work Priority version, which controls work here'},
     {status='incompatible',reason='schema_or_work_width',says='Ask the host to update the server.'},
+    {status='incompatible',reason='server_older',says='Ask the host to update the server.'},
+    {status='incompatible',reason='server_newer',says='newer Pal Work Priority version, which controls work here. Update the mod to edit.'},
     {status='unavailable',reason='settings_recovering',says='The server is loading saved settings.'},
     {status='unavailable',reason='settings_restart_required',says='host must restart'},
 }) do
@@ -1225,7 +1227,7 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
     package.loaded.darnmenu={labels={key_panel=string.rep('W',24)}}
     local rebound=f.ui.edit_legend()
     package.loaded.darnmenu=dm
-    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND,rebound,f.ui.VANILLA_ABSENT,f.ui.LOCKED_INCOMPATIBLE,
+    for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND,rebound,f.ui.VANILLA_ABSENT,f.ui.LOCKED_INCOMPATIBLE,f.ui.LOCKED_NEWER_SERVER,
         f.ui.PAK_MISSING,'Server settings are locked. The host must restart the game or server before editing can resume.'}) do
         assert(#text<=f.ui.LEGEND_MAX_CHARS,'legend too wide at 14 pt: '..#text..' '..text)
         assert(not text:find('\n',1,true),'stand legend must stay one line')

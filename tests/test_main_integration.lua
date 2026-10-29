@@ -323,6 +323,26 @@ test("both settings stores receive the same current role epoch",function()
     end
 end)
 
+-- Round 3: the advice depends on which side is older. The server's
+-- Incompatible reply and its Welcome both carry its schema.
+test("a version mismatch says which side has to update",function()
+    local s=boot(false)
+    local net=s.net
+    local status=require('panel_status')
+    net.begin_session(s.session.epoch)
+    assert(not net.receive_state("PWP_Incompatible|"..(net.SCHEMA+1).."|"..net.WORKS))
+    assert(net.status=="incompatible" and net.status_reason=="server_newer",tostring(net.status_reason))
+    assert(status.plain_reason(net.status_reason):find("Update the mod to the server's version.",1,true))
+    net.begin_session(s.session.epoch)
+    assert(not net.receive_state("PWP_Incompatible|"..(net.SCHEMA-1).."|"..net.WORKS))
+    assert(net.status_reason=="server_older",tostring(net.status_reason))
+    assert(status.plain_reason(net.status_reason):find("Ask the host to update the server",1,true))
+    -- No schema to go on: the neutral reason, which still names the host.
+    net.begin_session(s.session.epoch)
+    assert(not net.receive_state("PWP_Rule|Mining|Stone|100"))
+    assert(net.status_reason=="server_requires_matching_mod",tostring(net.status_reason))
+end)
+
 test("incompatible reported before the client role keeps the panel on incompatible",function()
     -- 2026-10-19, rc1 client joining a 0.4.1 server: net went incompatible
     -- before the role tick, caps.set_role reset the panel to "connecting", and

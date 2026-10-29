@@ -49,6 +49,9 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     save_failed='The server applied this change but could not save it; it may be lost after a restart.',
     schema_or_work_width=mismatch,
     server_requires_matching_mod=mismatch,
+    server_older=mismatch,
+    server_newer='This server runs a newer Pal Work Priority version, which controls work here. '
+        ..'Update the mod to the server\'s version.',
     settings_restart_required='Server settings are locked. The host must restart the game or server before editing can resume.',
     settings_recovering='The server is loading saved settings. Editing is temporarily locked.',
     activation_busy='Settings are being loaded. Try again in a moment.',

@@ -1817,6 +1817,17 @@ local function settle(entry)
     end
 end
 
+-- Which side is older decides the advice (round 3): "ask the host to update
+-- the server" is wrong when the server is the newer one. Welcome and
+-- Incompatible both carry the server's schema; anything else keeps the
+-- neutral reason.
+function M.mismatch_reason(schema, fallback)
+    schema = tonumber(schema)
+    if schema and schema > M.SCHEMA then return "server_newer" end
+    if schema and schema < M.SCHEMA then return "server_older" end
+    return fallback
+end
+
 function M.receive_state(message)
     if api.has_authority() ~= false then return false end
     local p = wire.parts(message)
@@ -1824,7 +1835,7 @@ function M.receive_state(message)
     if p[1] == PREFIX .. "Welcome" then
         if #p ~= 7 or p[4] ~= M.local_nonce then return false end
         if tonumber(p[2]) ~= M.SCHEMA or tonumber(p[3]) ~= M.WORKS then
-            set_status("incompatible", "schema_or_work_width"); return false
+            set_status("incompatible", M.mismatch_reason(p[2], "schema_or_work_width")); return false
         end
         if not wire.token(p[5], 64) or not wire.token(p[6])
             or not wire.integer(p[7], 1, 2147483647) then return false end
@@ -1846,7 +1857,10 @@ function M.receive_state(message)
     if p[1] == PREFIX .. "Incompatible" or p[1] == PREFIX .. "Reset"
         or p[1] == PREFIX .. "PalReset" or p[1] == PREFIX .. "Pal"
         or p[1] == PREFIX .. "Rule" or p[1] == PREFIX .. "Done" or p[1] == PREFIX .. "PalDone" then
-        if not receiver then set_status("incompatible", "server_requires_matching_mod") end
+        if not receiver then
+            local schema = p[1] == PREFIX .. "Incompatible" and p[2] or nil
+            set_status("incompatible", M.mismatch_reason(schema, "server_requires_matching_mod"))
+        end
         return false
     end
     if not receiver or p[1] ~= "PWP_V2" or p[3] ~= receiver.server

@@ -174,6 +174,9 @@ M.VANILLA_ABSENT = "This server does not run Pal Work Priority " .. M.MOD_VERSIO
 -- player cannot go back to an older version, so the host updates the server.
 M.LOCKED_INCOMPATIBLE = "This server runs another Pal Work Priority version, which controls work here. "
     .. "Ask the host to update the server."
+-- A server on a newer version: here the player is the one to update.
+M.LOCKED_NEWER_SERVER = "This server runs a newer Pal Work Priority version, which controls work here. "
+    .. "Update the mod to edit."
 -- The receivers that take clicks, number keys and controller buttons live in
 -- the pak. Without it the stand can show numbers but nothing on it edits them.
 M.PAK_MISSING = "Stand editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
@@ -973,7 +976,9 @@ end
 -- receiver armed, every edit refused, and the legend says why.
 function M.lock_message()
     if api.has_authority() ~= false then return nil end
-    if net.status == "incompatible" then return M.LOCKED_INCOMPATIBLE end
+    if net.status == "incompatible" then
+        return net.status_reason == "server_newer" and M.LOCKED_NEWER_SERVER or M.LOCKED_INCOMPATIBLE
+    end
     if net.status == "unavailable" then return M.settings_message() end
 end
 
