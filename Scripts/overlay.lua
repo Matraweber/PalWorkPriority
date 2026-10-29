@@ -1175,6 +1175,14 @@ function M.fit_width()
 end
 
 
+-- The backdrop's size as last fitted, plain numbers. Its slot is centre
+-- anchored and aligned at offset 0,0 (the commandlet's), so this is all the
+-- panel's pointer map needs to place it. nil before the first fit.
+function M.backdrop_size()
+    if fitted == nil or fitted_h == nil then return nil end
+    return fitted + 36, fitted_h
+end
+
 function M.release_input()
     return set_input_now(false)
 end
