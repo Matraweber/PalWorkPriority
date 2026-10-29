@@ -149,7 +149,7 @@ The `.tmp`, `.pending` and `.bak` files next to them are recovery copies. Do not
 
 Only the six Alt keys F1, F2, F3, F10, F11 and F12 can be changed on the options page. The NVIDIA overlay uses Alt+F1 to Alt+F3 too, see [Troubleshooting](#troubleshooting).
 
-**Controller.** Tested with a virtual XInput pad on the release candidate. No physical controller or Steam Input run was done, and the latest input fixes were checked only by the mod's automated tests. Plug the pad in before you start the game. On the stand, the D-pad moves, LB or A step toward 1, RB toward X, X sets X and View opens Production Limits (Y stays the game's view switch). In the panel, the D-pad moves, Y opens or raises, X twice removes, LB and RB switch tabs, LT and RT turn pages and B closes the panel. A does nothing in the panel.
+**Controller.** Tested with a virtual XInput pad on the release candidate. No physical controller or Steam Input run was done, and the latest input fixes were checked only by the mod's automated tests. Plug the pad in before you start the game. On the stand, the D-pad moves, LB or A step toward 1, RB toward X, X sets X and View opens Production Limits (Y stays the game's view switch). In the panel, up and down move, Y or right raises a limit one step and left lowers it, Y also presses buttons and picks items, X twice removes, LB and RB switch tabs, LT and RT turn pages and B closes the panel. A does nothing in the panel.
 
 Commands go into chat. Their replies are written to `priority.log` in the mod folder and may not show up in the chat itself.
 

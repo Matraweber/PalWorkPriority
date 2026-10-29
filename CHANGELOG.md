@@ -99,7 +99,8 @@ respawn, and controller input after the latest fixes.
 - The Monitoring Stand and the Production Limits panel work with a
   controller. On the stand: D-pad moves, LB or A toward 1, RB toward X, X
   sets X, View opens Production Limits (Y stays the game's view switch). In
-  the panel: D-pad moves, Y opens or raises, LB/RB switch tabs,
+  the panel: up/down move, Y or right raises a limit a step, left
+  lowers it, Y also presses buttons and picks items, LB/RB switch tabs,
   LT/RT turn pages, B closes only the panel. X twice removes a limit. The
   hints on screen switch to the controller version while you play with one.
   A in the panel is taken by the game itself, so use Y there. Tested with a

@@ -1,6 +1,6 @@
 -- Optional DarnMenu integration.
 --
--- DarnMenu (ESC > Darn Mod Options) is a settings framework: a mod writes a
+-- DarnMenu (ESC > Options > Mod Options) is a settings framework: a mod writes a
 -- schema into Mods/shared/, DarnMenu renders it as a page, and the player's
 -- edits are saved to Mods/shared/<target>.lua for the mod to read back. It
 -- exists so mods stop asking people to hand-edit Lua, which is exactly what
