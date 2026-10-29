@@ -132,7 +132,11 @@ local function shown(w)
     return true
 end
 local cursor = { X = 0, Y = 0 }
+-- The pointer the engine reports is parked at the viewport's centre and no
+-- widget is hovered, as in game for the first seconds after opening.
+local parked = false
 function Widget:IsHovered()
+    if parked then return false end
     if self.kind ~= 'Border' or self.visibility ~= 0 or not shown(self) then return false end
     if self.parent == overlay.parts.Root then return false end
     local size = self.Slot and self.Slot.size
@@ -298,6 +302,28 @@ row_extra = 0
 panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 assert(not rb.hover_off and rb.hmap, 'reopening left the map off')
 assert(reach('pick8') == 1 and hovered() == 'pick8', 'after reopening: '..tostring(hovered()))
+
+-- Parked at the centre over a tile while the widgets say nothing: no draw
+-- asked for, nothing counted or learned, and a real move then works.
+panel.close(); panel.toggle(); panel.set_screen('item')
+parked = true; cursor = { X = VW / 2, Y = VH / 2 }
+draw()
+assert(rb.hover_lookup(cursor.X, cursor.Y) ~= nil, 'fixture: the centre is over no target')
+local asked = 0
+for _ = 1, 20 do
+    if tick() then asked = asked + 1 end
+    panel.refresh(cfg)
+end
+assert(not rb.hover_off, 'a parked pointer turned the map off: '..tostring(rb.hover_off_why))
+assert(asked == 0 and rb.hover_bad == 0, asked..' draws asked for by a parked pointer')
+assert(rb.hover_cal.item == nil, 'an offset was learned from a parked pointer')
+parked = false
+assert(reach('pick5') == 1 and hovered() == 'pick5', 'after parking: '..tostring(hovered()))
+-- Silence over a target is never held against the map either.
+parked = true; point('pick11')
+for _ = 1, 20 do tick(); panel.refresh(cfg) end
+assert(not rb.hover_off and rb.hover_bad == 0, 'widget silence counted against the map')
+parked = false
 
 -- No local controller: off at once, never retried.
 controller = nil
