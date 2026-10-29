@@ -65,6 +65,32 @@ assert(count('guild-A')==499 and caps.data['guild-A'].Deforest.Wood==false)
 assert(caps.apply_set('Mining','Item501',1,'guild-A'))
 assert(select(2,caps.apply_set('Deforest','Wood',70,'guild-A'))=='too_many_limits')
 
+-- 2026-10-29 round 2: a file whose guild view holds more than 500 limits
+-- still loads (DECISIONS), but the log says that guild's players cannot sync.
+local warnings={}
+package.loaded.log.warn=function(m) warnings[#warnings+1]=m end
+local before=caps.load('caps')
+assert(before>500 and count('guild-A')==500 and #warnings==0,'a view of exactly 500 limits warned')
+local big={}
+for i=1,501 do big[#big+1]='guild-C|Mining|Item'..i..'|'..i end
+big[#big+1]='guild-D|Mining|Stone|10'
+big[#big+1]='guild-E|Mining|Item1|OFF'
+fs.files['big-caps']=table.concat(big,'\n')..'\n'
+assert(caps.load('big-caps')==503,'an oversized file was refused')
+assert(caps.data['guild-C'].Mining.Item501==501,'the oversized guild lost its limits')
+assert(#warnings==1 and warnings[1]:find('guild guild-C holds 501 limits, more than 500',1,true)
+    and warnings[1]:find('Connecting to server...',1,true),'no warning for the oversized guild: '..tostring(warnings[1]))
+-- Shared limits over the bound reach every guild: said once, not per guild.
+local shared={}
+for i=1,501 do shared[#shared+1]='*|Mining|Item'..i..'|'..i end
+shared[#shared+1]='guild-D|Mining|Stone|10'
+fs.files['shared-caps']=table.concat(shared,'\n')..'\n'
+warnings={}
+assert(caps.load('shared-caps')==502 and #warnings==1 and warnings[1]:find('every guild',1,true))
+package.loaded.log.warn=function() end
+assert(caps.load('caps')==before and count('guild-A')==500)
+caps.set_role('authority',1)
+
 -- Over the network: the 501st Set is rejected with that reason and the
 -- client stays ready with its 500 limits.
 local file=assert(io.open(TEST_ROOT..'/tests/test_net_commit_errors.lua','rb'))

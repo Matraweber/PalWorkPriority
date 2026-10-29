@@ -220,6 +220,17 @@ panel.refresh(cfg)
 assert(panel.apply(cfg,{kind="stock_scope"},1,true))
 panel.refresh(cfg)
 assert(rendered("18"), "base selector did not change the scoped storage quantity")
+-- 2026-10-29 round 2: the host's group row in camp scope with two bases
+-- reads its base's own verdict, not "No count yet" for good.
+scheduler.last_capped.Mining={pass=1,camps=2,capped=1,unknown=0}
+scheduler.last_capped_by_camp={base1={pass=1,works={Mining=false}},base2={pass=1,works={Mining=true}}}
+panel.refresh(cfg)
+assert(rendered("Limit reached") and not rendered("No count yet"), "host with two bases has no verdict")
+assert(panel.apply(cfg,{kind="stock_scope"},1,true))
+panel.refresh(cfg)
+assert(rendered("37") and rendered("Below limit") and not rendered("Limit reached"),
+    "host verdict did not follow the selected base")
+scheduler.last_capped_by_camp=nil
 scheduler.last_storage_by_camp.base2=nil
 scheduler.last_totals_by_camp.base2=nil
 scheduler.last_capped={}

@@ -67,4 +67,29 @@ assert(warned[#warned]:find('could not tell an old client', 1, true), 'failure n
 transmitters_list = { transmitter }
 assert(net.notify_old_client(comp) == false and #sent == 2, 'retried within the session')
 
+-- 2026-10-29 round 2: a Hello with a higher schema is a newer client. It is
+-- told the server is older and to ask the host, never to update itself.
+net.begin_session(5)
+local up_sent = {}
+FName = function(text) return text end
+comp.Notify_RequestClient_int32 = function(_, _, msg) up_sent[#up_sent + 1] = msg end
+assert(net.receive_command(comp, 'PWP_Hello|' .. (net.SCHEMA + 1) .. '|' .. net.WORKS .. '|nonce1', 0) == false)
+assert(#sent == 3 and sent[3].text == net.NEWER_CLIENT_NOTICE, 'newer client was told to update')
+assert(sent[3].text:find('Ask the host to update the server.', 1, true)
+    and not sent[3].text:find('Please update', 1, true))
+assert(said[#said]:find('newer Pal Work Priority', 1, true))
+assert(#net.NEWER_CLIENT_NOTICE <= #net.OLD_CLIENT_NOTICE + 16, 'notice grew past the old bound')
+-- An older schema, and 0.4.1's bare Hello, still get the update advice.
+net.begin_session(6)
+assert(net.receive_command(comp, 'PWP_Hello|' .. (net.SCHEMA - 1) .. '|' .. net.WORKS .. '|nonce2', 0) == false)
+assert(#sent == 4 and sent[4].text == net.OLD_CLIENT_NOTICE)
+net.begin_session(7)
+assert(net.receive_command(comp, 'PWP_Hello', 0) == false)
+assert(#sent == 5 and sent[5].text == net.OLD_CLIENT_NOTICE)
+-- Every reply is still the Incompatible line the client can read.
+assert(#up_sent == 3)
+for _, msg in ipairs(up_sent) do
+    assert(msg == 'PWP_Incompatible|' .. net.SCHEMA .. '|' .. net.WORKS, msg)
+end
+
 print('old client notice checks passed')

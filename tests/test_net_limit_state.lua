@@ -139,5 +139,68 @@ view = (function()
     return status.stock({}, {}, 'guild-A', 'camp-A', true, client)
 end)()
 assert(view.verified and view.totals.Stone == 1200 and status.verdict({}, 'Mining', view) == nil)
+
+-- 2026-10-29 round 2: after a limit edit the cached verdict described the old
+-- limits for up to ten seconds. An acknowledged Set or a committed R snapshot
+-- drops it at once, keeps the totals, and asks for a fresh count soon.
+local function deliver()
+    local batch = down; down = {}
+    for _, msg in ipairs(batch) do client.receive_state(msg) end
+end
+local function edited(how)
+    setup()
+    local rules = {}
+    server.on_command = function(command, _, c)
+        local p = server.split(command)
+        if p[1] == 'PWP_Set' then
+            rules = {[p[2]] = {[p[3]] = tonumber(p[4])}}
+            if how == 'snapshot' then
+                assert(server.push_rules({all=function() return rules end}, {}, c))
+            end
+            return true
+        end
+        assert(server.push_rules({all=function() return rules end}, {}, c))
+        assert(server.push_pals(function() return {} end, c))
+    end
+    local before = fetch()
+    assert(status.verdict({}, 'Mining', before) == true, 'fixture has no verdict to go stale')
+    local sent_at = time
+    time = time + 1.5
+    assert(client.request('set', 'Mining', 'Stone', 5000))
+    assert(server.receive_command(comp, table.remove(up, 1), 0))
+    deliver()
+    local after = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
+    assert(after.verified and after.totals.Stone == 1200, how .. ': the edit cost the count')
+    assert(status.verdict({}, 'Mining', after) == nil, how .. ': stale verdict outlived the edit')
+    assert(status.item_stopped('Stone') == false)
+    -- A fresh count is due soon, not after the ten second poll.
+    time = math.max(time + 0.11, sent_at + 1)
+    client.storage_tick()
+    assert(#up == 1, how .. ': no fresh count requested after the edit')
+    limit_state = {per_item=false, verdicts={Mining={capped=0, camps=1, unknown=0}}, stopped={}}
+    assert(server.receive_command(comp, table.remove(up, 1), 0))
+    for _ = 1, 40 do time = time + 0.1; server.storage_tick(); deliver() end
+    after = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
+    assert(status.verdict({}, 'Mining', after) == false, how .. ': fresh verdict not shown')
+end
+edited('ack')
+edited('snapshot')
+
+-- A count already in flight when the limits changed may predate the edit:
+-- its verdict is dropped on arrival and another count follows soon.
+setup()
+fetch()
+time = time + 11
+client.storage_tick()
+assert(#up == 1)
+assert(server.receive_command(comp, table.remove(up, 1), 0))
+assert(server.push_rules({all=function() return {Mining={Stone=9}} end}, {}, comp))
+time = time + 0.1; server.storage_tick(); deliver()
+for _ = 1, 40 do time = time + 0.1; server.storage_tick(); deliver() end
+view = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
+assert(view.verified and status.verdict({}, 'Mining', view) == nil, 'verdict from before the edit shown')
+time = time + 1.1
+client.storage_tick()
+assert(#up == 1, 'no fresh count after a count that predates the edit')
 package.loaded.caps, package.loaded.net = nil, nil
 print('net limit state: server verdict and per-item flag reach the client panel, expire with the count, never cost it')

@@ -200,77 +200,30 @@ local function host_seen(scheduler,work,view)
     return seen
 end
 
--- A client's view carries the server's verdicts (protocol schema 5), so the
--- client shows what the server decided instead of "No count yet". Nil until
--- a fresh count with verdicts arrived, and for a work type it did not judge.
-function M.verdict(scheduler,work,view)
-    if not view or not view.verified then return nil end
-    local seen
-    if view.limits~=nil or client() then
-        local limits=type(view.limits)=='table' and view.limits or {}
-        seen=type(limits.verdicts)=='table' and limits.verdicts[work] or nil
-        if type(seen)~='table' or seen.unknown~=0 or type(seen.camps)~='number' or seen.camps<=0
-            or type(seen.capped)~='number' then return nil end
-    else
-        seen=host_seen(scheduler,work,view)
-        if not seen then return nil end
-    end
-    -- Third value: how many bases the partial count is out of ("Reached 2/3").
-    return seen.capped>=seen.camps,
-        seen.capped>0 and seen.capped<seen.camps and seen.capped or nil, seen.camps
-end
-
--- Whether Mining limits work per item (on rocks). A client follows the
--- server, since the server is the one that holds rocks; until a reply said
--- so it falls back to its own config.
-function M.per_item(cfg)
-    if client() then
-        local net=transport()
-        local flag=net and net.server_item_limits
-        if flag==true or flag==false then return flag end
-    end
-    return not (type(cfg)=='table' and cfg.item_limits_on_rocks==false)
-end
-
--- Whether rocks of this item are held off. A client asks the server's last
--- fresh count (schema 5), the host asks item_sources. False when unknown.
-function M.item_stopped(item)
-    if client() then
-        local net=transport()
-        if not net or type(net.item_stopped)~='function' then return false end
-        local ok,stopped=pcall(net.item_stopped,item)
-        return ok and stopped==true
-    end
-    local sources=package.loaded.item_sources
-    if type(sources)~='table' or type(sources.item_stopped)~='function' then return false end
-    local ok,stopped=pcall(sources.item_stopped,item)
-    return ok and stopped==true
-end
-
--- Server side of schema 5, for net.on_limit_state: the limit state of one
--- guild for exactly the scope of a storage view it is about to send. Plain
--- data from the last pass. A verdict counts the guild's camps in that scope:
--- with scheduler.last_capped_by_camp ({[camp]={pass=, works={[work]=true
--- (capped) | false (running) | 'unknown'}}}) it is exact on a server with
--- many guilds; without it the server-wide last_capped is used only where
--- host_seen proves it covers this scope alone, as on the host's own panel.
-function M.server_limits(cfg,scheduler,guild,view,caps,sources)
-    local out={per_item=not (type(cfg)=='table' and cfg.item_limits_on_rocks==false), verdicts={}, stopped={}}
-    if type(view)~='table' or view.verified~=true or type(scheduler)~='table'
-        or type(guild)~='string' then return out end
-    caps=caps or package.loaded.caps
-    sources=sources or package.loaded.item_sources
-    local rules
-    if type(caps)=='table' and type(caps.all)=='function' then
-        local ok,got=pcall(caps.all,cfg,guild)
-        if ok and type(got)=='table' then rules=got end
-    end
+-- The guild's camps in a view's scope this pass: {[camp]=true} and how many.
+-- Camp scope is the view's own camp only, and only if it is the guild's.
+local function scope_camps(scheduler,guild,view)
     local camps,n={},0
+    if type(scheduler)~='table' or type(view)~='table' or type(guild)~='string' then return camps,n end
     for camp,meta in pairs(scheduler.last_storage_by_camp or {}) do
         if type(meta)=='table' and meta.pass==scheduler.pass_id and meta.guild==guild
             and (view.scope~='camp' or camp==view.camp) then camps[camp],n=true,n+1 end
     end
-    if n==0 or (view.scope=='camp' and n~=1) then return out end
+    return camps,n
+end
+
+-- Verdicts {[work]={camps=, capped=, unknown=}} of one guild for exactly the
+-- scope of a view, plus that scope's camps. With
+-- scheduler.last_capped_by_camp ({[camp]={pass=, works={[work]=true (capped)
+-- | false (running) | 'unknown'}}}) it is exact for any number of bases and
+-- guilds; without it the server-wide last_capped counts only where host_seen
+-- proves it covers this scope alone. rules (work -> anything) limits the
+-- answer to judged work types; nil judges every one. The host's own panel
+-- and a client's reply (server_limits) both read it, so they cannot differ.
+local function scoped_verdicts(scheduler,guild,view,rules)
+    local out={}
+    local camps,n=scope_camps(scheduler,guild,view)
+    if n==0 or (view.scope=='camp' and n~=1) then return out,camps end
     local by_camp=scheduler.last_capped_by_camp
     local function judged(name) return rules==nil or rules[name]~=nil end
     if type(by_camp)=='table' then
@@ -291,35 +244,124 @@ function M.server_limits(cfg,scheduler,guild,view,caps,sources)
                 if state==true then v.capped=v.capped+1
                 elseif state~=false then v.unknown=v.unknown+1 end
             end
-            out.verdicts[name]=v
+            out[name]=v
         end
     else
         local scope={verified=true, guild=guild, scope=view.scope, camp=view.camp}
         for name in pairs(scheduler.last_capped or {}) do
             local seen=judged(name) and host_seen(scheduler,name,scope)
-            if seen then out.verdicts[name]={camps=seen.camps, capped=seen.capped, unknown=0} end
+            if seen then out[name]={camps=seen.camps, capped=seen.capped, unknown=0} end
         end
     end
-    if not out.per_item or type(sources)~='table' then return out end
+    return out,camps
+end
+
+-- A client's view carries the server's verdicts (protocol schema 5), so the
+-- client shows what the server decided instead of "No count yet". Nil until
+-- a fresh count with verdicts arrived, and for a work type it did not judge.
+function M.verdict(scheduler,work,view)
+    if not view or not view.verified then return nil end
+    local seen
+    if view.limits~=nil or client() then
+        local limits=type(view.limits)=='table' and view.limits or {}
+        seen=type(limits.verdicts)=='table' and limits.verdicts[work] or nil
+        if type(seen)~='table' or seen.unknown~=0 or type(seen.camps)~='number' or seen.camps<=0
+            or type(seen.capped)~='number' then return nil end
+    else
+        -- The host judges its own panel's scope per camp, as a client's
+        -- reply does: host_seen alone gave nil in camp scope with two or
+        -- more bases (the default), so every group row said "No count yet".
+        seen=scoped_verdicts(scheduler,view.guild,view)[work]
+        if type(seen)~='table' or seen.unknown~=0 then return nil end
+    end
+    -- Third value: how many bases the partial count is out of ("Reached 2/3").
+    return seen.capped>=seen.camps,
+        seen.capped>0 and seen.capped<seen.camps and seen.capped or nil, seen.camps
+end
+
+-- Whether Mining limits work per item (on rocks). A client follows the
+-- server, since the server is the one that holds rocks; until a reply said
+-- so it falls back to its own config.
+function M.per_item(cfg)
+    if client() then
+        local net=transport()
+        local flag=net and net.server_item_limits
+        if flag==true or flag==false then return flag end
+    end
+    return not (type(cfg)=='table' and cfg.item_limits_on_rocks==false)
+end
+
+-- Items whose rocks are held in these camps, {[item]=true}, or nil when
+-- item_sources cannot say for exactly them. held_items answers per camp;
+-- an older item_sources' item_stopped answers for every camp at once, which
+-- is this scope's answer only while every camp holding rocks lies inside it.
+local function held_in(sources,camps,items)
+    if type(sources)~='table' then return nil end
+    local out={}
     if type(sources.held_items)=='function' then
         for camp in pairs(camps) do
             local ok,held=pcall(sources.held_items,camp)
             if ok and type(held)=='table' then
-                for item,yes in pairs(held) do if yes==true then out.stopped[item]=true end end
+                for item,yes in pairs(held) do if yes==true then out[item]=true end end
             end
         end
-    elseif type(sources.item_stopped)=='function' and type(sources.blocked)=='table'
-        and rules and type(rules.Mining)=='table' then
-        -- item_stopped answers for every camp at once. That is this scope's
-        -- answer only while every camp holding rocks off lies inside it.
-        for camp,keys in pairs(sources.blocked) do
-            if type(keys)=='table' and next(keys)~=nil and not camps[camp] then return out end
-        end
-        for item in pairs(rules.Mining) do
-            local ok,stopped=pcall(sources.item_stopped,item)
-            if ok and stopped==true then out.stopped[item]=true end
-        end
+        return out
     end
+    if type(sources.item_stopped)~='function' or type(sources.blocked)~='table'
+        or type(items)~='table' then return nil end
+    for camp,keys in pairs(sources.blocked) do
+        if type(keys)=='table' and next(keys)~=nil and not camps[camp] then return nil end
+    end
+    for item in pairs(items) do
+        local ok,stopped=pcall(sources.item_stopped,item)
+        if ok and stopped==true then out[item]=true end
+    end
+    return out
+end
+
+-- Whether rocks of this item are held off. A client asks the server's last
+-- fresh count (schema 5), which already covers its scope. The host asks
+-- item_sources: with a view, only for that view's guild and scope (as
+-- server_limits answers a client); without one, for every camp (callers
+-- from before the view argument). False when unknown.
+function M.item_stopped(item,view)
+    if client() then
+        local net=transport()
+        if not net or type(net.item_stopped)~='function' then return false end
+        local ok,stopped=pcall(net.item_stopped,item)
+        return ok and stopped==true
+    end
+    local sources=package.loaded.item_sources
+    if type(view)=='table' then
+        local camps,n=scope_camps(package.loaded.scheduler,view.guild,view)
+        if n==0 or (view.scope=='camp' and n~=1) then return false end
+        local held=held_in(sources,camps,{[item]=true})
+        return type(held)=='table' and held[item]==true
+    end
+    if type(sources)~='table' or type(sources.item_stopped)~='function' then return false end
+    local ok,stopped=pcall(sources.item_stopped,item)
+    return ok and stopped==true
+end
+
+-- Server side of schema 5, for net.on_limit_state: the limit state of one
+-- guild for exactly the scope of a storage view it is about to send. Plain
+-- data from the last pass, judged by scoped_verdicts for the guild's work
+-- types with limits, and the rocks held in that scope's camps.
+function M.server_limits(cfg,scheduler,guild,view,caps,sources)
+    local out={per_item=not (type(cfg)=='table' and cfg.item_limits_on_rocks==false), verdicts={}, stopped={}}
+    if type(view)~='table' or view.verified~=true or type(scheduler)~='table'
+        or type(guild)~='string' then return out end
+    caps=caps or package.loaded.caps
+    sources=sources or package.loaded.item_sources
+    local rules
+    if type(caps)=='table' and type(caps.all)=='function' then
+        local ok,got=pcall(caps.all,cfg,guild)
+        if ok and type(got)=='table' then rules=got end
+    end
+    local verdicts,camps=scoped_verdicts(scheduler,guild,view,rules)
+    out.verdicts=verdicts
+    if not out.per_item or next(camps)==nil then return out end
+    out.stopped=held_in(sources,camps,rules and type(rules.Mining)=='table' and rules.Mining or nil) or {}
     return out
 end
 return M
