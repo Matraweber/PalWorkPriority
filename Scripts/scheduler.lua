@@ -488,6 +488,10 @@ local function plan_fences(cfg, pals, demand, stats, capped)
         report.fenced, report.held, report.staff_limited = 0, 0, 0
         report.free = 0 -- no automatic allocation decision was made
     end
+    -- The Pals the allocator ordered, for the stand's steering count. A
+    -- reconcile-only camp keeps observed choices, so it orders none.
+    local reconcile = #ready > 0 and ready[1].reconcile_only
+    stats.steered = (stats.steered or 0) + (reconcile and 0 or (#ready - (report.unsteered or 0)))
     for key, value in pairs(report) do stats[key] = (stats[key] or 0) + value end
     return plan
 end
@@ -1864,8 +1868,38 @@ local function run_pass_body(cfg)
     return released(stats)
 end
 
+-- The stand legend's "Steering N of M Pals" (onboarding round 3, P2-3).
+-- Plain numbers from the last complete pass in this session, never an
+-- object. A blocked pass, a failed one and test mode (which changes nothing)
+-- clear it, so the stand shows no count rather than one that is not true.
+local steering = nil
+
+local function record_steering(cfg, stats)
+    steering = nil
+    if type(stats) ~= "table" or stats.blocked or (cfg and cfg.dry_run) or (stats.pals or 0) <= 0 then return end
+    local session = package.loaded.session
+    steering = {
+        steered = stats.steered or 0, pals = stats.pals, left = stats.unsteered or 0,
+        at = os.clock(), window = math.max(60, 3 * (tonumber(cfg and cfg.interval_seconds) or 10)),
+        epoch = type(session) == "table" and session.epoch or nil,
+    }
+end
+
+-- Read only, for ui.lua: steered, all and left-to-the-game Pal counts of the
+-- last pass, or nil when there is none in this session or it is older than
+-- about three passes (the mod was switched off, or passes stopped).
+function M.steering_count()
+    local s = steering
+    if not s then return nil end
+    local session = package.loaded.session
+    if type(session) == "table" and s.epoch ~= session.epoch then return nil end
+    if os.clock() - s.at > s.window then return nil end
+    return s.steered, s.pals, s.left
+end
+
 function M.run_pass(cfg)
     if require('settings_gate').blocked() then
+        steering = nil
         local stats=M.blank_stats()
         stats.blocked=true;stats.blocked_reason=require('settings_gate').status()=='restart_required'
             and 'settings locked; restart the game' or 'settings recovery is in progress'
@@ -1874,6 +1908,7 @@ function M.run_pass(cfg)
     pass_comp, pass_comp_tried = nil, false
     local ok, result = pcall(run_pass_body, cfg)
     pass_comp, pass_comp_tried, pass_totals = nil, false, nil
+    record_steering(cfg, ok and result or nil)
     if ok then return result end
     local stats = M.blank_stats()
     stats.blocked, stats.failed = true, 1

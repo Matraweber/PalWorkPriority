@@ -870,3 +870,62 @@ do
     config.item_limits_on_rocks = nil
     api.camp_works = saved.camp_works
 end
+
+-- Round 3 (onboarding P2-3): the stand legend's steering count comes from
+-- the last complete pass, as plain numbers, and only while it is current.
+do
+    local session = package.loaded.session
+    local clock, now = os.clock, 500
+    os.clock = function() return now end
+    package.loaded.session = {epoch = 7}
+    local ok, err = pcall(function()
+        reset({ {key = "a", camp = "camp", ranks = {[5] = 1, [8] = 1}, off = {}},
+            {key = "b", camp = "camp", ranks = {[5] = 1, [8] = 1}, off = {}} })
+        config.leave_unordered_pals_to_game = true
+        assert(scheduler.steering_count() == nil, "forget kept no pass, yet a count was reported")
+        stats = scheduler.run_pass(config)
+        assert(stats.pals == 2 and stats.unsteered == 2 and stats.steered == 0)
+        local steered, pals, left = scheduler.steering_count()
+        assert(steered == 0 and pals == 2 and left == 2, "fresh install: " .. tostring(steered))
+        -- One Pal with different numbers is steered.
+        store.data.a = {[5] = 1, [8] = 2}
+        scheduler.run_pass(config)
+        steered, pals, left = scheduler.steering_count()
+        assert(steered == 1 and pals == 2 and left == 1)
+        -- Equal Pals steered too when the switch is off.
+        config.leave_unordered_pals_to_game = false
+        scheduler.run_pass(config)
+        steered, pals, left = scheduler.steering_count()
+        assert(steered == 2 and left == 0)
+        config.leave_unordered_pals_to_game = true
+        -- Test mode changes nothing, so it steers nothing: no count.
+        config.dry_run = true
+        scheduler.run_pass(config)
+        assert(scheduler.steering_count() == nil, "test mode reported a steering count")
+        config.dry_run = false
+        scheduler.run_pass(config)
+        assert(scheduler.steering_count() == 1, "the count did not come back after test mode")
+        -- A blocked pass clears it.
+        store.state = "error"
+        assert(scheduler.run_pass(config).blocked)
+        assert(scheduler.steering_count() == nil, "a blocked pass kept the old count")
+        store.state = "saved"
+        scheduler.run_pass(config)
+        assert(scheduler.steering_count() ~= nil)
+        -- Passes stopped (mod switched off) or another world: gone.
+        now = now + 3 * config.interval_seconds + 61
+        assert(scheduler.steering_count() == nil, "a stale count outlived its passes")
+        scheduler.run_pass(config)
+        assert(scheduler.steering_count() ~= nil)
+        package.loaded.session.epoch = 8
+        assert(scheduler.steering_count() == nil, "a count from the last world reached this one")
+        -- No Pals at any loaded base: nothing to count.
+        reset({})
+        package.loaded.session.epoch = 9
+        scheduler.run_pass(config)
+        assert(scheduler.steering_count() == nil)
+    end)
+    os.clock, package.loaded.session = clock, session
+    config.leave_unordered_pals_to_game, config.dry_run = false, false
+    assert(ok, err)
+end

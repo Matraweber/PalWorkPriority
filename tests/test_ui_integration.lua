@@ -972,8 +972,8 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
         and f.ui.MARKS_HELP:find('* sending',1,true) and f.ui.MARKS_HELP:find('? unknown',1,true))
     -- One line: the mouse first, then the panel key. A second line ran into
     -- the game's "unused Stat Points" bar (in game, 2026-10-22).
-    assert(legends[1].text:find('Left click: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
-    assert(legends[1].text:find('All jobs equal: game picks',1,true))
+    assert(legends[1].text:find('Left click/Enter: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
+    assert(legends[1].text:find('All equal: game picks',1,true))
     assert(not legends[1].text:find('\n',1,true),'stand legend must stay one line')
     assert(legends[1].text:find('ALT+F1: Production Limits',1,true),'legend lost the panel key')
     -- A rebound panel key is named as bound; an absent label keeps the default.
@@ -1104,7 +1104,7 @@ end
 -- stays ours, read-only, and says why.
 for _,case in ipairs({
     {status='incompatible',reason='server_requires_matching_mod',says='another Pal Work Priority version, which controls work here'},
-    {status='incompatible',reason='schema_or_work_width',says='Update both to edit.'},
+    {status='incompatible',reason='schema_or_work_width',says='Ask the host to update the server.'},
     {status='unavailable',reason='settings_recovering',says='The server is loading saved settings.'},
     {status='unavailable',reason='settings_restart_required',says='host must restart'},
 }) do
@@ -1146,8 +1146,11 @@ check('the vanilla legend names this version and the incompatible case',function
     assert(version and f.ui.MOD_VERSION==version,'ui.MOD_VERSION is not main.lua VERSION '..tostring(version))
     assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority '..version
         ..'. The stand works as in the base game.')
+    -- Round 3 (onboarding P2-1): the same advice as the panel. A Workshop
+    -- player cannot go back to an older version; the host updates the server.
     assert(f.ui.LOCKED_INCOMPATIBLE=='This server runs another Pal Work Priority version, which controls work here. '
-        ..'Update both to edit.')
+        ..'Ask the host to update the server.')
+    assert(not f.ui.LOCKED_INCOMPATIBLE:find('Update both',1,true))
     assert(f.ui.VANILLA_INCOMPATIBLE==nil and f.ui.VANILLA_LOCKED==nil,'a base-game fallback text survived')
 end)
 
@@ -1225,15 +1228,25 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
         assert(#text<=f.ui.LEGEND_MAX_CHARS,'legend too wide at 14 pt: '..#text..' '..text)
         assert(not text:find('\n',1,true),'stand legend must stay one line')
     end
-    assert(f.ui.PAD_LEGEND:find('X button: set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
+    assert(f.ui.PAD_LEGEND:find('X (left button): set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
+    assert(f.ui.PAD_LEGEND:find('LB/A (bottom button): toward 1',1,true),'pad legend does not say where A sits')
     assert(f.ui.PAD_LEGEND:find('View button: Production Limits',1,true))
     -- Decision 2026-10-29: a left click (LB / A on a pad) wraps from 1 to X,
-    -- and equal numbers leave the Pal to the game. Both legends say it.
+    -- and equal numbers leave the Pal to the game. Both legends say it, and
+    -- round 3 adds the state every job starts in (newcomer P2-2).
     for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND}) do
         assert(text:find('toward 1 (1 wraps to X)',1,true),'legend hides the wrap: '..text)
-        assert(text:find('All jobs equal: game picks',1,true),'legend lacks the equal-numbers rule: '..text)
+        assert(text:find('All equal: game picks',1,true),'legend lacks the equal-numbers rule: '..text)
+        assert(text:find('All start at 1 | ',1,true)==1,'legend does not start with the starting state: '..text)
+        -- Clear separators (accessibility P2-3: "(1 wraps to X)  Right click" ran together).
+        assert(not text:find('  ',1,true),'legend parts run together: '..text)
     end
-    assert(f.ui.EDIT_LEGEND:find('Left click: toward 1 (1 wraps to X)  Right click: toward X  Keys 1-5, X',1,true))
+    assert(f.ui.EDIT_LEGEND=='All start at 1 | Left click/Enter: toward 1 (1 wraps to X) | Right click: toward X'
+        ..' | Arrows, keys 1-5, X | All equal: game picks | ALT+F1: Production Limits',f.ui.EDIT_LEGEND)
+    -- The longest rebound key drops the starting state rather than overflow,
+    -- and keeps every control and the panel key.
+    assert(not rebound:find('All start at 1',1,true) and rebound:find(f.ui.LEGEND_CONTROLS,1,true)
+        and rebound:find(string.rep('W',24)..': Production Limits',1,true),rebound)
     -- The wrap the legend promises is what a left click does.
     assert(require('store').cycle(1,-1)==false)
     local api=package.loaded.palapi; api.last_input_type=1
@@ -1435,6 +1448,120 @@ check('server settings fence explains host action and cancels queued input',func
     f.net.status='ready';f.net.status_reason=nil;assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
     assert(f.texts(f.cells[1])[1].text=='3' and f.cells[1].PalCheckBox.visibility==2,'grid did not come back')
+end)
+
+-- Round 3 (onboarding P2-3): a fresh install changes nothing in game, so the
+-- legend says how many Pals the mod steers, from the last pass on the
+-- machine that runs them. A client is told no count and shows none.
+check('the legend shows the steering count only where the passes run',function()
+    local f=fixture()
+    local count={0,14,14}
+    local scheduler=package.loaded.scheduler
+    package.loaded.scheduler={steering_count=function() return count[1],count[2],count[3] end}
+    local ok,err=pcall(function()
+        -- A client: the stub answers, but a client's own scheduler runs no
+        -- passes, so the number would not be about this server.
+        f.authority=false
+        assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND,'a client showed a steering count')
+        f.authority=true
+        local zero=f.ui.edit_legend()
+        assert(zero=='Steering 0 of 14 Pals: all jobs equal | '..f.ui.LEGEND_CONTROLS..' | ALT+F1: Production Limits',zero)
+        assert(#zero<=f.ui.LEGEND_MAX_CHARS)
+        -- Some Pals could not be read: not all of them are "equal".
+        count={0,14,12}
+        assert(f.ui.edit_legend():find('Steering 0 of 14 Pals | ',1,true)==1,f.ui.edit_legend())
+        count={3,14,11}
+        local some=f.ui.edit_legend()
+        assert(some:find('Steering 3 of 14 Pals | Left click/Enter',1,true)==1,some)
+        count={1,1,0}
+        assert(f.ui.edit_legend():find('Steering 1 of 1 Pal | ',1,true)==1,f.ui.edit_legend())
+        -- The longest counts with the longest rebound key still fit one line
+        -- and keep every control and the panel key.
+        local dm=package.loaded.darnmenu
+        package.loaded.darnmenu={labels={key_panel=string.rep('W',24)}}
+        for _,c in ipairs({{0,9999,9999},{9999,9999,0}}) do
+            count=c
+            local text=f.ui.edit_legend()
+            assert(#text<=f.ui.LEGEND_MAX_CHARS,'steering legend too wide: '..#text..' '..text)
+            assert(text:find(f.ui.LEGEND_CONTROLS,1,true) and text:find('Production Limits',1,true),text)
+        end
+        package.loaded.darnmenu=dm
+        -- The pad legend carries it the same way.
+        local api=package.loaded.palapi; api.last_input_type=1
+        count={0,14,14}
+        local pad_text=f.ui.edit_legend()
+        assert(pad_text=='Steering 0 of 14 Pals: all jobs equal | '..f.ui.PAD_CONTROLS..' | '..f.ui.PAD_PANEL,pad_text)
+        assert(#pad_text<=f.ui.LEGEND_MAX_CHARS)
+        api.last_input_type=nil
+        -- No current pass, an impossible answer or a throwing reader: no count.
+        for _,bad in ipairs({function() return nil end,function() return 5,3,0 end,
+            function() return -1,3,0 end,function() return 0,0,0 end,function() error('boom') end}) do
+            package.loaded.scheduler={steering_count=bad}
+            assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND,'a bad steering answer reached the legend')
+        end
+        -- And it is what the footer draws.
+        package.loaded.scheduler={steering_count=function() return 2,5,3 end}
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text:find('Steering 2 of 5 Pals | ',1,true)==1,f.legends()[1].text)
+    end)
+    package.loaded.scheduler=scheduler; f.authority=false
+    assert(ok,err)
+end)
+
+-- Round 3 (onboarding P2-4): the config reset notice was panel-only. The
+-- stand shows it once, for a few seconds or until the stand opens again,
+-- and leaves the acknowledgement (and the marker file) to the panel.
+check('the config reset notice shows once on the stand and is not acknowledged there',function()
+    local f=fixture(); assert(f.ui.refresh(f.cfg))
+    local configuration=package.loaded.configuration
+    local acked=0
+    package.loaded.configuration={upgrade_reset=true,
+        upgrade_message='Your earlier config.lua was not found (the Workshop or Vortex update removed it). '
+            ..'Default settings are in use; options page settings are kept.',
+        UPGRADE_MESSAGE='unused', ack_upgrade_reset=function() acked=acked+1 end}
+    local clock,now=os.clock,1000
+    os.clock=function() return now end
+    local ok,err=pcall(function()
+        local lifecycle=package.loaded.stand_lifecycle
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        local text=f.legends()[1].text
+        assert(text==package.loaded.configuration.upgrade_message,'the stand did not show the reset notice: '..text)
+        assert(#text<=f.ui.LEGEND_MAX_CHARS and not text:find('\n',1,true))
+        -- Cell tooltips keep the controls.
+        assert(f.cells[1].tooltip:find(f.ui.LEGEND_CONTROLS,1,true))
+        -- The panel acknowledging it meanwhile does not cut it short.
+        package.loaded.configuration.upgrade_reset=false
+        now=now+f.ui.RESET_NOTICE_SECONDS-1
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text==text,'the notice did not stay for its seconds')
+        package.loaded.configuration.upgrade_reset=true
+        now=now+2
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text==f.ui.EDIT_LEGEND,'the notice outstayed its time')
+        -- Once only, even while the marker is still there.
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+        assert(acked==0 and package.loaded.configuration.upgrade_reset==true,'the stand acknowledged the notice')
+        -- A fresh process: the notice is gone when the stand is opened again.
+        f=fixture(); lifecycle=package.loaded.stand_lifecycle
+        package.loaded.configuration.upgrade_message='config.lua was missing, defaults are in use. Options page settings are kept.'
+        assert(f.ui.refresh(f.cfg))
+        assert(f.ui.legend_text()=='Pal Work Priority: config.lua was missing, defaults are in use. Options page settings are kept.',
+            f.ui.legend_text())
+        lifecycle.generation=lifecycle.generation+1
+        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND,'the notice survived the next stand open')
+        -- A lock still comes first; the notice waits for a stand that can show it.
+        f=fixture()
+        f.net.status,f.net.status_reason='incompatible','schema_or_work_width'
+        assert(f.ui.legend_text()==f.ui.LOCKED_INCOMPATIBLE)
+        now=now+100
+        assert(f.ui.legend_text()==f.ui.LOCKED_INCOMPATIBLE)
+        f.net.status,f.net.status_reason='ready',nil
+        assert(f.ui.legend_text():find('Pal Work Priority: config.lua was missing',1,true)==1,f.ui.legend_text())
+        assert(acked==0)
+    end)
+    os.clock=clock; package.loaded.configuration=configuration
+    assert(ok,err)
 end)
 
 print(string.format('Stand integration: %d passed, %d failed',passed,#failures))

@@ -121,19 +121,40 @@ local legend_styled = {}
 -- fresh install sets X. Equal numbers leave the Pal to the game. The number
 -- scale and the marks "* ! ?" moved to every cell's tooltip (M.MARKS_HELP)
 -- to make room for both.
-M.EDIT_LEGEND = "Left click: toward 1 (1 wraps to X)  Right click: toward X  Keys 1-5, X  |  "
-    .. "All jobs equal: game picks  |  ALT+F1: Production Limits"
+--
+-- Round 3 (2026-10-29): the line starts with the state a fresh install is
+-- in, so the first left click setting X is no surprise (newcomer P2-2), and
+-- names Enter and the arrows, which keyboard players otherwise only found in
+-- the mouse-hover tooltip (accessibility P2-3). Enter is the receiver's code
+-- 10, the same step toward 1 as a left click; the arrows move the selection.
+-- The parts are kept apart with " | " and joined by M.edit_legend, which
+-- drops the least needed part when a long rebound key would not fit.
+M.LEGEND_START = "All start at 1"
+M.LEGEND_CONTROLS = "Left click/Enter: toward 1 (1 wraps to X) | Right click: toward X | Arrows, keys 1-5, X"
+M.LEGEND_EQUAL = "All equal: game picks"
+M.LEGEND_PANEL = "ALT+F1: Production Limits"
+M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_EQUAL, M.LEGEND_PANEL}, " | ")
 -- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
 -- view switch, so the panel opens with View. Buttons are named as buttons:
--- "X: off" read as "X means off", not "press X" (audit 2026-10-28).
-M.PAD_LEGEND = "LB / A button: toward 1 (1 wraps to X)  RB: toward X  X button: set X  |  "
-    .. "All jobs equal: game picks  |  View button: Production Limits"
+-- "X: off" read as "X means off", not "press X" (audit 2026-10-28). A and X
+-- also say where they sit, because on a PlayStation pad the button players
+-- call X (Cross) is the bottom one, not the left one (accessibility P3-1).
+-- A arrives as code 10 and LB as 11, both toward 1; RB is 12, toward X.
+M.PAD_CONTROLS = "LB/A (bottom button): toward 1 (1 wraps to X) | RB: toward X | X (left button): set X"
+M.PAD_PANEL = "View button: Production Limits"
+M.PAD_LEGEND = table.concat({M.LEGEND_START, M.PAD_CONTROLS, M.LEGEND_EQUAL, M.PAD_PANEL}, " | ")
 -- What the legend line no longer has room for, in each cell's tooltip.
 M.MARKS_HELP = "1 highest, 5 lowest, X off.  * sending  ! not saved  ? unknown"
 -- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
 -- on 2026-10-28: 152 characters drew 730 px wide, so 14 pt is about 5.6 px a
 -- character and 160 characters about 900 px with the backing's padding.
 M.LEGEND_MAX_CHARS = 160
+-- The config reset notice (configuration.upgrade_message) used to appear
+-- only in the Production Limits panel, which a player who was updated by
+-- the Workshop may never open (onboarding P2-4). The stand shows it once
+-- too, for this long or until the stand is opened again. Only the panel
+-- acknowledges it, after drawing it, so the marker file stays for the panel.
+M.RESET_NOTICE_SECONDS = 12
 -- Bumped with main.lua's VERSION, like net.OLD_CLIENT_NOTICE
 -- (tests/test_ui_integration.lua compares the two).
 M.MOD_VERSION = "0.5.0"
@@ -146,26 +167,73 @@ M.VANILLA_ABSENT = "This server does not run Pal Work Priority " .. M.MOD_VERSIO
 -- rewrites the work flags every pass, so base-game checkboxes would show a
 -- choice it overwrites (review round 2, 2026-10-29). The stand stays
 -- read-only and says who controls work.
+-- The advice matches the panel's (onboarding round 3, P2-1): a Workshop
+-- player cannot go back to an older version, so the host updates the server.
 M.LOCKED_INCOMPATIBLE = "This server runs another Pal Work Priority version, which controls work here. "
-    .. "Update both to edit."
+    .. "Ask the host to update the server."
 -- The receivers that take clicks, number keys and controller buttons live in
 -- the pak. Without it the stand can show numbers but nothing on it edits them.
 M.PAK_MISSING = "Stand editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
 -- Shown in a cell's tooltip for a Pal the scheduler leaves to the game
 -- (scheduler_plan.unordered: every job it may do has the same number).
 M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs different numbers to steer this Pal."
+-- Whether the mod is doing anything, on the machine that runs the passes
+-- (onboarding round 3, P2-3). All jobs start equal, so a fresh install
+-- changes nothing in game and "N left to the game" was only in the log.
+-- scheduler.steering_count answers from its last pass, or nil while it has
+-- none that is current. A client runs no passes and is told no count, so it
+-- shows none rather than a number that is not true. Plain numbers only.
+-- Returns the full and the short wording.
+local function steering_status()
+    if api.has_authority() ~= true then return nil end
+    local scheduler = package.loaded.scheduler
+    if type(scheduler) ~= "table" or type(scheduler.steering_count) ~= "function" then return nil end
+    local ok, steered, pals, left = pcall(scheduler.steering_count)
+    if not ok then return nil end
+    steered, pals, left = math.tointeger(steered), math.tointeger(pals), math.tointeger(left)
+    if not steered or not pals or pals <= 0 or steered < 0 or steered > pals then return nil end
+    local short = string.format("Steering %d of %d %s", steered, pals, pals == 1 and "Pal" or "Pals")
+    -- Only when every Pal was left to the game for equal numbers; Pals the
+    -- pass could not read are neither steered nor equal.
+    if steered == 0 and left == pals then return short .. ": all jobs equal", short end
+    return short, short
+end
+
+-- The first choice whose joined text fits one line.
+local function fit_legend(choices)
+    for _, parts in ipairs(choices) do
+        local text = table.concat(parts, " | ")
+        if #text <= M.LEGEND_MAX_CHARS then return text end
+    end
+    return table.concat(choices[#choices], " | ")
+end
+
 -- The panel key as the player bound it in DarnMenu. main.lua records it in
 -- darnmenu.labels; without it (older main, no DarnMenu) the shipped text stands.
+-- With a steering count, the count takes the place of "All start at 1" and
+-- "All equal: game picks": "Steering 0 of 14 Pals: all jobs equal" says both
+-- for the case they were written for, and the line has no room for all three.
 function M.edit_legend()
-    if api.last_input_type == 1 then return M.PAD_LEGEND end
-    local label
-    pcall(function()
-        local dm = package.loaded.darnmenu
-        label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels.key_panel or nil
-    end)
-    if type(label) ~= "string" or label == "" or #label > 24 then return M.EDIT_LEGEND end
-    label = label:upper()
-    return (M.EDIT_LEGEND:gsub("ALT%+F1", function() return label end))
+    local controls, panel = M.LEGEND_CONTROLS, M.LEGEND_PANEL
+    if api.last_input_type == 1 then
+        controls, panel = M.PAD_CONTROLS, M.PAD_PANEL
+    else
+        local label
+        pcall(function()
+            local dm = package.loaded.darnmenu
+            label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels.key_panel or nil
+        end)
+        if type(label) == "string" and label ~= "" and #label <= 24 then
+            label = label:upper()
+            panel = (panel:gsub("ALT%+F1", function() return label end))
+        end
+    end
+    local status, short = steering_status()
+    if status then
+        return fit_legend({{status, controls, panel}, {short, controls, panel}, {controls, panel}})
+    end
+    return fit_legend({{M.LEGEND_START, controls, M.LEGEND_EQUAL, panel},
+        {controls, M.LEGEND_EQUAL, panel}, {controls, panel}})
 end
 
 local function warn_once(key, message)
@@ -914,8 +982,35 @@ local function pak_message()
     if stand_pointer.asset_missing == true then return M.PAK_MISSING end
 end
 
+-- The config reset notice, once per process (M.RESET_NOTICE_SECONDS). The
+-- clock starts the first time the legend would show it, so a stand that is
+-- locked or missing its pak shows that first and this after. The text is
+-- copied then: the panel acknowledging it meanwhile does not cut it short.
+-- stand_lifecycle.generation moves on every stand open.
+local reset_note = {}
+local function reset_notice()
+    local now = os.clock()
+    if reset_note.until_at then
+        if now <= reset_note.until_at and reset_note.generation == stand_lifecycle.generation then
+            return reset_note.text
+        end
+        return nil
+    end
+    local configuration = package.loaded.configuration
+    if type(configuration) ~= "table" or configuration.upgrade_reset ~= true then return nil end
+    local text = configuration.upgrade_message or configuration.UPGRADE_MESSAGE
+    if type(text) ~= "string" or text == "" then return nil end
+    local named = "Pal Work Priority: " .. text
+    if #named <= M.LEGEND_MAX_CHARS then text = named end
+    if #text > M.LEGEND_MAX_CHARS then return nil end
+    reset_note.text, reset_note.until_at = text, now + M.RESET_NOTICE_SECONDS
+    reset_note.generation = stand_lifecycle.generation
+    return text
+end
+
 function M.legend_text()
-    return M.vanilla_message() or M.lock_message() or M.settings_message() or pak_message() or M.edit_legend()
+    return M.vanilla_message() or M.lock_message() or M.settings_message() or pak_message()
+        or reset_notice() or M.edit_legend()
 end
 
 local function edit_presentation(key, work)
