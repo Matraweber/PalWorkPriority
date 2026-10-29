@@ -400,7 +400,11 @@ function M.display_name(id)
     return name
 end
 
-local function search_index(ids, lower, disp, text, limit, accept)
+-- shown_only: match the drawn name alone, never the internal id (the picker;
+-- UX crowding P3-6). "ore" listed items whose ids happen to contain it
+-- beside their names, which looked like a broken search. Generic callers
+-- (the pwp debug verbs) still find an item by its id.
+local function search_index(ids, lower, disp, text, limit, accept, shown_only)
     limit = limit or 40
 
     if type(text) ~= "string" or text == "" then
@@ -423,6 +427,7 @@ local function search_index(ids, lower, disp, text, limit, accept)
         -- Either key matches, and the better of the two decides the rank, so
         -- typing a displayed name is not punished for being the second key.
         local shown = disp and disp[i] or id
+        if shown_only then id = shown end
 
         if id == want or shown == want then
             exact[#exact + 1] = ids[i]
@@ -454,7 +459,7 @@ end
 function M.search_picker(text, limit, accept)
     if not picker_index then return nil, picker_status end
     return search_index(picker_index.ids, picker_index.lower, picker_index.disp,
-        text, limit, accept), "ready"
+        text, limit, accept, true), "ready"
 end
 
 measurement.bind(M, 'catalogue_ids', 'items: catalogue IDs')

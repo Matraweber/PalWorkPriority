@@ -1638,7 +1638,7 @@ test("a refused config.lua still brings up Alt+F1 with the reason and schedules 
     end,"invalid interval_seconds")
     local output=table.concat(s.console,"\n")
     local notice="config.lua rejected: invalid interval_seconds. Fix it, or delete config.lua and restart. "
-        .."No Pals are assigned until then."
+        .."The mod is paused until then."
     assert(output:find(notice,1,true),output)
     assert(not output:find("did not start",1,true),output)
     assert(output:find("loaded (config.lua rejected, nothing is scheduled",1,true),output)
@@ -1658,6 +1658,14 @@ test("a refused config.lua still brings up Alt+F1 with the reason and schedules 
     s.console={}; s.commands.reload()
     output=table.concat(s.console,"\n")
     assert(output:find("config.lua rejected: line 1:",1,true) and not output:find("config reloaded",1,true),output)
+    -- A long reason is cut and the next step stays on the notice row (UX
+    -- crowding P3-7); the log keeps the whole reason.
+    s.fs.files[ROOT.."config.lua"]="return {x=1 "..string.rep("abcdefghij",8).."}"
+    s.console={}; s.commands.reload()
+    output=table.concat(s.console,"\n")
+    local shown=configuration.upgrade_message
+    assert(#shown<=125 and shown:find("^config.lua rejected: line 1:") and shown:find("%.%.%.%. Fix it, or delete config.lua and restart%. The mod is paused until then%.$"),shown)
+    assert(output:find(string.rep("abcdefghij",8),1,true),"the log lost the whole reason: "..output)
     -- Fixed and reloaded: the notice goes and passes run again.
     s.fs.files[ROOT.."config.lua"]=defaults
     s.console={}; s.commands.reload()

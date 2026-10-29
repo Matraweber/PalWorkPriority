@@ -77,7 +77,8 @@ rule()
 local before=writes
 assert(panel.nav(cfg,'enter')); draw()
 local foot=assert(footer(), 'no footer')
-assert(foot==rb.FOOT.keys..' Alt+F2 rechecks now.', 'keyboard footer: '..foot)
+-- UX crowding P2-4: the recheck key is in the tab bar only.
+assert(foot==rb.FOOT.keys, 'keyboard footer: '..foot)
 assert(foot:find('Right/Enter raise a step',1,true) and data.Stone01==500 and writes==before+1
     and not editing_now(), 'Enter did not do what the keyboard footer says')
 rule(); assert(panel.nav(cfg,'left')); draw()
@@ -92,7 +93,7 @@ assert(footer():find('Left lowers',1,true) and data.Stone01==100, 'pad Left did 
 -- Mouse: a click types (the editor, nothing saved), a right click lowers.
 before=writes
 assert(panel.apply(cfg,rule(),-1,true)); draw()
-assert(footer()==rb.FOOT.mouse..' Alt+F2 rechecks now.', 'mouse footer: '..tostring(footer()))
+assert(footer()==rb.FOOT.mouse, 'mouse footer: '..tostring(footer()))
 assert(footer():find('Click a limit to type',1,true) and editing_now() and writes==before,
     'a click did not do what the mouse footer says')
 panel.cancel_edit(); draw()
@@ -101,7 +102,7 @@ assert(panel.apply(cfg,rule(),1,true)); draw()
 assert(footer():find('right click lowers it a step',1,true) and data.Stone01==100, 'right click did not lower')
 data.Stone01=101; draw()
 for by,text in pairs(rb.FOOT) do
-    assert(#text+(by=='pad' and 0 or 21)<=(by=='pad' and 115 or 104), by..' footer too long: '..#text)
+    assert(#text<=115 and not text:find('rechecks',1,true), by..' footer too long: '..#text)
 end
 
 -- P2-1: the device comes from the input, not from the game's frozen flag.
@@ -127,14 +128,17 @@ api.input_is_gamepad=function() asked_flag=asked_flag+1 api.last_input_type=1 re
 panel.close(); panel.toggle(); draw()
 assert(asked_flag==1 and footer()==rb.FOOT.pad, 'opening ignored the controller flag: '..tostring(footer()))
 panel.nav(cfg,'down'); draw()
-assert(footer()==rb.FOOT.keys..' Alt+F2 rechecks now.', 'a key after opening kept the pad footer')
+assert(footer()==rb.FOOT.keys, 'a key after opening kept the pad footer')
 api.input_is_gamepad=nil; api.last_input_type=nil
 
 -- Newcomer P3-2: one base is just "your base".
 assert(rendered('Storage: your base'), 'one base not called your base')
--- Accessibility P2-5: the save state is 14pt, like the notice row.
+-- Accessibility P2-5: the save state is 14pt, like the notice row. It is
+-- shown after a save only (UX crowding P3-2), so one is made first.
+rule(); assert(panel.nav(cfg,'left')); draw()
 local saved=assert(rendered('Limits saved'))
 assert(saved.Font and saved.Font.Size==14, 'save state size: '..tostring(saved.Font and saved.Font.Size))
+data.Stone01=101; draw()
 
 -- Newcomer P1-1: two bases. The panel cannot tell which base the player is
 -- at (palapi has no position), so the line says so, and a new limit is
@@ -355,18 +359,28 @@ assert(kept_search()==0, 'a debug verb asked the kept search box')
 panel.command(cfg,'filter')
 panel.set_screen('list'); draw()
 
--- Newcomer P2-1 / P3-5 and accessibility P2-2: the rules help row names
--- the input and says Stone Pits keep producing; "job", not "work type".
+-- Newcomer P2-1 / P3-5: the rules help row says Stone Pits keep
+-- producing; "job", not "work type". UX crowding P2-4 / P3-3: it says what
+-- a limit does and nothing about keys (the footer does), and "group" ties
+-- it to the picker's "Add group limit".
 cfg.item_limits_on_rocks=nil
 local verdict=require('panel_status').verdict
 require('panel_status').verdict=function() return false,nil,1 end
 data.Stone01=1000; draw()
 panel.nav(cfg,'down'); panel.nav(cfg,'up'); draw()
-assert(notice()==rb.RULE_HELP.keys..' Mining stops rocks by item, Stone Pits keep producing; others stop the whole job.',
+assert(notice()=="Mining limits stop only that item's rocks; Stone Pits keep producing. Other (group) limits stop their whole job.",
     'rules help: '..tostring(notice()))
 assert(#notice()<=125)
 cfg.item_limits_on_rocks=false; draw()
-assert(notice()==rb.RULE_HELP.keys..' Each limit switches its whole job.', 'group help: '..tostring(notice()))
+assert(notice()=='Each limit is a group limit: it stops its whole job.', 'group help: '..tostring(notice()))
+for _,text in ipairs({rb.LIMIT_HELP.rocks, rb.LIMIT_HELP.group}) do
+    for _,foot in pairs(rb.FOOT) do
+        for phrase in foot:gmatch('[^,]+') do
+            phrase=phrase:gsub('^%s+',''):gsub('%.$','')
+            assert(not text:find(phrase,1,true), 'help row repeats the footer: '..phrase)
+        end
+    end
+end
 require('panel_status').verdict=verdict
 data.Stone01=101
 assert(stale==0)

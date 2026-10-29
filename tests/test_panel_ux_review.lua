@@ -95,10 +95,11 @@ assert(rendered('ALT+F2 RECHECK NOW'), 'host recheck hint missing')
 -- (test_panel_round3.lua drives them); each fits the row.
 local MOUSE='Click a limit to type a number, right click lowers it a step, Remove asks first.'
 local FOOT='Up/Down move, Right/Enter raise a step, Left lowers, Delete removes, click types.'
-local foot=assert(rendered(MOUSE..' Alt+F2 rechecks now.'), 'mouse footer missing')
+-- UX crowding P2-4: the recheck key is said once, in the tab bar.
+local foot=assert(rendered(MOUSE), 'mouse footer missing')
 assert(#foot.text<=104, 'footer longer than its row: '..#foot.text)
 panel.nav(cfg,'down'); panel.refresh(cfg)
-foot=assert(rendered(FOOT..' Alt+F2 rechecks now.'), 'keyboard footer missing')
+foot=assert(rendered(FOOT), 'keyboard footer missing')
 assert(#foot.text<=104, 'footer longer than its row: '..#foot.text)
 local esc,close=rendered('ESC / ALT+F1'),rendered('CLOSE')
 assert(esc.Slot.position.X+#esc.text*13*0.76<=close.Slot.position.X-9, 'close key hint runs into CLOSE')

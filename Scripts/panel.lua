@@ -1104,7 +1104,10 @@ local function hide_rows_from(n, which)
     end
 end
 
-local function slab(key, px, py, w, h, colour, hittable, current)
+-- sel_colour: the fill while selected, for a control whose own colour must
+-- stay (the Add row) or a tile whose selection needs more than its rail
+-- (UX crowding P2-6, P2-7). ROW_SEL otherwise.
+local function slab(key, px, py, w, h, colour, hittable, current, sel_colour)
     local _p = RB.prof["slab"]
     if _p == nil then _p = { n = 0, ms = 0 } RB.prof["slab"] = _p end
     _p.n = _p.n + 1
@@ -1189,7 +1192,7 @@ local function slab(key, px, py, w, h, colour, hittable, current)
     -- The token written has to be the token compared. It was writing `want`
     -- and comparing `want .. colour`, so every slab failed its own cache check
     -- and repainted on every frame.
-    local token = want .. tostring(colour) .. tostring(current)
+    local token = want .. tostring(colour) .. tostring(current) .. tostring(sel_colour)
     if drawn["s:" .. key] ~= token then
         RB.logic.write(drawn, "s:" .. key, token, function()
             -- State first, base colour second. It read `colour or hot or sel
@@ -1200,7 +1203,7 @@ local function slab(key, px, py, w, h, colour, hittable, current)
             -- were the only ones that could never light up under the mouse or
             -- the keyboard.
             return border:SetBrushColor((want == "hot" and ROW_HOVER)
-                or (want == "sel" and ROW_SEL)
+                or (want == "sel" and (sel_colour or ROW_SEL))
                 or colour
                 or ROW_BG)
         end)
@@ -1227,8 +1230,8 @@ end
 -- above, two below, and nothing outside it to clip.
 RB.ROW_LIFT = (LINE - ROW_H) / 2 + 3
 
-local function stripe(key, row, from, width, colour, hittable, current)
-    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable, current)
+local function stripe(key, row, from, width, colour, hittable, current, sel_colour)
+    slab(key, from - 6, row * LINE - 3, width, ROW_H, colour, hittable, current, sel_colour)
 end
 
 -- Font size, which is what makes a heading read as a heading.
@@ -1912,6 +1915,9 @@ function RB.change_limit(clear,work,item,amount,guild)
     local accepted,pending=RB.status.submission(caps,written,why,receipt,guild,work,item,amount,epoch)
     if not current() then return false,false,true end
     if accepted and not pending and not caps.is_client then M.wants_pass=true end
+    -- A host save is done here, with no "saving" state to watch end. A
+    -- client's label is the server's and never "Saved", so it is unaffected.
+    if accepted and not pending then RB.saved_at=os.clock() end
     return accepted,pending,false
 end
 
@@ -2113,15 +2119,19 @@ RB.PICK_HELP = {
     mouse = "Click an item to add a limit. Items saying Edit already have one: click to open it.",
     keys = "Press Enter on an item to add a limit. Items saying Edit already have one: Enter opens it.",
     pad = "Press Y on an item to add a limit. Items saying Edit already have one: Y opens it." }
--- How a limit row changes, for the rules help row (round 3, P2-2). Only the
--- mouse can type a number; Enter and Y raise one step (DECISIONS 2026-10-21).
-RB.RULE_HELP = { mouse = "Click a limit to type a new number.",
-    keys = "Right/Enter raises a limit, Left lowers.", pad = "Y or Right raises a limit, Left lowers." }
+-- The rules help row says what a limit does; the footer alone says how to
+-- change one (UX crowding P2-4: every control was explained twice). "Group"
+-- is the word the picker's tiles use, so the two read as one idea (P3-3).
+RB.LIMIT_HELP = { rocks = "Mining limits stop only that item's rocks; Stone Pits keep producing. "
+    .. "Other (group) limits stop their whole job.",
+    group = "Each limit is a group limit: it stops its whole job." }
+-- Before the first limit (UX crowding P2-5): what a limit is, in one line.
+RB.NO_LIMITS = "No limits yet. A limit stops a job once storage holds that many of an item."
 -- The footer by device, each saying what that input really does on a limit
 -- (round 3, P1-1): the keyboard one said Enter types, but Enter raises one
 -- step and saves. Y and X are named by position as well, since PlayStation
--- pads print other symbols there. About 104 characters fit with the
--- recheck, 115 without it (a controller has no recheck key).
+-- pads print other symbols there. About 115 characters fit. The recheck key
+-- is in the tab bar only (UX crowding P2-4).
 RB.FOOT = {
     mouse = "Click a limit to type a number, right click lowers it a step, Remove asks first.",
     keys = "Up/Down move, Right/Enter raise a step, Left lowers, Delete removes, click types.",
@@ -2133,6 +2143,16 @@ RB.AGAIN_TILE = { mouse = "Click again to add", pad = "Press Y to add", keys = "
 -- A confirm sooner than this after arming is the same double-click or key
 -- bounce that armed it, not a decision (review round 2, P2).
 RB.CONFIRM_MIN_S = 0.4
+-- A picker tile's fill while the keys or the pad have it (UX crowding P2-7):
+-- a blue tint, well apart from ROW_BG and from the green "has a limit" rail,
+-- and about 10:1 under the tile's text.
+RB.TILE_SEL = { R = 0.075, G = 0.200, B = 0.270, A = 1.00 }
+-- How long a new limit's reveal waits for its row (UX crowding P2-3). A
+-- client's row arrives from the server some beats after the add.
+RB.REVEAL_S = 3.0
+-- How long "Limits saved" stays after a save (UX crowding P3-2). It was
+-- shown for as long as the panel was open, a line that said nothing new.
+RB.SAVED_S = 5.0
 
 -- The first limit that a click on a tile would add: the step above what
 -- storage holds. Past the top step (50,000) the ladder has nothing above
@@ -2200,16 +2220,26 @@ end
 function RB.place_sel()
     local placed_sel = false
     if RB.reveal_rule and mode == "list" then
+        local reveal = RB.reveal_rule
         for index, key in ipairs(order) do
             local target = hits[key]
             if target and target.kind == "rule" and target.rule
-                and target.rule.work == RB.reveal_rule.work
-                and target.rule.item == RB.reveal_rule.item then
+                and target.rule.work == reveal.work
+                and target.rule.item == reveal.item then
                 sel, placed_sel, want_first_row = index, true, false
                 break
             end
         end
-        RB.reveal_rule = nil
+        -- Kept until its row is drawn (UX crowding P2-3). On a client the
+        -- row comes from the server some beats after the add, and clearing
+        -- this on the first draw left the selection on "Add a limit", where
+        -- Right reopens the picker. Given up after RB.REVEAL_S. Any input
+        -- in between clears it (M.move, M.apply).
+        if placed_sel or (os.clock() - (reveal.at or 0)) > RB.REVEAL_S then RB.reveal_rule = nil end
+        -- What changes it was held back until the selection is really on it.
+        if placed_sel and reveal.hint and notice == reveal.said then
+            announce(reveal.said .. " " .. reveal.hint)
+        end
     end
     if not placed_sel and want_first_row and #order > tab_hits then
         want_first_row = false
@@ -2270,7 +2300,10 @@ local function list_row(key, at, item, have, top, capability)
     -- drawn under "n:"..key - so before this the only hoverable part of the
     -- row was the icon, and a row still waiting for its icon had none at all.
     local _ts = os.clock()
-    slab(key, px, py, LIST_W, LIST_H, TILE_BG, true)
+    -- Selected by keys or pad, the tile takes a tint of its own (UX crowding
+    -- P2-7): its cyan rail alone looked like the green rail of a tile that
+    -- has a limit.
+    slab(key, px, py, LIST_W, LIST_H, TILE_BG, true, nil, RB.TILE_SEL)
     RB.t_slab = (RB.t_slab or 0) + (os.clock() - _ts)
     tile_face[key] = stripes[key]
 
@@ -2795,7 +2828,36 @@ function stock_totals(cfg)
     RB.stock = RB.status.stock(cfg, scheduler, mine(), RB.stock_camp, caps.is_client, package.loaded.net)
     if RB.stock.scope == 'guild' then RB.stock_camp = nil
     else RB.stock_camp = RB.stock.camp or RB.stock_camp end
+    RB.scope_moved(RB.stock)
     return RB.stock.totals
+end
+
+-- What is counted now, after the storage line changed under a notice.
+function RB.counting_said(view)
+    if view.scope == "guild" then return "Now counting all loaded bases in your guild." end
+    local n = type(view.choices) == "table" and #view.choices or 0
+    if n == 1 then return "Now counting your base." end
+    return string.format("Now counting Base %d of %d.", view.index, n)
+end
+
+-- A notice about storage ("Storage already holds 51,627 Wood, so this limit
+-- is reached") outlived a change of the counted base, beside rows that now
+-- said Below limit (UX crowding P2-2, ScreenShot00394: the options page had
+-- switched the storage scope with the panel open). "change base" itself is
+-- an input and clears the notice already. Only a change between two counted
+-- views, so data arriving for the first time says nothing, and never over a
+-- prompt that is waiting for its second press or a number being typed.
+function RB.scope_moved(view)
+    local key = view.scope == "guild" and "guild"
+        or (view.scope == "camp" and type(view.camp) == "string" and math.type(view.index) == "integer"
+            and ("camp:" .. view.camp)) or nil
+    if key == nil then return end
+    local was = RB.stock_key
+    RB.stock_key = key
+    if was == nil or was == key then return end
+    if notice == nil or (os.clock() - notice_at) >= NOTICE_FOR then return end
+    if pending_drop ~= nil or RB.armed ~= nil or editing ~= nil then return end
+    announce(RB.counting_said(view))
 end
 
 -- ---------------------------------------------------------------------------
@@ -2956,9 +3018,17 @@ local function draw_tabs(active)
     line("title", 0, PAD, "Production Limits", "title", 22, TITLE_DROP)
     RB.save_state, RB.save_label, RB.save_error = RB.status.save(caps)
     RB.saving_done()
+    -- A save that finished while the panel watched counts as just saved.
+    if RB.save_state == "saved" and RB.prev_save_state ~= nil and RB.prev_save_state ~= "saved" then
+        RB.saved_at = os.clock()
+    end
+    RB.prev_save_state = RB.save_state
     -- "Limits saved", not a bare "Saved" beside a title, which read as if
-    -- the whole game had been saved.
-    line("save_state", 0, W - 460, RB.save_label == "Saved" and "Limits saved" or RB.save_label,
+    -- the whole game had been saved. Only for RB.SAVED_S after a save (UX
+    -- crowding P3-2), then nothing: saved is the normal state.
+    local just_saved = RB.saved_at ~= nil and (os.clock() - RB.saved_at) < RB.SAVED_S
+    line("save_state", 0, W - 460, RB.save_label == "Saved" and (just_saved and "Limits saved" or "")
+        or RB.save_label,
         -- Amber for a version mismatch too: in dim 12pt it was easy to miss,
         -- and nothing can be changed until the versions match (review P1-6).
         -- 14pt, the notice row's size (round 3, accessibility P2-5): this
@@ -3156,11 +3226,9 @@ local function draw_list(cfg, totals)
         -- (round 3, engine P3-3); refresh acknowledges it after the unveil.
         if notice == RB.upgrade_ack then RB.upgrade_drawn = true end
     elseif #all_rules == 0 then
-        -- Said before anyone adds one (P1-1): what a limit switches. Mining
-        -- limits stop only their own item's rocks (review C, 2026-10-28).
-        line("why", 0, PAD, per_item
-            and "No limits yet. Mining limits stop only that item's rocks, not pits; others stop their whole job."
-            or "No limits yet. A limit switches its whole job off once reached.", "dim", 14)
+        -- Said before anyone adds one (P1-1): what a limit is (UX crowding
+        -- P2-5). Rocks and pits are told once there is a limit to tell it on.
+        line("why", 0, PAD, RB.NO_LIMITS, "dim", 14)
     elseif uncounted then
         -- A client's verdict is the server's (panel_status); until it
         -- arrives there is nothing it could recheck by itself.
@@ -3173,12 +3241,10 @@ local function draw_list(cfg, totals)
     elseif others then
         line("why", 0, PAD, "Others below: this item is reached; the job waits for its other limits.", "dim", 14)
     else
-        -- By device (round 3, accessibility P2-2), and Stone Pits named
-        -- (newcomer P2-1): "Rocks stopped" while pits kept making stone
-        -- read as the limit not working.
-        line("why", 0, PAD, (RB.RULE_HELP[RB.device()] or RB.RULE_HELP.mouse) .. (per_item
-            and " Mining stops rocks by item, Stone Pits keep producing; others stop the whole job."
-            or " Each limit switches its whole job."), "dim", 14)
+        -- What a limit does, Stone Pits named (newcomer P2-1): "Rocks
+        -- stopped" while pits kept making stone read as the limit not
+        -- working. How to change one is the footer's (UX crowding P2-4).
+        line("why", 0, PAD, per_item and RB.LIMIT_HELP.rocks or RB.LIMIT_HELP.group, "dim", 14)
     end
     RB.done_row()
 
@@ -3529,8 +3595,12 @@ local function draw_list(cfg, totals)
     -- Browsing does not promise that every displayed item supports creation.
     hit("new", { kind = "new" })
     if RB.use_row("Foot") then RB.base = -RB.ROW_LIFT end
-    stripe("new", 0, PAD, ROW_W, PRIMARY_BG, true)
+    -- Selected, it keeps its bright fill and takes the cyan rail a selected
+    -- limit row has (UX crowding P2-6). The selection fill turned it dark
+    -- grey, on the empty screen where it is always selected.
+    stripe("new", 0, PAD, ROW_W, PRIMARY_BG, true, nil, PRIMARY_BG)
     tile_face["new"] = stripes["new"]
+    if row_is_current("new") then slab("selrail_new", PAD - 6, -3, RAIL_W, ROW_H, ACCENT) end
     -- Glyph and label in fixed slots, so all three action rows start their
     -- words on one edge. Baked into single strings before, where "[x]   ",
     -- "+   " and "<   " are three different widths and the labels came out
@@ -3547,12 +3617,11 @@ local function draw_list(cfg, totals)
     -- The keys as well (round 2): the arrows were never hinted. At most
     -- about 104 characters with the recheck, which is what fits the row at
     -- 13pt (the old mouse-only line was 100 and filled it).
-    -- One line per device (round 3, P1-1): see RB.FOOT.
-    local by = RB.device()
-    line("foot_hint", 1, PAD, by == "pad" and RB.FOOT.pad
-        or ((RB.FOOT[by] or RB.FOOT.mouse)
-        .. (caps.is_client and "" or (" " .. RB.key_prose("key_pass", "ALT+F2") .. " rechecks now."))),
-        "dim", 13)
+    -- One line per device (round 3, P1-1): see RB.FOOT. Not while the list
+    -- is empty: there is no limit for it to be about (UX crowding P2-5).
+    if #all_rules > 0 then
+        line("foot_hint", 1, PAD, RB.FOOT[RB.device()] or RB.FOOT.mouse, "dim", 13)
+    end
     RB.done_row()
 
     -- One row of breathing space, not two. The panel is sized from what it
@@ -3917,13 +3986,10 @@ local function draw_item_picker(cfg, totals)
         caption = caption .. string.format(caption:sub(-1) == "." and " Page %d of %d." or ", page %d of %d",
             page + 1, pages)
     end
-    -- Always, not only on an empty field. This sentence used to disappear
-    -- the moment anything was typed, which is precisely when somebody is
-    -- about to click a tile for the first time. Named for the input in use
-    -- (round 2): Y on a controller, Enter after the arrow keys.
+    -- "Under each item: what Enter does" left the caption (UX crowding
+    -- P3-1): the help row above says it by device, the label on each tile
+    -- shows it.
     local by = RB.device()
-    caption = caption .. "   |   Under each item: what "
-        .. (by == "pad" and "Y does" or (by == "keys" and "Enter does" or "a click does"))
 
     -- Reserve the same help row on every draw. Showing or expiring a refusal
     -- must never move another item under the pointer for the next click.
@@ -4167,10 +4233,11 @@ local function draw_item_picker(cfg, totals)
         searching and "spent" or (everything and "action" or "dim"), ROW_PT)
     -- "craftable" was wrong for Wood, Stone and Berries, which are gathered
     -- (review P2-10). These are the items a base's Pals can produce.
+    -- Greyed while searching says it does nothing then; the words did too
+    -- and crowded the row (UX crowding P3-1).
     line("all", r_all, PAD + MARK_W + GLYPH_SLOT,
-        searching and "Show all items a base can make (a search already does)"
-            or (everything and "Showing all items a base can make"
-            or "Show all items a base can make"),
+        (everything and not searching) and "Showing all items a base can make"
+            or "Show all items a base can make",
         searching and "spent" or (everything and "action" or "item"), ROW_PT)
 
     hit("back", { kind = "back" })
@@ -4802,6 +4869,7 @@ function M.close()
     mode, page, show_all = "list", 0, false
     -- An old notice must not greet the next opening (review B6).
     notice, RB.armed, RB.saving = nil, nil, nil
+    RB.prev_save_state, RB.saved_at, RB.stock_key = nil, nil, nil
     RB.search_dirty, RB.search_focused = nil, false
     -- The search box goes with the widgets, so its text goes too (round 3,
     -- P3-1): kept, the next opening drew one stale "Matching" grid and the
@@ -6297,7 +6365,7 @@ function M.apply(cfg, what, dir, from_mouse)
     -- The mouse put the selection on Confirm or Cancel, which go away with
     -- the editor; the row that was edited keeps it (round 2, P3).
     if (what.kind == "edit_save" or what.kind == "edit_cancel") and editing then
-        RB.reveal_rule = { work = editing.work, item = editing.item, guild = editing.guild }
+        RB.reveal_rule = { work = editing.work, item = editing.item, guild = editing.guild, at = os.clock() }
     end
     if what.kind == "edit_save" then return M.confirm_edit(cfg) end
     if what.kind == "edit_cancel" then return M.cancel_edit() end
@@ -6412,7 +6480,7 @@ function M.apply(cfg, what, dir, from_mouse)
             announce(string.format("%s, now %s. %s", capability.detail, group_digits(capability.amount),
                 RB.CHANGE[RB.device(from_mouse)] or RB.CHANGE.mouse))
             mode = "list"
-            RB.reveal_rule = { work = work, item = what.item, guild = guild }
+            RB.reveal_rule = { work = work, item = what.item, guild = guild, at = os.clock() }
             want_first_row = true
             return true
         end
@@ -6538,16 +6606,21 @@ function M.apply(cfg, what, dir, from_mouse)
         end
         -- What changes it next, by device (round 3, newcomer P2-4), and
         -- which storage the seed is above. The second sentence gives way
-        -- past the notice row's ~125 characters.
+        -- past the notice row's ~125 characters. On a client it waits for
+        -- the row to arrive and take the selection (UX crowding P2-3):
+        -- until then Left/Right would act on another row.
         local done = string.format("%s: %s limit %s for %s, just above %s.",
             caps.is_client and "Sent to the server" or "Saved", job, group_digits(seed), name,
             fullest and "your fullest base" or "storage")
         local change = RB.CHANGE[RB.device(from_mouse)] or RB.CHANGE.mouse
-        if #done + 1 + #change <= 125 then done = done .. " " .. change end
+        local hint
+        if #done + 1 + #change <= 125 then
+            if caps.is_client then hint = change else done = done .. " " .. change end
+        end
         if pending then RB.saving_said("Saving change...", done) else announce(done) end
         -- Follow it, like opening an existing limit does (review B6).
         mode = "list"
-        RB.reveal_rule = { work = work, item = what.item, guild = guild }
+        RB.reveal_rule = { work = work, item = what.item, guild = guild, at = os.clock(), said = done, hint = hint }
         want_first_row = true
         return true
     end
