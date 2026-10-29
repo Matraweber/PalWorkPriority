@@ -1138,10 +1138,17 @@ function M.camp_works(camp)
     -- keys[i] is out[i]'s work id as a plain string (nil when unreadable), so
     -- a caller can remember facts about a work across passes without keeping
     -- the work itself.
-    local keys = {}
+    --
+    -- The fourth value counts entries that threw and were left out. The list
+    -- is still usable (the error stays nil, so the demand fallback and the
+    -- rocks command keep working), but it is not complete: a held rock among
+    -- the skipped entries must not read as gone (review 2026-10-29, engine
+    -- P2-3). An id that resolves to no valid work is not a skip; the work is
+    -- gone.
+    local keys, skipped = {}, 0
     local swept = pcall(function()
         ids:ForEach(function(_, entry)
-            pcall(function()
+            local ok = pcall(function()
                 local id = unwrap(entry)
                 local w = wpm:GetWork(id)
                 if valid(w) then
@@ -1149,13 +1156,14 @@ function M.camp_works(camp)
                     keys[#out] = M.guid_key(id)
                 end
             end)
+            if not ok then skipped = skipped + 1 end
         end)
     end)
     if not swept then
-        return out, "WorkIds sweep threw", keys
+        return out, "WorkIds sweep threw", keys, skipped
     end
 
-    return out, nil, keys
+    return out, nil, keys, skipped
 end
 
 -- The works this camp currently wants a worker for.

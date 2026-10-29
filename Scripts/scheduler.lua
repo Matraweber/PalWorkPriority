@@ -54,10 +54,18 @@ local MAX_TOGGLES_PER_PASS = 40
 local work_types = {}
 
 -- Whether Mining was still wanted at a camp by the last per-item decision
--- (camp key -> boolean). Used only when this pass cannot read the camp's
--- works, so a failed read keeps the last answer instead of falling back to
--- the guild-wide group rule for one pass and flipping the permission.
+-- (camp key -> { pass = n, wanted = boolean }). Used only when this pass
+-- cannot read the camp's works, so a failed read keeps the last answer
+-- instead of falling back to the guild-wide group rule for one pass and
+-- flipping the permission. `pass` is the last pass that visited the camp;
+-- a camp no pass visits any more (unloaded) is pruned at the end of the
+-- next full pass, like last_capped_by_camp.
 local mining_wanted_by_camp = {}
+
+-- The last "still held" warning of a restore (count and os.clock time).
+-- main's restore_all calls restore up to twelve times in one go, and each
+-- call warned again about the same stuck rocks (review 2026-10-29).
+local said_held = nil
 
 -- Only assignment identities and timestamps survive a pass; no wrappers.
 local hold_since = {}
@@ -142,10 +150,14 @@ function M.forget(keep_permissions)
     remote_stock_interest = {}
     api.last_storage_scan = nil
     hold_since = {}
+    said_held = nil
     if not keep_permissions then
         permission_history = {}
-        -- A new world: the rocks held off belonged to the old one, and the
-        -- old world's rocks forgot their state when it unloaded.
+        -- Products only: the held list survives. This reset also runs on a
+        -- local respawn and a same-map reconnect, where the rocks still read
+        -- NotWorkable, and dropping the list left them off for good (review
+        -- 2026-10-29, P1). item_sources.forget says why keeping it is safe
+        -- after a real world change as well.
         item_sources.forget()
         if stations.forget then stations.forget() end
     end
@@ -213,8 +225,18 @@ end
 -- rule its own guild set, plus anything written in config or left over from
 -- before guild scoping - never by another guild's ceiling, which used to
 -- happen because there was one rule set for the whole machine.
-function M.cap_state(cfg, work_name, totals, guild)
-    local ceilings = caps.for_work(cfg, work_name, guild)
+--
+-- `rules`, when given, is caps.all(cfg, guild) read once by the caller.
+-- caps.for_work builds that whole merged copy for every call, and one camp
+-- asks for every work type, several times over (review 2026-10-29).
+function M.cap_state(cfg, work_name, totals, guild, rules)
+    local ceilings
+    if type(rules) == "table" then
+        ceilings = rules[work_name]
+        if ceilings ~= nil and next(ceilings) == nil then ceilings = nil end
+    else
+        ceilings = caps.for_work(cfg, work_name, guild)
+    end
     if ceilings == nil then return false, nil end
 
     local listed, short = false, nil
@@ -236,8 +258,8 @@ function M.cap_state(cfg, work_name, totals, guild)
     return short == nil, short
 end
 
-local function cap_reached(cfg, work_name, totals, guild)
-    return (M.cap_state(cfg, work_name, totals, guild))
+local function cap_reached(cfg, work_name, totals, guild, rules)
+    return (M.cap_state(cfg, work_name, totals, guild, rules))
 end
 
 -- Pending jobs per work type. A type whose resource ceiling is met
@@ -628,29 +650,72 @@ function M.blank_stats()
     }
 end
 
+-- Whether a camp_works answer is the camp's whole list. An error, entries
+-- the sweep skipped (fourth value) or a work without a readable id all make
+-- it partial: a held rock among them must stay held rather than be dropped
+-- as gone (review 2026-10-29, engine P2-3). `types`, when given, holds each
+-- work's type: a keyless work typed as something other than Mining cannot
+-- be a held rock or a Mining source, so it leaves the list complete. One
+-- unreadable id on a workbench must not stop every per-item decision.
+local function works_complete(works, err, keys, skipped, types)
+    if err ~= nil or type(keys) ~= "table" or (tonumber(skipped) or 0) > 0 then return false end
+    local mining = types and workdefs.value("Mining")
+    for i = 1, #works do
+        if keys[i] == nil and not (types and types[i] ~= nil and types[i] ~= mining) then return false end
+    end
+    return true
+end
+
 -- Rocks a Mining limit holds off (item_sources) go back with the Pals. They
 -- are the mod's own writes, so they are undone in test mode as well, and
 -- they need no network component: the state is a property of the
 -- authority's own work object. A rock that could not be released stays on
 -- the held list for the next restore or pass; rocks are not saved, so the
 -- next load frees it in any case.
+
+-- One camp's held rocks, given back. Its works are read only when it holds
+-- some.
+local function release_camp_rocks(camp, camp_key, stats)
+    if item_sources.count(camp_key) == 0 then return end
+    local ok, got, err, keys, skipped = pcall(api.camp_works, camp)
+    if ok and type(got) == "table" and type(keys) == "table" then
+        local done, n = pcall(item_sources.release_all, camp_key, got, keys,
+            works_complete(got, err, keys, skipped))
+        if done then stats.rocks_started = (stats.rocks_started or 0) + (n or 0) end
+    end
+    stats.rocks_held = (stats.rocks_held or 0) + item_sources.count(camp_key)
+end
+
+-- Rounds of one restore run follow each other within milliseconds; a player
+-- typing the command again takes longer than this.
+local RESTORE_RUN_SECONDS = 2
+
 local function release_rocks(camps, stats)
     for _, camp in ipairs(camps or {}) do
         local camp_id = api.camp_id(camp)
         local camp_key = camp_id ~= nil and api.guid_key(camp_id) or nil
-        if camp_key ~= nil and item_sources.count(camp_key) > 0 then
-            local ok, got, err, keys = pcall(api.camp_works, camp)
-            if ok and type(got) == "table" and type(keys) == "table" then
-                local done, n = pcall(item_sources.release_all, camp_key, got, keys, err == nil)
-                if done then stats.rocks_started = (stats.rocks_started or 0) + (n or 0) end
-            end
-            stats.rocks_held = (stats.rocks_held or 0) + item_sources.count(camp_key)
-        end
+        if camp_key ~= nil then release_camp_rocks(camp, camp_key, stats) end
     end
-    if (stats.rocks_held or 0) > 0 then
-        log.warn(stats.rocks_held .. " rock(s) are still held off by a Mining limit and " ..
-            "could not be released now; run it again, or they come back on the next load")
+    local held = stats.rocks_held or 0
+    if held == 0 then said_held = nil; return end
+    -- Once per restore run: the same count again within the run is the same
+    -- news (main's restore_all calls this up to twelve times in a row).
+    local now = os.clock()
+    if said_held and said_held.count == held and now - said_held.at < RESTORE_RUN_SECONDS then
+        said_held.at = now
+        return
     end
+    said_held = { count = held, at = now }
+    log.warn(held .. " rock(s) are still held off by a Mining limit and " ..
+        "could not be released now; run it again, or they come back on the next load")
+end
+
+-- Every loaded camp's held rocks, for the restore paths that end before the
+-- Pals (no saved settings, no network component). Nothing held: no read.
+local function release_held(stats)
+    if next(item_sources.blocked) == nil then return end
+    local camps = api.base_camps()
+    if api.camps_available == true then release_rocks(camps, stats) end
 end
 
 -- Give every pal back everything it can do, and stop.
@@ -676,12 +741,26 @@ function M.restore(cfg)
     -- A dangerous primitive that every caller has to remember to guard is
     -- exactly the shape of the bug this gate closes.
     local stats = M.blank_stats()
-    if not settings_ready(stats, false) then return stats end
+    local ready = settings_ready(stats, false)
+    -- The settings fence (recovery in progress, or locked until a restart)
+    -- still refuses before any engine call; a restart reloads the rocks.
+    if not ready and require('settings_gate').blocked() then return stats end
     local authority = api.latch_authority()
     if authority ~= true then
-        stats.blocked = true
-        stats.blocked_reason = authority == false and "this machine is not the authority"
-            or "authority data is unavailable; permissions were not changed"
+        -- When both fail, the settings reason stays (it was the first gate).
+        if ready then
+            stats.blocked = true
+            stats.blocked_reason = authority == false and "this machine is not the authority"
+                or "authority data is unavailable; permissions were not changed"
+        end
+        return released(stats)
+    end
+    -- Held rocks go back even while settings cannot be saved: undoing the
+    -- mod's own rock writes needs no saved priorities or limits, only the
+    -- authority. They used to stay off until settings recovered, through off
+    -- and restore (review 2026-10-29). The Pals still wait for the gate.
+    if not ready then
+        release_held(stats)
         return released(stats)
     end
 
@@ -707,10 +786,7 @@ function M.restore(cfg)
     if pass_comp == nil then
         stats.blocked = true
         -- Held rocks need no component, so they still go back.
-        if next(item_sources.blocked) ~= nil then
-            local camps = api.base_camps()
-            if api.camps_available == true then release_rocks(camps, stats) end
-        end
+        release_held(stats)
         log.warn("nothing on this machine owns a base camp component, so no " ..
             "pal work can be changed from here and no Pal was restored")
         return released(stats)
@@ -1093,6 +1169,10 @@ local function run_camp(cfg, camp, stats, prepare_stock)
         stats.unknown_scope = stats.unknown_scope + 1
         return
     end
+    -- Visited in this pass: the camp's last Mining decision survives the
+    -- end-of-pass prune even if this camp returns early below.
+    local last_mining = mining_wanted_by_camp[camp_key]
+    if last_mining then last_mining.pass = M.pass_id end
 
     -- Resolved once for the camp, because every ceiling check below needs it
     -- and it costs an engine call. nil when the camp will not say which guild
@@ -1100,6 +1180,19 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- readable guild gets config and pre-scoping rules only, never another
     -- guild's ceilings.
     local camp_guild = api.camp_guild(camp)
+
+    -- The camp's merged limits, copied once on first use and handed to every
+    -- cap_state call below instead of one caps.all copy per work type.
+    local camp_rules
+    local function rules()
+        if camp_rules == nil then camp_rules = caps.all(cfg, camp_guild) or {} end
+        return camp_rules
+    end
+    local per_item = cfg.item_limits_on_rocks ~= false
+    local function mining_rules()
+        local items = per_item and rules().Mining or nil
+        if items and next(items) then return items end
+    end
 
     trace.at("camp: camp_pals")
     local pals, pal_err = measured("scheduler: camp roster", api.camp_pals, camp)
@@ -1122,8 +1215,17 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             -- works are not read, so the group rule is its answer.
             if not has_limits then limits_available = true end
             decide_capped(limits_available, function(name)
-                return cap_reached(cfg, name, totals, camp_guild)
+                return cap_reached(cfg, name, totals, camp_guild, rules())
             end, camp_key)
+        end
+        -- Held rocks still go back here in test mode and with the Mining
+        -- limits removed or per-item switched off: the base's last Pal may
+        -- have left after the rocks went off (review 2026-10-29). A limit
+        -- that is still there keeps them until Pals return and decide.
+        if workdefs.value("Mining") and (cfg.dry_run or mining_rules() == nil) then
+            release_camp_rocks(camp, camp_key, stats)
+        else
+            stats.rocks_held = (stats.rocks_held or 0) + item_sources.count(camp_key)
         end
         log.debug("camp has no working pals")
         return
@@ -1165,11 +1267,14 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- drop out; a partial read keeps what it did not reach. An untyped work
     -- is not remembered and is asked again. A throw while typing leaves the
     -- camp without works for this pass, which every user treats as unknown.
+    -- `complete` is false for an error, for entries the sweep skipped and for
+    -- a Mining or untyped work without an id (works_complete); only `err`
+    -- blocks the fallback.
     local works_read
     local function camp_works_typed()
         if works_read ~= nil then return works_read or nil end
         works_read = false
-        local ok, got, err, keys = pcall(measured, "scheduler: camp works", api.camp_works, camp)
+        local ok, got, err, keys, skipped = pcall(measured, "scheduler: camp works", api.camp_works, camp)
         if not ok or type(got) ~= "table" then return nil end
         if type(keys) ~= "table" then keys = nil end
         local known = work_types[camp_key] or {}
@@ -1186,14 +1291,15 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             end
         end)
         if not typed then return nil end
-        if err ~= nil then
+        local complete = works_complete(got, err, keys, skipped, types)
+        if not complete then
             for key, v in pairs(known) do
                 if fresh[key] == nil then fresh[key] = v end
             end
         end
         if keys then work_types[camp_key] = fresh end
         works_read = { works = got, keys = keys or {}, types = types, reasons = reasons,
-            values = fresh, keyless = keyless, err = err, complete = err == nil and keys ~= nil }
+            values = fresh, keyless = keyless, err = err, complete = complete }
         return works_read
     end
 
@@ -1210,12 +1316,16 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     -- camp's own rocks and pits decide Mining: a stone-only base whose Stone
     -- is reached stops Mining even while Ore is short at another base (the
     -- Stone Pit kept running past the limit before, review 2026-10-28). A
-    -- failed or partial read keeps the camp's last decision; with none yet,
-    -- the group rule decides, as for every other work type.
+    -- failed read keeps the camp's last decision; with none yet, the group
+    -- rule decides, as for every other work type. A partial read can prove
+    -- "wanted" (it saw a source still short) but never "not wanted", since
+    -- what it missed may be short. A complete read that finds no Mining
+    -- source with a product at all (every rock mined out) proves nothing
+    -- about the limits either, so the group rule decides there too; it used
+    -- to read as "nothing wanted" and withdrew Mining (review 2026-10-29).
     local mining_wanted
     local mining = workdefs.value("Mining")
-    local per_item = cfg.item_limits_on_rocks ~= false
-    local mining_limits = per_item and caps.for_work(cfg, "Mining", camp_guild) or nil
+    local mining_limits = mining_rules()
     local numeric_limits = false
     for _, ceiling in pairs(mining_limits or {}) do
         if type(ceiling) == "number" then numeric_limits = true; break end
@@ -1232,7 +1342,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             if done then stats.rocks_started = (stats.rocks_started or 0) + (n or 0) end
         end
         if typed and mining_limits ~= nil then
-            local applied, wanted, stopped, started = pcall(measured, "scheduler: item limits on rocks",
+            local applied, wanted, stopped, started, sourced = pcall(measured, "scheduler: item limits on rocks",
                 item_sources.apply, camp_key, typed.works, typed.keys, typed.values,
                 function(v) if v == mining then return mining_limits end end,
                 item_stock, not cfg.dry_run, typed.complete)
@@ -1240,23 +1350,34 @@ local function run_camp(cfg, camp, stats, prepare_stock)
             if applied and type(wanted) == "table" then
                 stats.rocks_stopped = (stats.rocks_stopped or 0) + (stopped or 0)
                 stats.rocks_started = (stats.rocks_started or 0) + (started or 0)
-                if decides and typed.complete then
+                if decides then
                     -- A Mining work without an id cannot be looked up; unknown
                     -- counts as wanted, like an unreadable product.
-                    mining_wanted = wanted[mining] == true or typed.keyless[mining] == true
-                    mining_wanted_by_camp[camp_key] = mining_wanted
+                    if wanted[mining] == true or typed.keyless[mining] == true then
+                        mining_wanted = true
+                    elseif typed.complete and type(sourced) == "table" and sourced[mining] then
+                        mining_wanted = false
+                    elseif typed.complete then
+                        -- No source: the earlier decision is void as well.
+                        mining_wanted_by_camp[camp_key] = nil
+                    end
+                    if mining_wanted ~= nil then
+                        mining_wanted_by_camp[camp_key] = { pass = M.pass_id, wanted = mining_wanted }
+                    end
                 end
             end
         end
         stats.rocks_held = (stats.rocks_held or 0) + item_sources.count(camp_key)
     end
-    if mining_wanted == nil and decides then mining_wanted = mining_wanted_by_camp[camp_key] end
+    if mining_wanted == nil and decides and mining_wanted_by_camp[camp_key] then
+        mining_wanted = mining_wanted_by_camp[camp_key].wanted
+    end
 
     -- A work type whose limits are all reached. Mining under the per-item
     -- rule is decided by its rocks and pits instead (above).
     local function type_capped(name)
         if mining_wanted ~= nil and name == "Mining" then return not mining_wanted end
-        return cap_reached(cfg, name, totals, camp_guild)
+        return cap_reached(cfg, name, totals, camp_guild, rules())
     end
 
     -- What the camp actually wants doing, from the game's own pulses.
@@ -1411,7 +1532,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
                 end
                 if by_value then
                     local read_ok, needing = pcall(measured, "scheduler: station read", kind.needing,
-                        by_value[value] or {}, keys_by_value[value] or {})
+                        by_value[value] or {}, keys_by_value[value] or {}, camp_key)
                     -- A ranch worker's current suitability reads unavailable
                     -- (2026-10-27, and on the server 2026-09-25) while its
                     -- assignment record says occupied on Farming. Without the
@@ -1705,6 +1826,17 @@ local function run_pass_body(cfg)
             stats.failed = stats.failed + 1
             log.warn("pass threw on a camp: " .. tostring(err))
         end
+    end
+
+    -- Per-camp memos of camps this pass did not visit (unloaded, or gone
+    -- with their world) are dropped, so they do not pile up over a session
+    -- on a server whose players walk between many bases. Readers already
+    -- ignore an entry from an older pass.
+    for key, entry in pairs(M.last_capped_by_camp) do
+        if type(entry) ~= "table" or entry.pass ~= M.pass_id then M.last_capped_by_camp[key] = nil end
+    end
+    for key, entry in pairs(mining_wanted_by_camp) do
+        if entry.pass ~= M.pass_id then mining_wanted_by_camp[key] = nil end
     end
 
     -- Only published when the pass actually read storage. A pass with no

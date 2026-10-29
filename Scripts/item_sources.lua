@@ -38,6 +38,7 @@ M.ROCK_MODEL = 'PalMapObjectItemDropOnDamagModel'
 -- seen in the camp's last pass: mined-out rocks drop out with their key.
 local products = {}
 -- camp key -> {[work key] = true} for the rocks this module switched off.
+-- Kept across forget(): see there.
 M.blocked = {}
 
 -- A name as a string, false for a readable empty name ("None"), nil when it
@@ -58,7 +59,10 @@ end
 
 -- The largest entry of a rock's drop list; the first one wins a tie. Second
 -- value: whether the list was read in full. An empty list read in full is a
--- confirmed "no drop"; a list with an unreadable entry is not.
+-- confirmed "no drop". A list with an unreadable entry is unreadable as a
+-- whole, even when another entry read: the entry it missed may be the
+-- largest, so the best of the rest is a guess (review 2026-10-29). It is not
+-- cached, so it is asked again next pass.
 local function main_drop(model)
     local best, most, unreadable
     local ok = pcall(function()
@@ -75,7 +79,7 @@ local function main_drop(model)
             end
         end)
     end)
-    if not ok or (unreadable and best == nil) then return nil, false end
+    if not ok or unreadable then return nil, false end
     return best, true
 end
 
@@ -140,11 +144,14 @@ end
 --
 -- Returns `wanted`: work value -> true when some rock or building of that
 -- type still produces an item that has no limit or is below it, or whose
--- product could not be read (unknown counts as wanted), and the number of
--- rocks switched off and back on in this pass. With unknown stock nothing
--- is switched off, and a held rock stays held.
+-- product could not be read (unknown counts as wanted), the number of rocks
+-- switched off and back on in this pass, and `sourced`: work value -> true
+-- when a work of that type under limits named a product. A base whose rocks
+-- are all mined out has no Mining source at all; that is not "every limit
+-- reached", so the caller leaves it to the group rule (review 2026-10-29).
+-- With unknown stock nothing is switched off, and a held rock stays held.
 function M.apply(camp_key, works, keys, values, ceilings, totals, can_write, complete)
-    local wanted, stopped, started = {}, 0, 0
+    local wanted, stopped, started, sourced = {}, 0, 0, {}
     local was = (camp_key and M.blocked[camp_key]) or {}
     local old = (camp_key and products[camp_key]) or {}
     local now, cache, seen = {}, {}, {}
@@ -163,6 +170,7 @@ function M.apply(camp_key, works, keys, values, ceilings, totals, can_write, com
         local have = source and totals and totals[source.item]
         local reached = type(ceiling) == 'number' and type(have) == 'number' and have >= ceiling
         local numeric = type(ceiling) == 'number'
+        if value and limits and source then sourced[value] = true end
         if value and limits and (source == nil
             or (source and not reached and (not numeric or totals ~= nil))) then
             wanted[value] = true
@@ -205,7 +213,7 @@ function M.apply(camp_key, works, keys, values, ceilings, totals, can_write, com
         M.blocked[camp_key] = next(now) and now or nil
         products[camp_key] = next(cache) and cache or nil
     end
-    return wanted, stopped, started
+    return wanted, stopped, started, sourced
 end
 
 -- Gives back every rock this module holds off in a camp: switched off,
@@ -236,10 +244,17 @@ function M.release_all(camp_key, works, keys, complete)
     return started
 end
 
--- World change: nothing held carries over (the unloaded world's rocks reset
--- themselves; their keys mean nothing in the next world).
+-- Session reset: the product cache goes, the held list stays. main's
+-- ClientRestart reset runs on every local respawn and same-map reconnect, not
+-- only on a world change, and there the rocks still read NotWorkable: a
+-- dropped list left them off for good, through off, restore and a removed
+-- limit (review 2026-10-29, P1). Keeping it is safe after a real reload too.
+-- Keys are work GUIDs, so nothing in another world matches them; release()
+-- writes only where a rock still reads NotWorkable; and the next complete
+-- pass drops every key it does not see, while reloaded rocks read Workable.
+-- Products are only a cache and are read again where needed.
 function M.forget()
-    products, M.blocked = {}, {}
+    products = {}
 end
 
 -- Rocks this module holds switched off in a camp.
