@@ -47,6 +47,9 @@ assert(not panel.confirm_edit(cfg,'35001'),'accepted edit was left open')
 local writes=live.writes;panel.cancel_edit();assert(live.writes==writes,'cancel replayed accepted submission')
 live:complete();assert(caps.flush() and caps.state=='saved' and live.notices==1)
 panel.refresh(cfg);assert(rendered('Limits saved'))
+-- The pending notice ends with the save (round 2, P3); it used to stay.
+assert(not rendered('Saving change...') and rendered('Saved: Mining limit 35,001 for Stone.'),
+    'Saving change... outlived the save')
 
 -- Step and confirmed removal must use exactly the same pending contract.
 panel.wants_pass=false
@@ -54,13 +57,17 @@ assert(panel.apply(cfg,{kind='rule',rule={work='Mining',item='Stone',amount=3500
 assert(caps.state=='saving' and not panel.wants_pass)
 panel.refresh(cfg);assert(rendered('Saving change...'))
 live:complete();assert(caps.flush())
+panel.refresh(cfg);assert(not rendered('Saving change...'),'step notice outlived the save')
 local amount=caps.data[alias].Mining.Stone
 local drop={kind='drop',rule={work='Mining',item='Stone',amount=amount}}
 panel.wants_pass=false
-assert(panel.apply(cfg,drop,1,true));assert(panel.apply(cfg,drop,1,true))
+assert(panel.apply(cfg,drop,1,true));later();assert(panel.apply(cfg,drop,1,true))
 assert(caps.state=='saving' and not panel.wants_pass)
 panel.refresh(cfg);assert(rendered('Saving removal...'))
 live:complete();assert(caps.flush())
+panel.refresh(cfg)
+assert(not rendered('Saving removal...') and rendered('Removed the Mining limit for Stone.'),
+    'Saving removal... outlived the save')
 assert(caps.data[alias].Mining==nil or caps.data[alias].Mining.Stone==nil or caps.data[alias].Mining.Stone==false)
 
 -- A structurally invalid, stale, foreign, or uncertain reply never becomes pending success.

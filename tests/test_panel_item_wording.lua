@@ -48,7 +48,8 @@ rules(2)
 local verdict=status.verdict
 status.verdict=function() return false,1,2 end
 panel.refresh(cfg)
-assert(rendered('Item limit, rocks'), 'per-item Mining row sub-label')
+-- One line (round 2): the per-item row says it stops rocks in the job cell.
+assert(rendered('Mining (rocks)') and not rendered('Item limit, rocks'), 'per-item Mining row job cell')
 assert(not rendered('Reached 1/2') and rendered('Below limit'), 'per-item row showed the whole-Mining verdict')
 assert(notice()~='Reached 1/2: this job is off at 1 of your 2 bases.')
 -- Its own item first: held rocks, then storage against the limit.
@@ -65,7 +66,7 @@ data.Stone01=101
 -- The server says per-item is off: group rows, "Reached N/M" and its notice.
 status.per_item=function() return false end
 panel.refresh(cfg)
-assert(rendered('Group limit') and not rendered('Item limit, rocks'), 'server setting ignored')
+assert(rendered('Mining') and not rendered('Mining (rocks)'), 'server setting ignored')
 assert(rendered('Reached 1/2'), 'group row lost Reached N/M')
 assert(notice()=='Reached 1/2: this job is off at 1 of your 2 bases.', 'reached notice: '..tostring(notice()))
 status.per_item=nil
@@ -171,6 +172,16 @@ panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(notice()==UPGRADE, 'upgrade reset not said: '..tostring(notice()))
 panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(notice()~=UPGRADE, 'upgrade reset said twice')
+-- configuration keeps the flag across sessions until the notice is shown
+-- (round 2); the panel acknowledges it once it has said it.
+rb.upgrade_said=nil
+local acked=0
+package.loaded.configuration={upgrade_reset=true,
+    ack_upgrade_reset=function() acked=acked+1; package.loaded.configuration.upgrade_reset=false end}
+panel.close(); panel.toggle(); panel.refresh(cfg)
+assert(notice()==UPGRADE and acked==1, 'shown upgrade notice not acknowledged')
+panel.close(); panel.toggle(); panel.refresh(cfg)
+assert(acked==1, 'upgrade notice acknowledged twice')
 package.loaded.configuration=nil
 assert(writes==0 and stale==0)
 ]=], '@panel-item-wording-fixture'))()
