@@ -4615,11 +4615,27 @@ function M.hover_map()
     return 2
 end
 
+-- The pointer is looked up less the offset this screen has learned (see
+-- RB.hover_fit).
 function RB.hover_lookup(x, y)
+    local cal = RB.hover_cal[mode]
+    if cal then x, y = x - cal.dx, y - cal.dy end
     for _, r in ipairs(RB.hmap or {}) do
         if x >= r[2] and x < r[4] and y >= r[3] and y < r[5] then return r[1] end
     end
     return nil
+end
+
+function RB.hover_rect(key)
+    for _, r in ipairs(RB.hmap or {}) do
+        if r[1] == key then return r end
+    end
+    return nil
+end
+
+function RB.fmt_rect(r)
+    if r == nil then return "none" end
+    return string.format("%.1f,%.1f-%.1f,%.1f", r[2], r[3], r[4], r[5])
 end
 
 -- The viewport in its DPI-scaled units: 1920x1080 on a 1280x720 screen at
@@ -4675,21 +4691,78 @@ function RB.hover_watch()
 end
 
 -- The draw's half: does the map agree with IsHovered?
+-- The offset between the map and the screen, learned from IsHovered.
+--
+-- In game (2026-10-29) the map sat a little above the tiles: one draw said
+-- pick10 where the widgets said pick7. Every height and visibility the map
+-- sums is one this file wrote, and they match the commandlet's shell, so the
+-- difference is in what Slate does with that tree (or in a shipped asset
+-- that differs from the commandlet) and cannot be read from here without
+-- geometry, which UE4SS does not give. What can be read is the answer: a
+-- target IsHovered names, and the cursor that is inside it. Each such draw
+-- says where the offset may lie, as an interval per axis; the intervals of
+-- one screen are intersected, and the offset is kept inside them. A
+-- constant offset is learned on the first draw that disagrees and never
+-- costs another. One that is not constant (rows of a different pitch, a
+-- list scrolled by the wheel) keeps contradicting itself, and each
+-- contradiction counts towards HOVER_BAD_MAX like a disagreement.
+RB.hover_cal, RB.hover_resets, RB.HOVER_SHIFT_MAX = {}, 0, 120
+function RB.hover_fit(r, x, y)
+    -- dx in [x - right + 1, x - left], dy likewise: the cursor inside r.
+    local lox, hix = x - r[4] + 1, x - r[2]
+    local loy, hiy = y - r[5] + 1, y - r[3]
+    local M_ = RB.HOVER_SHIFT_MAX
+    if hix < -M_ or lox > M_ or hiy < -M_ or loy > M_ then return end
+    local cal = RB.hover_cal[mode]
+    if cal == nil then
+        cal = { dx = 0, dy = 0 }
+        RB.hover_cal[mode] = cal
+    elseif cal.lox then
+        local a, b = math.max(cal.lox, lox), math.min(cal.hix, hix)
+        local c, d = math.max(cal.loy, loy), math.min(cal.hiy, hiy)
+        if a <= b and c <= d then
+            lox, hix, loy, hiy = a, b, c, d
+        else
+            -- Not one offset: start again from this draw, and count it.
+            RB.hover_resets = RB.hover_resets + 1
+            RB.hover_note(string.format("contradicted itself on %s: cursor %.1f,%.1f in %s, "
+                .. "offset was %.1f,%.1f", tostring(mode), x, y, RB.fmt_rect(r), cal.dx, cal.dy))
+        end
+    end
+    cal.lox, cal.hix, cal.loy, cal.hiy = lox, hix, loy, hiy
+    local dx = math.min(math.max(cal.dx, lox), hix)
+    local dy = math.min(math.max(cal.dy, loy), hiy)
+    if (dx ~= cal.dx or dy ~= cal.dy) and not cal.said then
+        cal.said = true
+        log.info(string.format("panel: hover map offset on %s: %.1f,%.1f, from %s at cursor "
+            .. "%.1f,%.1f (map rect %s)", tostring(mode), dx, dy, tostring(r[1]), x, y, RB.fmt_rect(r)))
+    end
+    cal.dx, cal.dy = dx, dy
+end
+
 function RB.hover_check(hovered)
     local x, y = RB.cursor()
     if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
     RB.hover_x, RB.hover_y = x, y
+    local mapped = hovered ~= nil and RB.hmap_keys[hovered]
+    local before = RB.hover_resets
+    if mapped then RB.hover_fit(RB.hover_rect(hovered), x, y) end
     local said = RB.hover_lookup(x, y)
-    if said == hovered or (said == nil and (hovered == nil or not RB.hmap_keys[hovered])) then
+    if RB.hover_resets == before
+        and (said == hovered or (said == nil and not mapped)) then
         RB.hover_bad = 0
         return
     end
     RB.hover_bad = RB.hover_bad + 1
     -- Slate can answer a beat after the pointer moved, so look once more.
     if RB.hover_bad == 1 then RB.hover_due = true end
-    if RB.hover_bad >= RB.HOVER_BAD_MAX then
-        RB.hover_stop("disagreed with the widgets " .. RB.HOVER_BAD_MAX
-            .. " times (map said " .. tostring(said) .. ", widgets " .. tostring(hovered) .. ")")
+    if RB.hover_bad >= RB.HOVER_BAD_MAX or RB.hover_resets >= RB.HOVER_BAD_MAX then
+        local cal = RB.hover_cal[mode] or { dx = 0, dy = 0 }
+        RB.hover_stop(string.format("disagreed with the widgets (map said %s %s, widgets %s %s, "
+            .. "cursor %.1f,%.1f, offset %.1f,%.1f, %d in a row, %d contradictions)",
+            tostring(said), RB.fmt_rect(said and RB.hover_rect(said)),
+            tostring(hovered), RB.fmt_rect(hovered and RB.hover_rect(hovered)),
+            x, y, cal.dx, cal.dy, RB.hover_bad, RB.hover_resets))
         log.debug("panel: the pointer map disagreed with the widgets "
             .. RB.HOVER_BAD_MAX .. " times, hover follows the draw again")
     end
@@ -5343,6 +5416,7 @@ function M.toggle()
     -- The pointer's map is trusted again, and starts from nothing.
     RB.hover_off, RB.hover_bad, RB.hover_seen = nil, 0, nil
     RB.hover_off_why, RB.hmap_said = nil, {}
+    RB.hover_cal, RB.hover_resets = {}, 0
     RB.hover_x, RB.hover_y = nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
