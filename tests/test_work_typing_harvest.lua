@@ -27,4 +27,19 @@ assert(api.work_suitability(work(5, nil, nil, 'PalWorkProgress')) == collection,
 assert(api.work_suitability(work(26, nil, 'MonsterFarm_0', 'PalWorkProgress')) == farm, 'ranch lost its type')
 assert(api.work_suitability(work(0, 'Planting', 'FarmBlockV2_Berries_4', 'PalWorkProgress')) == workdefs.value('Seeding'))
 assert(api.work_suitability(work(0, 'Watering', 'FarmBlockV2_Berries_4', 'PalWorkProgress')) == workdefs.value('Watering'))
-print('work typing: plantation harvest is Gathering, ranch and other plantation jobs unchanged')
+-- An untyped work is named in the one-time warning, and Construction (a
+-- standing blueprint, untyped in g4-old-reports 2026-10-27) is explained,
+-- not hidden: no discover dump has confirmed it is the one a host sees, so
+-- it stays out of WORK_IGNORE (review 2026-10-29).
+local warned = {}
+require('log').warn = function(msg) warned[#warned + 1] = msg end
+api._suitability_warned = false
+local blueprint = work(0, 'Construction', 'BuildWork_0', 'PalWorkProgress')
+assert(api.work_suitability(blueprint) == nil and api.WORK_IGNORE.Construction == nil)
+assert(#warned == 1, 'untyped work did not warn once')
+assert(warned[1]:find('Construction, BuildWork_0, PalWorkProgress', 1, true), 'warning does not name the work: ' .. warned[1])
+assert(warned[1]:find('building not finished yet', 1, true) and warned[1]:find('!pwp discover', 1, true))
+assert(not warned[1]:find(string.char(226, 128, 148), 1, true), 'em dash in the warning')
+api.work_suitability(work(0, 'Something', 'Other_0', 'PalWorkProgress'))
+assert(#warned == 1, 'the warning repeated')
+print('work typing: plantation harvest is Gathering, ranch and other plantation jobs unchanged, untyped work named once')
