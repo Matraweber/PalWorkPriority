@@ -466,7 +466,7 @@ local function run_pass(reason, explicit)
         -- there is nothing fenced it sends nothing.
         if not restored_for_disabled then
             restored_for_disabled = true
-            log.say("disabled, so giving every pal its work back")
+            log.say("disabled, so giving back every job the mod switched off (X stays off)")
             restore_all("disabled")
         end
         return
@@ -801,6 +801,8 @@ local COMMANDS = {}
 
 -- Kept in step with the README's table deliberately: an audit found four
 -- commands documented in neither, and two documented with the wrong meaning.
+-- The README leaves out only the bug-report helpers icons, stand, funcs and
+-- probe.
 COMMANDS.help = function()
     local p = cfg.chat_prefix
     log.say("commands:")
@@ -830,8 +832,8 @@ COMMANDS.help = function()
     log.say("  " .. p .. " probe     extra reads for bug reports")
     log.say("  " .. p .. " adopt     give limits made before guild rules " ..
             "to this guild")
-    log.say("  " .. p .. " restore   give every Pal all its work back " ..
-            "(do this before removing the mod)")
+    log.say("  " .. p .. " restore   give back every job the mod switched off " ..
+            "(X stays off; do this before removing the mod)")
     log.say("keys, all on Alt, because Ctrl is crouch:")
     log.say("  Alt+F1 Production Limits Alt+F2 recheck now")
     log.say("  Alt+F3 base storage      Alt+F5 Discovery.txt")

@@ -1323,7 +1323,7 @@ test("chat help and the load line are in player words",function()
         assert(not help:lower():find(word,1,true),"help says "..word)
     end
     for _,want in ipairs({"list, set or remove production limits","Alt+F2 recheck now",
-        "give every Pal all its work back (do this before removing the mod)"}) do
+        "give back every job the mod switched off (X stays off; do this before removing the mod)"}) do
         assert(help:find(want,1,true),"help lacks "..want)
     end
 end)
@@ -1354,6 +1354,16 @@ test("without an Alt modifier the Alt keys are not bound as plain keys",function
     assert(s.keys.ESCAPE and s.keys.DEL,"the panel keys went with the Alt keys")
     local said=table.concat(s.console," | ")
     assert(said:find("no modifier key for it",1,true),"the missing hotkeys were not reported")
+end)
+
+test("switching off says X stays off, as the restore does (release-truth r3 P2-5)",function()
+    local s=boot(true); s.timers.role.fn()
+    s.scheduler.restore=function() return {camps=2,pals=14,toggles=0,deferred=0} end
+    s.cfg().enabled=false
+    s.console={}; s.commands.run()
+    local said=table.concat(s.console,"\n")
+    assert(said:find("disabled, so giving back every job the mod switched off (X stays off)",1,true),said)
+    assert(not said:find("every pal its work back",1,true),said)
 end)
 
 test("chat help says rocks works on the host too",function()

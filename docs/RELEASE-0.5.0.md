@@ -40,7 +40,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 ## G2. Saving backend decision
 
 - [x] **0.5.0 ships the synchronous writer; the native async DLL is not in
-  PASS 2026-10-28 on the final v0.5.0 build ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)): neither archive holds a DLL; clean manual, clean Workshop and a real 0.4.1 upgrade all ran the synchronous writer with no lock, no "restart to edit" and no warning.
+  PASS 2026-10-28 on the v0.5.0 build of that day (35366bf; to update at the retag with the new commit) ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)): neither archive holds a DLL; clean manual, clean Workshop and a real 0.4.1 upgrade all ran the synchronous writer with no lock, no "restart to edit" and no warning.
   the package** (G2b moved to 0.5.x on 2026-10-20). 2026-10-20: the rc1
   archives hold no DLL, and a clean manual install ran the synchronous writer
   with no fence, and so did a clean Workshop install on 2026-10-21 ([evidence](g7-install-2026-10-20.md)). Open: the G1 upgrade
@@ -169,7 +169,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - [x] **Mining limits per item on rocks** (user's decision 2026-10-28, into
   0.5.0). Built: `Scripts/item_sources.lua`, scheduler, panel wording
   (job column "Mining (rocks)" since the round-2 fixes, status "Rocks stopped"), config switch;
-  tests pass (228 Lua). PASS 2026-10-28 in game ([evidence](per-item-limits-2026-10-27.md)):
+  tests pass (243 Lua at a7b81af). PASS 2026-10-28 in game ([evidence](per-item-limits-2026-10-27.md)):
   19 stone rocks held, 0 of 12 samples on stone while ore and crystals were
   mined, released at a raised limit, held again, fresh after a restart and
   after a world change. Dedicated server PASS 2026-10-28 (GPortal "RAM" on
@@ -181,7 +181,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   Workable again.
 
 - [x] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
-  PASS 2026-10-28: tag v0.5.0 (35366bf), `tools/release.py` built both archives reproducibly with identical Lua and pak bytes; reruns A (manual) and C (Workshop) pass on them ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)). Server RAM runs 0.5.0; a 0.5.0 client syncs.
+  PASS 2026-10-28: tag v0.5.0 (35366bf; to update at the retag with the new commit and the new `release.json` hashes), `tools/release.py` built both archives reproducibly with identical Lua and pak bytes; reruns A (manual) and C (Workshop) pass on them ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)). Server RAM runs 0.5.0; a 0.5.0 client syncs.
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
@@ -196,19 +196,31 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   manual layout; 0.4.1 installed and loaded, 0.5.0 installed over it, 0.4.1
   removed, 0.5.0 loaded once with settings intact, removal kept the user's
   files. The Nexus page should say to turn off Vortex's UE4SS management when
-  UE4SS comes from the game's mod loader. Rechecked on Vortex 2.9.1 (same
+  UE4SS comes from the game's mod loader (in
+  [store-page-0.5.0-draft](store-page-0.5.0-draft.md)). Rechecked on Vortex 2.9.1 (same
   day): fresh install, game load and removal pass.
 
 - [ ] **Audit fixes** ([review-2026-10-28](review-2026-10-28.md),
   [review-round2-2026-10-29](review-round2-2026-10-29.md)): retested in game
-  and on the server ([retest-2026-10-29](retest-2026-10-29.md)); round-2
-  fixes retest pending. Only checked by automated tests so far, and said so in
-  the changelog: the cap of 500 limits per guild, the stand on a server
-  without the mod or with another version, the missing-pak and second-UE4SS
-  warnings, the config reset notice, controller input after the latest fixes.
+  and on the server ([retest-2026-10-29](retest-2026-10-29.md)). Round-2
+  fixes retested 2026-10-29 in game and on the server
+  ([retest-r2-2026-10-29](retest-r2-2026-10-29.md)). Not covered there: a
+  0.4.1 server (read-only stand) or one without the mod, a missing pak, a
+  second UE4SS copy, and a respawn that really runs the `ClientRestart`
+  reset. Only checked by automated tests so far, and said so in the
+  changelog and README: the cap of 500 limits per guild, the stand on a
+  server without the mod or with another version, the missing-pak and
+  second-UE4SS warnings, the config reset notice, old 0.4.1 config values and
+  a BOM in config.lua, rocks after a respawn, controller input after the
+  latest fixes.
   **Done when:** the round-2 fixes are retested in game and on the server, and
   the install checks (manual, Workshop, 0.4.1 upgrade) are rerun on the final
   archives.
+- [ ] **Store pages updated** from
+  [store-page-0.5.0-draft](store-page-0.5.0-draft.md) (user).
+  **Done when:** both pages carry the 0.5.0 text and say: one copy only,
+  Windows servers only, the UE4SS dependency, the Vortex switch, and the
+  `config.lua` loss on a Workshop update from 0.4.1.
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
@@ -227,9 +239,10 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
 - Design calls open since the 2026-08-26 audit: marking a capped work column
   on the stand (needs injecting into vanilla header widgets) and un-hiding the
   vanilla checkbox when the mod switched a permission off. The mouse and key
-  legend (Extramrdo, Sep 28) ships in 0.5.0 as two lines under the stand
-  ([ux-review-2026-10-21](ux-review-2026-10-21.md)); it does not name pad
-  buttons.
+  legend (Extramrdo, Sep 28) ships in 0.5.0 as one line under the stand
+  ([ux-review-2026-10-21](ux-review-2026-10-21.md)); with a controller it
+  switches to a pad version that names the buttons (`ui.lua` `EDIT_LEGEND`,
+  `PAD_LEGEND`).
 - Live tests with two real clients and two real guilds (needs a second Steam
   account and machine), unmodded-client edit detection.
 - Physical Steam Deck, ultrawide and UI scaling matrix. A physical
