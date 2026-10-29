@@ -829,6 +829,50 @@ assert(next(seen) == nil and stats.station_vacancies == nil, "a typing failure s
 api.work_suitability = plain_typing
 for i, kind in ipairs(kinds) do kind.needing = plain_needing[i] end
 
+-- An empty dedicated server (GPortal 2026-10-29): no viewport and no player
+-- controller. The real palapi.camp_works found its work manager through the
+-- controller walk, got nothing, and returned no works, so the station
+-- counters silently counted nothing on every pass. With the game instance as
+-- the world context the generator's work reaches its counter, with no walk.
+do
+    local saved = { log = package.loaded.log, camp_works = api.camp_works, base_camps = api.base_camps,
+        find = FindFirstOf, ue = package.loaded.UEHelpers }
+    package.loaded.log = { count = function() return { ms = 0 } end, info = noop, debug = noop, warn = noop }
+    local real = dofile(TEST_ROOT .. "/Scripts/palapi.lua")
+    package.loaded.log = saved.log
+    local function live(o) o.IsValid = function() return true end; return o end
+    local walks = 0
+    FindFirstOf = function() walks = walks + 1; return nil end
+    local gi = live({ world_context = true, GetFullName = function()
+        return "PalGameInstance /Engine/Transient.GameEngine_0:PalGameInstance_0" end })
+    package.loaded.UEHelpers = { GetEngine = function() return live({ GameViewport = nil, GameInstance = gi }) end }
+    local generator = live({ value = 4 })
+    local wpm = live({ GetWork = function() return generator end })
+    real.cdo = function() return live({ GetWorkProgressManager = function(_, ctx)
+        if ctx ~= nil and ctx.world_context == true then return wpm end
+    end }) end
+    local camp = { id = "camp", WorkCollection = live({ WorkIds = { ForEach = function(_, fn)
+        fn(1, { A = 1, B = 2, C = 3, D = 4 })
+    end } }) }
+    api.base_camps = function() return { camp } end
+    api.camp_works = real.camp_works
+    kinds[1].needing = function(list) return #list end
+    local run_ok, run_err = pcall(function()
+        reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5} })
+        store.data.g = {[4] = 1, [5] = 3}
+        required = {[5] = 1}
+        real.reset()
+        walks = 0
+        stats = scheduler.run_pass(config)
+        assert(stats.station_vacancies == 1, "an empty server's generator never reached its counter")
+        assert(walks == 0, "the pass walked for a player controller: " .. walks)
+    end)
+    kinds[1].needing = plain_needing[1]
+    api.camp_works, api.base_camps = saved.camp_works, saved.base_camps
+    FindFirstOf, package.loaded.UEHelpers = saved.find, saved.ue
+    assert(run_ok, run_err)
+end
+
 -- 2026-10-28: a reached Mining limit switches off only the rocks whose main
 -- drop is that item (item_sources.lua); Mining stays allowed while ore rocks
 -- are wanted, and the rock comes back when the limit goes.

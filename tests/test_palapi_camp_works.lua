@@ -15,6 +15,7 @@ local wpm = live({ GetWork = function(_, id)
     if missing[id.D] then return nil end
     return live({ id = id.D })
 end })
+local real_wpm = api.work_progress_manager
 api.work_progress_manager = function() return wpm end
 local ids = { guid(1), guid(2), guid(3) }
 local camp = { WorkCollection = live({ WorkIds = { ForEach = function(_, fn)
@@ -34,4 +35,28 @@ assert(keys[1] == '1-2-3-1' and keys[2] == '1-2-3-3')
 throws[2], missing[2] = nil, true
 works, err, keys, skipped = api.camp_works(camp)
 assert(#works == 2 and err == nil and skipped == 0, 'a gone work counted as skipped')
-print('palapi camp_works: skipped entries counted, gone works are not skips')
+
+-- A headless dedicated server with nobody online (GPortal 2026-10-29): no
+-- viewport, no player controller. The manager's world context came from the
+-- controller walk, which found nothing every pass, so camp_works returned an
+-- error and no works. The game instance is the context now: a manager, and
+-- no walk at all.
+throws, missing = {}, {}
+api.work_progress_manager = real_wpm
+local walks = 0
+FindFirstOf = function() walks = walks + 1; return nil end
+local gi = live({ world_context = true, GetFullName = function()
+    return 'PalGameInstance /Engine/Transient.GameEngine_0:PalGameInstance_0' end })
+local engine = live({ GameViewport = nil, GameInstance = gi })
+package.loaded.UEHelpers = { GetEngine = function() return engine end }
+local util = live({ GetWorkProgressManager = function(_, ctx)
+    -- Like the engine: an object with no world gives no manager.
+    if ctx ~= nil and ctx.world_context == true then return wpm end
+    return nil
+end })
+api.cdo = function(path) if path == '/Script/Pal.Default__PalUtility' then return util end end
+api.reset()
+works, err = api.camp_works(camp)
+assert(err == nil and #works == 3, 'empty server had no work manager: ' .. tostring(err))
+assert(walks == 0, 'the work manager walked for a player controller: ' .. walks)
+print('palapi camp_works: skipped entries counted, gone works are not skips, headless server has works')

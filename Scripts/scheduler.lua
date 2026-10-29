@@ -1760,8 +1760,12 @@ local function run_pass_body(cfg)
     -- session that hosted first carries a stale "yes" into a client session
     -- with the pass timer still armed. Probing here re-latches every pass, so
     -- a stale answer survives at most one interval and cannot reach the calls
-    -- below. On a host the lookup exits early; on a client it is one walk to
-    -- return false, once per pass.
+    -- below. On a client the local Role-2 proxy answers false without a
+    -- walk; a listen host or singleplayer asks the world through the
+    -- viewport chain, and a headless server through the game instance
+    -- (2026-10-29: the FindFirstOf("PalGameMode") walk it did before cost
+    -- 20.5 ms every pass on the GPortal server). The walk is left only as
+    -- the fallback when those routes cannot say.
     local authority = api.latch_authority()
     if authority ~= true then
         -- Named, like the component abort below.
@@ -1784,8 +1788,9 @@ local function run_pass_body(cfg)
     -- between the top of this function and here reaches a pal - base_camps
     -- is FindAllOf plus valid(), which a client survives - so the crash
     -- guard the latch provides has lost no ground, it just runs one step
-    -- later. And with the pulse hint wired, the probe itself is free on any
-    -- authority that has scheduled work since it spawned.
+    -- later. The pulse hint is not wired (main.lua sets it to nil: a
+    -- timestamp cannot bind a native callback to a connection), so the probe
+    -- costs whatever its route costs; see the latch comment above.
 
     -- Resolve an owned send route only after a permission difference is found.
     -- Reconciliation, authority checks and readback still run on every pass.

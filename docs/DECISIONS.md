@@ -360,6 +360,28 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Performance
 
+- **2026-10-29 - On a headless server the game instance is the world context
+  for authority and for the work manager, re-checked every pass.** The GPortal
+  server (1 camp, 9 Pals, 0 players) spent 65.9 ms per pass: 20.5 ms in
+  `FindFirstOf("PalGameMode")` because the viewport chain does not exist there
+  and the pulse hint is unwired, and 20.5 ms in `FindFirstOf("PalPlayerController")`
+  for the work manager's world context, which with nobody online found nothing,
+  so camp works came back empty and station counters and per-item rock limits
+  did nothing. Now `PalUtility:GetPalGameMode` and `GetWorkProgressManager`
+  get `GameEngine.GameInstance` (or UEHelpers.GetGameInstance, asked once per
+  world) when no viewport exists. Authority still answers yes or nil, never
+  no, and is asked fresh on every call. When the route gives nothing the old
+  walk runs, so a failure costs what it did before. The controller walk's
+  gap now doubles from 10 s to a 120 s cap on repeated misses (the fixed 10 s
+  never engaged at 11.5 s passes). Clients, listen hosts and singleplayer keep
+  their viewport paths. *Rejected:* caching the authority answer across
+  passes (rejected 2026-08-27). Supersedes the 2026-08-28 pulse entry below.
+  *Evidence:* the 2026-10-29 server measurement (perf review, server
+  section); the route itself is not yet confirmed on the live server.
+- **2026-10-29 - The camp FindAllOf costs 20.8 ms per pass on the GPortal
+  server.** The 2026-10-19 decision to keep it recorded about 10 ms on the
+  local test world only. It stays (user's choice); with the two walks above
+  gone it is most of what is left of a server pass.
 - **2026-10-20 - The storage refresh stays at 30 s, recorded as justified
   (user's choice).** 31-37 ms every ~29 s, the one mod cost left that crosses
   33 ms (about 2 frames a minute in the test world), and only while limits that
@@ -425,7 +447,10 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   per 170 s); excluding no-base loot before storage module discovery (hides
   module failures). *Evidence:* [g5-performance-2026-10-19.md](g5-performance-2026-10-19.md) "History".
 - **2026-08-28 - Authority comes from a demand pulse newer than the current
-  spawn; the owned component from the controller's `Children`.** Both may
+  spawn; the owned component from the controller's `Children`.** **Superseded
+  2026-10-29** for authority (entry at the top of this section): the pulse
+  hint is unwired (`api.set_authority_hint(nil)` in main.lua), and the world
+  chain or game instance answers instead. Both may
   answer yes or nil, never no.
 - **2026-08-27 - Rejected with measurements, do not re-propose without new
   numbers:** closure/pcall hoisting, GC tuning, lazy logging, token interning,
