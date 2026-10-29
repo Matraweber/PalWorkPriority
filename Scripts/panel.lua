@@ -4537,6 +4537,7 @@ function M.hover_map()
     end
     local vw, vh, vwhy = RB.viewport()
     if vw == nil then RB.hover_stop("viewport unreadable: " .. tostring(vwhy)) return 2 end
+    RB.hover_mid_x, RB.hover_mid_y = vw / 2, vh / 2
 
     -- Where each row's canvas starts, in the order Body stacks them.
     local top, unknown = {}, false
@@ -4679,12 +4680,23 @@ end
 -- The fast loop's half: a draw on the next beat when the pointer reaches
 -- another target. Costs one cursor read per tick, and nothing more while
 -- the pointer stands still.
+-- A reading of exactly the viewport's centre while no widget is hovered is
+-- not a pointer (in game, 2026-10-29): GetMousePositionOnViewport answered
+-- 960,540 for the first seconds after opening, with the real pointer
+-- elsewhere, and a map that believed it asked for draws and counted the
+-- widgets' silence against itself. Such a reading is unknown.
+function RB.hover_parked(x, y)
+    return hover_key == nil and RB.hover_mid_x ~= nil
+        and math.abs(x - RB.hover_mid_x) < 0.01 and math.abs(y - RB.hover_mid_y) < 0.01
+end
+
 function RB.hover_watch()
     if RB.hover_off or RB.hmap == nil or RB.hover_due then return end
     local x, y = RB.cursor()
     -- Not readable on this build: off, rather than a lookup every 16ms.
     if x == nil then RB.hover_stop("cursor unreadable (fast loop)") return end
     if x == RB.hover_x and y == RB.hover_y then return end
+    if RB.hover_parked(x, y) then return end
     RB.hover_x, RB.hover_y = x, y
     local key = RB.hover_lookup(x, y)
     if key ~= RB.hover_seen then RB.hover_seen, RB.hover_due = key, true end
@@ -4743,13 +4755,19 @@ end
 function RB.hover_check(hovered)
     local x, y = RB.cursor()
     if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
+    if hovered == nil and RB.hover_parked(x, y) then return end
     RB.hover_x, RB.hover_y = x, y
     local mapped = hovered ~= nil and RB.hmap_keys[hovered]
+    -- Only positive evidence counts (in game, 2026-10-29): a target the
+    -- widgets name and the map does not, or a different one. Silence from
+    -- the widgets proves nothing about the map - the pointer may be parked,
+    -- or over a gap Slate hit-tests differently - and is never held against
+    -- it, nor learned from.
+    if not mapped then return end
     local before = RB.hover_resets
-    if mapped then RB.hover_fit(RB.hover_rect(hovered), x, y) end
+    RB.hover_fit(RB.hover_rect(hovered), x, y)
     local said = RB.hover_lookup(x, y)
-    if RB.hover_resets == before
-        and (said == hovered or (said == nil and not mapped)) then
+    if RB.hover_resets == before and said == hovered then
         RB.hover_bad = 0
         return
     end
