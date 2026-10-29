@@ -124,7 +124,10 @@ refresh(5) -- expire() clears the committed view and schedules bounded retry.
 assert(#phase_builds==1,'expiry caused an immediate refresh storm')
 assert(rendered('Storage: Base 2 of 2 - change base'),
     'expiry heartbeat discarded selector metadata')
-refresh(110)
+-- The expired count keeps the 10 s poll already due for it (round 3: the
+-- poll used to restart from the expiry), so each phase below is one poll
+-- period long and gets exactly one request.
+refresh(100)
 local unknown=network.client().storage_view('guild-A','camp-B')
 assert(#phase_builds==2 and phase_builds[2].selected=='camp-B')
 assert(not unknown.verified and unknown.camp==nil and #unknown.choices==2)
@@ -133,12 +136,12 @@ for _=1,100 do panel.refresh(cfg) end
 
 -- Both unavailable shapes are legal: choices alone, or choices plus the
 -- selected camp. Neither may fall back to the first choice or infer zero.
-phase='unknown_camp';refresh(110)
+phase='unknown_camp';refresh(100)
 unknown=network.client().storage_view('guild-A','camp-B')
 assert(#phase_builds==3 and phase_builds[3].selected=='camp-B')
 assert(not unknown.verified and unknown.camp=='camp-B' and unknown.index==2)
 assert(next(unknown.totals)==nil and rendered('?') and not rendered('5,498'))
-phase='renew';refresh(110)
+phase='renew';refresh(100)
 local renewed=network.client().storage_view('guild-A','camp-B')
 assert(#phase_builds==4 and phase_builds[4].selected=='camp-B')
 assert(renewed.verified and renewed.camp=='camp-B' and renewed.index==2)

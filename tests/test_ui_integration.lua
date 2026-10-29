@@ -100,6 +100,8 @@ local function fixture(keys)
         end,
     }
     f.net={status='ready', pals={}, pals_gen=1, pending_gen=0, PREFIX='PWP:', to_server=function() return false end}
+    -- As net.ask_pals: only a connected client asks, and no transport here.
+    f.net.ask_pals=function() return false end
     function f.net.pending_priority(key,work)
         local row=f.pending[key]
         if row and row[work]~=nil then return row[work],true,'pending' end
@@ -1435,6 +1437,59 @@ check('server settings fence explains host action and cancels queued input',func
     f.net.status='ready';f.net.status_reason=nil;assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
     assert(f.texts(f.cells[1])[1].text=='3' and f.cells[1].PalCheckBox.visibility==2,'grid did not come back')
+end)
+
+-- Round 3 (multiplayer P2-2): an ask about a pal caught after the join that
+-- the server refused (its announcement budget) or that never arrived got no
+-- answer, nothing else pushes a full table, and the pal kept plain checkboxes
+-- for the rest of a quiet session.
+check('a missing-pal ask with no answer is asked again, a pending one counts as asked',function()
+    local f=fixture({'a','b'})
+    local clock,now=os.clock,1000
+    os.clock=function() return now end
+    local ok,err=pcall(function()
+        -- As net.ask_pals: connected, nothing sent in the last 10 s.
+        local asks,last=0,-math.huge
+        f.net.ask_pals=function()
+            if f.net.status~='ready' then return false end
+            if now-last<10 then return 'pending' end
+            asks,last=asks+1,now; return true
+        end
+        f.net.pals.b=nil -- bound to a row, not in the server's table yet
+        assert(f.ui.refresh(f.cfg) ~= nil)
+        assert(asks==1,'the missing pal was not asked about')
+        for _=1,9 do now=now+1; f.ui.refresh(f.cfg) end
+        assert(asks==1,'asked again before 10 s')
+        now=now+1; f.ui.refresh(f.cfg)
+        assert(asks==2,'a refused ask was never asked again')
+        -- Still no answer: the wait doubles.
+        for _=1,19 do now=now+1; f.ui.refresh(f.cfg) end
+        assert(asks==2,'unanswered asks did not back off')
+        now=now+1; f.ui.refresh(f.cfg)
+        assert(asks==3)
+        -- The answer arrives with the pal: no more asks.
+        f.net.pals.b={ranks={[1]=1},prios={[1]=2}}; f.net.pals_gen=f.net.pals_gen+1
+        for _=1,300 do now=now+1; f.ui.refresh(f.cfg) end
+        assert(asks==3,'asked again after the pal arrived')
+        -- Another pal caught moments after a Hello: "pending" counts as the
+        -- ask, and with no answer it is asked again 10 s later.
+        f.add_row('c'); f.bind(f.rows[#f.rows]); f.net.pals.c=nil
+        last=now-1
+        f.ui.refresh(f.cfg)
+        assert(asks==3,'a pending ask sent another Hello')
+        for _=1,10 do now=now+1; f.ui.refresh(f.cfg) end
+        assert(asks==4,'a pending ask with no answer was never asked again')
+        f.net.pals.c={ranks={[1]=1},prios={[1]=2}}; f.net.pals_gen=f.net.pals_gen+1
+        -- Not connected: nothing is sent and nothing is counted as asked.
+        f.net.status='connecting'
+        f.add_row('d'); f.bind(f.rows[#f.rows]); f.net.pals.d=nil
+        for _=1,3 do now=now+1; f.ui.refresh(f.cfg) end
+        assert(asks==4)
+        f.net.status='ready'; now=now+11; f.ui.refresh(f.cfg)
+        assert(asks==5,'an ask refused while connecting was latched as asked')
+    end)
+    os.clock=clock
+    assert(ok,err)
 end)
 
 print(string.format('Stand integration: %d passed, %d failed',passed,#failures))

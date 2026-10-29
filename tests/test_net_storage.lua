@@ -177,24 +177,32 @@ for _,fence in ipairs({'close','session','lock','server_nonce','client_nonce'})d
         fence..' did not fence selector metadata')
 end
 
--- Replays/rate-limited probes are refused before any expensive ownership walk.
+-- Replays are refused and early probes only kept (round 3: the newest one is
+-- served once the second has passed), both before any expensive ownership walk.
 setup();original=request(nil)
 local discovery_count=0
 hook=function(p)if p=='discovery'then discovery_count=discovery_count+1 end end
 for _=1,100 do
     assert(not server.receive_command(comp,original,0))
-    assert(not server.receive_command(comp,original:gsub('|1|%-$','|2|-'),0))
+    assert(server.receive_command(comp,(original:gsub('|1|%-$','|2|-')),0))
 end
 hook=nil;assert(discovery_count==0,'rate/replay gate performed an object census')
 
 -- Failed ownership checks are charged too, and cannot spam full censuses.
 time=time+2;owner.guild='foreign'
-local forged=original:gsub('|1|%-$','|2|-')
+local forged=(original:gsub('|1|%-$','|3|-'))
 assert(not server.receive_command(comp,forged,0))
 discovery_count=0
 hook=function(p)if p=='discovery'then discovery_count=discovery_count+1 end end
-for _=1,100 do assert(not server.receive_command(comp,forged,0))end
+for i=1,100 do server.receive_command(comp,(original:gsub('|1|%-$','|'..(i+3)..'|-')),0)end
 hook=nil;assert(discovery_count==0)
+-- The one request kept from that burst is served a second later, at most one
+-- census for it, and the guild is proven again before anything is sent.
+down={}
+hook=function(p)if p=='discovery'then discovery_count=discovery_count+1 end end
+for _=1,30 do beat(false)end
+hook=nil
+assert(discovery_count<=2 and #down==0,'a kept request skipped the ownership proof')
 
 -- Global queue has an explicit eight-peer cap, independent of negotiated peers.
 setup();server.guild_of_sender=function()return 'guild-A'end

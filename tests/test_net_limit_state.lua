@@ -186,23 +186,68 @@ end
 edited('ack')
 edited('snapshot')
 
--- A count already in flight when the limits changed is kept whole (live
--- 2026-10-29: dropping its verdict cost a whole extra round, and that round's
--- request could be refused by the server's 1 s gate), and another count
--- follows it soon in case it predates the edit.
+-- A count in flight when the limits changed keeps its totals (live
+-- 2026-10-29: dropping it cost a whole extra round). Its verdict may predate
+-- the edit, so it lives only briefly and another count follows soon (round 3:
+-- the test here used to require the pre-edit verdict, whichever it was).
+local function in_flight(before_edit)
+    setup()
+    fetch()
+    if before_edit then
+        -- More than four packets: the reply goes out over several ticks.
+        local totals = {}
+        for i = 1, 300 do totals['Item' .. i] = i end
+        value = {scope='camp', camp='camp-A', choices={'camp-A'}, verified=true,
+            totals=totals, age_ms=1000, remaining_ms=29000}
+    end
+    time = time + 11
+    client.storage_tick()
+    assert(#up == 1)
+    assert(server.receive_command(comp, table.remove(up, 1), 0))
+    if before_edit then
+        time = time + 0.1; server.storage_tick() -- built and first packets sent
+        assert(#down > 0 and #down <= 4)
+    end
+    -- The edit: the server's limits and verdict change, and its R snapshot
+    -- reaches the client while the count is pending or half delivered.
+    limit_state = {per_item=false, verdicts={Mining={capped=0, camps=1, unknown=0}}, stopped={}}
+    assert(server.push_rules({all=function() return {Mining={Stone=9}} end}, {}, comp))
+    deliver()
+    local committed
+    for _ = 1, 40 do
+        time = time + 0.1; server.storage_tick(); deliver()
+        view = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
+        if view.verified and view.limits then committed = time; break end
+    end
+    assert(committed, 'the in-flight count was lost')
+    local verdict = status.verdict({}, 'Mining', view)
+    if not before_edit then
+        assert(verdict == false, 'a count built after the edit did not show the new verdict')
+    end
+    -- Without the follow-up count (not delivered here) the verdict is gone
+    -- within 2 s; the totals stay.
+    up = {}
+    time = committed + 2
+    view = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
+    assert(view.verified and (before_edit and view.totals.Item1 == 1 or view.totals.Stone == 1200),
+        'the totals went with the verdict')
+    assert(status.verdict({}, 'Mining', view) == nil and client.limit_state() == nil,
+        'a verdict that may predate the edit outlived 2 s')
+end
+in_flight(false)
+in_flight(true)
+-- And the follow-up itself is due within 1.5 s of the commit.
 setup()
 fetch()
 time = time + 11
 client.storage_tick()
-assert(#up == 1)
 assert(server.receive_command(comp, table.remove(up, 1), 0))
 assert(server.push_rules({all=function() return {Mining={Stone=9}} end}, {}, comp))
-time = time + 0.1; server.storage_tick(); deliver()
+deliver()
 for _ = 1, 40 do time = time + 0.1; server.storage_tick(); deliver() end
-view = status.stock({}, {}, 'guild-A', 'camp-A', true, client)
-assert(view.verified and status.verdict({}, 'Mining', view) == true, 'in-flight count lost its verdict')
+up = {}
 time = time + 1.1
 client.storage_tick()
-assert(#up == 1, 'no fresh count after a count that predates the edit')
+assert(#up == 1, 'no fresh count after a count that may predate the edit')
 package.loaded.caps, package.loaded.net = nil, nil
 print('net limit state: server verdict and per-item flag reach the client panel, expire with the count, never cost it')
