@@ -6,17 +6,30 @@
 ; --world: stand grid is closed. --title: already on the title menu.
 ; --check: syntax/config check only. Pause / ScrollLock abort immediately.
 ; --open-only: already facing the stand in gameplay; hold V without restarting.
+; --any-guild (after the mode): join although PWP_SERVER_GUILD is not set.
 ; Window-relative 16:9 calibration. Never kills the game or edits its saves.
 GAME := 'D:\Steam\steamapps\common\Palworld'
 EXE := GAME '\Pal\Binaries\Win64\Palworld-Win64-Shipping.exe'
 GAME_LOG := GAME '\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log'
 REPORT := A_ScriptDir '\restart-server-last-run.log'
 SERVER := EnvGet('PWP_SERVER') || 'server address not set'  ; real address lives only in the Desktop copy; it is only logged
-; The server's guild id comes from the environment, not from the repo (docs/testing.md).
-; Unset: no guild check, any confirmed guild counts as ready (logged at start).
+; The server's guild id comes from the environment (docs/testing.md); this file
+; holds none since 2026-10-29. The id is not a secret: older commits and
+; docs/g6-guild-isolation-2026-10-19.md still contain it.
+; Unset: the macro refuses to join, unless --any-guild is given; then any
+; confirmed guild counts as ready (logged at start).
 EXPECTED_GUILD := Trim(EnvGet('PWP_SERVER_GUILD'))
 REMOTE := GAME '\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\remote.txt'
-MODE := A_Args.Length ? A_Args[1] : '--stand'
+MODE := '--stand'
+ANY_GUILD := false
+for arg in A_Args {
+    if arg = '--any-guild'
+        ANY_GUILD := true
+    else if A_Index = 1
+        MODE := arg
+    else
+        ExitApp 2
+}
 HELD_VK := 0
 HELD_SC := 0
 if MODE = '--self-test' {
@@ -34,9 +47,16 @@ OnExit ReleaseKeys
 Pause::ExitApp
 ScrollLock::ExitApp
 try {
-    Note('Starting ' MODE)
-    if EXPECTED_GUILD = ''
-        Note('NOTICE: PWP_SERVER_GUILD is not set, so the guild check is off: any confirmed server guild counts as ready.')
+    Note('Starting ' MODE (ANY_GUILD ? ' --any-guild' : ''))
+    ; Before any key: --open-only acts in the world already open, every other
+    ; mode joins the server.
+    if MODE != '--open-only' {
+        gate := GuildGate(EXPECTED_GUILD, ANY_GUILD)
+        if gate != ''
+            throw Error(gate)
+        if EXPECTED_GUILD = ''
+            Note('NOTICE: --any-guild and PWP_SERVER_GUILD is not set, so the guild check is off: any confirmed server guild counts as ready.')
+    }
     if MODE = '--open-only' {
         Focus()
         HELD_VK := 0x56
@@ -239,6 +259,13 @@ Probe() {
     FileMove temp, REMOTE, 1
 }
 
+; '' when the macro may join, else why not.
+GuildGate(expected, anyGuild) {
+    if expected != '' || anyGuild
+        return ''
+    return 'PWP_SERVER_GUILD is not set, so any server guild would count as ready. Set it '
+        . '(setx PWP_SERVER_GUILD "<guild id>", then a new shell) or pass --any-guild after the mode. No key was sent.'
+}
 ClassifyReply(reply) {
     global EXPECTED_GUILD
     if !InStr(reply, 'synchronization: client; ready')
@@ -250,7 +277,7 @@ ClassifyReply(reply) {
     if guild = 'unavailable' || guild = ''
         return 'pending'
     if EXPECTED_GUILD = ''
-        return 'ready' ; PWP_SERVER_GUILD unset: no guild check (noted at start)
+        return 'ready' ; only with --any-guild (GuildGate): no guild check, noted at start
     return guild = EXPECTED_GUILD ? 'ready' : 'mismatch'
 }
 SelfTest() {
@@ -288,6 +315,9 @@ SelfTest() {
     } finally
         EXPECTED_GUILD := saved
     FileAppend 'PASS 13 server readiness cases`n', '*'
+    if GuildGate('', false) = '' || GuildGate('', true) != '' || GuildGate('-1-2-3--4', false) != ''
+        throw Error('Guild gate regression failed.')
+    FileAppend 'PASS 3 guild gate cases`n', '*'
 }
 
 ClickServer() {
