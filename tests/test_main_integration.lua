@@ -248,6 +248,32 @@ test("identified local restart invalidates queued edits and resets writer roles"
     assert(s.timers.role and s.timers.pass and s.timers.ui,"local restart lost recurring work: "..table.concat(s.console,"\n"))
 end)
 
+-- Rocks held off by a Mining limit survive a respawn (same world key: the
+-- rocks still read NotWorkable, review 2026-10-29 P1) but not a real world
+-- change, where the old world's list would only pile up (review 2026-10-29,
+-- performance P3-2). An unreadable key keeps the list.
+test("held rocks survive a respawn and go with a real world change",function()
+    local s=boot(true); s.timers.role.fn()
+    local pc={GetFullName=function() return "LocalController" end}
+    s.api.local_player_controller=function() return pc end
+    local sources=require("item_sources")
+    local function respawn() s.hooks['/Script/Engine.PlayerController:ClientRestart'].before({get=function() return pc end}) end
+    sources.blocked={}
+    respawn() -- first spawn: no earlier key
+    sources.blocked={camp={rock=true}}
+    respawn(); respawn()
+    assert(sources.count("camp")==1,"a same-world respawn dropped the held rocks")
+    s.api.world_key=function() return nil end
+    respawn()
+    assert(sources.count("camp")==1,"an unreadable world key dropped the held rocks")
+    s.api.world_key=function() return "same-world-name" end
+    respawn()
+    assert(sources.count("camp")==1,"the key coming back dropped the held rocks")
+    s.api.world_key=function() return "another-world" end
+    respawn()
+    assert(next(sources.blocked)==nil,"a real world change kept the old world's held rocks")
+end)
+
 test("native Escape ownership suppresses only the duplicate raw panel action",function()
     local s=boot(true)
     local panel,overlay=package.loaded.panel,package.loaded.overlay

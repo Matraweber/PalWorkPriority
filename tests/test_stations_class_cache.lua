@@ -60,4 +60,16 @@ stations.ponds_and_labs_needing(works, nil, 'c2')
 names = 0
 stations.ponds_and_labs_needing(works, keys, 'c2')
 assert(names == 1, 'a call without keys dropped the memo')
-print('stations: pond/lab class read once per work id, failed reads asked again, forget starts over, memo per camp shrinks with the works')
+-- The end of a pass drops the memo of camps it did not reach (unloaded),
+-- keeps the ones it did (engine review 2026-10-29, P3-5).
+stations.forget()
+stations.ponds_and_labs_needing(works, keys, 'c1')
+stations.ponds_and_labs_needing(works, keys, 'c2')
+stations.prune({ c1 = true })
+names = 0
+stations.ponds_and_labs_needing(works, keys, 'c1')
+assert(names == 1, 'prune dropped a visited camp: ' .. names)
+names = 0
+stations.ponds_and_labs_needing(works, keys, 'c2')
+assert(names == 4, 'prune kept a camp no pass reached: ' .. names)
+print('stations: pond/lab class read once per work id, failed reads asked again, forget starts over, memo per camp shrinks with the works, unvisited camps pruned')

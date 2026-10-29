@@ -252,9 +252,28 @@ end
 -- Keys are work GUIDs, so nothing in another world matches them; release()
 -- writes only where a rock still reads NotWorkable; and the next complete
 -- pass drops every key it does not see, while reloaded rocks read Workable.
--- Products are only a cache and are read again where needed.
+-- Products are only a cache and are read again where needed, except those of
+-- held rocks: held_items names them, and the host's "Rocks stopped" went
+-- missing for an interval after every respawn (review 2026-10-29). A work's
+-- product never changes, so keeping them is safe.
 function M.forget()
+    local kept = {}
+    for camp_key, held in pairs(M.blocked) do
+        local known, mine = products[camp_key], {}
+        for key in pairs(held) do
+            if known and known[key] then mine[key] = known[key] end
+        end
+        if next(mine) then kept[camp_key] = mine end
+    end
+    products = kept
+end
+
+-- A real world change (main's world key differs from the last one): the
+-- rocks of the old world are gone with it, so its held list goes too. Not on
+-- a respawn or a same-map reconnect, which keep the world key (forget above).
+function M.forget_world()
     products = {}
+    M.blocked = {}
 end
 
 -- Rocks this module holds switched off in a camp.

@@ -2715,6 +2715,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
   end
   -- Stop writers and invalidate queued work before resolving the new session.
   if async_trial then async_trial.transition() end
+  -- The last spawn's world key, read before begin() clears it.
+  local was_world = session.world
   session.begin(nil)
   store.set_role(nil, session.epoch)
   caps.set_role(nil, session.epoch)
@@ -2758,6 +2760,17 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
             if not ok_step then
                 log.warn("world reset step '" .. step[1] .. "' threw: " ..
                     tostring(err_step))
+            end
+        end
+        -- Rocks held off by a Mining limit survive the reset above, because
+        -- a respawn keeps the world and its rocks still read NotWorkable. A
+        -- world key that really differs (both read) is another world: its
+        -- held list goes with it, so old worlds do not pile up (review
+        -- 2026-10-29). An unreadable key keeps it, which is the safe side.
+        if type(was_world) == "string" and type(now_key) == "string" and was_world ~= now_key then
+            local ok_drop, err_drop = pcall(function() require("item_sources").forget_world() end)
+            if not ok_drop then
+                log.warn("world reset step 'held rocks' threw: " .. tostring(err_drop))
             end
         end
     end

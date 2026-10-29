@@ -45,8 +45,8 @@ local keys = { 'stone', 'ore', 'crystal', 'pit' }
 local values = { stone = MINING, ore = MINING, crystal = MINING, pit = MINING }
 local function limits(t) return function(v) if v == MINING then return t end end end
 -- A clean slate between sections. forget() keeps the held list (see the
--- respawn test at the end), so it is emptied here by hand.
-local function fresh() src.forget(); src.blocked = {} end
+-- respawn test at the end); forget_world() is the real world change.
+local function fresh() src.forget_world() end
 
 -- Main drop: the largest entry.
 assert(src.product(works[1], 'stone').item == 'Stone' and src.product(works[1], 'stone').rock)
@@ -217,6 +217,36 @@ writes = 0
 src.apply('base', {}, {}, {}, limits({ Stone = 10 }), { Stone = 50 }, true)
 assert(src.count('base') == 0 and writes == 0, 'a stale held entry survived a complete pass')
 
+-- held_items still names the item after forget: the host's "Rocks stopped"
+-- must not vanish for an interval after every respawn (review 2026-10-29).
+-- Products of rocks no longer held go with the cache.
+fresh()
+local held_rock, free_rock = rock({ { 'Stone', 50 } }), rock({ { 'CopperOre', 40 } })
+src.apply('base', { held_rock, free_rock }, { 'h', 'f' }, { h = MINING, f = MINING },
+    limits({ Stone = 10, CopperOre = 100 }), { Stone = 50, CopperOre = 1 }, true)
+assert(src.held_items('base').Stone and src.item_stopped('Stone'))
+src.forget()
+assert(src.held_items('base').Stone, 'forget made held_items forget the item')
+assert(src.item_stopped('Stone') and not src.item_stopped('CopperOre'), 'forget changed item_stopped')
+model_reads = 0
+local free_pit = pit('Stone')
+src.apply('base', { held_rock, free_pit }, { 'h', 'p' }, { h = MINING, p = MINING },
+    limits({ Stone = 10 }), { Stone = 50 }, true)
+src.forget()
+src.apply('base', { held_rock, free_pit }, { 'h', 'p' }, { h = MINING, p = MINING },
+    limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(model_reads == 2, 'forget kept the product of a work that was not held')
+
+-- forget_world (main, when the world key really changes): the old world's
+-- held list and products go. A respawn keeps the key and never calls it.
+fresh()
+local old_world = rock({ { 'Stone', 50 } })
+src.apply('old', { old_world }, { 'o' }, { o = MINING }, limits({ Stone = 10 }), { Stone = 50 }, true)
+assert(src.count('old') == 1)
+src.forget_world()
+assert(next(src.blocked) == nil and next(src.held_items('old')) == nil, 'forget_world kept the old held list')
+assert(not src.item_stopped('Stone'))
+
 -- A drop list with one unreadable entry is unreadable as a whole: the entry
 -- it missed may be the largest. Not cached, so it is read again (review
 -- 2026-10-29).
@@ -250,4 +280,4 @@ assert(sourced[MINING] == nil, 'an idle pit counted as a source')
 _, _, _, sourced = src.apply('base', { rock({ { 'Stone', 50 } }) }, { 'r' }, { r = MINING },
     limits({ Stone = 10 }), { Stone = 50 }, true)
 assert(sourced[MINING] == true, 'a stone rock was not reported as a Mining source')
-print('item sources: main drop, rocks only, release on below/removed/release_all, partial lists, unknown type, unreadable products, model class, held list kept by forget, sources reported')
+print('item sources: main drop, rocks only, release on below/removed/release_all, partial lists, unknown type, unreadable products, model class, held list kept by forget, held items named after forget, forget_world, sources reported')
