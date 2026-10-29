@@ -7,10 +7,17 @@
 -- so it reads the cursor and looks it up in the last draw's map of plain
 -- numbers, and asks for one draw when the answer changes.
 --
--- The model: a small layout engine over test_panel_render.lua's widgets.
--- Rows stack in their list, widgets sit at their slot positions, the screen
--- is the panel at DPI scale 1.5 in a window at (200, 100), and IsHovered is
--- true for a visible, hit-testable Border under the cursor, as Slate does.
+-- The first map read row geometry from the engine. Through UE4SS that is an
+-- empty struct copy, so in game the map was never built while this test,
+-- with geometry it made up, passed. Now GetCachedGeometry answers an empty
+-- table here too, and the screen is decided by a small Slate model of the
+-- real shell (unreal/PalWidgetGen, BuildWorkRulesWidgetCommandlet.cpp) that
+-- reads only the widget tree: Root, a centred Backdrop at its slot size,
+-- Body padded 18, the row SizeBoxes at their height overrides, the two
+-- ScrollBoxes stacking their children, Foot 76; collapsed widgets take no
+-- space. IsHovered is true for a visible, hit-testable Border under the
+-- cursor, as Slate does. The viewport is ultrawide (3440x1440 at scale
+-- 4/3, so 2580x1080 in viewport units) to prove the centring.
 local f=assert(io.open(TEST_ROOT..'/tests/test_panel_render.lua','r'))
 local source=f:read('*a'); f:close()
 local start=assert(source:find('\nrules%(1%)\r?\npanel.refresh'))
@@ -27,28 +34,82 @@ local function up(fn,name)
 end
 local rb=assert(up(panel.refresh,'RB'))
 rb.SLICE=math.huge
+local cat={}
+for i=0,59 do cat[#cat+1]='Stone'..string.char(65+i//26)..string.char(65+i%26) end
+local items=package.loaded.items
+items.catalogue_ids=function() return cat, 'ready' end
+items.prepare_picker=function() return {}, 'ready' end
+items.search_picker=function() return {} end
 
-local SCALE, OX, OY = 1.5, 200, 100
-local told_scale = SCALE -- what the geometry reports; a liar later
-local cursor = { X = 0, Y = 0 }
-local PART_Y = { Tabs=0, Title=34, Sub=68, Notice=94, Search=116, Caption=156,
-    Head=180, ItemList=208, RuleList=208, Foot=640 }
-local function origin(w)
-    local p = w.parent
+-- The shell's tree, as the commandlet builds it.
+local HEAD = { {'Tabs',34}, {'Title',34}, {'Sub',26}, {'Notice',22}, {'Search',40},
+    {'Caption',24}, {'Head',28} }
+local function shape()
+    local P = overlay.parts
+    P.Root:AddChild(P.Backdrop)
+    P.Backdrop:AddChild(P.Body)
+    for _, row in ipairs(HEAD) do
+        P[row[1]..'Row'].height = row[2]
+        P.Body:AddChild(P[row[1]..'Row']); P[row[1]..'Row']:AddChild(P[row[1]])
+    end
+    P.Body:AddChild(P.RuleList); P.Body:AddChild(P.ItemList)
+    P.FootRow.height = 76
+    P.Body:AddChild(P.FootRow); P.FootRow:AddChild(P.Foot)
+    P.Backdrop.Slot.size = { X = 1086, Y = 700 }
+end
+local show = overlay.show
+overlay.show = function(...)
+    local fresh = overlay.parts.Root == nil or overlay.parts.Root.dead
+    local ok = show(...)
+    if fresh then shape() end
+    return ok
+end
+local fitted
+function overlay.fit_width()
+    local h = math.max(220, math.min(700, math.floor(overlay.height or 700)))
+    overlay.parts.Backdrop.Slot.size = { X = overlay.width + 36, Y = h }
+    fitted = { overlay.width + 36, h }
+end
+function overlay.backdrop_size() if fitted then return fitted[1], fitted[2] end end
+
+-- Slate, small. Positions in viewport units.
+local VW, VH, SCALE = 2580, 1080, 4 / 3
+local scrolled = 0 -- a list the wheel has scrolled: the map does not know
+local function collapsed(w) return w.visibility == 1 end
+local layout
+local function height(w)
+    if collapsed(w) then return 0 end
+    local P = overlay.parts
+    if w == P.ItemList or w == P.RuleList then
+        local h = (w.Slot and w.Slot.padding and w.Slot.padding.Top) or 0
+        for _, c in ipairs(w.children) do h = h + height(c) end
+        return h
+    end
+    return w.height or 0
+end
+function layout(w)
+    local P, p = overlay.parts, w.parent
     if p == nil then return 0, 0 end
-    local px, py = origin(p)
-    if p.parent == nil then return 0, PART_Y[w.kind] or 0 end
-    if w.kind == 'SizeBox' then
-        local y = 0
+    if w == P.Backdrop then
+        local s, at = w.Slot.size, w.Slot.position or { X = 0, Y = 0 }
+        return VW / 2 + at.X - s.X / 2, VH / 2 + at.Y - s.Y / 2
+    end
+    local x, y = layout(p)
+    if w == P.Body then return x + 18, y + 18 end
+    if p == P.Body or p == P.ItemList or p == P.RuleList then
+        if p ~= P.Body then
+            y = y + ((p.Slot and p.Slot.padding and p.Slot.padding.Top) or 0)
+            if p == P.ItemList then y = y - scrolled end
+        end
         for _, c in ipairs(p.children) do
             if c == w then break end
-            if c.visibility ~= 1 then y = y + (c.height or 0) end
+            y = y + height(c)
         end
-        return px, py + y
+        return x, y
     end
     local at = w.Slot and w.Slot.position
-    if at then return px + at.X, py + at.Y end
-    return px, py
+    if at and p.kind ~= 'SizeBox' and not tostring(p.kind):match('Row$') then return x + at.X, y + at.Y end
+    return x, y
 end
 local function shown(w)
     while w do
@@ -57,54 +118,53 @@ local function shown(w)
     end
     return true
 end
+local cursor = { X = 0, Y = 0 }
 function Widget:IsHovered()
     if self.kind ~= 'Border' or self.visibility ~= 0 or not shown(self) then return false end
+    if self.parent == overlay.parts.Root then return false end
     local size = self.Slot and self.Slot.size
     if not size then return false end
-    local x, y = origin(self)
-    local lx, ly = (cursor.X - OX) / SCALE, (cursor.Y - OY) / SCALE
-    return lx >= x and lx < x + size.X and ly >= y and ly < y + size.Y
+    local x, y = layout(self)
+    return cursor.X >= x and cursor.X < x + size.X and cursor.Y >= y and cursor.Y < y + size.Y
 end
-function Widget:GetCachedGeometry() check(self) return { w = self } end
+-- What UE4SS hands back for FGeometry: a struct copy with nothing in it.
+function Widget:GetCachedGeometry() check(self) return {} end
+
 local native_calls = 0
-local slate = {
-    LocalToAbsolute = function(_, g, at)
+local PC = { pc = true }
+local controller = PC
+package.loaded.palapi.local_player_controller = function() return controller end
+local layout_lib = {
+    GetMousePositionOnViewport = function(_, pc)
+        assert(pc == PC, 'cursor read without the local controller')
         native_calls = native_calls + 1
-        local x, y = origin(g.w)
-        return { X = OX + (x + at.X) * told_scale, Y = OY + (y + at.Y) * told_scale }
+        return { X = cursor.X, Y = cursor.Y }
     end,
-    GetLocalSize = function(_, g)
-        native_calls = native_calls + 1
-        if g.w.unpainted then return { X = 0, Y = 0 } end
-        return { X = 600, Y = 40 }
-    end,
-}
-local layout = {
-    GetMousePositionOnPlatform = function() native_calls = native_calls + 1 return { X = cursor.X, Y = cursor.Y } end,
+    GetViewportSize = function(_, pc) assert(pc == PC); native_calls = native_calls + 1
+        return { X = VW * SCALE, Y = VH * SCALE } end,
+    GetViewportScale = function(_, pc) assert(pc == PC); native_calls = native_calls + 1 return SCALE end,
 }
 local cdo = package.loaded.palapi.cdo
 package.loaded.palapi.cdo = function(path)
-    if path == '/Script/UMG.Default__SlateBlueprintLibrary' then return slate end
-    if path == '/Script/UMG.Default__WidgetLayoutLibrary' then return layout end
+    if path == '/Script/UMG.Default__WidgetLayoutLibrary' then return layout_lib end
     return cdo(path)
 end
 
--- Looked up each time: clear_widgets replaces the cache table.
 local function surface(key) return up(rb.retint, 'stripes')[key] end
 local ROW_HOVER = assert(up(rb.retint, 'ROW_HOVER'))
 local function hovered() return up(rb.retint, 'hover_key') end
 local function lit(key) local b = surface(key) return b and b.colour == ROW_HOVER end
--- The cursor on the middle of a surface, in screen pixels.
+-- The cursor on the middle of a surface, from the Slate model.
 local function point(key)
     local b = assert(surface(key), 'no surface '..key)
-    local x, y = origin(b)
-    cursor = { X = OX + (x + b.Slot.size.X / 2) * SCALE, Y = OY + (y + b.Slot.size.Y / 2) * SCALE }
+    local x, y = layout(b)
+    cursor = { X = x + b.Slot.size.X / 2, Y = y + b.Slot.size.Y / 2 }
 end
 local function tick() now = now + 0.016; panel.hover_tick(); return panel.fill_tick() end
 -- The pointer moved to a surface and left there for three beats, so the
 -- draw spacing is not what is being tested. Answers the draws it cost.
 local function reach(key)
-    if key then point(key) else cursor = { X = OX - 40, Y = OY - 40 } end
+    if key then point(key) else cursor = { X = 5, Y = 5 } end
     local n = 0
     for _ = 1, 3 do if tick() then n = n + 1 end end
     return n
@@ -113,11 +173,14 @@ local function draw() panel.refresh(cfg); panel.refresh(cfg) end
 
 rules(3)
 panel.refresh(cfg); panel.toggle(); draw()
-assert(panel.open)
+assert(panel.open and overlay.parts.Body.parent == overlay.parts.Backdrop, 'fixture: no shell tree')
 panel.set_screen('item'); draw()
+-- The model and the panel agree on where row 0 is before any test of it.
+point('pick0')
+local bx, by = layout(overlay.parts.Backdrop)
+assert(cursor.Y > by + 18 and cursor.X > bx + 18, 'fixture: tile outside the backdrop')
 
 -- A tile the pointer reaches is lit on the next beat, by one draw.
-point('pick0')
 assert(tick(), 'the pointer reached a tile and no draw was asked for')
 assert(hovered() == 'pick0' and lit('pick0'), 'pick0 not lit: '..tostring(hovered()))
 assert(not tick(), 'a second draw for the same tile')
@@ -125,20 +188,18 @@ assert(rb.hmap and #rb.hmap >= 27, 'the map does not hold the page')
 -- Standing still, or moving inside the tile, costs no draw.
 for _ = 1, 30 do cursor.X = cursor.X + 1; assert(not tick(), 'moving inside a tile drew') end
 for _ = 1, 30 do assert(not tick(), 'a still pointer drew') end
--- And a draw with the pointer still keeps the map it has: no native calls.
 -- The first draw after the pointer moved maps it again; the next one, with
 -- the pointer where it was, only reads the cursor.
-panel.refresh(cfg); local per_draw = rb.hmap_calls
+native_calls = 0; panel.refresh(cfg); local per_map = native_calls
 native_calls = 0; panel.refresh(cfg)
 assert(rb.hmap_calls == 0 and native_calls == 1, 'a still pointer rebuilt the map: '..native_calls..' calls')
 -- One draw per tile reached, and the old one goes dark.
 local draws = 0
-for _, key in ipairs({ 'pick1', 'pick2', 'pick5', 'pick4', 'pick7' }) do
-    point(key)
-    for _ = 1, 4 do if tick() then draws = draws + 1 end end
+for _, key in ipairs({ 'pick1', 'pick2', 'pick5', 'pick4', 'pick7', 'pick26' }) do
+    draws = draws + reach(key)
     assert(hovered() == key and lit(key), key..' not lit: '..tostring(hovered()))
 end
-assert(draws == 5, 'five tiles cost '..draws..' draws')
+assert(draws == 6, 'six tiles cost '..draws..' draws')
 assert(not lit('pick0') and not lit('pick4'), 'an old tile stayed lit')
 -- A pointer crossing a new tile on every beat: at most one draw per
 -- HOVER_GAP, and the last tile reached is the one lit.
@@ -150,21 +211,21 @@ assert(hovered() == 'pick26' and lit('pick26'), 'the sweep ended on '..tostring(
 -- The pager and the footer bars are targets too.
 assert(reach('nextbox') == 1 and hovered() == 'next', 'Next: '..tostring(hovered()))
 assert(reach('all') == 1 and hovered() == 'all', 'Show all: '..tostring(hovered()))
+assert(reach('back') == 1 and hovered() == 'back', 'Back: '..tostring(hovered()))
 -- Off every target: one draw puts the highlight out.
 assert(reach(nil) == 1 and hovered() == nil, 'highlight stayed off the panel')
+assert(rb.hover_bad == 0 and not rb.hover_off, 'the map disagreed with the widgets')
 
--- The Limits tab uses the same path: the limit well and Remove.
+-- Show all: a longer list, the same grid.
+assert(panel.apply(cfg, { kind = 'toggle_all' }, -1, true)); draw()
+assert(reach('pick13') == 1 and hovered() == 'pick13', 'Show all tile: '..tostring(hovered()))
+
+-- The Limits tab uses the same path, on a shorter backdrop.
 panel.set_screen('list'); draw()
 assert(reach('capbox1') == 1 and hovered() == 'cap1', 'limit well: '..tostring(hovered()))
 assert(reach('delbox2') == 1 and hovered() == 'del2', 'Remove: '..tostring(hovered()))
-
--- A row Slate has not painted yet has no place on the map, so it costs no
--- draw by mistake; the next draw maps it.
-panel.set_screen('item'); draw()
-local box = rb.runtime.objects[rb.hosts['ItemList:3'].canvas]
-box.unpainted = true; cursor.X = cursor.X + 1; draw()
-for _, r in ipairs(rb.hmap) do assert(r[1] ~= 'pick9', 'an unpainted row was mapped') end
-box.unpainted = nil
+assert(reach('tabhit:tab_new') == 1 and hovered() == 'tab_new', 'a tab: '..tostring(hovered()))
+assert(rb.hover_bad == 0 and not rb.hover_off, 'the map disagreed on the Limits tab')
 
 -- No engine object outlives the draw that recorded it.
 assert(#rb.hrect == 0, 'the draw kept '..#rb.hrect..' widget rects')
@@ -173,9 +234,10 @@ for _, r in ipairs(rb.hmap) do
     assert(type(r[1]) == 'string')
 end
 
--- A map that disagrees with the widgets (here the geometry reports the
--- wrong scale) is switched off, and hover rides the draw as before.
-told_scale = 1.0; cursor.X = cursor.X + 1; draw()
+-- A map that disagrees with the widgets (here the wheel scrolled the list,
+-- which the map does not model) is switched off, and hover rides the draw.
+panel.set_screen('item'); draw()
+scrolled = 25
 local extra = 0
 for i = 1, 60 do
     point('pick'..(i % 27))
@@ -187,18 +249,24 @@ local after = 0
 for i = 1, 30 do point('pick'..(i % 27)); if tick() then after = after + 1 end end
 assert(after == 0, 'a map switched off still asked for '..after..' draws')
 -- Reopening trusts the map again.
-told_scale = SCALE
+scrolled = 0
 panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 assert(not rb.hover_off and rb.hmap, 'reopening left the map off')
 assert(reach('pick8') == 1 and hovered() == 'pick8', 'after reopening: '..tostring(hovered()))
 
+-- No local controller: off at once, never retried.
+controller = nil
+point('pick6'); tick()
+assert(rb.hover_off, 'hover follow ran without a controller')
+controller = PC
+panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 -- A build where the cursor cannot be read: off at once, never retried.
-layout.GetMousePositionOnPlatform = function() error('no such function') end
+layout_lib.GetMousePositionOnViewport = function() error('no such function') end
 point('pick6'); tick()
 assert(rb.hover_off, 'an unreadable cursor kept being polled')
 
 assert(stale == 0)
-print(string.format('hover map: %d native calls per picker draw, %d draws for a %d beat sweep, '
-    .. '%d extra draws while a wrong map was on', per_draw, swept, beats, extra))
+print(string.format('hover map: %d native calls per map, %d draws for a %d beat sweep, '
+    .. '%d extra draws while a wrong map was on', per_map, swept, beats, extra))
 ]=], '@panel-hover-follow-fixture'))()
-print('PASS panel hover follow: one draw per target reached, none when still, Limits tab, unpainted rows, wrong map off')
+print('PASS panel hover follow: map from layout numbers, one draw per target, none when still, Show all, Limits tab, wrong map off')

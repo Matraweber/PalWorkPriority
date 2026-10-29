@@ -1058,7 +1058,11 @@ local function row_host(i, which, height, reserve)
     end)
     if not ok then return nil end
 
-    RB.hosts[i] = { box = RB.runtime:remember(box), canvas = RB.runtime:remember(inner) }
+    -- Height and append order, for the pointer's map (M.hover_map): a
+    -- ScrollBox stacks its children in the order they were added.
+    RB.host_seq = (RB.host_seq or 0) + 1
+    RB.hosts[i] = { box = RB.runtime:remember(box), canvas = RB.runtime:remember(inner),
+        h = height or LINE, seq = RB.host_seq }
     RB.vis["h:" .. i] = reserve and 1 or nil
     return inner
 end
@@ -4418,17 +4422,72 @@ end
 -- and the map is off until the panel opens again, which is how hover worked
 -- before.
 --
--- Built at the end of a draw from that draw's widgets, which are dropped
--- here. Only numbers and key names outlive the callback.
+-- Worked out from the panel's own layout, never from engine geometry. The
+-- first version asked each row for GetCachedGeometry, and through UE4SS
+-- that comes back as an empty struct copy (FGeometry's fields are not
+-- reflected): every row read as 0x0 at 0,0 and the map was never built
+-- (in game, 2026-10-29). The shell's layout is fixed by its commandlet
+-- (unreal/PalWidgetGen, BuildWorkRulesWidgetCommandlet.cpp): a Backdrop
+-- centred on the viewport canvas at offset 0,0, sized by overlay.fit_width;
+-- Body inside it, padded BODY_PAD; then the chrome rows (RB.rows), the two
+-- lists and the Foot row, stacked top to bottom, each as tall as its height
+-- override and nothing when collapsed. Every height and visibility in that
+-- stack is one this file wrote, so the stack is summed here from RB.rows,
+-- RB.hosts and RB.vis. Units are the viewport's DPI-scaled ones, the same as
+-- GetMousePositionOnViewport. A list scrolled by the wheel is not modelled;
+-- the disagreement count catches it.
+--
+-- Built at the end of a draw. The widgets the draw recorded are dropped
+-- here; only numbers and key names outlive the callback.
 RB.hmap, RB.hmap_keys, RB.hrect = nil, {}, {}
 RB.hover_bad, RB.HOVER_BAD_MAX, RB.HOVER_GAP = 0, 8, 0.033
+RB.BODY_PAD, RB.FOOT_ROW = 18, { "Foot", 76 }
 function M.hover_map()
     local rects = RB.hrect
     RB.hrect = {}
     RB.hmap, RB.hmap_keys = nil, {}
     if RB.hover_off or #rects == 0 then return 0 end
-    local lib = api.cdo("/Script/UMG.Default__SlateBlueprintLibrary")
-    if not lib then RB.hover_off = true return 0 end
+    local parts = overlay.parts
+    local bw, bh
+    if overlay.backdrop_size then bw, bh = overlay.backdrop_size() end
+    if not (parts and bw and bh) then return 0 end
+    local vw, vh = RB.viewport()
+    if vw == nil then RB.hover_off = true return 2 end
+
+    -- Where each row's canvas starts, in the order Body stacks them.
+    local top, unknown = {}, false
+    local x0 = vw / 2 - bw / 2 + RB.BODY_PAD
+    local y = vh / 2 - bh / 2 + RB.BODY_PAD
+    local function chrome(row)
+        local shown = RB.vis["chrome:" .. row[1]]
+        if shown == nil then unknown = true end
+        if shown == 0 then
+            if parts[row[1]] ~= nil then top[parts[row[1]]] = y end
+            y = y + row[2]
+        end
+    end
+    local function list(which)
+        y = y + ((RB.pads or {})[which] or 0)
+        local mine = {}
+        for k in pairs(RB.hosts) do
+            if tostring(k):sub(1, #which + 1) == which .. ":" then mine[#mine + 1] = k end
+        end
+        table.sort(mine, function(p, q) return RB.hosts[p].seq < RB.hosts[q].seq end)
+        for _, k in ipairs(mine) do
+            local h = RB.hosts[k]
+            if RB.vis["h:" .. k] ~= 1 then
+                local canvas = RB.runtime.objects[h.canvas]
+                if canvas ~= nil then top[canvas] = y end
+                y = y + h.h
+            end
+        end
+    end
+    for _, row in ipairs(RB.rows) do chrome(row) end
+    list("RuleList")
+    list("ItemList")
+    chrome(RB.FOOT_ROW)
+    if unknown then return 2 end
+
     -- The hit key each surface answers for: its face, or the slab itself
     -- when the slab carries the key.
     local key_of = {}
@@ -4436,44 +4495,20 @@ function M.hover_map()
         local face = tile_face[key] or stripes[key]
         if face ~= nil then key_of[face] = key end
     end
-    local origin, map, keys, calls = {}, {}, {}, 0
-    local sx, sy
-    local ok = pcall(function()
-        for _, r in ipairs(rects) do
-            local key = key_of[r[1]]
-            local o = key and origin[r[2]]
-            if key and o == nil then
-                -- One row's place, from the geometry Slate last painted it
-                -- with. A row not painted yet has no size, and its targets
-                -- wait for the next draw. The scale is the panel's, so it
-                -- is asked of the first painted row only.
-                local g = r[2]:GetCachedGeometry()
-                local at = lib:LocalToAbsolute(g, { X = 0, Y = 0 })
-                local size = lib:GetLocalSize(g)
-                calls = calls + 3
-                local x, y = tonumber(at.X), tonumber(at.Y)
-                local painted = x and y and (tonumber(size.X) or 0) > 0 and (tonumber(size.Y) or 0) > 0
-                if painted and sx == nil then
-                    local far = lib:LocalToAbsolute(g, { X = 100, Y = 100 })
-                    calls = calls + 1
-                    sx = ((tonumber(far.X) or 0) - x) / 100
-                    sy = ((tonumber(far.Y) or 0) - y) / 100
-                end
-                o = (painted and sx > 0 and sy > 0) and { x, y } or false
-                origin[r[2]] = o
-            end
-            if o then
-                local x1, y1 = o[1] + r[3] * sx, o[2] + r[4] * sy
-                map[#map + 1] = { key, x1, y1, x1 + r[5] * sx, y1 + r[6] * sy }
-                keys[key] = true
-            end
+    local map, keys = {}, {}
+    for _, r in ipairs(rects) do
+        local key, o = key_of[r[1]], top[r[2]]
+        if key and o then
+            local x1, y1 = x0 + r[3], o + r[4]
+            map[#map + 1] = { key, x1, y1, x1 + r[5], y1 + r[6] }
+            keys[key] = true
         end
-    end)
-    if ok and #map > 0 then
+    end
+    if #map > 0 then
         RB.hmap, RB.hmap_keys = map, keys
         RB.hover_seen = RB.hover_x and RB.hover_lookup(RB.hover_x, RB.hover_y)
     end
-    return calls
+    return 2
 end
 
 function RB.hover_lookup(x, y)
@@ -4483,14 +4518,34 @@ function RB.hover_lookup(x, y)
     return nil
 end
 
--- Desktop pixels, the space LocalToAbsolute answers in. Nothing kept: the
--- class default is the one object api.cdo may cache.
+-- The viewport in its DPI-scaled units: 1920x1080 on a 1280x720 screen at
+-- scale 0.667 (measured 2026-10-29). Nothing kept: the class default is the
+-- one object api.cdo may cache, and the controller is this callback's.
+function RB.viewport()
+    local lib = api.cdo("/Script/UMG.Default__WidgetLayoutLibrary")
+    local pc = api.local_player_controller and api.local_player_controller()
+    if not (lib and pc) then return nil end
+    local w, h
+    pcall(function()
+        local size = lib:GetViewportSize(pc)
+        local scale = tonumber(lib:GetViewportScale(pc))
+        if scale and scale > 0 then
+            w, h = tonumber(size.X), tonumber(size.Y)
+            w, h = w and w / scale, h and h / scale
+        end
+    end)
+    if not (w and h and w > 0 and h > 0) then return nil end
+    return w, h
+end
+
+-- The pointer in the same units as the map.
 function RB.cursor()
     local lib = api.cdo("/Script/UMG.Default__WidgetLayoutLibrary")
-    if not lib then return nil end
+    local pc = api.local_player_controller and api.local_player_controller()
+    if not (lib and pc) then return nil end
     local x, y
     pcall(function()
-        local at = lib:GetMousePositionOnPlatform()
+        local at = lib:GetMousePositionOnViewport(pc)
         x, y = tonumber(at.X), tonumber(at.Y)
     end)
     if x == nil or y == nil then return nil end
@@ -4900,20 +4955,6 @@ function M.refresh(cfg)
     -- screen and the cursor blinked out for one frame.
     was_sel = order[sel]
 
-    -- The pointer's map for the fast loop, from this draw's widgets. Kept
-    -- while the pointer stands still on the same screen: no lookup reads it
-    -- then, and a draw the pointer asks for has moved, so it rebuilds.
-    local tm = os.clock()
-    local sig = mode .. ":" .. page .. ":" .. RB.rule_page .. ":" .. #order
-    if RB.hmap == nil or RB.hmap_sig ~= sig
-        or RB.hmap_x ~= RB.hover_x or RB.hmap_y ~= RB.hover_y then
-        RB.hmap_calls = M.hover_map()
-        RB.hmap_sig, RB.hmap_x, RB.hmap_y = sig, RB.hover_x, RB.hover_y
-    else
-        RB.hrect, RB.hmap_calls = {}, 0
-    end
-    RB.hmap_ms = os.clock() - tm
-
     -- Centred vertically from what was actually drawn.
     --
     -- The height is only known once the screen has been drawn, so a screen
@@ -4945,6 +4986,24 @@ function M.refresh(cfg)
     end
 
     ensure_backdrop(rows)
+
+    -- The pointer's map for the fast loop, after the backdrop has this
+    -- draw's size. Kept while the pointer stands still on the same screen:
+    -- no lookup reads it then, and a draw the pointer asks for has moved, so
+    -- it rebuilds.
+    local tm = os.clock()
+    local bw, bh
+    if overlay.backdrop_size then bw, bh = overlay.backdrop_size() end
+    local sig = mode .. ":" .. page .. ":" .. RB.rule_page .. ":" .. #order
+        .. ":" .. tostring(bw) .. "x" .. tostring(bh)
+    if RB.hmap == nil or RB.hmap_sig ~= sig
+        or RB.hmap_x ~= RB.hover_x or RB.hmap_y ~= RB.hover_y then
+        RB.hmap_calls = M.hover_map()
+        RB.hmap_sig, RB.hmap_x, RB.hmap_y = sig, RB.hover_x, RB.hover_y
+    else
+        RB.hrect, RB.hmap_calls = {}, 0
+    end
+    RB.hmap_ms = os.clock() - tm
     local tb = os.clock()
     if editing then ensure_amount_box() end
     blank_unused()
