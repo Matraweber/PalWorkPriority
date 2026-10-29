@@ -60,10 +60,60 @@ local stale = {pass_id=1, last_capped={Mining={pass=1, camps=1, capped=1, unknow
     last_storage_by_camp={a={pass=1, guild='g', verified=true}}}
 assert(status.verdict(stale, 'Mining', {verified=true, guild='g', scope='camp', camp='a'}) == nil)
 
--- The host keeps its own path unchanged.
+-- Without per-camp records the host falls back to the server-wide count.
 role(false)
 reached, partly, bases = status.verdict(stale, 'Mining', {verified=true, guild='g', scope='camp', camp='a'})
 assert(reached == true and partly == nil and bases == 1)
+
+-- 2026-10-29 round 2: host, camp scope (the default), two bases. The
+-- server-wide count covers both, so the host used to say "No count yet" for
+-- every group row; the per-camp record judges each base by itself.
+local two = {pass_id=4, last_capped={Deforest={pass=4, camps=2, capped=1, unknown=0}},
+    last_capped_by_camp={a={pass=4, works={Deforest=true, Mining='unknown'}},
+        b={pass=4, works={Deforest=false, Mining=false}}, x={pass=4, works={Deforest=true}}},
+    last_storage_by_camp={a={pass=4, guild='g', verified=true}, b={pass=4, guild='g', verified=true},
+        x={pass=4, guild='other', verified=true}}}
+local at_a = {verified=true, guild='g', scope='camp', camp='a'}
+local at_b = {verified=true, guild='g', scope='camp', camp='b'}
+reached, partly, bases = status.verdict(two, 'Deforest', at_a)
+assert(reached == true and partly == nil and bases == 1, 'host camp a: '..tostring(reached))
+reached, partly, bases = status.verdict(two, 'Deforest', at_b)
+assert(reached == false and partly == nil and bases == 1, 'host camp b: '..tostring(reached))
+assert(status.verdict(two, 'Mining', at_a) == nil, 'an unknown camp read became a verdict')
+assert(status.verdict(two, 'Mining', at_b) == false)
+assert(status.verdict(two, 'Deforest', {verified=false, guild='g', scope='camp', camp='a'}) == nil)
+-- Guild scope counts the guild's two bases, never the other guild's x.
+reached, partly, bases = status.verdict(two, 'Deforest', {verified=true, guild='g', scope='guild'})
+assert(reached == false and partly == 1 and bases == 2, 'guild scope: '..tostring(partly)..'/'..tostring(bases))
+-- A camp of another guild, or a record of an older pass, is no verdict.
+assert(status.verdict(two, 'Deforest', {verified=true, guild='g', scope='camp', camp='x'}) == nil)
+two.last_capped_by_camp.a.pass = 3
+assert(status.verdict(two, 'Deforest', at_a) == nil, 'old pass counted on the host')
+two.last_capped_by_camp.a.pass = 4
+
+-- item_stopped(item, view) on the host: only the view's guild and scope.
+local saved_scheduler = package.loaded.scheduler
+package.loaded.scheduler = two
+local rocks = {a={Stone=true}, b={Ore=true}, x={Sulfur=true}}
+role(false, nil, {held_items=function(camp) return rocks[camp] or {} end,
+    item_stopped=function() return true end})
+assert(status.item_stopped('Stone', at_a) == true and status.item_stopped('Ore', at_a) == false,
+    'host item_stopped ignored the base')
+assert(status.item_stopped('Ore', at_b) == true and status.item_stopped('Stone', at_b) == false)
+local whole_guild = {verified=true, guild='g', scope='guild'}
+assert(status.item_stopped('Stone', whole_guild) and status.item_stopped('Ore', whole_guild))
+assert(status.item_stopped('Sulfur', whole_guild) == false, 'another guild\'s rocks reported on the host')
+assert(status.item_stopped('Stone', {guild='g', scope='camp', camp='x'}) == false)
+assert(status.item_stopped('Stone', {scope='guild'}) == false, 'no guild means unknown')
+-- The one-argument call keeps its every-camp answer.
+assert(status.item_stopped('Sulfur') == true)
+-- An item_sources without held_items answers only while unambiguous.
+local blocked = {a={rock1=true}}
+role(false, nil, {blocked=blocked, item_stopped=function(item) return item == 'Stone' end})
+assert(status.item_stopped('Stone', at_a) == true and status.item_stopped('Ore', at_a) == false)
+blocked.x = {rock2=true}
+assert(status.item_stopped('Stone', at_a) == false, 'rocks held elsewhere made the answer ambiguous')
+package.loaded.scheduler = saved_scheduler
 
 -- server_limits: exactly the guild and scope of the view being sent.
 local cfg = {}

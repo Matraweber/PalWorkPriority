@@ -404,9 +404,15 @@ end
 M.OLD_CLIENT_NOTICE = "Pal Work Priority: this server runs a newer version of the mod (0.5.0). " ..
     "Your copy is older, so your priority and limit changes are not applied here. " ..
     "Please update Pal Work Priority."
+-- A client whose Hello names a higher schema is the newer one (round 2,
+-- 2026-10-29): telling it to update was wrong advice.
+M.NEWER_CLIENT_NOTICE = "Pal Work Priority: this server runs an older Pal Work Priority. " ..
+    "Your copy is newer, so your priority and limit changes are not applied here. " ..
+    "Ask the host to update the server."
 local told_old = {}
 
-function M.notify_old_client(comp)
+-- newer: the client's Hello named a higher schema than this server's.
+function M.notify_old_client(comp, newer)
     if api.has_authority() ~= true or not api.valid(comp) then return false end
     local name = full_name(comp)
     if not name or told_old[name] then return false end
@@ -424,10 +430,12 @@ function M.notify_old_client(comp)
         local util = api.cdo("/Script/Pal.Default__PalUtility")
         local world = FindFirstOf("World")
         if not (api.valid(util) and api.valid(world)) then error("utility or world missing") end
-        util:SendSystemToPlayerChat(world, M.OLD_CLIENT_NOTICE,
+        util:SendSystemToPlayerChat(world, newer and M.NEWER_CLIENT_NOTICE or M.OLD_CLIENT_NOTICE,
             { { A = uid.A, B = uid.B, C = uid.C, D = uid.D } })
     end)
-    if ok then
+    if ok and newer then
+        log.say("told a client with a newer Pal Work Priority that this server is older (system chat)")
+    elseif ok then
         log.say("told a client with an older Pal Work Priority to update (system chat)")
     else
         log.warn("could not tell an old client to update: " .. tostring(why))
@@ -755,6 +763,18 @@ local function clear_stock_view(keep_metadata)
     if stock.receiver then wire.invalidate(stock.receiver, 'S') end
 end
 
+-- The guild's limits changed (an R snapshot committed or a Set/Clear was
+-- acknowledged). The server's verdict in the cached count described the
+-- old limits: drop it, keep the totals, and ask for a fresh count soon. A
+-- count already in flight may have been built before the edit, so its
+-- verdict is dropped on arrival too (round 2, 2026-10-29: the panel showed
+-- a stale "Limit reached" for up to ten seconds after an edit).
+local function limits_changed()
+    if stock.view and stock.view.storage then stock.view.storage.limits = nil end
+    if stock.pending then stock.pending.stale_limits = true end
+    if stock.open then stock.due = math.max(now() + COALESCE, (stock.last_sent or -1) + 1) end
+end
+
 function M.set_storage_open(open)
     open = open == true
     if stock.open == open then return end
@@ -1071,11 +1091,14 @@ local function receive_stock_state(message)
     -- known for this session after the count expires.
     if view.limits and view.limits.per_item ~= nil then M.server_item_limits = view.limits.per_item end
     event.epoch = M.epoch
+    local stale = pending.stale_limits == true
+    if stale then view.limits = nil end
     -- Retain only plain selector metadata across count expiry/timeouts, never
     -- a reference to the expired totals. Lifecycle/selection clears both.
     state.metadata = {epoch=event.epoch, guild=event.guild, session=event.session,
         client_session=event.client_session, storage={scope=view.scope,camp=view.camp,choices=view.choices}}
     state.view, state.pending, state.due = event, nil, now()+10
+    if stale then state.due = math.max(now() + COALESCE, (state.last_sent or -1) + 1) end
     return true
 end
 
@@ -1122,7 +1145,8 @@ function M.receive_command(comp, command, value)
         if #p ~= 4 or tonumber(p[2]) ~= M.SCHEMA or tonumber(p[3]) ~= M.WORKS
             or not wire.token(p[4], 64) then
             M.to_client(comp, PREFIX .. "Incompatible|" .. M.SCHEMA .. "|" .. M.WORKS)
-            M.notify_old_client(comp)
+            local schema = wire.integer(p[2], 1, 2147483647)
+            M.notify_old_client(comp, schema ~= nil and schema > M.SCHEMA)
             return false
         end
         local guild = M.guild_of_sender(comp)
@@ -1731,6 +1755,7 @@ function M.receive_state(message)
                 M.save_failures[stream] = math.max(M.save_failures[stream] or 0, id)
                 if wire.ready(receiver) then set_status("ready") end
             end
+            if not entry.cell then limits_changed() end
             notify_edit(entry, entry.unsaved and "applied_unsaved" or "acknowledged",
                 entry.unsaved and "save_failed" or "awaiting_snapshot")
             settle(entry)
@@ -1769,6 +1794,7 @@ function M.receive_state(message)
             return false
         end
         M.rules = event.rows
+        limits_changed()
     end
     if wire.ready(receiver) then set_status("ready") end
     for _, entry in pairs(requests) do settle(entry) end

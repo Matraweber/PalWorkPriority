@@ -179,6 +179,45 @@ function M.decode_snapshot(text)
     return decode(text)
 end
 
+-- A guild's view (config defaults if configured, shared rows, its own rows)
+-- reaches its players in one snapshot of at most MAX_RULES rows. A file
+-- holding more still loads (DECISIONS 2026-10-28: refusing it would make
+-- every limit unavailable), but say so: that guild's players stay
+-- "connecting" until limits are removed.
+local function warn_oversized(data)
+    local shared, defaults = data[M.ANY_GUILD], type(config_source)=='table' and config_source.work_caps or nil
+    local function size(own)
+        local seen, n = {}, 0
+        for _, works in ipairs({defaults or {}, shared or {}, own or {}}) do
+            if type(works)=='table' then
+                for work, items in pairs(works) do
+                    if type(items)=='table' then
+                        for item, ceiling in pairs(items) do
+                            local key = tostring(work) .. '|' .. tostring(item)
+                            if ceiling == false then
+                                if seen[key] then seen[key], n = nil, n - 1 end
+                            elseif not seen[key] then seen[key], n = true, n + 1 end
+                        end
+                    end
+                end
+            end
+        end
+        return n
+    end
+    local function warn(who, n)
+        log.warn(string.format("%s holds %d limits, more than %d: its players' panels stay "
+            .. "\"Connecting to server...\" until limits are removed", who, n, M.MAX_RULES))
+    end
+    local n = size(nil)
+    if n > M.MAX_RULES then warn("every guild (shared limits)", n) return end
+    for guild, own in pairs(data) do
+        if guild ~= M.ANY_GUILD then
+            n = size(own)
+            if n > M.MAX_RULES then warn("guild " .. tostring(guild), n) end
+        end
+    end
+end
+
 function M.load(path)
     if settings_gate.blocked() then return 0,'settings_recovering' end
     if activation_busy() then return 0 end
@@ -196,6 +235,7 @@ function M.load(path)
         dirty, M.state = true, "saving"
         log.warn("recovered limits from " .. meta.source)
     end
+    pcall(warn_oversized, M.data)
     return decoded.count
 end
 
