@@ -54,7 +54,7 @@ The server needs UE4SS too. On GPortal you switch it on in the server panel's mo
 
 Server settings live in `config.lua` inside that `PalWorkPriority` folder on the server. Restart the server after a change. The in-game options page has no effect on a server.
 
-The server and every player need exactly 0.5.0. Mixed versions are refused and nothing is written. A 0.4.1 player gets a chat message asking them to update, and a 0.5.0 player on an older server sees "Server version incompatible" in the panel. On a server with another Pal Work Priority version the stand stays read-only until both match. Workshop players get updates on their own, so update the server first or on the same day. A player with the mod on a server without it gets the normal Monitoring Stand back after about a minute.
+The server and every player need exactly 0.5.0. Mixed versions are refused and nothing is written. A 0.4.1 player gets a chat message asking them to update, and a 0.5.0 player on an older server sees "Server version incompatible" in the panel. On a server with another Pal Work Priority version, or one whose settings are locked, the stand stays read-only. Its cells show `?` and the legend says to update both. Workshop players get updates on their own, so update the server first or on the same day. A player with the mod on a server without it gets the normal Monitoring Stand back after about a minute.
 
 To remove the mod from a server, set `enabled = false` in the server's `config.lua` and restart the server. Check that its `priority.log` says the work permissions were verified, then stop the server and delete the folder.
 
@@ -67,7 +67,7 @@ left click:   X → 5 → 4 → 3 → 2 → 1 → X
 right click:  1 → 2 → 3 → 4 → 5 → X → 1
 ```
 
-You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5. The legend under the stand lists the keys and the marks. `*` is still being sent, `!` was not saved and `?` is unknown. It also reminds you that 1 wraps to X and that a Pal with all jobs equal is left to the game.
+You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5. The legend under the stand lists the clicks and keys. It also reminds you that 1 wraps to X and that a Pal with all jobs equal is left to the game. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
 
 A dash means the Pal cannot do that job at all. It is not a priority.
 
@@ -170,9 +170,9 @@ Commands go into chat. Their replies are written to `priority.log` in the mod fo
 2. **Is the mod in the right place?** You need `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\Scripts\main.lua` and `<Palworld>\Pal\Content\Paks\LogicMods\PalWorkPriority.pak`. If they sit in an extra folder named after the zip, extract again with exactly `<Palworld>` as the target.
 3. **Did it load?** Open `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log`. It should say `Pal Work Priority 0.5.0 loaded`.
 4. **No numbers on the stand?** The mod is not running. Go through steps 1 to 3.
-5. **Numbers, but a click changes nothing and the legend says the pak is missing?** Copy `PalWorkPriority.pak` back to `<Palworld>\Pal\Content\Paks\LogicMods\` or reinstall.
-6. **Two copies?** Use either the Workshop or the manual zip. The mod warns when it finds a switched-on Workshop copy of another version, and when it finds a second UE4SS, for example one Vortex added under `<Palworld>\Pal\Binaries\Win64`. Remove that one.
-7. **"Server version incompatible"?** The server and every player need exactly 0.5.0. Until then the stand is read-only.
+5. **Numbers, but the stand cannot be edited and the legend says the pak is missing?** Copy `PalWorkPriority.pak` back to `<Palworld>\Pal\Content\Paks\LogicMods\` or reinstall.
+6. **Two copies?** Use either the Workshop or the manual zip. The mod warns when it finds a switched-on Workshop copy of another version. It also warns when it finds `<Palworld>\Pal\Binaries\Win64\dwmapi.dll`. If that is an old UE4SS, for example one Vortex added, remove it or switch off UE4SS in Vortex.
+7. **"Server version incompatible"?** The server and every player need exactly 0.5.0. Until then the stand is read-only, its cells show `?` and the legend says to update both.
 8. **A Pal ignores its numbers?** If all its jobs have the same number, it is left to the game. Also check the panel does not say "Mod off" or "Test mode".
 9. **A setting does nothing?** Restart the game. On a server, change the server's `config.lua`. Settings changed with Alt+F10, Alt+F11 or Alt+F12 last only until you restart.
 

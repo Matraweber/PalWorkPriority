@@ -122,9 +122,10 @@ reset notice, and controller input after the latest fixes.
   item and say "Saved" or "Sent to the server", and warn when storage already
   holds the new limit. A search with no results says so.
 - The Monitoring Stand legend says what left and right click do, that 1
-  wraps to X, that a Pal with all jobs equal is left to the game, the number
-  keys, the marks (* sending, ! not saved, ? unknown) and Alt+F1. It now has
-  a dark backing, so it stays readable on grass.
+  wraps to X, the number keys, that a Pal with all jobs equal is left to the
+  game, and Alt+F1. It now has a dark backing, so it stays readable on grass.
+  The 1-5 scale and the marks (* sending, ! not saved, ? unknown) are in the
+  tooltip of every cell.
 - The item list no longer counts Pal souls, Ancient Civilization Parts, AI
   Core, Carbon Fiber and similar items as Mining or Lumbering products.
 - The item search and "Show all" no longer crash the game with item mods
@@ -137,8 +138,8 @@ reset notice, and controller input after the latest fixes.
   ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
   replace or delete the manual files when that copy updates.
 - The mod warns when its pak is missing and when it finds a second UE4SS.
-  Without the pak the stand still shows numbers, but clicks do not change
-  them and the legend says the pak is missing.
+  Without the pak the stand still shows numbers, but it cannot be edited and
+  the legend says the pak is missing.
 
 **Controller**
 - The Monitoring Stand and the Production Limits panel work with a
@@ -158,8 +159,7 @@ reset notice, and controller input after the latest fixes.
   yet". This is why the server and every player need exactly 0.5.0.
 - A player with the mod on a server without it gets the normal Monitoring
   Stand back after about a minute, instead of a grid of "?". On a server with
-  another Pal Work Priority version the stand stays read-only until both
-  match.
+  another version, or with its settings locked, the stand stays read-only.
 
 ### Limits in 0.5.0
 
