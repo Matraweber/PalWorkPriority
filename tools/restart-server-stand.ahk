@@ -12,7 +12,9 @@ EXE := GAME '\Pal\Binaries\Win64\Palworld-Win64-Shipping.exe'
 GAME_LOG := GAME '\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\priority.log'
 REPORT := A_ScriptDir '\restart-server-last-run.log'
 SERVER := EnvGet('PWP_SERVER') || 'server address not set'  ; real address lives only in the Desktop copy; it is only logged
-EXPECTED_GUILD := '-357895952-1262986004-1392804764--410933938'
+; The server's guild id comes from the environment, not from the repo (docs/testing.md).
+; Unset: no guild check, any confirmed guild counts as ready (logged at start).
+EXPECTED_GUILD := Trim(EnvGet('PWP_SERVER_GUILD'))
 REMOTE := GAME '\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\remote.txt'
 MODE := A_Args.Length ? A_Args[1] : '--stand'
 HELD_VK := 0
@@ -33,6 +35,8 @@ Pause::ExitApp
 ScrollLock::ExitApp
 try {
     Note('Starting ' MODE)
+    if EXPECTED_GUILD = ''
+        Note('NOTICE: PWP_SERVER_GUILD is not set, so the guild check is off: any confirmed server guild counts as ready.')
     if MODE = '--open-only' {
         Focus()
         HELD_VK := 0x56
@@ -132,7 +136,7 @@ try {
     DllCall('keybd_event', 'UChar', 0x56, 'UChar', 0x2F, 'UInt', 2, 'UPtr', 0)
     HELD_VK := 0
     Sleep 3000
-    Note('SERVER_READY endpoint=' SERVER ' guild=' EXPECTED_GUILD ' pid=' newPid)
+    Note('SERVER_READY endpoint=' SERVER ' guild=' (EXPECTED_GUILD = '' ? 'unchecked' : EXPECTED_GUILD) ' pid=' newPid)
     Note('Stand-open key sent. Visual confirmation is required; this is not an edit/pass receipt.')
 } catch as err {
     Note('STOPPED: ' err.Message)
@@ -243,13 +247,18 @@ ClassifyReply(reply) {
     if !RegExMatch(reply, 'server guild: ([^\r\n]+)', &m)
         return 'pending'
     guild := Trim(m[1])
-    if guild = 'unavailable'
+    if guild = 'unavailable' || guild = ''
         return 'pending'
+    if EXPECTED_GUILD = ''
+        return 'ready' ; PWP_SERVER_GUILD unset: no guild check (noted at start)
     return guild = EXPECTED_GUILD ? 'ready' : 'mismatch'
 }
 SelfTest() {
     global EXPECTED_GUILD
+    saved := EXPECTED_GUILD
     prefix := 'authority: client; server owns assignments`nsynchronization: client; ready`n'
+    ; With a configured guild (a made-up id, never the server's).
+    EXPECTED_GUILD := '-1-2-3--4'
     cases := [
         ['', 'pending'],
         ['PWP_READY session=0 role=authority settings=available', 'pending'],
@@ -261,10 +270,24 @@ SelfTest() {
         [prefix 'server guild: ' EXPECTED_GUILD 'extra', 'mismatch'],
         ['synchronization: client; ready`nserver guild: ' EXPECTED_GUILD, 'pending']
     ]
-    for row in cases
-        if ClassifyReply(row[1]) != row[2]
-            throw Error('Readiness regression failed: ' row[2])
-    FileAppend 'PASS 9 server readiness cases`n', '*'
+    ; PWP_SERVER_GUILD unset: any confirmed guild is ready, unconfirmed still waits.
+    unchecked := [
+        [prefix 'server guild: wrong', 'ready'],
+        [prefix 'server guild: unavailable', 'pending'],
+        [prefix, 'pending'],
+        ['synchronization: client; ready`nserver guild: wrong', 'pending']
+    ]
+    try {
+        for row in cases
+            if ClassifyReply(row[1]) != row[2]
+                throw Error('Readiness regression failed: ' row[2])
+        EXPECTED_GUILD := ''
+        for row in unchecked
+            if ClassifyReply(row[1]) != row[2]
+                throw Error('Readiness regression failed without a guild: ' row[2])
+    } finally
+        EXPECTED_GUILD := saved
+    FileAppend 'PASS 13 server readiness cases`n', '*'
 }
 
 ClickServer() {

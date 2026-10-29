@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -143,6 +144,27 @@ class ReleaseTests(unittest.TestCase):
                 for name in archive.namelist():
                     self.assertNotIn(Path(name).name, ("caps.txt", "priorities.txt", "remote.txt", "priority.log", "accidental.lua", ".workshop.json", "main.lua.bak"))
                     self.assertEqual(archive.getinfo(name).date_time, release.FIXED_TIME)
+
+    def test_default_output_is_the_folder_workshop_upload_reads(self):
+        # tools/workshop_upload.py prepare reads build/release-<version>/.
+        expected = self.root / "build" / "release-1.2.3"
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = release.main(["--root", str(self.root), "--pak", str(self.pak), "--pak-sha256", self.expected])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(sorted(p.name for p in expected.iterdir()),
+                         ["PalWorkPriority-1.2.3-manual.zip", "PalWorkPriority-1.2.3-release.json",
+                          "PalWorkPriority-1.2.3-workshop.zip"])
+        self.assertFalse((self.root / "build" / "release").exists(), "the old unversioned default is gone")
+        self.assertEqual(release.build(self.root, None, self.pak, self.expected),
+                         json.loads((expected / "PalWorkPriority-1.2.3-release.json").read_text(encoding="utf-8")))
+
+    def test_default_output_refuses_a_different_build_of_the_same_version(self):
+        release.build(self.root, None, self.pak, self.expected)
+        target = self.root / "build" / "release-1.2.3" / "PalWorkPriority-1.2.3-workshop.zip"
+        target.write_bytes(b"an older build from another commit")
+        with self.assertRaisesRegex(release.ReleaseFailure, "refusing to overwrite a different release"):
+            release.build(self.root, None, self.pak, self.expected)
+        self.assertEqual(target.read_bytes(), b"an older build from another commit")
 
     def test_missing_pak_blocks_before_creating_output(self):
         self.pak.unlink()
