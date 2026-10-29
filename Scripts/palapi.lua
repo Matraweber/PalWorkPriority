@@ -1442,6 +1442,14 @@ M.WORK_IGNORE = {
     ["Idle"] = true,
 }
 
+-- The same, keyed by the station id without its _N suffix, for jobs whose
+-- display name says nothing. The egg incubator's hatch timer is a work
+-- object ("Busy" | HatchingPalEgg_0 | PalWorkProgress, GPortal server
+-- 2026-10-29) but no Pal works it: the egg hatches on its own.
+M.ASSIGN_IGNORE = {
+    ["HatchingPalEgg"] = true,
+}
+
 M._unknown_worktype = {}
 M._suitability_warned = false
 
@@ -1502,6 +1510,7 @@ function M.work_suitability(w)
     -- 3. Station identity, for the generic PalWorkProgress objects.
     local assign = work_text(w, "prop", "AssignDefineDataId")
     if assign then
+        if M.ASSIGN_IGNORE[assign:match("^(.-)_%d+$") or assign] then return nil, "ignored" end
         local mapped = M.STATION_SUIT[assign]
         if mapped then return workdefs.value(mapped) end
         local kw = workdefs.from_text(assign)
@@ -1527,8 +1536,8 @@ function M.work_suitability(w)
         if cls then seen[#seen + 1] = cls end
         log.warn("some work could not be typed and is not counted: " ..
             (#seen > 0 and table.concat(seen, ", ") or "no readable name") ..
-            ". That is expected for Construction, a building not finished yet. " ..
-            "'!pwp discover' lists every untyped work")
+            ". The game still assigns it as usual; a building not finished yet " ..
+            "is one known case. '!pwp discover' lists every untyped work")
     end
     return nil
 end
