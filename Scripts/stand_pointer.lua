@@ -33,17 +33,21 @@ end
 
 -- Same mounted-mod route as overlay.mod_class. Every caller is already on
 -- the game thread; the generated class is returned only within this call.
+-- The second result says whether both lookups really answered "not found":
+-- true only then. Without the registry to ask, LoadAsset's nil alone proves
+-- nothing (it misses mounted mod assets), so that is nil, "not known".
 local function load_class()
     local class=LoadAsset(M.path)
-    if valid(class) then return class end
+    if valid(class) then return class, false end
     local registry=api.cdo('/Script/AssetRegistry.Default__AssetRegistryHelpers')
-    if not valid(registry) then return nil end
+    if not valid(registry) then return nil, nil end
     local function name(value)
         if helpers and helpers.FindOrAddFName then return helpers.FindOrAddFName(value) end
         return FName(value,EFindName.FNAME_Add)
     end
-    return registry:GetAsset({PackageName=name('/Game/Mods/PalWorkPriority/UI/WBP_StandInput'),
+    local found=registry:GetAsset({PackageName=name('/Game/Mods/PalWorkPriority/UI/WBP_StandInput'),
         AssetName=name('WBP_StandInput_C')})
+    return found, not valid(found)
 end
 
 function M.configure(fn, gate, keyboard, revision)
@@ -96,10 +100,13 @@ local function ready()
     if hooked and key_hooked then return true end
     if os.clock()<retry_at then return false end
     retry_at=os.clock()+10
-    local loaded, class = pcall(load_class)
+    local loaded, class, missing = pcall(load_class)
     -- A clean "not found" from both routes is the missing pak, and the stand
-    -- legend says so (ui.PAK_MISSING). A thrown lookup proves nothing either way.
-    if loaded then M.asset_missing=not valid(class) end
+    -- legend says so (ui.PAK_MISSING). A thrown lookup, or no asset registry
+    -- to ask, proves nothing either way (review round 2: an invalid registry
+    -- CDO was reported as a missing pak).
+    if loaded and valid(class) then M.asset_missing=false
+    elseif loaded and missing==true then M.asset_missing=true end
     if not loaded or not valid(class) then M.last_error='asset: '..tostring(loaded and 'unavailable' or class); return false end
     if not hooked then
         local ok, why = pcall(RegisterHook, M.path..':PWP_Dispatch', receive)

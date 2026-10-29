@@ -99,11 +99,15 @@ local function old_layout_text(found)
             .. found.native .. '.'
     end
     if found.old_ue4ss then
+        -- The file name alone does not prove UE4SS: other loaders and tools
+        -- install a dwmapi.dll too (review round 2, 2026-10-29), so the text
+        -- says what to do if it is one, not to delete it.
         local sep = found.sep
-        parts[#parts + 1] = 'Pal Work Priority: a second UE4SS is installed in ' .. found.old_ue4ss
-            .. ', next to the one from the game\'s mod loader, so mods can load twice. Remove '
-            .. found.old_ue4ss .. sep .. 'dwmapi.dll and the folder ' .. found.old_ue4ss .. sep .. 'ue4ss'
-            .. ' after moving any mods you still use to ' .. found.native .. '.'
+        parts[#parts + 1] = 'Pal Work Priority: ' .. found.old_ue4ss .. sep .. 'dwmapi.dll found. '
+            .. 'If it is an old UE4SS next to the one from the game\'s mod loader, mods can load twice: '
+            .. 'remove it and the folder ' .. found.old_ue4ss .. sep .. 'ue4ss'
+            .. ' after moving any mods you still use to ' .. found.native
+            .. ' (or disable UE4SS in Vortex). Other mod loaders use the same file name; keep it if it is one of them.'
     end
     return table.concat(parts, ' ')
 end
@@ -120,7 +124,9 @@ end
 -- A second copy of the mod comes first: it can run the mod twice.
 function M.short(found)
     if found.old_copy then return 'Second copy in Pal/Binaries/Win64/ue4ss: remove it.' end
-    if found.old_ue4ss then return 'Second UE4SS in Pal/Binaries/Win64: remove it.' end
+    if found.old_ue4ss then
+        return 'Pal/Binaries/Win64/dwmapi.dll found: if it is an old UE4SS, remove it (or disable UE4SS in Vortex).'
+    end
     if found.managed == nil then
         return 'Steam Workshop copy also on, not installed yet: use one copy.'
     end
