@@ -66,21 +66,48 @@ local function unpack_file(text)
     return payload, gen
 end
 
+-- The payload of a live file this version did not write, or nil. 0.5 installs
+-- a live file only by renaming a verified .tmp into place, so a live file
+-- with no envelope (gen 0) or a failed checksum came from 0.4.1 or from a
+-- person editing it (review round 3).
+local function outside_payload(bytes)
+    -- Never an empty file: 0.4.1 always writes its header lines, so zero
+    -- bytes is a failed write, not an edit.
+    if bytes == '' then return nil end
+    local payload, gen = unpack_file(bytes)
+    if payload then return gen == 0 and payload or nil end
+    return bytes:match('^# PWP%-DATA [^\n]*\n(.*)$')
+end
+
 -- validate(payload) returns a decoded table or nil,error. Never execute saves.
 function M.read(path, validate)
-    local best, errors, found = nil, {}, false
+    local best, errors, found, outside, highest, backed_up = nil, {}, false, nil, 0, false
     for _, suffix in ipairs({ '', '.tmp', '.pending', '.bak' }) do
         local bytes, err, code = M.read_raw(path .. suffix)
         if bytes then
             found = true
+            if suffix == '.bak' then backed_up = true end
             local payload, gen = unpack_file(bytes)
+            if type(gen) == 'number' and gen > highest then highest = gen end
             if payload and (suffix == '.tmp' or suffix == '.pending') and gen == 0 then
                 payload, gen = nil, 'unfinished temporary generation has no integrity envelope'
+            end
+            local edited = suffix == '' and outside_payload(bytes) or nil
+            if edited then
+                -- A hand edit that kept the envelope line keeps its number too.
+                local stated = math.tointeger(tonumber(bytes:match('^# PWP%-DATA 1 (%d+) ')))
+                if stated and stated > highest then highest = stated end
+                payload, gen = edited, 0
             end
             if payload then
                 local value, why = validate(payload)
                 if value ~= nil then
-                    if not best or gen > best.generation then
+                    if edited then
+                        -- The newest edit there is: it wins over any older
+                        -- generation, whose number it takes so saving goes on.
+                        outside = { value = value, generation = 0, source = path, recovered = false,
+                            payload = payload, enveloped = bytes:sub(1, 11) == '# PWP-DATA ' }
+                    elseif not best or gen > best.generation then
                         best = { value = value, generation = gen, source = path .. suffix,
                             recovered = suffix ~= '', payload = payload }
                     end
@@ -90,6 +117,21 @@ function M.read(path, validate)
             -- ENOENT alone proves absence; access errors must not mean a new install.
             errors[#errors + 1] = tostring(err)
         end
+    end
+    -- Every finished save of this version leaves a .bak. Without one, an
+    -- unfinished .tmp or .pending is this version's interrupted first save on
+    -- top of that live file, so it stays the newer copy.
+    if outside and best and not backed_up and best.source ~= path .. '.bak' then outside = nil end
+    if outside then
+        -- Alone and without an envelope it is a plain 0.4.1 upgrade: read as
+        -- it is and left unchanged on disk.
+        if highest > 0 or outside.enveloped then
+            outside.generation, outside.recovered = highest, true
+            log.warn(path .. " was changed outside this version (by hand or by 0.4.1); "
+                .. "using it instead of the older saved copy")
+        end
+        outside.enveloped = nil
+        return outside.value, outside
     end
     if best then return best.value, best end
     if found or #errors > 0 then return nil, { error = table.concat(errors, '; '), state = 'error' } end
@@ -133,25 +175,49 @@ function M.write(path, payload, generation, validate)
     if checked ~= bytes then return false, 'temporary verification: ' .. tostring(check_err or 'content mismatch') end
     local live, live_err, live_code = M.read_raw(path, 'inspect live')
     if not live and live_code ~= 2 then return false, 'cannot inspect previous save: ' .. tostring(live_err) end
-    local previous = bak
+    local previous, dropped = bak, false
     if live then
-        local old_payload = unpack_file(live)
+        -- A live file read as written by hand or by 0.4.1 was the one loaded,
+        -- so it rotates to .bak like any other good generation.
+        local old_payload = unpack_file(live) or outside_payload(live)
         local valid_old = old_payload ~= nil and (not validate or validate(old_payload) ~= nil)
-        if not valid_old then previous = path .. ".rejected." .. tostring(gen) end
-        local old_bak, bak_err, bak_code = M.read_raw(previous, 'inspect backup')
-        if not old_bak and bak_code ~= 2 then return false, 'cannot inspect backup: ' .. tostring(bak_err) end
-        if old_bak then
-            if previous ~= bak then return false, "rejected generation already preserved" end
-            local removed, remove_err = call('save: rotate backup', M.fs.remove, bak)
-            if not removed then return false, 'cannot rotate backup: ' .. tostring(remove_err) end
+        if not valid_old then
+            -- Kept under a name of its own. A second bad edit in a row used to
+            -- meet the first one's name and refuse every save for good
+            -- (review round 3); the same bytes twice are kept once.
+            previous = nil
+            local base = path .. ".rejected." .. tostring(gen)
+            for n = 1, 100 do
+                local name = n == 1 and base or (base .. "." .. n)
+                local kept, kept_err, kept_code = M.read_raw(name, 'inspect rejected')
+                if kept == nil and kept_code ~= 2 then
+                    return false, 'cannot inspect rejected copy: ' .. tostring(kept_err)
+                end
+                if kept == nil or kept == live then previous, dropped = name, kept == live; break end
+            end
+            if previous == nil then return false, "too many rejected copies of " .. path end
         end
-        local moved, move_err = call('save: preserve live', M.fs.rename, path, previous)
-        if not moved then return false, 'cannot preserve previous save: ' .. tostring(move_err) end
+        if previous == bak then
+            local old_bak, bak_err, bak_code = M.read_raw(bak, 'inspect backup')
+            if not old_bak and bak_code ~= 2 then return false, 'cannot inspect backup: ' .. tostring(bak_err) end
+            if old_bak then
+                local removed, remove_err = call('save: rotate backup', M.fs.remove, bak)
+                if not removed then return false, 'cannot rotate backup: ' .. tostring(remove_err) end
+            end
+        end
+        if dropped then
+            local removed, remove_err = call('save: drop duplicate rejected', M.fs.remove, path)
+            if not removed then return false, 'cannot replace rejected save: ' .. tostring(remove_err) end
+        else
+            local moved, move_err = call('save: preserve live', M.fs.rename, path, previous)
+            if not moved then return false, 'cannot preserve previous save: ' .. tostring(move_err) end
+        end
     end
     local moved, move_err = call('save: install temporary', M.fs.rename, tmp, path)
     if not moved then
-        -- Best effort restore. Even if this fails, .bak and the verified .tmp remain.
-        if live then call('save: restore live', M.fs.rename, previous, path) end
+        -- Best effort restore. Even if this fails, .bak and the verified .tmp
+        -- remain; a dropped duplicate still has its rejected copy.
+        if live and not dropped then call('save: restore live', M.fs.rename, previous, path) end
         return false, 'cannot install save: ' .. tostring(move_err)
     end
     return true, nil, gen

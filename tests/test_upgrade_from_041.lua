@@ -76,3 +76,29 @@ for line in written_caps:gmatch('[^\r\n]+') do
 end
 assert(rules == 3, 'fixture should persist 3 limit rules, got ' .. rules)
 assert(fs.files['caps.txt'] == written_caps, 'loading rewrote the upgraded caps file')
+
+-- Review round 3 (P2-1): back to 0.4.1 and up again. 0.5 saves twice (live
+-- gen 2, .bak gen 1), 0.4.1 runs for a while and its own save() writes a plain
+-- file, then 0.5 loads. The older .bak used to win and drop every 0.4.1 edit.
+do
+    local A = '00000000000000000000000000000001679D42C842B4D85AC496DCBF862D1565'
+    store.set_role('authority')
+    assert(store.set(A, 4, 2) and store.generation == 1, '0.5 first save failed')
+    assert(store.set(A, 5, 1) and store.generation == 2, '0.5 second save failed')
+    assert(fs.files['priorities.txt.bak'], 'no .bak after two saves')
+
+    old_store.load('priorities.txt')
+    assert(old_store.data[A][4] == 2, '0.4.1 could not read the 0.5 file')
+    old_store.data[A][4] = 5
+    old_store.data[A][9] = 3
+    assert(old_store.save(), '0.4.1 save failed')
+    assert(fs.files['priorities.txt']:sub(1, 11) ~= '# PWP-DATA ', 'fixture: 0.4.1 wrote an envelope')
+
+    local rows = store.load('priorities.txt')
+    assert(store.get(A, 4) == 5 and store.get(A, 9) == 3 and store.get(A, 5) == 1,
+        "0.5 dropped 0.4.1's edits for its older .bak")
+    assert(rows > 0 and store.state == 'saving', 'the 0.4.1 file was not marked for a rewrite')
+    assert(store.generation == 1, 'generation is not the highest one left: ' .. tostring(store.generation))
+    assert(store.flush(nil, true) and store.generation == 2)
+    assert(store.load('priorities.txt') and store.get(A, 9) == 3 and store.state == 'saved')
+end
