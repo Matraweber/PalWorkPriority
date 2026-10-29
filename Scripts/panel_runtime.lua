@@ -100,7 +100,9 @@ function M.new()
         })
     end
 
-    function state:snapshot(root, limit)
+    -- skip: names of containers recorded but not descended into (the icon
+    -- pin shelf, whose children only the draw that needs one reads).
+    function state:snapshot(root, limit, skip)
         self.objects = {}
         local seen, count, complete = {}, 0, true
         local function visit(w, depth)
@@ -113,6 +115,7 @@ function M.new()
             if depth > 64 or count >= (limit or 4096) then complete = false return end
             seen[name], count = true, count + 1
             self.objects[name] = w
+            if skip and skip[name] then return end
             if M.leaves[name:match("^([%a_][%w_]*) [^%s%c]+$")] then return end
             local ok, n = pcall(function() return w:GetChildrenCount() end)
             if ok and type(n) == "number" then
@@ -129,6 +132,8 @@ function M.new()
             end
         end
         visit(root, 0)
+        -- Widgets this rescan named, for the panel's perf line.
+        self.last_count = count
         if not complete then self.objects = {} end
         return complete and count > 0
     end

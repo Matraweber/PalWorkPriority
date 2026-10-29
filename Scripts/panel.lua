@@ -761,6 +761,7 @@ function RB.clear_widgets()
     RB.hmap, RB.hmap_keys, RB.hrect, RB.hover_due = nil, {}, {}, false
     RB.validated, root_checked = -1, -1
     pin_count = 0
+    RB.shelf_name, RB.shelf_skip, RB.shelf_read = nil, nil, nil
     search_box, amount_box, editing, edit_focus = nil, nil, nil, false
     styled_boxes, picker_key, picker_hit = {}, nil, nil
     was_hit, was_sel, hover_key, hits = {}, nil, nil, {}
@@ -779,7 +780,7 @@ local function ensure_root()
     end
     -- Only names survive across callbacks. Rebind widgets from this call's
     -- current tree before asking them anything, including IsValid/IsHovered.
-    if not RB.runtime:snapshot(host) then
+    if not RB.runtime:snapshot(host, nil, RB.shelf_skip) then
         -- Preserve name-only row identities through a transient incomplete
         -- read. No wrapper from the previous callback remains usable.
         root, root_tree, backdrop, search_box, amount_box = nil, nil, nil, nil, nil
@@ -1621,9 +1622,64 @@ end
 -- it does today - swept when resident, reloaded when not.
 local PIN_MAX = 400
 
+-- The pins live on one shelf (perf P2-3, 2026-10-29).
+--
+-- Each pin used to be an Image straight on the panel's root, so ensure_root's
+-- rescan of every widget under the root - five times a second, on every tab -
+-- paid one GetFullName per pin and grew with every icon a session browsed,
+-- up to 400. They are now the children of one collapsed CanvasPanel that the
+-- rescan records but does not descend into (RB.shelf_skip). Its children are
+-- read only by a draw that looks for a pin, at most once per tree snapshot,
+-- and always from the shelf this snapshot just found: never a widget kept
+-- from an earlier callback.
+--
+-- Answers false when the shelf cannot be read; nothing is pinned then, so a
+-- shelf that cannot be read never fills with duplicates.
+function RB.read_shelf()
+    local objects = RB.runtime.objects
+    if RB.shelf_read == objects then return RB.shelf_ok end
+    RB.shelf_read, RB.shelf_ok = objects, false
+    if RB.shelf_name == nil then
+        RB.shelf_ok = pin_count == 0
+        return RB.shelf_ok
+    end
+    local shelf = objects[RB.shelf_name]
+    if not alive(shelf) then return false end
+    local ok = pcall(function()
+        local n = shelf:GetChildrenCount()
+        for i = 0, n - 1 do
+            local child = shelf:GetChildAt(i)
+            local name = RB.logic.name(child)
+            if name then objects[name] = child end
+        end
+    end)
+    RB.shelf_ok = ok
+    return ok
+end
+
+-- The shelf itself, made on the first pin of a tree.
+function RB.shelf()
+    if not RB.read_shelf() then return nil end
+    if RB.shelf_name ~= nil then return RB.runtime.objects[RB.shelf_name] end
+    local cls = api.cdo("/Script/UMG.CanvasPanel")
+    if not cls then return nil end
+    local shelf
+    pcall(function() shelf = StaticConstructObject(cls, root_tree) end)
+    if not alive(shelf) then return nil end
+    if not pcall(function() root:AddChildToCanvas(shelf) end) then return nil end
+    pcall(function() shelf:SetVisibility(1) end)
+    local name = RB.runtime:remember(shelf)
+    if not name then return nil end
+    RB.shelf_name, RB.shelf_skip = name, { [name] = true }
+    return shelf
+end
+
 local function pin(texture, item_id)
-    if pinned[item_id] ~= nil or pin_count >= PIN_MAX then return end
+    if pin_count >= PIN_MAX then return end
     if not (alive(root) and alive(root_tree)) then return end
+    -- The shelf first: until it is read, an existing pin looks missing.
+    local shelf = RB.shelf()
+    if shelf == nil or pinned[item_id] ~= nil then return end
 
     local cls = api.cdo("/Script/UMG.Image")
     if not cls then return end
@@ -1632,7 +1688,7 @@ local function pin(texture, item_id)
     pcall(function() img = StaticConstructObject(cls, root_tree) end)
     if not alive(img) then return end
 
-    if not pcall(function() root:AddChildToCanvas(img) end) then return end
+    if not pcall(function() shelf:AddChildToCanvas(img) end) then return end
 
     -- The texture wrapper is from this same call, per the tile that is about
     -- to draw it, so handing it to a second brush costs nothing and keeps
@@ -1669,6 +1725,8 @@ local function pin_from_sweep(found)
     if not M.open then return end
     root_checked = -1
     if not ensure_root() then return end
+    -- Existing pins are only known once the shelf is read.
+    if not RB.read_shelf() then return end
 
     -- Twenty four, not eight. Eight took ten sweeps to cover the seventy odd
     -- item icons a browse loads, and each of those sweeps is the 25ms this is
@@ -1793,7 +1851,7 @@ local function picture(key, px, py, size, item_id, token)
         local texture
         local icon_name = item_id and icons.name_for
             and icons.name_for(item_id) or nil
-        local pin_w = icon_name and pinned[icon_name] or nil
+        local pin_w = icon_name and RB.read_shelf() and pinned[icon_name] or nil
         if pin_w ~= nil and pin_w ~= true and alive(pin_w) then
             pcall(function()
                 local b = pin_w.Brush
@@ -5120,10 +5178,10 @@ function M.refresh(cfg)
         if perf_worst > 4.0 then
             log.say(string.format(
                 "panel refresh worst %.1fms  (setup %.1f, hover %.1f/%d, " ..
-                "stock %.1f, draw %.1f, blank %.1f, tail %.1f)",
+                "stock %.1f, draw %.1f, blank %.1f, tail %.1f; rescan %d widgets, %d pins)",
                 perf_worst, worst_setup * 1000, worst_hover * 1000, worst_hits,
                 worst_stock * 1000, worst_draw * 1000, worst_blank * 1000,
-                (RB.worst_tail or 0) * 1000))
+                (RB.worst_tail or 0) * 1000, RB.runtime.last_count or 0, pin_count))
         end
         perf_worst = 0
     end
