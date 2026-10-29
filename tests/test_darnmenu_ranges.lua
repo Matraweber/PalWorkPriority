@@ -107,6 +107,11 @@ assert(label('run_on_world_load') == 'Recheck when a world loads')
 assert(label('key_pass') == 'Recheck now')
 assert(label('min_suitability_rank') == 'Lowest work level to dedicate')
 assert(options.storage_scope.section == 'Production limits' and options.item_limits_on_rocks.section == 'Production limits')
+-- Review round 2: Off does not free X jobs, and a limit is when Pals stop.
+assert(options.enabled.option.help == 'Off gives back every job the mod switched off and stops steering. Jobs set to X stay off.')
+assert(label('leave_unordered_pals_to_game') == 'Leave Pals with equal numbers to the game')
+assert(options.key_panel.option.help:find('when Pals stop making an item', 1, true)
+    and not options.key_panel.option.help:find('a base keeps', 1, true))
 for path, entry in pairs(options) do
     assert(type(entry.option.help) == 'string' and entry.option.help ~= '', path .. ' has no help')
 end

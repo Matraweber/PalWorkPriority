@@ -819,7 +819,7 @@ COMMANDS.help = function()
     log.say("  " .. p .. " discover  write Discovery.txt (for bug reports)")
     log.say("  " .. p .. " guilds    write Guilds.txt (for bug reports)")
     log.say("  " .. p .. " assignments  which job each Pal is on (server only)")
-    log.say("  " .. p .. " rocks     Mining rocks stopped by limits, and who mines what (server only)")
+    log.say("  " .. p .. " rocks     Mining rocks stopped by limits, and who mines what (host or server)")
     log.say("  " .. p .. " icons     check the panel icons")
     log.say("  " .. p .. " perf      how often the mod runs and writes files " ..
             "(perf on for timings)")
@@ -1761,9 +1761,11 @@ local function stock_across_camps()
     -- Reuse the same positively scoped evidence as the panel. Commands must
     -- not scan another guild's chests or present failed reads as zero stock.
     -- With camp scope the first known base is named explicitly in the output.
+    -- A client asks the server through net, as the panel does; without it a
+    -- client's listing always said "unavailable" (review round 2).
     local status = require("panel_status")
     local view = status.stock(cfg, scheduler, api.my_guild(), nil,
-        api.has_authority() ~= true)
+        api.has_authority() ~= true, package.loaded.net)
     return view.verified and view.totals or {}, view.verified, view.label
 end
 
@@ -1811,8 +1813,9 @@ local function show_limits()
             end
         end
         -- Mining limits stop only the rocks of their item (item_sources.lua,
-        -- 2026-10-28); every other limit switches its whole work type.
-        log.say((cfg.item_limits_on_rocks ~= false
+        -- 2026-10-28); every other limit switches its whole work type. A
+        -- client follows the server's setting, as the panel does.
+        log.say((require("panel_status").per_item(cfg)
             and "Mining limits stop only the rocks that mainly give their item; other limits switch their whole work type"
             or "each limit can switch its entire work type, including unrelated products")
             .. "; a reached limit does not show whether the work has stopped yet")
@@ -2953,6 +2956,12 @@ end))
 local function bind(key, label, fn, modifiers)
     local action = fn
     fn = function() session.enqueue(action, true) end
+    -- An Alt key whose Alt is missing is not bound as a plain key: plain Fn
+    -- keys belong to other mods (see the key list below).
+    if modifiers ~= nil and #modifiers == 0 then
+        log.warn("could not bind " .. label .. ": this UE4SS has no modifier key for it")
+        return false
+    end
     local ok, err = pcall(function()
         if modifiers then
             RegisterKeyBind(key, modifiers, fn)
@@ -2984,7 +2993,8 @@ local function bind_action(name, default_key, what, fn)
 
     if key == nil then
         key = Key and Key[default_key] or nil
-        mods = (ModifierKey ~= nil) and { ModifierKey.ALT } or nil
+        -- Empty when this UE4SS has no Alt; bind then refuses it.
+        mods = { ModifierKey ~= nil and ModifierKey.ALT or nil }
         label = "Alt+" .. default_key
     end
 
