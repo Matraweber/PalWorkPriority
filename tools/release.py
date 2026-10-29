@@ -258,7 +258,9 @@ def archive_entries(payload: dict[str, bytes], manifest: dict, kind: str) -> dic
             "   No stand yet? Alt+F1 opens the Production Limits panel, which proves\n"
             "   the mod loaded.\n\n"
             "Did it load? Open priority.log in the PalWorkPriority folder.\n"
-            "It should say \"Pal Work Priority " + manifest["version"] + " loaded\".\n\n"
+            "It should say \"Pal Work Priority " + manifest["version"] + " loaded\".\n"
+            "If it says \"did not start\", the line before it names the setting.\n"
+            "Fix it in config.lua, or delete config.lua and restart.\n\n"
             "Use one copy only. If the Steam Workshop copy is switched on in the game's\n"
             "mod list, switch it off or unsubscribe first.\n\n"
             "With Vortex, turn off in Settings > Mods \"Manage modding requirements (UE4SS,\n"
@@ -267,7 +269,9 @@ def archive_entries(payload: dict[str, bytes], manifest: dict, kind: str) -> dic
             "the game once, then remove 0.4.1. Your config.lua edits are kept.\n\n"
             "Multiplayer. The server and every player need exactly this version.\n"
             "A dedicated server must run Windows and needs UE4SS. From this zip it\n"
-            "needs only the PalWorkPriority folder. See README.md for the steps.\n\n"
+            "needs only the PalWorkPriority folder, including the empty enabled.txt\n"
+            "in it. Without that file UE4SS does not start the mod. See README.md\n"
+            "for the steps.\n\n"
             "More help is in README.md inside the PalWorkPriority folder.\n"
         ).encode("utf-8")
     return entries

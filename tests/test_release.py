@@ -164,7 +164,12 @@ class ReleaseTests(unittest.TestCase):
             for name, expected in manifest["files"].items():
                 self.assertEqual(release.sha256(w.read(name)), expected["sha256"])
                 self.assertEqual(w.read(name), m.read(release.distribution_path(name, "manual")))
-            self.assertIn("Alt+F1", m.read("INSTALL.txt").decode())
+            install = m.read("INSTALL.txt").decode()
+            self.assertIn("Alt+F1", install)
+            # A server copy without enabled.txt is never started by UE4SS.
+            self.assertIn("including the empty enabled.txt\nin it.", install)
+            self.assertIn('If it says "did not start"', install)
+            self.assertIn("delete config.lua and restart", install)
             self.assertNotIn("Scripts/config.lua", w.namelist())
             self.assertIn("Scripts/default_config.lua", w.namelist())
             self.assertIn(release.MANUAL_ROOT + "enabled.txt", m.namelist())
