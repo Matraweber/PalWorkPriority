@@ -47,6 +47,7 @@ for _, entry in ipairs({
     {panel,"refresh","panel: complete refresh"},
     {panel,"hover_tick","panel: hover and input"},
     {panel,"fill_tick","panel: incremental fill"},
+    {panel,"hover_map","panel: hover map"},
     {overlay,"host","overlay: host resolution"},
     {icons,"get","icons: get"},
     {pad,"drive","pad: complete drive"},

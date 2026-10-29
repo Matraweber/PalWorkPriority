@@ -132,6 +132,14 @@ local RB = {
     SLICE = 0.008,
     filled = {},           -- tile key -> the item id that tile is showing
     pending = false,       -- a page stopped mid fill and wants another frame
+    -- Tiles filled so far, ever. fill_tick compares it across its refreshes:
+    -- a pending page that fills nothing is not a fill, and gets
+    -- FILL_IDLE_MAX fast tries (about a second) before only the maintenance
+    -- refresh carries it on. Its next new tile lets the fast loop back in.
+    fill_mark = 0,
+    fill_seen = 0,
+    fill_idle = 0,
+    FILL_IDLE_MAX = 60,
     draw_t0 = 0,           -- when the current draw started
     cfg = nil,             -- last config handed to refresh, for fill_tick
     -- The shell's chrome rows, in the order the commandlet stacked them into
@@ -750,6 +758,7 @@ function RB.clear_widgets()
     drawn, placed, RB.vis, RB.parent, RB.font = {}, {}, {}, {}, {}
     RB.hosts, RB.slot, RB.base, RB.pads, RB.on = {}, nil, 0, {}, {}
     RB.filled, RB.pending, RB.edit_layout = {}, false, {}
+    RB.hmap, RB.hmap_keys, RB.hrect, RB.hover_due = nil, {}, {}, false
     RB.validated, root_checked = -1, -1
     pin_count = 0
     search_box, amount_box, editing, edit_focus = nil, nil, nil, false
@@ -1178,6 +1187,14 @@ local function slab(key, px, py, w, h, colour, hittable, current, sel_colour)
                 return slot:SetSize({ X = w, Y = h })
             end)
         end
+    end
+
+    -- Where this target sits in its row, for the pointer's map (see
+    -- M.hover_map). Row hosted ones only: a row is top left anchored, so its
+    -- own origin is all that turns this into a place on screen. Dropped at
+    -- the end of the draw.
+    if hittable and RB.slot then
+        RB.hrect[#RB.hrect + 1] = { border, into, px, py - base, w, h }
     end
 
     RB.base_col[key] = colour
@@ -3755,10 +3772,11 @@ local function producible(id)
     -- 88 ids that answer this way are debug weapons, NPC-only gear and _Tmp
     -- leftovers, none of which a player can ever hold.
     if items.real_name then
-        local real = items.real_name(id)
-        -- nil is "cannot say yet" (catalogue or controller missing), not
-        -- "no such item": the list built now is not cached (round 3, P3-2).
-        if real == nil then RB.names_missing = true end
+        local real, unnamed = items.real_name(id)
+        -- A bare nil is "cannot say yet" (catalogue or controller missing),
+        -- not "no such item": the list built now is not cached (round 3,
+        -- P3-2). nil, "unnamed" is the game's answer and is kept.
+        if real == nil and unnamed == nil then RB.names_missing = true end
         if real == nil or real:match("^%a[%a%-]* Text$") then return false end
     end
     -- An id the icon loader has exhausted every route for is not an item the
@@ -4063,6 +4081,9 @@ local function draw_item_picker(cfg, totals)
     if not RB.reserve_rows("ItemList", 0, LIST_ROWS - 1, LIST_PITCH) then
         return 6 + math.ceil((LIST_ROWS * LIST_PITCH) / LINE) + 4
     end
+    -- Tiles shown for the first time in this draw, which is what the slice
+    -- rations. Not grid_count, which counts the settled tiles too.
+    local fresh = 0
     for i = from, math.min(from + LIST_PER_PAGE - 1, #source) do
         local id = source[i]
         local key = "pick" .. (i - from)
@@ -4089,13 +4110,22 @@ local function draw_item_picker(cfg, totals)
             -- at 16ms a tile that is one or two frames of staleness against a
             -- guaranteed dropped frame, which is the better trade.
             --
-            -- grid_count > 0 keeps one tile of progress per frame, so a slice
-            -- too small for even one tile still cannot stall the fill.
-            if grid_count > 0 and (os.clock() - RB.draw_t0) > RB.SLICE then
+            -- fresh > 0 keeps one tile of progress per frame, so a slice too
+            -- small for even one tile still cannot stall the fill.
+            --
+            -- It was grid_count > 0, which counts the tiles already showing
+            -- their item as well (perf, 2026-10-29). Redrawing those is cheap
+            -- but not free, so once twenty of them had used up the slice the
+            -- loop broke at tile 21 before filling it, on every frame: the
+            -- page stayed at 20 of 27 and fill_tick redrew it at 60 Hz for as
+            -- long as the picker was open.
+            if fresh > 0 and (os.clock() - RB.draw_t0) > RB.SLICE then
                 RB.pending = true
                 break
             end
             RB.filled[key] = id
+            fresh = fresh + 1
+            RB.fill_mark = RB.fill_mark + 1
         end
 
         local work = workdefs.work_for_item(id) or workdefs.DEFAULT_WORK
@@ -4374,6 +4404,133 @@ RB.retint = function(key)
     end
 end
 
+-- The pointer's map: where each target was on screen at the last draw, as
+-- plain numbers (perf, 2026-10-29).
+--
+-- The highlight follows IsHovered, which only a draw may ask, because only a
+-- draw has the fresh tree (RB.validated). Draws come four or five times a
+-- second, so the highlight trailed the pointer by up to ~200ms - "super
+-- laggy with the mouse" in the picker. The fast loop now reads the cursor,
+-- a static call on a class default, and looks it up here; when the answer
+-- changes it asks for one draw on the next 16ms beat (fill_tick). The map
+-- only decides WHEN to draw. What is lit is still IsHovered's answer, and a
+-- draw that disagrees with the map counts against it: HOVER_BAD_MAX in a row
+-- and the map is off until the panel opens again, which is how hover worked
+-- before.
+--
+-- Built at the end of a draw from that draw's widgets, which are dropped
+-- here. Only numbers and key names outlive the callback.
+RB.hmap, RB.hmap_keys, RB.hrect = nil, {}, {}
+RB.hover_bad, RB.HOVER_BAD_MAX, RB.HOVER_GAP = 0, 8, 0.033
+function M.hover_map()
+    local rects = RB.hrect
+    RB.hrect = {}
+    RB.hmap, RB.hmap_keys = nil, {}
+    if RB.hover_off or #rects == 0 then return 0 end
+    local lib = api.cdo("/Script/UMG.Default__SlateBlueprintLibrary")
+    if not lib then RB.hover_off = true return 0 end
+    -- The hit key each surface answers for: its face, or the slab itself
+    -- when the slab carries the key.
+    local key_of = {}
+    for key in pairs(hits) do
+        local face = tile_face[key] or stripes[key]
+        if face ~= nil then key_of[face] = key end
+    end
+    local origin, map, keys, calls = {}, {}, {}, 0
+    local sx, sy
+    local ok = pcall(function()
+        for _, r in ipairs(rects) do
+            local key = key_of[r[1]]
+            local o = key and origin[r[2]]
+            if key and o == nil then
+                -- One row's place, from the geometry Slate last painted it
+                -- with. A row not painted yet has no size, and its targets
+                -- wait for the next draw. The scale is the panel's, so it
+                -- is asked of the first painted row only.
+                local g = r[2]:GetCachedGeometry()
+                local at = lib:LocalToAbsolute(g, { X = 0, Y = 0 })
+                local size = lib:GetLocalSize(g)
+                calls = calls + 3
+                local x, y = tonumber(at.X), tonumber(at.Y)
+                local painted = x and y and (tonumber(size.X) or 0) > 0 and (tonumber(size.Y) or 0) > 0
+                if painted and sx == nil then
+                    local far = lib:LocalToAbsolute(g, { X = 100, Y = 100 })
+                    calls = calls + 1
+                    sx = ((tonumber(far.X) or 0) - x) / 100
+                    sy = ((tonumber(far.Y) or 0) - y) / 100
+                end
+                o = (painted and sx > 0 and sy > 0) and { x, y } or false
+                origin[r[2]] = o
+            end
+            if o then
+                local x1, y1 = o[1] + r[3] * sx, o[2] + r[4] * sy
+                map[#map + 1] = { key, x1, y1, x1 + r[5] * sx, y1 + r[6] * sy }
+                keys[key] = true
+            end
+        end
+    end)
+    if ok and #map > 0 then
+        RB.hmap, RB.hmap_keys = map, keys
+        RB.hover_seen = RB.hover_x and RB.hover_lookup(RB.hover_x, RB.hover_y)
+    end
+    return calls
+end
+
+function RB.hover_lookup(x, y)
+    for _, r in ipairs(RB.hmap or {}) do
+        if x >= r[2] and x < r[4] and y >= r[3] and y < r[5] then return r[1] end
+    end
+    return nil
+end
+
+-- Desktop pixels, the space LocalToAbsolute answers in. Nothing kept: the
+-- class default is the one object api.cdo may cache.
+function RB.cursor()
+    local lib = api.cdo("/Script/UMG.Default__WidgetLayoutLibrary")
+    if not lib then return nil end
+    local x, y
+    pcall(function()
+        local at = lib:GetMousePositionOnPlatform()
+        x, y = tonumber(at.X), tonumber(at.Y)
+    end)
+    if x == nil or y == nil then return nil end
+    return x, y
+end
+
+-- The fast loop's half: a draw on the next beat when the pointer reaches
+-- another target. Costs one cursor read per tick, and nothing more while
+-- the pointer stands still.
+function RB.hover_watch()
+    if RB.hover_off or RB.hmap == nil or RB.hover_due then return end
+    local x, y = RB.cursor()
+    -- Not readable on this build: off, rather than a lookup every 16ms.
+    if x == nil then RB.hover_off = true return end
+    if x == RB.hover_x and y == RB.hover_y then return end
+    RB.hover_x, RB.hover_y = x, y
+    local key = RB.hover_lookup(x, y)
+    if key ~= RB.hover_seen then RB.hover_seen, RB.hover_due = key, true end
+end
+
+-- The draw's half: does the map agree with IsHovered?
+function RB.hover_check(hovered)
+    local x, y = RB.cursor()
+    if x == nil then RB.hover_off = true return end
+    RB.hover_x, RB.hover_y = x, y
+    local said = RB.hover_lookup(x, y)
+    if said == hovered or (said == nil and (hovered == nil or not RB.hmap_keys[hovered])) then
+        RB.hover_bad = 0
+        return
+    end
+    RB.hover_bad = RB.hover_bad + 1
+    -- Slate can answer a beat after the pointer moved, so look once more.
+    if RB.hover_bad == 1 then RB.hover_due = true end
+    if RB.hover_bad >= RB.HOVER_BAD_MAX then
+        RB.hover_off = true
+        log.debug("panel: the pointer map disagreed with the widgets "
+            .. RB.HOVER_BAD_MAX .. " times, hover follows the draw again")
+    end
+end
+
 -- Poll the pointer and move the highlight, WITHOUT drawing anything else.
 --
 -- The highlight used to move only when the whole panel redrew - ten times a
@@ -4459,17 +4616,49 @@ function M.hover_tick()
     pcall(M.pad_tick)
     -- Native hover reads run with the 100ms draw's fresh tree snapshot. A
     -- recent timestamp never makes an older widget wrapper safe to touch.
+    -- This only reads the cursor and the last draw's map, plain numbers, and
+    -- asks fill_tick for a draw when the pointer reaches another target.
+    pcall(RB.hover_watch)
     return false
 end
 
 -- Continue incomplete pages on the existing game-thread loop. The tile slice
 -- is a soft budget; complete callback costs must be measured in the game.
 function M.fill_tick()
-    if not (M.open and RB.pending and RB.cfg) then return false end
+    if not (M.open and RB.cfg and (RB.pending or RB.hover_due)) then
+        RB.fill_idle = 0
+        return false
+    end
     -- Only continuation work yields. A normal maintenance refresh must still
     -- rediscover the current tree/data even immediately after a fill. This
     -- timestamp is a scheduling deadline, never evidence of widget lifetime.
     if RB.refreshing or (RB.fill_after and os.clock() < RB.fill_after) then return false end
+    -- Bounded (perf, 2026-10-29). A page that stays pending without filling
+    -- a tile - a row the engine will not host, a catalogue that never gets
+    -- ready, a slice that cannot be met - used to be redrawn at 60 Hz for
+    -- as long as the panel was open. Any new tile, from either loop, counts
+    -- as progress and resets the count.
+    if RB.fill_mark ~= RB.fill_seen then RB.fill_seen, RB.fill_idle = RB.fill_mark, 0 end
+    -- A draw the pointer asked for is not a fill and is not counted: there
+    -- is one per target the pointer reaches (RB.hover_watch), and no more
+    -- than one per HOVER_GAP, so a pointer crossing a tile every frame
+    -- costs 30 draws a second rather than 60. Targets crossed in between
+    -- share the next draw.
+    if RB.hover_due and os.clock() >= (RB.hover_at or 0) then
+        RB.hover_at = os.clock() + RB.HOVER_GAP
+        M.refresh(RB.cfg)
+        return true
+    end
+    if not RB.pending then return false end
+    if RB.fill_idle >= RB.FILL_IDLE_MAX then
+        if RB.fill_idle == RB.FILL_IDLE_MAX then
+            RB.fill_idle = RB.fill_idle + 1
+            log.debug("panel: fill made no progress in " .. RB.FILL_IDLE_MAX
+                .. " frames, leaving it to the 100ms draw")
+        end
+        return false
+    end
+    RB.fill_idle = RB.fill_idle + 1
     M.refresh(RB.cfg)
     return true
 end
@@ -4482,6 +4671,9 @@ function M.refresh(cfg)
     frame_id = frame_id + 1
     RB.upgrade_drawn = nil -- set by this draw only
     icon_budget = ICONS_PER_FRAME
+    -- Any refresh answers a hover request, one that returns early too, or
+    -- an unrooted panel would be asked again on every beat.
+    RB.hover_due = false
 
     -- Kept so fill_tick can carry a half drawn page on without the clock. It
     -- is config's own table, plain Lua this mod owns, not an engine object -
@@ -4643,6 +4835,8 @@ function M.refresh(cfg)
         end
     end
     perf_hover, perf_hits = os.clock() - th, hn
+    -- Checks the map this draw's hover request came from.
+    if RB.hmap and not RB.hover_off then RB.hover_check(hover_key) end
 
     -- What the selection points at, from the map it was chosen in. Every
     -- move between draws (keys, pad, a click) changed sel against this
@@ -4658,6 +4852,7 @@ function M.refresh(cfg)
     perf_stock = os.clock() - ts
 
     local td = os.clock()
+    RB.hrect = {}
     local rows = redraw(cfg, totals)
     perf_draw = os.clock() - td
 
@@ -4704,6 +4899,20 @@ function M.refresh(cfg)
     -- rule is added, the old order named something that is no longer on
     -- screen and the cursor blinked out for one frame.
     was_sel = order[sel]
+
+    -- The pointer's map for the fast loop, from this draw's widgets. Kept
+    -- while the pointer stands still on the same screen: no lookup reads it
+    -- then, and a draw the pointer asks for has moved, so it rebuilds.
+    local tm = os.clock()
+    local sig = mode .. ":" .. page .. ":" .. RB.rule_page .. ":" .. #order
+    if RB.hmap == nil or RB.hmap_sig ~= sig
+        or RB.hmap_x ~= RB.hover_x or RB.hmap_y ~= RB.hover_y then
+        RB.hmap_calls = M.hover_map()
+        RB.hmap_sig, RB.hmap_x, RB.hmap_y = sig, RB.hover_x, RB.hover_y
+    else
+        RB.hrect, RB.hmap_calls = {}, 0
+    end
+    RB.hmap_ms = os.clock() - tm
 
     -- Centred vertically from what was actually drawn.
     --
@@ -4817,6 +5026,8 @@ do
         icons.new_frame()
         local result = table.pack(pcall(refresh, ...))
         icons.new_frame()
+        -- Widgets a draw recorded for the pointer's map never outlive it.
+        if not was_refreshing then RB.hrect = {} end
         RB.refreshing = was_refreshing
         -- Space continuations from completion, including slow/failed draws;
         -- full maintenance refreshes are deliberately never skipped here.
@@ -4955,6 +5166,9 @@ function M.toggle()
     -- screenshot 02a: the first frame drew every row on top of the others).
     -- The cap starts at the first hidden frame (refresh), not here.
     RB.unveiled, RB.laid_out, RB.unveil_by = false, false, nil
+    -- The pointer's map is trusted again, and starts from nothing.
+    RB.hover_off, RB.hover_bad, RB.hover_seen = nil, 0, nil
+    RB.hover_x, RB.hover_y = nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
     -- flag asked once now, since nothing refreshes it while the panel is

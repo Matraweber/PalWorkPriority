@@ -278,10 +278,14 @@ local name_memo = {}
 
 M.resolved, M.unresolved = 0, 0
 
+-- nil, "unnamed" is an answer: the game has no name for this id (or no such
+-- row). A bare nil is "cannot say yet", and the picker does not keep a list
+-- built while it got one (perf, 2026-10-29: the two were the same nil, so a
+-- single unnamed job item kept the Show all list from ever being cached).
 function M.real_name(id)
     local hit = name_memo[id]
     if hit ~= nil then
-        if hit == false then return nil end
+        if hit == false then return nil, "unnamed" end
         return hit
     end
 
@@ -303,7 +307,7 @@ function M.real_name(id)
     end
     if not row_set[id] then
         M.refused_unknown = (M.refused_unknown or 0) + 1
-        return nil
+        return nil, "unnamed"
     end
 
     -- A missing utility or controller is NOT an answer.
@@ -359,6 +363,7 @@ function M.real_name(id)
     name_memo[id] = got or false
     if got then M.resolved = M.resolved + 1
     else M.unresolved = M.unresolved + 1 end
+    if got == nil then return nil, "unnamed" end
     return got
 end
 

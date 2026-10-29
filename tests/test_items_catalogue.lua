@@ -198,6 +198,16 @@ assert(items.real_name('Late')==nil and name_calls==calls_before,'named without 
 missing_table=false; now=now+5.1
 localized.Late='Late item'
 assert(items.real_name('Late')=='Late item','unreadable catalogue was memoized as no name')
+-- "Cannot say yet" and "the game has no name" are told apart (perf,
+-- 2026-10-29): the picker keeps a list only when every nil was an answer.
+items.reset(); ids={'Late','Unnamed','Later'}; localized.Unnamed='en Text'
+local function answer(id) return select('#', items.real_name(id)), select(2, items.real_name(id)) end
+local n, why=answer('Unnamed'); assert(n==2 and why=='unnamed', 'no-name was not an answer')
+n, why=answer('Unnamed'); assert(why=='unnamed', 'memoized no-name was not an answer')
+n, why=answer('COSM_Ninja01'); assert(why=='unnamed', 'unknown row was not an answer')
+missing_util=true; items.reset()
+local real, said=items.real_name('Later'); assert(real==nil and said==nil, 'a missing utility was an answer')
+missing_util=false
 assert(stale==0)
 os.clock=original_clock
 print('Catalogue: 2466 IDs preserved, atomic index, bounded name slices, fresh native wrappers')
