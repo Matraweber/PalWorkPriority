@@ -34,6 +34,12 @@ local function up(fn,name)
 end
 local rb=assert(up(panel.refresh,'RB'))
 rb.SLICE=math.huge
+-- The INFO notes that say why a map is or is not there.
+local notes={}
+package.loaded.log.info=function(m) notes[#notes+1]=m end
+local function noted(pat)
+    for _,m in ipairs(notes) do if m:find(pat) then return m end end
+end
 local cat={}
 for i=0,59 do cat[#cat+1]='Stone'..string.char(65+i//26)..string.char(65+i%26) end
 local items=package.loaded.items
@@ -185,6 +191,8 @@ assert(tick(), 'the pointer reached a tile and no draw was asked for')
 assert(hovered() == 'pick0' and lit('pick0'), 'pick0 not lit: '..tostring(hovered()))
 assert(not tick(), 'a second draw for the same tile')
 assert(rb.hmap and #rb.hmap >= 27, 'the map does not hold the page')
+local built=assert(noted('^panel: hover map built: '), 'no note for a built map')
+assert(built:find('viewport 2580x1080',1,true) and built:find('first ',1,true), built)
 -- Standing still, or moving inside the tile, costs no draw.
 for _ = 1, 30 do cursor.X = cursor.X + 1; assert(not tick(), 'moving inside a tile drew') end
 for _ = 1, 30 do assert(not tick(), 'a still pointer drew') end
@@ -258,6 +266,7 @@ assert(reach('pick8') == 1 and hovered() == 'pick8', 'after reopening: '..tostri
 controller = nil
 point('pick6'); tick()
 assert(rb.hover_off, 'hover follow ran without a controller')
+assert(noted('^panel: hover map off: cursor unreadable'), 'no note for the missing controller')
 controller = PC
 panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 -- A build where the cursor cannot be read: off at once, never retried.

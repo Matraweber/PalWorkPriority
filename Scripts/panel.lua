@@ -4442,17 +4442,43 @@ end
 RB.hmap, RB.hmap_keys, RB.hrect = nil, {}, {}
 RB.hover_bad, RB.HOVER_BAD_MAX, RB.HOVER_GAP = 0, 8, 0.033
 RB.BODY_PAD, RB.FOOT_ROW = 18, { "Foot", 76 }
+
+-- Why the map is or is not there, said once per reason per opening (INFO,
+-- so it reaches priority.log at the default level). Added for the in-game
+-- check of 2026-10-29, where no map was ever built and nothing said why.
+RB.hmap_said = {}
+function RB.hover_note(why)
+    if RB.hmap_said[why] then return end
+    RB.hmap_said[why] = true
+    log.info("panel: hover map " .. why)
+end
+
+-- Off, with the reason kept for the note.
+function RB.hover_stop(why)
+    RB.hover_off, RB.hover_off_why = true, why
+    RB.hover_note("off: " .. why)
+end
+
 function M.hover_map()
     local rects = RB.hrect
     RB.hrect = {}
     RB.hmap, RB.hmap_keys = nil, {}
-    if RB.hover_off or #rects == 0 then return 0 end
+    if RB.hover_off then
+        RB.hover_note("not built: off (" .. tostring(RB.hover_off_why) .. ")")
+        return 0
+    end
+    if #rects == 0 then RB.hover_note("not built: this draw recorded no row-hosted targets") return 0 end
     local parts = overlay.parts
+    if not parts then RB.hover_note("not built: no shell parts (overlay.parts nil)") return 0 end
     local bw, bh
     if overlay.backdrop_size then bw, bh = overlay.backdrop_size() end
-    if not (parts and bw and bh) then return 0 end
-    local vw, vh = RB.viewport()
-    if vw == nil then RB.hover_off = true return 2 end
+    if not (bw and bh) then
+        RB.hover_note(overlay.backdrop_size and "not built: backdrop size unknown (not fitted yet)"
+            or "not built: overlay has no backdrop_size")
+        return 0
+    end
+    local vw, vh, vwhy = RB.viewport()
+    if vw == nil then RB.hover_stop("viewport unreadable: " .. tostring(vwhy)) return 2 end
 
     -- Where each row's canvas starts, in the order Body stacks them.
     local top, unknown = {}, false
@@ -4486,7 +4512,15 @@ function M.hover_map()
     list("RuleList")
     list("ItemList")
     chrome(RB.FOOT_ROW)
-    if unknown then return 2 end
+    if unknown then
+        local names = {}
+        for _, row in ipairs(RB.rows) do
+            if RB.vis["chrome:" .. row[1]] == nil then names[#names + 1] = row[1] end
+        end
+        if RB.vis["chrome:" .. RB.FOOT_ROW[1]] == nil then names[#names + 1] = RB.FOOT_ROW[1] end
+        RB.hover_note("not built: chrome row visibility unknown: " .. table.concat(names, ","))
+        return 2
+    end
 
     -- The hit key each surface answers for: its face, or the slab itself
     -- when the slab carries the key.
@@ -4507,6 +4541,18 @@ function M.hover_map()
     if #map > 0 then
         RB.hmap, RB.hmap_keys = map, keys
         RB.hover_seen = RB.hover_x and RB.hover_lookup(RB.hover_x, RB.hover_y)
+        local r = map[1]
+        RB.hover_note(string.format(
+            "built: %d rects (%d recorded), %d row tops, viewport %.0fx%.0f, "
+            .. "backdrop %.0fx%.0f at %.1f,%.1f, first %s %.1f,%.1f-%.1f,%.1f",
+            #map, #rects, (function() local n = 0 for _ in pairs(top) do n = n + 1 end return n end)(),
+            vw, vh, bw, bh, vw / 2 - bw / 2, vh / 2 - bh / 2, r[1], r[2], r[3], r[4], r[5]))
+    else
+        local faces, tops = 0, 0
+        for _ in pairs(key_of) do faces = faces + 1 end
+        for _ in pairs(top) do tops = tops + 1 end
+        RB.hover_note(string.format("not built: no recorded target matched a row "
+            .. "(%d recorded, %d faces, %d row tops)", #rects, faces, tops))
     end
     return 2
 end
@@ -4523,18 +4569,22 @@ end
 -- one object api.cdo may cache, and the controller is this callback's.
 function RB.viewport()
     local lib = api.cdo("/Script/UMG.Default__WidgetLayoutLibrary")
+    if not lib then return nil, nil, "no WidgetLayoutLibrary class default" end
     local pc = api.local_player_controller and api.local_player_controller()
-    if not (lib and pc) then return nil end
-    local w, h
-    pcall(function()
+    if not pc then return nil, nil, "no local player controller" end
+    local w, h, said
+    local ok, err = pcall(function()
         local size = lib:GetViewportSize(pc)
         local scale = tonumber(lib:GetViewportScale(pc))
+        said = string.format("size %s,%s scale %s", tostring(size and size.X),
+            tostring(size and size.Y), tostring(scale))
         if scale and scale > 0 then
             w, h = tonumber(size.X), tonumber(size.Y)
             w, h = w and w / scale, h and h / scale
         end
     end)
-    if not (w and h and w > 0 and h > 0) then return nil end
+    if not ok then return nil, nil, "error " .. tostring(err) end
+    if not (w and h and w > 0 and h > 0) then return nil, nil, tostring(said) end
     return w, h
 end
 
@@ -4559,7 +4609,7 @@ function RB.hover_watch()
     if RB.hover_off or RB.hmap == nil or RB.hover_due then return end
     local x, y = RB.cursor()
     -- Not readable on this build: off, rather than a lookup every 16ms.
-    if x == nil then RB.hover_off = true return end
+    if x == nil then RB.hover_stop("cursor unreadable (fast loop)") return end
     if x == RB.hover_x and y == RB.hover_y then return end
     RB.hover_x, RB.hover_y = x, y
     local key = RB.hover_lookup(x, y)
@@ -4569,7 +4619,7 @@ end
 -- The draw's half: does the map agree with IsHovered?
 function RB.hover_check(hovered)
     local x, y = RB.cursor()
-    if x == nil then RB.hover_off = true return end
+    if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
     RB.hover_x, RB.hover_y = x, y
     local said = RB.hover_lookup(x, y)
     if said == hovered or (said == nil and (hovered == nil or not RB.hmap_keys[hovered])) then
@@ -4580,7 +4630,8 @@ function RB.hover_check(hovered)
     -- Slate can answer a beat after the pointer moved, so look once more.
     if RB.hover_bad == 1 then RB.hover_due = true end
     if RB.hover_bad >= RB.HOVER_BAD_MAX then
-        RB.hover_off = true
+        RB.hover_stop("disagreed with the widgets " .. RB.HOVER_BAD_MAX
+            .. " times (map said " .. tostring(said) .. ", widgets " .. tostring(hovered) .. ")")
         log.debug("panel: the pointer map disagreed with the widgets "
             .. RB.HOVER_BAD_MAX .. " times, hover follows the draw again")
     end
@@ -4998,7 +5049,13 @@ function M.refresh(cfg)
         .. ":" .. tostring(bw) .. "x" .. tostring(bh)
     if RB.hmap == nil or RB.hmap_sig ~= sig
         or RB.hmap_x ~= RB.hover_x or RB.hmap_y ~= RB.hover_y then
-        RB.hmap_calls = M.hover_map()
+        local ok, calls = pcall(M.hover_map)
+        if not ok then
+            RB.hrect, RB.hmap = {}, nil
+            RB.hover_note("not built: error " .. tostring(calls))
+            calls = 0
+        end
+        RB.hmap_calls = calls
         RB.hmap_sig, RB.hmap_x, RB.hmap_y = sig, RB.hover_x, RB.hover_y
     else
         RB.hrect, RB.hmap_calls = {}, 0
@@ -5227,6 +5284,7 @@ function M.toggle()
     RB.unveiled, RB.laid_out, RB.unveil_by = false, false, nil
     -- The pointer's map is trusted again, and starts from nothing.
     RB.hover_off, RB.hover_bad, RB.hover_seen = nil, 0, nil
+    RB.hover_off_why, RB.hmap_said = nil, {}
     RB.hover_x, RB.hover_y = nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
