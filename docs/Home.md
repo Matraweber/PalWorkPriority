@@ -22,6 +22,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 ## Latest
 
 - [Fourth strict review round, final pre-ship check (2026-10-30)](review-round4-2026-10-30.md) · 2026-10-30
+- [Round-4 fixes: merge and retest in game (2026-10-30)](retest-r4-2026-10-30.md) · 2026-10-30
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, Workshop dry run (2026-10-30)](g7-final-build-2026-10-30.md) · 2026-10-30
 - [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md) · 2026-10-29
 - [UI crowding and clarity review (2026-10-29)](review-ux-crowding-2026-10-29.md) · 2026-10-29
@@ -32,11 +33,11 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [In-game retest of the audit fixes (2026-10-28/29)](retest-2026-10-29.md) · 2026-10-29
 - [Performance check of the 0.5.0 build (2026-10-29)](perf-final-2026-10-29.md) · 2026-10-29
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
-- [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
 
 ## Release and reports
 
 - [Fourth strict review round, final pre-ship check (2026-10-30)](review-round4-2026-10-30.md)
+- [Round-4 fixes: merge and retest in game (2026-10-30)](retest-r4-2026-10-30.md)
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, Workshop dry run (2026-10-30)](g7-final-build-2026-10-30.md)
 - [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md)
 - [UI crowding and clarity review (2026-10-29)](review-ux-crowding-2026-10-29.md)

@@ -85,3 +85,11 @@ scheduler, multiplayer or persistence from the fixes since round 3.
   Onboarding.
 
 The P3 lists are in each reviewer's report and are not repeated here.
+
+## Outcome
+
+The user picked all of it (P1, the code P2s that reach players, the text and store
+page P2s, and the P3s). Seven fix agents worked in parallel. The merge and the retest
+in game are in [retest-r4-2026-10-30](retest-r4-2026-10-30.md), along with three more
+fixes it found (ore ids, Sandwich, and the stand saying the mod is paused). Decisions
+are in [DECISIONS](DECISIONS.md) under 2026-10-30.
