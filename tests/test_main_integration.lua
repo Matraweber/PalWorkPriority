@@ -1874,6 +1874,71 @@ test("a fresh install keeps its vanilla baseline when the first launch hosts no 
     assert(second.fs.files[ROOT.."priorities.txt"]:find("PAL-B|2|X",1,true),"the captured X was not saved")
 end)
 
+-- Review round 5 (persistence P3-3): a fresh install whose migration write
+-- failed keeps running and writes priority.log and its baseline. The next
+-- launch was not fresh, so it said an update had removed Scripts\config.lua.
+test("a first launch whose migration write failed is not called a removed config.lua next time",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local first=boot(true,true,function(fs)
+        fs.files[ROOT.."config.lua"]=nil
+        fs.files[ROOT.."priorities.txt"]=nil
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+        fs.fault=function(op,path) return op=="open" and path==ROOT.."config.migration.bak.tmp" end
+    end)
+    local configuration=package.loaded.configuration
+    assert(first.store.baseline==true and configuration.upgrade_reset==false,"launch 1 was not fresh")
+    assert(first.fs.files[ROOT.."config.migration.bak"]==nil and first.fs.files[ROOT.."config.lua"]==nil)
+    local carried={}
+    for path,text in pairs(first.fs.files) do carried[path]=text end
+    assert(carried[ROOT.."priority.log"] and carried[ROOT.."priorities.txt"],"launch 1 wrote neither file")
+    local second=boot(true,true,function(fs)
+        fs.files[ROOT.."config.lua"]=nil
+        for path,text in pairs(carried) do fs.files[path]=text end
+    end)
+    configuration=package.loaded.configuration
+    assert(configuration.upgrade_reset==false and second.fs.files[ROOT..configuration.MARKER]==nil,
+        "launch 2 said: "..tostring(configuration.upgrade_message))
+    assert(second.fs.files[ROOT.."config.lua"]==defaults,"launch 2 did not retry the migration")
+    assert(second.store.baseline==true,"launch 2 lost the vanilla baseline")
+end)
+
+-- Review round 5 (persistence P3-4): what must never write a baseline or
+-- replace priorities.txt, at the level of the whole mod.
+test("priority.log alone beside the shipped defaults writes no baseline",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local s=boot(true,true,function(fs)
+        fs.files[ROOT.."config.lua"]=nil
+        fs.files[ROOT.."priorities.txt"]=nil
+        fs.files[ROOT.."priority.log"]="an earlier install\n"
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end)
+    assert(s.store.baseline==false,"an earlier install was taken for a fresh one")
+    assert(package.loaded.configuration.upgrade_reset==true,"the 0.4.1 upgrade went unnoticed")
+    s.timers.role.fn(); s:ui_beat()
+    assert(s.fs.files[ROOT.."priorities.txt"]==nil,"a baseline was written")
+end)
+
+test("an unreadable priorities.txt is never replaced, at startup or by an edit",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local target=ROOT.."priorities.txt"
+    local s=boot(true,true,function(fs)
+        fs.files[ROOT.."config.lua"]=nil
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+        fs.fault=function(op,path) return op=="open" and path==target end
+    end,"priorities unavailable")
+    assert(s.store.state=="error" and s.store.load_failed and s.store.baseline==false)
+    s.timers.role.fn()
+    assert(not s.store.set("PAL-A",2,3))
+    s.store.flush(nil,true); s:ui_beat()
+    assert(s.fs.files[target]=="PAL-A|1|X\n","priorities.txt changed")
+    for _,op in ipairs(s.fs.operations) do
+        assert(op~="remove:"..target and op:sub(-#target-1)~=">"..target,"priorities.txt was touched: "..op)
+    end
+end)
+
 -- Review round 4 (engine P3-2): while config.lua is refused, caps runs on the
 -- shipped defaults, so a guild row overriding one of the file's own limits
 -- was removed outright. Fixed, the lower config limit came back.

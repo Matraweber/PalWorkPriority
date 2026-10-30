@@ -396,13 +396,18 @@ function M.load(root, scripts)
     if not original then return nil, read_err end
     local cfg, why = parse(original, source, source == scripts .. 'config.lua')
     if not cfg then return nil, why end
-    local fresh = true
+    local fresh, saved_here = true, false
     for _, name in ipairs({'priority.log','priorities.txt','caps.txt','config.migration.bak','remote.txt'}) do
         local previous, _, missing = file.read_raw(root .. name)
         if previous ~= nil or missing ~= 2 then fresh = false end
+        -- Only this version writes the envelope. 0.4.1 never did.
+        if previous and previous:sub(1, 11) == '# PWP-DATA ' then saved_here = true end
     end
     local existing, _, missing = file.read_raw(backup)
-    if source == scripts .. 'default_config.lua' and fresh == false then
+    -- Review round 5: with no backup, a save of this version means an
+    -- earlier launch of it whose migration write failed. Nothing was removed.
+    if source == scripts .. 'default_config.lua' and fresh == false
+        and (existing ~= nil or not saved_here) then
         local message = existing ~= nil and M.MISSING_MESSAGE or M.UPGRADE_MESSAGE
         remember_reset(message)
         log.warn(message)
