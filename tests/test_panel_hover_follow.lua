@@ -135,8 +135,11 @@ local cursor = { X = 0, Y = 0 }
 -- The pointer the engine reports is parked at the viewport's centre and no
 -- widget is hovered, as in game for the first seconds after opening.
 local parked = false
+-- Where Slate still thinks the pointer is, one draw behind (nil: caught up).
+local slate = nil
 function Widget:IsHovered()
     if parked then return false end
+    local cursor = slate or cursor
     if self.kind ~= 'Border' or self.visibility ~= 0 or not shown(self) then return false end
     if self.parent == overlay.parts.Root then return false end
     local size = self.Slot and self.Slot.size
@@ -236,6 +239,25 @@ assert(reach('back') == 1 and hovered() == 'back', 'Back: '..tostring(hovered())
 assert(reach(nil) == 1 and hovered() == nil, 'highlight stayed off the panel')
 assert(rb.hover_bad == 0 and not rb.hover_off, 'the map disagreed with the widgets')
 
+-- An instant jump from pick0 to pick1 with Slate's hover one draw behind:
+-- the draw right after the jump still names pick0. Nothing is learned from
+-- it or counted, and the next draw agrees.
+assert(reach('pick0') == 1 and hovered() == 'pick0')
+local function same_cal() local c = rb.hover_cal.item return c == nil or (c.dx == 0 and c.dy == 0) end
+assert(same_cal(), 'fixture: an offset before the jump')
+slate = { X = cursor.X, Y = cursor.Y }
+point('pick1')
+assert(tick() and hovered() == 'pick0', 'fixture: the lagging draw did not name pick0')
+assert(same_cal() and rb.hover_resets == 0 and rb.hover_bad == 0,
+    'learned from a lagging draw: '..tostring(rb.hover_cal.item and rb.hover_cal.item.dx))
+slate = nil
+local looked = 0
+for _ = 1, 4 do if tick() then looked = looked + 1 end end
+assert(looked >= 1 and hovered() == 'pick1', 'the next draw did not agree: '..tostring(hovered()))
+panel.refresh(cfg); panel.refresh(cfg)
+assert(same_cal() and rb.hover_resets == 0 and rb.hover_bad == 0 and not rb.hover_off,
+    'the jump left an offset or a count behind')
+
 -- Show all: a longer list, the same grid.
 assert(panel.apply(cfg, { kind = 'toggle_all' }, -1, true)); draw()
 assert(reach('pick13') == 1 and hovered() == 'pick13', 'Show all tile: '..tostring(hovered()))
@@ -286,10 +308,12 @@ head_extra, scrolled = 0, 0
 panel.close(); panel.toggle(); panel.set_screen('item'); draw()
 row_extra = 6
 local extra = 0
+-- Rows far apart, so the offsets they imply cannot be one; a maintenance
+-- draw after each move gives the steady sample that is judged.
 for i = 1, 60 do
-    point('pick'..(i % 27), i % 2 == 0 and 0.95 or 0.05)
+    point('pick'..(i % 2 == 0 and (i % 3) or (24 + i % 3)), i % 2 == 0 and 0.05 or 0.95)
     for _ = 1, 3 do if tick() then extra = extra + 1 end end
-    if i % 4 == 0 then panel.refresh(cfg) end
+    panel.refresh(cfg)
 end
 assert(rb.hover_off, 'a wrong map stayed on')
 local after = 0
