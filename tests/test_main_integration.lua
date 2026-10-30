@@ -1062,7 +1062,7 @@ test("network save failures distinguish applied memory from durable acceptance",
 end)
 
 test("limit commands reject fractional amounts without changing a saved rule",function()
-    local s=boot(true); s.timers.role.fn()
+    local s=boot(true); s.timers.role.fn(); s.viewport=true -- a host with a screen
     s.api.my_guild=function() return 'guild-local' end
     s.commands.limit('Mining Stone 2.5')
     assert(s.caps.data['guild-local'].Mining.Stone==100,'fractional input was silently rounded')
@@ -1080,7 +1080,7 @@ test("limit command does not call a queued client edit saved",function()
 end)
 
 test("limit clear save failure is not reported as a missing rule",function()
-    local s=boot(true); s.timers.role.fn()
+    local s=boot(true); s.timers.role.fn(); s.viewport=true -- a host with a screen
     s.api.my_guild=function() return 'guild-local' end
     s.fs.fault=function(op,path) return op=='write' and path==ROOT..'caps.txt.tmp' end
     s.commands.limit('Mining Stone off')
@@ -1091,7 +1091,7 @@ test("limit clear save failure is not reported as a missing rule",function()
 end)
 
 test("limit listing keeps unknown stock unavailable and labels legacy scope",function()
-    local s=boot(true); s.timers.role.fn()
+    local s=boot(true); s.timers.role.fn(); s.viewport=true -- a host with a screen
     s.api.my_guild=function() return 'guild-local' end
     s.commands.limit('')
     local output=table.concat(s.console,'\n')
@@ -1177,7 +1177,7 @@ test("real network receiver supplies metadata accepted by real main",function()
 end)
 
 test("local limit command distinguishes accepted async work from a rejection",function()
-    local s=boot(true);s.timers.role.fn()
+    local s=boot(true);s.timers.role.fn(); s.viewport=true -- a host with a screen
     s.api.my_guild=function()return 'guild-local'end
     local previous=package.loaded.panel_status
     package.loaded.panel_status={stock=function()return {verified=false,label='unavailable'}end}
@@ -1466,8 +1466,8 @@ end)
 -- An ordinary join used to send three Hellos (the grid's ask before the role
 -- was decided, poll, the 18 s announce) and the server refused the third with
 -- "too many at once", so a reconnect within the minute was never served.
-local function join_fixture()
-    local server=boot(true); server.timers.role.fn()
+local function join_fixture(server_prepare, server_error)
+    local server=boot(true,false,server_prepare,server_error); server.timers.role.fn()
     server.api.camps_available=true
     server.api.base_camps=function() return {{}} end
     server.api.camp_guild=function() return 'guild-A' end
@@ -1707,6 +1707,132 @@ test("adopt says what happened when caps.txt cannot be saved",function()
     s.console={}; s.commands.adopt()
     output=table.concat(s.console,"\n")
     assert(output:find("there was nothing left from before guild rules to adopt",1,true),output)
+end)
+
+-- Engine round 4, P2-1: a refused config.lua on a dedicated server used to
+-- look like a working mod to every client. "sync: ready", edits confirmed and
+-- saved, and no pass ever ran. Now the server locks its clients out with the
+-- reason, refuses edits, and lets them in again once the host fixes the file.
+test("a refused config.lua on the server locks a joining client and refuses its edits",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local j=join_fixture(function(fs)
+        fs.files[ROOT.."config.lua"]="return {interval_seconds=2}"
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end,"invalid interval_seconds")
+    local c,server=j.client,j.server
+    assert(server.store.decided and not server.store.is_client,'the rejected server never took its role')
+    j.restart(); j.run(6)
+    assert(c.net.status=='unavailable' and c.net.status_reason=='server_config_rejected',
+        'the client was not locked: '..tostring(c.net.status)..' '..tostring(c.net.status_reason))
+    local said="The server's config.lua was rejected; ask the host."
+    assert(c.ui.settings_message()==said,'the stand said: '..tostring(c.ui.settings_message()))
+    assert(require('panel_status').plain_reason('server_config_rejected')==said)
+    assert(c.net.request('set','Mining','Stone',35)==false and c.net.request_prio('PAL-A',1,2)==false,
+        'a locked client still queued edits')
+    -- The server refuses on its own too, with a reason a client can show.
+    local before=server.caps.serialize()
+    for _,command in ipairs({'PWP_Set|Mining|Stone|35','PWP_Clear|Mining|Stone','PWP_Prio|PAL-A|1|2'}) do
+        local ok,reason=server.net.on_command(command,0,j.link)
+        assert(ok==false and reason=='server_config_rejected',command..' was not refused: '..tostring(reason))
+    end
+    assert(server.caps.serialize()==before,'a refused edit changed the limits')
+    -- An edit sent as a negotiated request is not applied either.
+    local peer=server.net.clients['BaseCampComponent of player 1']
+    assert(peer,'the client was never listed')
+    local wire=require('protocol')
+    server.net.receive_command(j.link,wire.envelope('Q',peer.server,peer.client,peer.guild)
+        ..'|1|Set|Mining|Stone|35',0)
+    assert(server.caps.serialize()==before,'a negotiated edit was applied while config.lua is refused')
+    -- The host fixes the file and reloads: the client gets in by itself.
+    server.fs.files[ROOT.."config.lua"]=defaults
+    server.commands.reload()
+    j.run(35)
+    assert(c.net.status=='ready','the client never got back in: '..tostring(c.net.status_reason))
+end)
+
+-- Test coverage round 4, Gap 3: on a dedicated server ClientRestart is a
+-- client RPC and very likely never runs there, so a confirmed Hello lifts the
+-- controller walk backoff instead.
+test("dedicated server: a client's Hello lifts the controller walk backoff",function()
+    local j=join_fixture()
+    local retries=0
+    j.server.api.pc_walk_retry=function() retries=retries+1 end
+    j.restart(); j.run(6)
+    assert(j.client.net.status=='ready')
+    assert(retries==1,'a confirmed Hello lifted the backoff '..retries..' times')
+end)
+
+-- Multiplayer round 4, P3-3: a listen host's own respawn emptied the client
+-- list and made a new server nonce, telling nobody. Its clients stayed
+-- "ready" and their next edit went nowhere.
+test("a listen host's own respawn keeps its clients connected; another world drops them",function()
+    local j=join_fixture()
+    local c,server=j.client,j.server
+    server.viewport=true
+    local pc={GetFullName=function() return "HostController" end}
+    server.api.local_player_controller=function() return pc end
+    local function host_restart()
+        server.hooks["/Script/Engine.PlayerController:ClientRestart"].before({get=function() return pc end})
+    end
+    host_restart(); server.timers.role.fn()
+    assert(server.store.decided and not server.store.is_client)
+    j.restart(); j.run(6)
+    assert(c.net.status=='ready')
+    local nonce=server.net.local_nonce
+    host_restart()
+    assert(next(server.net.clients)~=nil and server.net.local_nonce==nonce,
+        'a same-world respawn dropped every client')
+    assert(server.net.epoch==server.session.epoch,'the server transport kept the old epoch')
+    server.timers.role.fn()
+    assert(c.net.request('set','Mining','Stone',35))
+    j.run(2)
+    assert(server.caps.all({},'guild-A').Mining.Stone==35,'the client edit after a host respawn went nowhere')
+    assert(c.net.status=='ready')
+    server.api.world_key=function() return 'another-world' end
+    host_restart()
+    assert(next(server.net.clients)==nil and server.net.local_nonce~=nonce,'another world kept the old clients')
+end)
+
+-- Multiplayer round 4, P3-2: my_guild on a dedicated server falls back to the
+-- first player controller found, so `limit` from remote.txt filed the limit
+-- under a random player's guild.
+test("limit on a dedicated server is refused instead of filed under a random player's guild",function()
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."caps.txt"]="guild-random|Deforest|Wood|7\n"
+    end)
+    s.timers.role.fn()
+    s.api.my_guild=function() return 'guild-random' end
+    local before=s.caps.serialize()
+    s.console={}; s.commands.limit('Mining Stone 300')
+    local output=table.concat(s.console,'\n')
+    assert(output:find('no player of its own',1,true),output)
+    assert(s.caps.serialize()==before,'a headless limit was filed under some guild')
+    s.console={}; s.commands.limit('')
+    output=table.concat(s.console,'\n')
+    assert(not output:find('Wood',1,true),"the listing showed a random player's guild: "..output)
+    -- A host with a screen speaks for its own player, as before.
+    s.viewport=true
+    s.commands.limit('Mining Stone 300')
+    assert(s.caps.data['guild-random'].Mining.Stone==300)
+end)
+
+-- Multiplayer round 4 P3-4, test coverage Gap 4: the comment promised that a
+-- new nonce is always served. The cap is kept (a loop of new nonces is a loop
+-- too) and the comment now says what this pins.
+test("hello budget: a join, two asks and a reconnect are served; a second reconnect waits out the minute",function()
+    local s=boot(true); s.timers.role.fn()
+    local may_announce=upvalue(s.net.on_command,'may_announce')
+    local comp={GetFullName=function() return 'component-1' end}
+    local function hello(nonce)
+        s.net.clients['component-1']={client=nonce}
+        return may_announce(comp)
+    end
+    assert(hello('join') and hello('join') and hello('join'),'a join and its two grid asks')
+    assert(hello('reconnect'),'a reconnect soon after a join was refused')
+    assert(not hello('again'),'a second reconnect inside the minute was served')
+    s.now=s.now+61
+    assert(hello('again'),'the second reconnect was never served')
 end)
 
 io.open,io.popen=original_io.open,original_io.popen

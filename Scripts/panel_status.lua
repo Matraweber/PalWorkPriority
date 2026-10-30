@@ -54,6 +54,7 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
         ..'Update the mod to the server\'s version.',
     settings_restart_required='Server settings are locked. The host must restart the game or server before editing can resume.',
     settings_recovering='The server is loading saved settings. Editing is temporarily locked.',
+    server_config_rejected="The server's config.lua was rejected; ask the host.",
     activation_busy='Settings are being loaded. Try again in a moment.',
     snapshot_apply_failed=RESYNC, snapshot_invalidated=RESYNC, invalid_packet=RESYNC, invalid_stream=RESYNC,
     invalid_kind=RESYNC, invalid_row=RESYNC, invalid_begin=RESYNC, invalid_delta=RESYNC, missing_begin=RESYNC,
