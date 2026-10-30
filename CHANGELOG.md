@@ -146,9 +146,9 @@ Your limits carry over, and you can add, change and remove them as in 0.4.1.
 
 ### Performance
 
-Measured 2026-10-20 on the release candidate, before per-item Mining limits,
-with PresentMon on the developer's test base, matched captures with the
-profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
+Measured with PresentMon on the developer's test base, matched captures with
+the profiler off, and checked again on the final build on 2026-10-29 with the
+same result. "Slow frame" = longer than 16.7 ms (below 60 FPS).
 - **Normal play:** the mod costs about one slow frame every 10 seconds (its
   scheduling pass, now about 20 ms, was 35 ms). Only while you have limits
   that need stock counts, it adds one frame over 33 ms every 30 seconds (the
@@ -157,6 +157,11 @@ profiler off. "Slow frame" = longer than 16.7 ms (below 60 FPS).
   while it is open, because the mod redraws the priority numbers once a second.
 - 0.5.0 also fixes a hidden cost: on game 1.0.5 a failing name lookup made
   every roster read about ten times slower than needed.
+- **Dedicated server:** each scheduling pass takes about half as long (31
+  instead of 66 ms on the test server). On a server with no players online,
+  generators, coolers and per-item rock limits now work too.
+- **Production Limits:** "Show all items" no longer redraws itself 60 times a
+  second, and the highlight follows the mouse right away.
 
 ### Not in 0.5.0
 
