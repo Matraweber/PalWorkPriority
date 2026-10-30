@@ -19,4 +19,11 @@ for _, id in ipairs({ 'PAL_Growth_Stone_L', 'PAL_Growth_Stone_XL', 'PalUpgradeSt
 end
 -- Asked twice: the memo keeps the answer.
 assert(workdefs.work_for_item('PAL_Growth_Stone_L') == nil)
+-- Every ore deposit in the game's item list counts as a rock drop, so its
+-- item can get a Mining limit; a non-rock Mining item cannot.
+for _, id in ipairs({ 'Stone', 'CopperOre', 'Pal_crystal_S', 'Coal', 'Sulfur', 'Quartz',
+        'Chromium', 'ManganeseOre', 'SkyIslandOre', 'WorldTreeOre', 'MeteorDrop' }) do
+    assert(workdefs.rock_drop(id), id .. ' is not a rock drop')
+end
+assert(not workdefs.rock_drop('Thermal_Core') and not workdefs.rock_drop('AIcore'))
 print('workdefs: look-alike ids are not base products; real ones keep their work')

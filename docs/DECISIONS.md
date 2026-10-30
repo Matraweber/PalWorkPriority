@@ -16,6 +16,35 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-30 - Round-4 findings: everything goes in before the upload
+  (user's pick).** The three P1s, the code P2s that reach players, the text
+  and store page P2s and the P3s. The tag moves once more (approved for
+  v0.5.0 only). master gets 0.5.0 by a merge at release, after the user
+  confirms, so GitHub's front page stops showing 0.4.1. *Rejected:* shipping
+  the tag as reviewed with known P1s. *Evidence:*
+  [review-round4-2026-10-30](review-round4-2026-10-30.md).
+- **2026-10-30 - A third archive for servers.** `release.py` also builds
+  `PalWorkPriority-<V>-server.zip` (the Scripts and an empty `enabled.txt`),
+  from the same git blobs. Hosts kept missing `enabled.txt` when they picked
+  the folder out of the manual zip. The user uploads it to Nexus as an
+  optional file.
+- **2026-10-30 - Per-item Mining limits only for rock drops.** The picker
+  offers an item limit only for items a natural rock mainly gives
+  (`workdefs.ROCK_DROPS`); on any other item the limit would stop nothing.
+  The list errs on the long side (every ore id in the game's item list), since
+  a missing id would refuse a real rock. Only Stone, Ore and Paldium were read
+  off rocks in game.
+- **2026-10-30 - A rejected `config.lua` is said every time and locks
+  clients.** The panel repeats the notice on every opening while the file is
+  rejected. A dedicated server with a rejected file answers clients with
+  `server_config_rejected` and refuses their edits, so the stand shows `?`
+  instead of looking like a working mod. A limit the refused file had set
+  cannot be removed in the panel until the file is fixed. *Rejected:* a
+  once-per-session notice (round 3), which left the mod paused without a word.
+- **2026-10-30 - "Unordered" means two or more numbered jobs.** The steering
+  warning for a Pal whose jobs are all equal now counts only numbered jobs
+  (X excluded, limited jobs included); one numbered job is an order.
+
 - **2026-10-29 - Release archives are packaged from git.** `release.py`
   reads every tracked file as the revision's blob, so line endings on disk
   cannot change the archive. G7 refuses an archive whose `release.json`

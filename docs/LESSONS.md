@@ -179,6 +179,25 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Process: what slowed the project down
 
+- **Write first-run state at the first chance, not at the first world.**
+  Round 4 found that a fresh install wrote its vanilla baseline only after the
+  player's own world loaded. Quitting at the title, joining a server first or
+  a crash on load lost it, and the next launch switched on every job the game
+  had unticked. Anything the mod must remember from its first launch is
+  written as soon as it is known.
+- **A fix needs its off-path checked too.** The round-3 rejection change
+  paused a refused `config.lua` correctly in singleplayer, but on a
+  dedicated server the clients still saw a working mod. When a fix changes
+  what the host does, check what a client sees.
+- **A grown return list breaks callers by position.** A scheduler helper
+  gained an "ignored" reason as a new return value, and one caller took it as
+  the demand timestamp, which crashed the demand pulse. Return a table, or
+  grep every caller when a function gets another return value.
+- **Check guessed game ids against the game's list.** A fix agent added four
+  ore ids "assumed from the game's deposits". They were real, but the list
+  missed four other ores the icon index knows. Ids come from `icondex.lua`
+  or the game, never from memory.
+
 - **Read what users asked before taking a feature away.** 0.5 locked new
   limits on 2026-10-11 because a limit switches its whole work type. None of
   the 8 limit comments asked for that, and all of them came from 0.4.1, where

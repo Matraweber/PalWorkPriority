@@ -182,10 +182,12 @@ M.NOT_PRODUCED = {
 -- would ever stop, so the limit would do nothing it says. Stone, Ore
 -- (CopperOre) and Paldium (Pal_crystal_S) were read off rocks in game
 -- (docs/per-item-limits-2026-10-27.md); the rest are the game's other ore
--- deposits.
+-- deposits and meteorite rocks, not seen in game yet. A missing id would show
+-- a real rock's item as "Cannot be limited", so the list errs on the long side.
 M.ROCK_DROPS = {
     stone = true, copperore = true, pal_crystal_s = true, coal = true,
-    sulfur = true, quartz = true, chromium = true,
+    sulfur = true, quartz = true, chromium = true, manganeseore = true,
+    skyislandore = true, worldtreeore = true, meteordrop = true,
 }
 
 function M.rock_drop(item_id)
