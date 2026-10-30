@@ -33,8 +33,10 @@ return {
     -- Recheck every base as soon as a world finishes loading.
     run_on_world_load = true,
 
-    -- Only true/number versus false matters here. A number means managed,
-    -- false means X for every Pal. Rank Pals on the stand.
+    -- Which jobs the mod manages. A whole number from 1 to 5 means managed,
+    -- false means X for every Pal. Which number does not matter: the numbers
+    -- below no longer rank anything. Rank Pals on the stand; a Pal you never
+    -- ranked is left to the game (leave_unordered_pals_to_game below).
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.

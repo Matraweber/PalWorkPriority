@@ -9,13 +9,15 @@ singleplayer and on a dedicated server. Only automated tests checked the cap
 of 500 limits per guild, the stand on a server without the mod or with another
 version, the warnings for a missing pak and a second UE4SS, the config reset
 notice, old 0.4.1 config values and a BOM in config.lua, rocks after a
-respawn, and controller input after the latest fixes.
+respawn, other players' panels after one player's limit edit, and
+controller input after the latest fixes.
 
 ### Before you update
 
 - **Back up your mod folder first:**
   `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority`. Your priorities
-  and limits carry over on every route.
+  and limits carried over on every route we tested (Workshop, manual zip,
+  Vortex next to 0.4.1).
 - **Steam Workshop: write down your changes in `Scripts\config.lua`.** The
   update deletes that file before 0.5.0 can carry it over. Enter them again
   in the new `config.lua` in the mod folder. Options page settings are kept.
@@ -44,7 +46,7 @@ respawn, and controller input after the latest fixes.
   servers, and Pals follow them right after loading without another edit
   (reports by Two Bob Games and johndujo).
 - X is no longer dropped when the file is saved (diagnosed with a working
-  patch by like in the Steam discussions).
+  patch by "like" in the Steam discussions).
 - Many quick edits are saved once, not once per click.
 - A settings file that cannot be read is never replaced with defaults.
 - If an upgrade had to reset `config.lua`, the panel says so until you have
@@ -63,7 +65,7 @@ respawn, and controller input after the latest fixes.
 - Priority 1 work wins over priority 5 work (report by HelpImStupid0).
 - "Everything stops" / "only one miner" (report by Okami_sama): Pals mine and
   chop again. Rocks and trees now count as work while they can be worked.
-  Limits under the "all bases" option no longer flicker to "stock
+  Limits counted "Across every loaded base" no longer flicker to "stock
   unavailable".
 - An empty generator and a cooler with food in it pull a Pal with a high
   priority for that work back to it.
@@ -82,7 +84,7 @@ respawn, and controller input after the latest fixes.
 **Production Limits panel and Monitoring Stand**
 - Alt+F1 never opens a second panel, and the panel never gets stuck in front
   of the pause menu, inventory or map (report by Extramrdo).
-- The lists keep their layout at every size.
+- The lists keep their layout however many limits they hold.
 - Escape cancels an amount first, then closes only the panel. Dying while
   editing closes the panel.
 - The item search and "Show all" no longer crash the game with item mods
@@ -90,15 +92,14 @@ respawn, and controller input after the latest fixes.
 - A guild can hold at most 500 limits. More left its players stuck
   connecting.
 - The stand legend says what the numbers mean (1 first, X never), what
-  clicks, Enter and keys do, that all jobs start equal, and how many Pals
-  the mod steers.
+  clicks, Enter and keys do, and either that all jobs start equal or how
+  many Pals the mod steers.
 - With several bases the panel says which base it counts, and a new limit
   starts above your fullest base.
 
 **Installation**
-- A manual install running next to a switched-on Steam Workshop copy of a
-  different version is named in the log and on the Production Limits panel
-  ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
+- A manual install next to a switched-on Steam Workshop copy of a different
+  version is named in the log and on the panel ("Steam Workshop copy 0.4.1 also on: use one copy"), because the game may
   replace or delete the manual files when that copy updates.
 - The mod warns when its pak is missing, and when it finds a `dwmapi.dll` in
   `Pal\Binaries\Win64`, which is usually a second UE4SS. Without the pak the stand still shows numbers, but it cannot be edited and
@@ -110,17 +111,15 @@ respawn, and controller input after the latest fixes.
   sets X, View opens Production Limits (Y stays the game's view switch). In
   the panel: up/down move, Y or right raises a limit a step, left
   lowers it, Y also presses buttons and picks items, LB/RB switch tabs,
-  LT/RT turn pages, B closes only the panel. X twice removes a limit. The
-  hints on screen switch to the controller version while you play with one.
-  A in the panel is taken by the game itself, so use Y there. Tested with a
-  virtual XInput pad on the release candidate.
+  LT/RT turn pages, B closes only the panel. X twice removes a limit. A
+  does nothing in the panel. The hints on screen switch to the pad while
+  you use one. Tested with a virtual XInput pad on the release candidate.
 
 **Multiplayer**
 - An edit made by a player survives a server restart.
-- Rules stay inside their guild: one guild's limits never apply to another's
-  bases.
+- One guild's limits never apply to another guild's bases.
 - Players now see the server's limit status in the panel instead of "No count
-  yet". This is why the server and every player need exactly 0.5.0.
+  yet".
 - A player with the mod on a server without it gets the normal Monitoring
   Stand back after about a minute, instead of a grid of "?". On a server with
   another version, or with its settings locked, the stand stays read-only
@@ -139,27 +138,31 @@ Your limits carry over, and you can add, change and remove them as in 0.4.1.
   "Sure?". Press it again to remove the limit.
 - **Mining limits now work per item.** A reached Stone limit stops only the
   rocks that mainly give stone, and your Pals keep mining ore and crystals.
-  Stone Pits and other mining buildings keep producing. Rocks forget it on a
-  reload, nothing is saved into your world.
+  Stone Pits and other mining buildings stop only when nothing that base
+  mines is still wanted. Rocks forget it on a reload, nothing is saved into
+  your world.
 - **Other limits stop their whole job,** once every limit in that job is
   reached.
 
 ### Performance
 
-Measured with PresentMon on the developer's test base, matched captures with
-the profiler off, and checked again on the final build on 2026-10-29 with the
-same result. "Slow frame" = longer than 16.7 ms (below 60 FPS).
+Measured with PresentMon on the developer's test base (matched captures,
+profiler off) on 2026-10-20. UI closed was rechecked on 2026-10-29 on a build
+before the last panel and server fixes. "Slow frame" = longer than 16.7 ms
+(below 60 FPS).
 - **Normal play:** the mod costs about one slow frame every 10 seconds (its
-  scheduling pass, now about 20 ms, was 35 ms). Only while you have limits
-  that need stock counts, it adds one frame over 33 ms every 30 seconds (the
-  storage count).
+  scheduling pass, now about 20 ms, was 35 ms). It also shows 2-3 frames over
+  33 ms a minute that the run without the mod does not. On 2026-10-20 they
+  matched the storage count every 30 seconds, on 2026-10-29 no mod event
+  could be tied to them.
 - **With the Monitoring Stand open:** about one extra slow frame per second
   while it is open, because the mod redraws the priority numbers once a second.
 - 0.5.0 also fixes a hidden cost: on game 1.0.5 a failing name lookup made
   every roster read about ten times slower than needed.
 - **Dedicated server:** each scheduling pass takes about half as long (31
-  instead of 66 ms on the test server). On a server with no players online,
-  generators, coolers and per-item rock limits now work too.
+  instead of 66 ms on the test server, which has one base). On a server with
+  no players online the mod now reads the base's stations and rocks too (seen
+  in the server log; Pals working them there was not observed).
 - **Production Limits:** "Show all items" no longer redraws itself 60 times a
   second, and the highlight follows the mouse right away.
 
@@ -172,8 +175,9 @@ Planned for 0.5.x or 0.6:
 - Faster background saving (built and tested separately, planned for 0.5.x).
 - Marking a capped work column on the stand and showing the game's checkbox
   again when the mod turned a permission off.
-- Tests with several real players and guilds at once, a physical controller
-  and Steam Input, Steam Deck and ultrawide/UI-scale checks.
+- Tests with several real players and guilds at once, a physical
+  controller, Steam Deck and ultrawide/UI-scale checks, and a server with
+  many bases.
 - Requests: separate priority and limit mods, restricting high-quality stands,
   limits for Pal-produced materials.
 
@@ -190,8 +194,10 @@ next to it, start the game once, then remove 0.4.1. Your `config.lua` edits
 are kept. Vortex's Update or Replace removes 0.4.1's files first, so your
 `config.lua` edits are lost that way.
 
-Developer notes, decisions and test evidence are on GitHub, not in the mod
-download: [docs/Home.md](docs/Home.md).
+Developer notes, decisions and test evidence are in the
+[GitHub repository](https://github.com/Matraweber/PalWorkPriority), not in
+the mod download. Start at
+[docs/Home.md](https://github.com/Matraweber/PalWorkPriority/blob/master/docs/Home.md).
 
 ## 0.4.1 - 2026-08-28
 

@@ -211,16 +211,19 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   changelog and README: the cap of 500 limits per guild, the stand on a
   server without the mod or with another version, the missing-pak and
   second-UE4SS warnings, the config reset notice, old 0.4.1 config values and
-  a BOM in config.lua, rocks after a respawn, controller input after the
-  latest fixes.
+  a BOM in config.lua, rocks after a respawn, other players' panels after
+  one player's limit edit, controller input after the latest fixes.
   **Done when:** the round-2 fixes are retested in game and on the server, and
   the install checks (manual, Workshop, 0.4.1 upgrade) are rerun on the final
   archives.
 - [ ] **Store pages updated** from
   [store-page-0.5.0-draft](store-page-0.5.0-draft.md) (user).
-  **Done when:** both pages carry the 0.5.0 text and say: one copy only,
-  Windows servers only, the UE4SS dependency, the Vortex switch, and the
-  `config.lua` loss on a Workshop update from 0.4.1.
+  **Done when:** both pages carry the 0.5.0 text and say: one copy only
+  (before extracting), Windows servers only, the UE4SS dependency (a
+  Required item on the Workshop page), the Vortex switch and steps, the
+  `config.lua` loss on a Workshop update from 0.4.1, the first-minute test
+  with a right click, the NVIDIA Alt+F1 line, the overshoot line and the
+  GitHub link to the full guide (round-4 review, onboarding and newcomer).
 
 ## Deferred to 0.5.x / 0.6 (say so in the changelog)
 
