@@ -80,7 +80,7 @@ status.verdict=verdict
 -- C: uncounted texts, host and client.
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.' or
-    notice():find("Mining limits stop only that item's rocks; Stone Pits keep producing",1,true), 'host help: '..tostring(notice()))
+    notice():find("Mining limits stop only that item's rocks; pits stop once no Mining is wanted",1,true), 'host help: '..tostring(notice()))
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.', 'host uncounted: '..tostring(notice()))
@@ -106,6 +106,10 @@ assert(border(0.060,0.080,0.110), 'selected row fill is not ROW_SEL')
 assert(border(0.42,0.80,1.00,3,30), 'selected row has no cyan rail')
 
 -- C: picker wording for Mining item limits, the help and the caption.
+-- The fixture's Stone* ids stand for stone rocks (workdefs.rock_drop).
+local wd=require('workdefs')
+local real_rock=wd.rock_drop
+wd.rock_drop=function(id) return real_rock(id) or tostring(id):find('^Stone')~=nil end
 caps.support=function() return true end
 caps.rule_kind=function(_,item) return data[item] and 'legacy' or 'item' end
 stock.Stone01=95 -- first on page 1: the picker sorts by quantity

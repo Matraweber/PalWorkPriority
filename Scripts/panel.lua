@@ -2201,7 +2201,9 @@ RB.PICK_HELP = {
 -- The rules help row says what a limit does; the footer alone says how to
 -- change one (UX crowding P2-4: every control was explained twice). "Group"
 -- is the word the picker's tiles use, so the two read as one idea (P3-3).
-RB.LIMIT_HELP = { rocks = "Mining limits stop only that item's rocks; Stone Pits keep producing. "
+-- Pits are not "kept producing" (release truth P1-1): a base whose rocks and
+-- pits are all reached stops Mining, pits included (scheduler, DECISIONS).
+RB.LIMIT_HELP = { rocks = "Mining limits stop only that item's rocks; pits stop once no Mining is wanted. "
     .. "Other (group) limits stop their whole job.",
     group = "Each limit is a group limit: it stops its whole job." }
 -- Before the first limit (UX crowding P2-5): what a limit is, in one line.
@@ -7068,12 +7070,14 @@ function M.apply(cfg, what, dir, from_mouse)
             local again = RB.AGAIN[by]
             local said
             if RB.per_item(cfg) and work == "Mining" then
-                -- Stone Pits named (round 3, newcomer P2-1): stone kept
-                -- rising after "Rocks stopped", which read as broken.
-                said = string.format("%s: stops its rocks once reached; Stone Pits keep producing. %s to add a limit of %s.",
+                -- Pits named (round 3, newcomer P2-1): stone kept rising
+                -- after "Rocks stopped", which read as broken. They stop
+                -- once no Mining is wanted (release truth P1-1), so the
+                -- short form drops them rather than say they go on.
+                said = string.format("%s: stops its rocks once reached; pits stop once no Mining is wanted. %s to add a limit of %s.",
                     name, again, group_digits(seed))
                 if #said > 125 then
-                    said = string.format("%s: stops its rocks once reached; pits go on. %s to add a limit of %s.",
+                    said = string.format("%s: stops only its own rocks once reached. %s to add a limit of %s.",
                         name, again, group_digits(seed))
                 end
             elseif capability.group ~= nil then

@@ -58,6 +58,13 @@ function M.describe(caps, rules, work, item, guild, cfg)
     if caps.support then ok, supported = pcall(caps.support, work, item, guild) end
     local job = workdefs.label(work)
     local group = covering_group(caps, rules, work, guild)
+    -- A per-item Mining limit on an item no rock mainly gives would stop no
+    -- rock at all (newcomer round 4, P2-5: Thermal Core showed "Add item
+    -- limit"). A limit already set is still shown above, to edit or remove.
+    if ok and supported == true and item_limit and not workdefs.rock_drop(item) then
+        return {state='unavailable', label='Cannot be limited',
+            detail='No rock mainly gives this item, so it cannot have a Mining limit.'}
+    end
     if ok and supported == true then
         -- A second item joins the type's group: the work stops only once
         -- every one of them is reached (scheduler.cap_state).
@@ -65,7 +72,7 @@ function M.describe(caps, rules, work, item, guild, cfg)
             and ('Joins the '..job..' limits: '..job..' stops once every one is reached.')
             or ('Stops all '..job..' work once reached, not only this item.')
         if item_limit then
-            detail = 'Stops the rocks that mainly give this item once reached; other mining goes on.'
+            detail = 'Stops the rocks that mainly give this item once reached; other mining goes on while it is still wanted.'
         end
         local label = item_limit and 'item limit' or 'group limit'
         return {state='create', group=group,

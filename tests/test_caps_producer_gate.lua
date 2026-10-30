@@ -17,9 +17,24 @@ local offer=picker.describe(caps,caps.all({},'guild-A'),'Mining','Ore','guild-A'
 assert(offer.state=='create' and offer.label=='Add group limit' and offer.group=='Stone'
     and offer.detail:find('stops once every one is reached',1,true), 'joining a group not explained')
 -- 2026-10-28: by default a Mining limit is per item on rocks (item_sources).
-local rocks=picker.describe(caps,caps.all({},'guild-A'),'Mining','Ore','guild-A')
+local rocks=picker.describe(caps,caps.all({},'guild-A'),'Mining','CopperOre','guild-A')
 assert(rocks.state=='create' and rocks.label=='Add item limit'
     and rocks.detail:find('rocks that mainly give this item',1,true), 'per-item Mining limit not explained')
+-- Newcomer round 4, P2-5: no rock mainly gives a Thermal Core or the
+-- fixture's "Ore", so no per-item Mining limit is offered on them; with
+-- per-item off the group limit still is.
+for _,item in ipairs({'Thermal_Core','Ore','Lily_Hat'}) do
+    local none=picker.describe(caps,caps.all({},'guild-A'),'Mining',item,'guild-A')
+    assert(none.state~='create' and none.label=='Cannot be limited'
+        and none.detail:find('No rock mainly gives',1,true), item..' offered a Mining item limit')
+end
+assert(picker.describe(caps,caps.all({},'guild-A'),'Mining','Coal','guild-A').state=='create')
+-- Pal drops are no base product (they had been filed under the ranch).
+local workdefs=require('workdefs')
+for _,item in ipairs({'Leather','Leather2','Horn','Bone','BeastBone_Ancient','Thermal_Core'}) do
+    assert(workdefs.work_for_item(item)==nil, item..' still has a job: '..tostring(workdefs.work_for_item(item)))
+end
+assert(workdefs.work_for_item('Wool')=='MonsterFarm' and workdefs.work_for_item('Stone')=='Mining')
 assert(picker.describe(caps,caps.all({},'guild-A'),'Deforest','Wood','guild-A').label=='Add group limit',
     'a non-Mining limit claimed to be per item')
 local before=fs.files.caps

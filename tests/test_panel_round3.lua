@@ -368,9 +368,18 @@ local verdict=require('panel_status').verdict
 require('panel_status').verdict=function() return false,nil,1 end
 data.Stone01=1000; draw()
 panel.nav(cfg,'down'); panel.nav(cfg,'up'); draw()
-assert(notice()=="Mining limits stop only that item's rocks; Stone Pits keep producing. Other (group) limits stop their whole job.",
+assert(notice()=="Mining limits stop only that item's rocks; pits stop once no Mining is wanted. Other (group) limits stop their whole job.",
     'rules help: '..tostring(notice()))
 assert(#notice()<=125)
+-- Release truth P1-1 (round 4): a stone-only base whose Stone is reached
+-- stops Mining, its pit included (scheduler, DECISIONS), so no panel text
+-- may say pits keep producing or simply go on.
+for _,text in ipairs({rb.LIMIT_HELP.rocks, rb.LIMIT_HELP.group,
+        require('picker_presentation').describe({support=function() return true end}, {},
+            'Mining', 'Stone', 'guild', {}).detail}) do
+    assert(not text:find('keep producing',1,true) and not text:find('pits go on',1,true),
+        'claims pits keep producing: '..text)
+end
 cfg.item_limits_on_rocks=false; draw()
 assert(notice()=='Each limit is a group limit: it stops its whole job.', 'group help: '..tostring(notice()))
 for _,text in ipairs({rb.LIMIT_HELP.rocks, rb.LIMIT_HELP.group}) do
