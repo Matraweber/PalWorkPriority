@@ -344,9 +344,105 @@ class DriverNoteCheck(unittest.TestCase):
         self.assertIn("8001 bytes", self.problem(crlf, crlf.replace("\r", "")))
 
 
+# Loads WhileNotesOpen and CloseNotes from the driver with stubs for the
+# uploader (buttons, Press, the window list, Stop-Process): a failure while
+# the Change Notes window is open must press Cancel or end the uploader.
+NOTES_GUARD_PS = r"""
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:PWP_PS1, [ref]$null, [ref]$null)
+foreach ($name in 'WhileNotesOpen', 'CloseNotes') {
+    $f = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    if (-not $f) { [Console]::Out.Write("NO FUNCTION $name"); exit 3 }
+    . ([scriptblock]::Create($f.Extent.Text))
+}
+$CancelWait = 1
+$proc = [pscustomobject]@{ Id = 4242 }
+$script:log = @()
+$script:open = $true
+function Button($window, $name) { if ($name -eq 'Cancel' -and $env:PWP_CANCEL -eq '1') { 'cancel-button' } }
+function Press($button) { $script:log += "press $button"; if ($env:PWP_CLOSES -eq '1') { $script:open = $false } }
+function IsOpen($procId, $handle) { $script:open }
+function Stop-Process { param($Id, [switch]$Force, $ErrorAction) $script:log += "kill $Id"; $script:open = $false }
+$dialog = [pscustomobject]@{ Current = [pscustomobject]@{ NativeWindowHandle = 77 } }
+try {
+    $r = WhileNotesOpen $dialog {
+        if ($env:PWP_FAIL -eq '1') { throw 'The change note did not go in completely (10 of 40 characters).' }
+        'ok-button'
+    }
+    $out = "RETURNED $r"
+} catch { $out = "THREW $($_.Exception.Message)" }
+[Console]::Out.Write($out + "`n" + ($script:log -join ';'))
+"""
+
+# Every use of $dialog in the script body (outside function definitions,
+# apart from the assignment that finds it) must sit inside a WhileNotesOpen
+# call; Press $ok must not, or a failed OK press would end a running upload.
+NOTES_GUARD_AST_PS = r"""
+$L = 'System.Management.Automation.Language'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:PWP_PS1, [ref]$null, [ref]$null)
+$guards = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'WhileNotesOpen' }, $true))
+$functions = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+function Within($node, $outer) { foreach ($o in $outer) { if ($node.Extent.StartOffset -ge $o.Extent.StartOffset -and $node.Extent.EndOffset -le $o.Extent.EndOffset) { return $true } }; return $false }
+$uses = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.UserPath -eq 'dialog' }, $true)
+$bad = @()
+foreach ($u in $uses) {
+    if (Within $u $functions) { continue }
+    if ($u.Parent -is [System.Management.Automation.Language.AssignmentStatementAst] -and $u.Parent.Left -eq $u) { continue }
+    if (-not (Within $u $guards)) { $bad += "line $($u.Extent.StartLineNumber)" }
+}
+$press = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Press' -and $n.Extent.Text -match '\$ok\b' }, $true))
+if ($press.Count -ne 1) { $bad += "Press `$ok found $($press.Count) times" }
+foreach ($p in $press) { if (Within $p $guards) { $bad += "Press `$ok inside WhileNotesOpen (line $($p.Extent.StartLineNumber))" } }
+if ($guards.Count -lt 2) { $bad += "only $($guards.Count) WhileNotesOpen calls" }
+[Console]::Out.Write(($bad -join '; '))
+"""
+
+
+@unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell required")
+class DriverCancelsOnFailure(unittest.TestCase):
+    """2026-10-30 (round 4, tooling P2-1): a failure after the Change Notes
+    window opened (a cut note, missing buttons) left the window open with
+    the rejected note, one OK away from publishing it."""
+
+    def run_ps(self, script, **env):
+        env = dict(os.environ, PWP_PS1=str(ROOT / "tools/workshop-upload.ps1"),
+                   **{"PWP_" + k.upper(): v for k, v in env.items()})
+        r = REAL_RUN(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                     capture_output=True, text=True, encoding="utf-8", env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def guard(self, fail, cancel, closes):
+        out = self.run_ps(NOTES_GUARD_PS, fail=fail, cancel=cancel, closes=closes)
+        result, _, log = out.partition("\n")
+        return result, log
+
+    def test_failure_presses_cancel_and_rethrows(self):
+        result, log = self.guard("1", "1", "1")
+        self.assertTrue(result.startswith("THREW The change note did not go in completely"), result)
+        self.assertIn("Cancel was pressed in the uploader: nothing was sent.", result)
+        self.assertEqual(log, "press cancel-button")
+
+    def test_cancel_that_does_not_close_ends_the_uploader(self):
+        result, log = self.guard("1", "1", "0")
+        self.assertIn("so the uploader was ended", result)
+        self.assertEqual(log, "press cancel-button;kill 4242")
+
+    def test_no_cancel_button_ends_the_uploader(self):
+        result, log = self.guard("1", "0", "0")
+        self.assertTrue(result.startswith("THREW "), result)
+        self.assertEqual(log, "kill 4242")
+
+    def test_success_touches_nothing(self):
+        self.assertEqual(self.guard("0", "1", "1"), ("RETURNED ok-button", ""))
+
+    def test_every_use_of_the_dialog_is_guarded(self):
+        self.assertEqual(self.run_ps(NOTES_GUARD_AST_PS), "")
+
+
 class NoAsserts(unittest.TestCase):
     def test_no_assert_statements(self):
-        for name in ("tools/workshop_upload.py", "tools/g7_install_matrix.py", "tools/g1_workshop_route.py"):
+        for name in ("tools/workshop_upload.py", "tools/g7_install_matrix.py", "tools/g1_workshop_route.py",
+                     "tools/mod_absent.py"):
             tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
             self.assertEqual([n.lineno for n in ast.walk(tree) if isinstance(n, ast.Assert)], [], name)
 
@@ -635,6 +731,117 @@ class Upload(Fixture):
         with mock.patch.object(wu.subprocess, "run", self.fake_run(PUBLISHED[0])):
             self.assertIn("stage changed since prepare", self.refused(wu.upload, "Submit"))
         self.assertEqual(self.calls, [], "nothing was started")
+
+    def test_refuses_while_the_uploader_is_open_before_touching_workshop_path(self):
+        # 2026-10-30 (round 4, tooling P3-2): workshop_path.txt was rewritten
+        # before the driver refused an uploader that was already open.
+        path = self.uploader.parent / "workshop_path.txt"
+        path.write_text("C:\\elsewhere", encoding="utf-8")
+
+        def run(args, **kw):
+            if args[0] == "git":
+                return REAL_RUN(args, **kw)
+            self.calls.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout="steam.exe  1234 Console\nPalworldModUploader.exe  5678 Console\n")
+        with mock.patch.object(wu.subprocess, "run", run):
+            self.assertIn("uploader is already open", self.refused(wu.upload, "Submit"))
+        self.assertEqual([c[0] for c in self.calls], ["tasklist"], "powershell was not started")
+        self.assertEqual(path.read_text(encoding="utf-8"), "C:\\elsewhere")
+        self.assertEqual(list(self.root.glob("workshop_path-before-*.txt")), [])
+
+    def test_failed_tasklist_refused(self):
+        def run(args, **kw):
+            if args[0] == "git":
+                return REAL_RUN(args, **kw)
+            self.calls.append(args)
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="broke")
+        with mock.patch.object(wu.subprocess, "run", run):
+            self.assertIn("tasklist failed", self.refused(wu.upload, "Submit"))
+        self.assertFalse((self.uploader.parent / "workshop_path.txt").exists())
+
+    def test_prepare_records_the_change_note_hash(self):
+        state = json.loads((self.root / "stage/stage.json").read_text(encoding="utf-8"))
+        note = self.root / "stage/changenote-0.5.0.txt"
+        self.assertEqual(state["changenote"], note.name)
+        self.assertEqual(state["changenote_sha256"], hashlib.sha256(note.read_bytes()).hexdigest())
+
+    def test_refuses_a_changed_change_note(self):
+        # 2026-10-30 (round 4, tooling P3-1): upload sent whatever the file held.
+        note = self.root / "stage/changenote-0.5.0.txt"
+        note.write_text(note.read_text(encoding="utf-8") + "edited by hand\n", encoding="utf-8", newline="\n")
+        self.assertIn("not the change note prepare wrote", self.refused_without_powershell())
+
+    def test_refuses_a_stage_without_a_change_note_hash(self):
+        path = self.root / "stage/stage.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        del state["changenote_sha256"]
+        path.write_text(json.dumps(state), encoding="utf-8")
+        self.assertIn("records no change-note hash", self.refused_without_powershell())
+
+    def test_driver_failure_says_not_published(self):
+        def run(args, **kw):
+            if args[0] == "git":
+                return REAL_RUN(args, **kw)
+            self.calls.append(args)
+            if args[0] == "tasklist":
+                return subprocess.CompletedProcess(args, 0, stdout="steam.exe  1234 Console\n")
+            return subprocess.CompletedProcess(args, 1)
+        for mode in (None, "Submit", "DryRun"):
+            with self.subTest(mode=mode), mock.patch.object(wu.subprocess, "run", run):
+                code, out = self.exit_code(wu.upload, mode)
+            self.assertEqual(code, 1)
+            self.assertIn("NOT published, do not press OK", out)
+
+    def test_failure_after_ok_does_not_invite_a_retry(self):
+        def run(args, **kw):
+            if args[0] == "git":
+                return REAL_RUN(args, **kw)
+            if args[0] == "tasklist":
+                return subprocess.CompletedProcess(args, 0, stdout="steam.exe  1234 Console\n")
+            return subprocess.CompletedProcess(args, wu.AFTER_OK)
+        with mock.patch.object(wu.subprocess, "run", run):
+            msg = self.refused(wu.upload, "Submit")
+        self.assertIn("Do not upload again", msg)
+        self.assertNotIn("NOT published", msg)
+
+    def test_metadata_warning_is_recorded_and_a_repeat_refused(self):
+        # 2026-10-30 (round 4, tooling P3-3): "Submitted, but failed to update
+        # metadata" leaves .workshop.json at 0.4.1 and Steam's copy at 0.4.1
+        # until it downloads, so a second upload passed every guard.
+        code, out = self.upload("Submit", WARNINGS[0])
+        self.assertEqual(code, 0, out)
+        self.assertIn("a second upload is refused", out)
+        state = json.loads((self.root / "stage/stage.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["submitted"]["version"], "0.5.0")
+        self.assertEqual(state["submitted"]["status"], WARNINGS[0])
+        self.calls = []
+        with mock.patch.object(wu.subprocess, "run", self.fake_run(PUBLISHED[0])):
+            msg = self.refused(wu.upload, "Submit")
+        self.assertEqual(self.calls, [], "neither tasklist nor powershell was started")
+        self.assertIn("not newer than the live version 0.5.0", msg)
+        self.assertIn("(submitted)", msg)
+        self.assertIn("live version 0.5.0", self.refused(wu.prepare, "0.5.0"), "a new prepare is refused too")
+
+    def test_record_survives_the_stage_being_moved_aside(self):
+        self.upload("Submit", WARNINGS[0])
+        aside = self.root / "stage-before-20261030-120000"
+        shutil.move(str(self.root / "stage"), str(aside))
+        self.assertIn("live version 0.5.0", self.refused(wu.prepare, "0.5.0"))
+
+    def test_error_is_not_recorded(self):
+        self.upload("Submit", "Submission failed: k_EResultLimitExceeded")
+        state = json.loads((self.root / "stage/stage.json").read_text(encoding="utf-8"))
+        self.assertNotIn("submitted", state)
+
+    def test_check_passes_after_a_metadata_warning(self):
+        self.upload("Submit", WARNINGS[0])
+        self.steam_downloads_stage()  # the stage's .workshop.json still says 0.4.1
+        json_write(self.subscribed / "Info.json", {"Version": "0.5.0"})
+        (self.subscribed / "Info.json").write_bytes((self.mod / "Info.json").read_bytes())
+        code, out = self.exit_code(wu.check)
+        self.assertEqual(code, 0, out)
+        self.assertIn("recorded the submission", out)
 
 
 if __name__ == "__main__":

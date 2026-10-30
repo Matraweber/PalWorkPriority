@@ -15,9 +15,12 @@ note (the CHANGELOG section at tag vV as Steam BBCode, at most 8000 bytes
 in UTF-8) next to the folder, not inside it: everything inside the folder
 is uploaded.
 
-The live version is the newest of the subscribed copy's Info.json Version and
+The live version is the newest of the subscribed copy's Info.json Version,
 the last_published_version the uploader recorded in earlier stages (it writes
-that file after a successful upload, before Steam has downloaded anything).
+that file after a successful upload, before Steam has downloaded anything)
+and the version upload --submit recorded as submitted in a stage's
+stage.json (the uploader records nothing when it says "Submitted, but failed
+to update metadata").
 prepare refuses a version that is not newer than the live one: no silent
 re-upload, no downgrade.
 
@@ -29,8 +32,13 @@ PalWorkPriority, checks name and version, presses "Upload To Steam" and fills
 in the change note. By default it stops there: the Change Notes window stays
 open and pressing OK publishes. --submit presses OK and waits for Steam's
 answer (classify_status: "Workshop item submitted successfully." and
-"Submitted, but ..." are published, anything else exits 1); --dry-run presses
-Cancel and closes the uploader (nothing is sent).
+"Submitted, but ..." are published and recorded in stage.json, anything else
+exits 1); --dry-run presses Cancel and closes the uploader (nothing is sent).
+When the driver fails while the Change Notes window is open, it presses
+Cancel there (or ends the uploader) and upload prints "NOT published, do not
+press OK". upload refuses while the uploader is already running (before
+workshop_path.txt is touched) and when the change note file is not the one
+prepare wrote (its sha256 is in stage.json).
 
 upload and check first re-check the stage against the release: tag vV, local
 and on origin, must still be the commit recorded at prepare, the release
@@ -73,6 +81,9 @@ KEEP = ['', 'Before you update', 'Limits in', 'Fixed/Settings', 'Fixed/Schedulin
 PUBLISHED = 'Workshop item submitted successfully.'
 # The last bullet of a shortened part.
 MORE = '- More in the full changelog (link below).'
+# workshop-upload.ps1's exit code when it failed after pressing OK: the
+# upload may be running, so nothing is cancelled and no retry is suggested.
+AFTER_OK = 3
 
 
 def die(message):
@@ -108,12 +119,17 @@ def live_version():
     it, so it is one release behind. Returns (version, {source: version})."""
     info = read_json(SUBSCRIBED / 'Info.json', "the subscribed copy's Info.json (subscribe to item %s first)" % ITEM)
     seen = {'subscribed Info.json': info.get('Version')}
-    for folder in [MOD] + sorted(ROOT.glob('stage-before-*/PalWorkPriority')):
-        meta = folder / '.workshop.json'
+    for stage in [STAGE] + sorted(ROOT.glob('stage-before-*')):
+        meta = stage / MOD.name / '.workshop.json'
         if meta.is_file():
             recorded = read_json(meta, "an earlier stage's .workshop.json").get('last_published_version')
             if recorded:
                 seen[str(meta)] = recorded
+        record = stage / 'stage.json'
+        if record.is_file():
+            submitted = (read_json(record, "a stage's stage.json").get('submitted') or {}).get('version')
+            if submitted:
+                seen[str(record) + ' (submitted)'] = submitted
     for source, v in seen.items():
         version_key(v, source)
     return max(seen.values(), key=version_key), seen
@@ -146,8 +162,8 @@ def report_submit(text):
     if kind == 'warning':
         print('Published, with a warning from the uploader: %s' % shown)
         if 'metadata' in shown:
-            print("  The uploader did not record the version in the stage's .workshop.json,"
-                  ' so check reports NOT YET on that line; compare the files it lists.')
+            print("  The uploader did not record the version in the stage's .workshop.json;"
+                  ' stage.json records the submission, so check accepts it and a second upload is refused.')
     else:
         print('Published: %s' % shown)
     print('Next: python tools/workshop_upload.py check (after Steam has downloaded the update).')
@@ -354,6 +370,16 @@ def check_public_tag(version, tag):
             % (version, public[:12], tag[:12], version))
 
 
+def write_state(state):
+    """stage.json, written to a temporary file and renamed over the old one."""
+    path = STAGE / 'stage.json'
+    temp = path.with_name('stage.json.tmp')
+    temp.write_text(json.dumps(state, indent=2), encoding='utf-8')
+    if json.loads(temp.read_text(encoding='utf-8')) != state:
+        die('could not write %s' % temp)
+    temp.replace(path)
+
+
 def check_stage_release(state, uploading):
     """The stage still belongs to the release: tag v<version>, local and on
     origin, is the commit recorded at prepare, the release manifest still
@@ -432,10 +458,12 @@ def prepare(version):
     published['last_published_version'] = live
     (MOD / '.workshop.json').write_text(json.dumps(published, indent=2), encoding='utf-8')
 
-    (STAGE / ('changenote-%s.txt' % version)).write_text(note, encoding='utf-8', newline='\n')
-    (STAGE / 'stage.json').write_text(json.dumps({
+    note_file = STAGE / ('changenote-%s.txt' % version)
+    note_file.write_text(note, encoding='utf-8', newline='\n')
+    write_state({
         'version': version, 'archive': entry['file'], 'sha256': entry['sha256'],
-        'source_commit': manifest['source_commit'], 'live_version': live, 'files': tree(MOD)}, indent=2))
+        'source_commit': manifest['source_commit'], 'live_version': live, 'files': tree(MOD),
+        'changenote': note_file.name, 'changenote_sha256': sha(note_file)})
     print('staged %d files of %s in %s' % (len(tree(MOD)) - 1, entry['file'], MOD))
     print('live version: %s (%s); item %s' % (live, sources, ITEM))
     print('change note (CHANGELOG.md at v%s): %d of %d bytes%s%s' % (
@@ -460,18 +488,36 @@ def point_uploader_at_stage():
     path.write_text(str(STAGE), encoding='utf-8')
 
 
+def check_note(state):
+    """The change note file is the one prepare wrote; returns its path."""
+    note = STAGE / ('changenote-%s.txt' % state['version'])
+    if not state.get('changenote_sha256'):
+        die('stage.json records no change-note hash (staged before 2026-10-30); run prepare again')
+    if not note.is_file() or sha(note) != state['changenote_sha256']:
+        die('%s is not the change note prepare wrote (its sha256 is in stage.json); run prepare again' % note)
+    return note
+
+
 def upload(mode):
     state = read_json(STAGE / 'stage.json', 'stage.json (run prepare first)')
     if tree(MOD) != state['files']:
         die('the stage changed since prepare (or it was already uploaded); run prepare again')
+    note = check_note(state)
     check_stage_release(state, uploading=True)
-    tasks = subprocess.run(['tasklist'], capture_output=True, text=True).stdout.lower()
+    r = subprocess.run(['tasklist'], capture_output=True, text=True)
+    if r.returncode != 0:
+        die('tasklist failed, so Steam and the uploader cannot be checked: %s' % (r.stderr or '').strip())
+    tasks = (r.stdout or '').lower()
     if 'steam.exe' not in tasks:
         die('start Steam and log in first')
+    # Before workshop_path.txt is touched: an open uploader has already read it.
+    if 'palworldmoduploader.exe' in tasks:
+        die('the uploader is already open. Close it first, so it reads the staged Workshop directory; '
+            'nothing was changed')
     point_uploader_at_stage()
     args = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
             str(REPO / 'tools/workshop-upload.ps1'), '-Exe', str(UPLOADER), '-Stage', str(STAGE),
-            '-Version', state['version'], '-NotesFile', str(STAGE / ('changenote-%s.txt' % state['version']))]
+            '-Version', state['version'], '-NotesFile', str(note)]
     status_file = None
     if mode:
         args.append('-' + mode)
@@ -480,11 +526,25 @@ def upload(mode):
         status_file = STAGE / time.strftime('submit-status-%Y%m%d-%H%M%S.txt')
         args += ['-StatusFile', str(status_file)]
     code = subprocess.run(args).returncode
-    if code != 0 or status_file is None:
+    if code == AFTER_OK:
+        die('OK was pressed (or may have been) and the driver stopped before Steam answered. '
+            'Do not upload again: look at the uploader, then run check')
+    if code != 0:
+        print('NOT published, do not press OK in the uploader. The driver stopped (exit code %d) and pressed '
+              'Cancel or ended the uploader; if a Change Notes window is still open, press Cancel there.' % code)
         sys.exit(code)
+    if status_file is None:
+        sys.exit(0)
     if not status_file.is_file():
         die('the driver recorded no final status; look at the uploader and run check before trying again')
-    sys.exit(report_submit(status_file.read_text(encoding='utf-8-sig')))
+    text = status_file.read_text(encoding='utf-8-sig')
+    if classify_status(text) != 'error':
+        # The uploader records the version only when its metadata update
+        # works; this record is what stops a second upload otherwise.
+        state['submitted'] = {'version': state['version'], 'status': text.strip(),
+                              'at': time.strftime('%Y-%m-%d %H:%M:%S')}
+        write_state(state)
+    sys.exit(report_submit(text))
 
 
 def check(version=None):
@@ -510,8 +570,11 @@ def check(version=None):
     for name, files in (('missing in the Steam copy', missing), ('only in the Steam copy', extra), ('different', differ)):
         if files:
             print('%s (%d): %s' % (name, len(files), ', '.join(files[:10])))
-    ok = (not (missing or extra or differ) and meta.get('last_published_version') == version
-          and steam_version == version)
+    submitted = (state.get('submitted') or {}).get('version')
+    if submitted:
+        print('upload --submit recorded the submission:', state['submitted'].get('status'))
+    recorded_live = meta.get('last_published_version') == version or submitted == version
+    ok = not (missing or extra or differ) and recorded_live and steam_version == version
     print('PASS: the Steam copy equals the staged %s (hashes recorded at prepare)' % state['archive'] if ok else
           'NOT YET: Steam has not downloaded the update (subscribe, or restart Steam) or the upload failed')
     sys.exit(0 if ok else 1)

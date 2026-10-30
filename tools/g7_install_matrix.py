@@ -2,11 +2,15 @@
 install while the Workshop item is active. Reversible; game closed for every step.
 
   prepare                      back up and move the dev install aside
-  manual <manual.zip> [--sha256 H]
+                               (state.json first; a failed move is undone)
+  manual <manual.zip> --state <folder> [--sha256 H]
                                extract the manual archive into the game root
-  workshop-content <workshop.zip> [--sha256 H]
+  workshop-content <workshop.zip> --state <folder> [--sha256 H]
                                replace the Workshop item's files with the
                                archive's (.workshop.json kept)
+                               Both need the prepare backup in <folder> to
+                               match its state.json, like wipe: the backup
+                               holds the dev install and the Workshop item.
   workshop on|off              add/remove ActiveModList=PalWorkPriority
   wipe --state <folder>        remove whatever PalWorkPriority install exists;
                                refused unless the prepare backup in <folder>
@@ -83,10 +87,25 @@ def prepare():
     state = {'dev_tree': tree(MOD), 'pak': sha(PAK), 'workshop_tree': tree(WS),
              'settings': sha(SETTINGS), 'mods_txt': sha(MODS / 'mods.txt'), 'managed_tree': tree(MANAGED),
              'install_txt': sha(install_txt) if install_txt.is_file() else None}
-    shutil.move(str(MOD), str(b / 'dev-PalWorkPriority'))
-    (b / 'dev-LogicMods').mkdir()
-    shutil.move(str(PAK), str(b / 'dev-LogicMods/PalWorkPriority.pak'))
+    # Written before anything moves, so the folder always says what it is.
     (b / 'state.json').write_text(json.dumps(state))
+    (b / 'dev-LogicMods').mkdir()
+    moved = []
+    try:
+        for src, dst in ((MOD, b / 'dev-PalWorkPriority'), (PAK, b / 'dev-LogicMods/PalWorkPriority.pak')):
+            shutil.move(str(src), str(dst))
+            moved.append((src, dst))
+    except OSError as err:
+        # Put back what was moved: a half-moved dev install matches neither
+        # the game nor the backup, and restore would refuse it.
+        try:
+            for src, dst in reversed(moved):
+                shutil.move(str(dst), str(src))
+        except OSError as again:
+            die('prepare could not move the dev install aside (%s), and putting it back failed too (%s). '
+                'Move %s back by hand' % (err, again, ', '.join('%s to %s' % (d, s_) for s_, d in moved)))
+        die('prepare could not move the dev install aside (%s); it is back in place. The copies in %s '
+            'are not a usable backup' % (err, b))
     print(b)
 
 
@@ -160,14 +179,17 @@ def checked_archive(archive, kind, expected=None):
     return names
 
 
-def manual(archive, expected=None):
+def manual(archive, expected=None, state=None):
+    verify_backup(state, 'manual')
     names = checked_archive(archive, 'manual', expected)
     with zipfile.ZipFile(archive) as z:
         z.extractall(GAME)
     print('extracted %d files of %s into the game root' % (len(names), Path(archive).name))
 
 
-def workshop_content(archive, expected=None):
+def workshop_content(archive, expected=None, state=None):
+    # It deletes the Workshop item's folder: the backup must hold a copy.
+    verify_backup(state, 'workshop-content')
     names = checked_archive(archive, 'workshop', expected)
     meta = WS / '.workshop.json'
     if not meta.is_file():
@@ -331,9 +353,9 @@ def main(argv):
     elif cmd == 'status':
         status()
     elif cmd == 'manual':
-        manual(argv[1], option(argv, '--sha256'))
+        manual(argv[1], option(argv, '--sha256'), st)
     elif cmd == 'workshop-content':
-        workshop_content(argv[1], option(argv, '--sha256'))
+        workshop_content(argv[1], option(argv, '--sha256'), st)
     elif cmd == 'workshop':
         if argv[1] not in ('on', 'off'):
             die('workshop takes on or off')

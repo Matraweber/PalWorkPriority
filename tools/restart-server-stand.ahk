@@ -6,7 +6,8 @@
 ; --world: stand grid is closed. --title: already on the title menu.
 ; --check: syntax/config check only. Pause / ScrollLock abort immediately.
 ; --open-only: already facing the stand in gameplay; hold V without restarting.
-; --any-guild (after the mode): join although PWP_SERVER_GUILD is not set.
+; --any-guild (before or after the mode): join although PWP_SERVER_GUILD is
+; not set. A refused argument is logged (STOPPED: ...) and exits 2.
 ; Window-relative 16:9 calibration. Never kills the game or edits its saves.
 GAME := 'D:\Steam\steamapps\common\Palworld'
 EXE := GAME '\Pal\Binaries\Win64\Palworld-Win64-Shipping.exe'
@@ -20,15 +21,16 @@ SERVER := EnvGet('PWP_SERVER') || 'server address not set'  ; real address lives
 ; confirmed guild counts as ready (logged at start).
 EXPECTED_GUILD := Trim(EnvGet('PWP_SERVER_GUILD'))
 REMOTE := GAME '\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\remote.txt'
-MODE := '--stand'
-ANY_GUILD := false
-for arg in A_Args {
-    if arg = '--any-guild'
-        ANY_GUILD := true
-    else if A_Index = 1
-        MODE := arg
-    else
-        ExitApp 2
+USAGE := 'Usage: restart-server-stand.ahk [--stand|--world|--title|--launch|--open-only|--check|--self-test] [--any-guild]'
+PARSED := ParseArgs(A_Args)
+MODE := PARSED[1]
+ANY_GUILD := PARSED[2]
+if PARSED[3] != '' {
+    ; Logged before the exit (round 4, 2026-10-30): "--any-guild --world"
+    ; used to exit 2 with no line anywhere.
+    Note('STOPPED: ' PARSED[3])
+    try FileAppend PARSED[3] '`n', '*'
+    ExitApp 2
 }
 HELD_VK := 0
 HELD_SC := 0
@@ -38,9 +40,8 @@ if MODE = '--self-test' {
 }
 if MODE = '--check'
     ExitApp FileExist(EXE) && FileExist(GAME_LOG) && FileExist(REMOTE) ? 0 : 2
-if !(MODE = '--stand' || MODE = '--world' || MODE = '--title' || MODE = '--launch' || MODE = '--open-only')
-    ExitApp 2
 CoordMode 'Mouse', 'Client'
+CoordMode 'Pixel', 'Client'
 SetKeyDelay 70, 90
 SetMouseDelay 80
 OnExit ReleaseKeys
@@ -73,12 +74,11 @@ try {
       hwnd := GameWindow()
       oldPid := WinGetPID('ahk_id ' hwnd)
       if MODE != '--title' {
-        if MODE = '--stand' {
-            Key('Escape')
-            Sleep 1200
-        }
-        Key('Escape')
-        Sleep 1500
+        ; Escape until the game menu is really open (--stand needs one more
+        ; for the stand), as in restart-stand.ahk since 2026-10-28: a blind
+        ; Escape can be swallowed right after focus, and the next click then
+        ; lands in the world on the shared server (round 4, 2026-10-30).
+        OpenMenu()
         Point(306, 573) ; Return to title (normal save path)
         Sleep 1200
         Point(552, 477) ; Yes
@@ -202,6 +202,36 @@ Focus() {
         throw Error('This calibration needs a 16:9 game window, at least 800x450.')
     return [w, h]
 }
+; The game menu (Escape) shows the "Options" tab in bright blue at the top
+; right; the same check as restart-stand.ahk (measured there on 2026-10-28
+; in a 1280x720 client: open R0 G144 B255 at (1041,40) and R38 G160 B255 at
+; (1080,45); closed (sky) about R85-89 B133-143, and with only the stand
+; grid open R117-123 B143-150).
+MenuOpen() {
+    size := Focus()
+    for pt in [[1041, 40], [1080, 45]] {
+        c := Integer(PixelGetColor(Round(pt[1] * size[1] / 1280), Round(pt[2] * size[2] / 720)))
+        if !MenuBlue(c)
+            return false
+    }
+    return true
+}
+MenuBlue(c) {
+    return (c & 0xFF) >= 230 && ((c >> 16) & 0xFF) <= 60
+}
+OpenMenu() {
+    ; A menu that already reads open before any Escape would be closed by the
+    ; first one, or something else matches the blue tab: refuse either way.
+    if MenuOpen()
+        throw Error('The game menu already looks open before the first Escape (blue Options tab); refusing the menu sequence. Close the menu, or use --title from the title screen.')
+    loop 4 {
+        Key('Escape')
+        Sleep 1500
+        if MenuOpen()
+            return
+    }
+    throw Error('The game menu did not open after four Escape presses; no menu click was sent.')
+}
 Point(x, y) {
     size := Focus()
     MouseMove Round(x * size[1] / 1280), Round(y * size[2] / 720), 0
@@ -259,6 +289,26 @@ Probe() {
     FileMove temp, REMOTE, 1
 }
 
+; [mode, anyGuild, ''] or [mode, anyGuild, why the arguments are refused].
+; --any-guild may come before or after the mode.
+ParseArgs(args) {
+    global USAGE
+    mode := ''
+    anyGuild := false
+    for arg in args {
+        if arg = '--any-guild'
+            anyGuild := true
+        else if mode = ''
+            mode := arg
+        else
+            return [mode, anyGuild, 'Unexpected argument ' arg ' after the mode ' mode '; nothing was sent. ' USAGE]
+    }
+    if mode = ''
+        mode := '--stand'
+    if !RegExMatch(mode, 'i)^--(stand|world|title|launch|open-only|check|self-test)$')
+        return [mode, anyGuild, 'Unknown mode ' mode '; nothing was sent. ' USAGE]
+    return [mode, anyGuild, '']
+}
 ; '' when the macro may join, else why not.
 GuildGate(expected, anyGuild) {
     if expected != '' || anyGuild
@@ -318,6 +368,27 @@ SelfTest() {
     if GuildGate('', false) = '' || GuildGate('', true) != '' || GuildGate('-1-2-3--4', false) != ''
         throw Error('Guild gate regression failed.')
     FileAppend 'PASS 3 guild gate cases`n', '*'
+    args := [
+        [[], '--stand', false, false],
+        [['--world'], '--world', false, false],
+        [['--world', '--any-guild'], '--world', true, false],
+        [['--any-guild', '--world'], '--world', true, false],
+        [['--any-guild'], '--stand', true, false],
+        [['--world', '--title'], '--world', false, true],
+        [['--bogus'], '--bogus', false, true]
+    ]
+    for row in args {
+        got := ParseArgs(row[1])
+        if got[1] != row[2] || got[2] != row[3] || (got[3] != '') != row[4]
+            throw Error('Argument regression failed: case ' A_Index)
+    }
+    FileAppend 'PASS ' args.Length ' argument cases`n', '*'
+    ; Menu colours measured on 2026-10-28 (restart-stand.ahk): open tab, sky, stand grid.
+    colours := [[0x0090FF, true], [0x26A0FF, true], [0x556A85, false], [0x7B8796, false], [0x75808F, false]]
+    for row in colours
+        if MenuBlue(row[1]) != row[2]
+            throw Error('Menu colour regression failed: case ' A_Index)
+    FileAppend 'PASS ' colours.Length ' menu colour cases`n', '*'
 }
 
 ClickServer() {

@@ -6,17 +6,30 @@ Usage (game must be closed):
 remove moves the mod folder and LogicMods/PalWorkPriority.pak to
 D:/PalWorkPriority-backups/g5-absent-<time>/ with a SHA-256 manifest and sets
 the mods.txt entry to 0 byte-exactly (the file is CRLF; sed would rewrite it).
-restore moves both back, restores mods.txt and verifies every hash.
+restore checks the quarantine folder against its manifest first (nothing is
+moved when it does not match), moves both back, restores mods.txt and
+verifies every hash again.
 Procedure: docs/testing.md "Mod-absent baseline"; first used 2026-10-19.
+
+Every guard is an explicit check that exits with a message, so python -O
+cannot switch one off.
 """
-import hashlib, os, shutil, subprocess, sys, time
+import hashlib, shutil, subprocess, sys, time
 from pathlib import Path
 
 GAME = Path('D:/Steam/steamapps/common/Palworld')
 MODS = GAME / 'Mods/NativeMods/UE4SS/Mods'
 MOD = MODS / 'PalWorkPriority'
 PAK = GAME / 'Pal/Content/Paks/LogicMods/PalWorkPriority.pak'
+BACKUPS = Path('D:/PalWorkPriority-backups')
+GAME_EXE = 'Palworld-Win64-Shipping'
 LINE_ON, LINE_OFF = b'PalWorkPriority : 1\r\n', b'PalWorkPriority : 0\r\n'
+
+
+def die(message):
+    """Stop with a message and exit code 1 (instead of assert, which python -O
+    removes)."""
+    raise SystemExit('mod_absent: ' + message)
 
 
 def sha(p):
@@ -27,10 +40,13 @@ def sha(p):
     return h.hexdigest()
 
 
-def game_running():
-    out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq Palworld-Win64-Shipping.exe'],
-                         capture_output=True, text=True).stdout
-    return 'Palworld-Win64-Shipping' in out  # tasklist truncates the name
+def closed():
+    """Refuse every step while the game runs, or when that cannot be told."""
+    r = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq %s.exe' % GAME_EXE], capture_output=True, text=True)
+    if r.returncode != 0:
+        die('tasklist failed, so the game cannot be confirmed closed: %s' % (r.stderr or '').strip())
+    if GAME_EXE in (r.stdout or ''):  # tasklist truncates the name, so match the stem
+        die('close the game first (%s is running)' % GAME_EXE)
 
 
 def manifest(root):
@@ -38,10 +54,13 @@ def manifest(root):
 
 
 def remove():
-    q = Path('D:/PalWorkPriority-backups') / time.strftime('g5-absent-%Y%m%d-%H%M%S')
-    q.mkdir(parents=True)
     mods_txt = (MODS / 'mods.txt').read_bytes()
-    assert mods_txt.count(LINE_ON) == 1, 'mods.txt has no single enabled PalWorkPriority line'
+    if mods_txt.count(LINE_ON) != 1:
+        die('mods.txt has no single enabled PalWorkPriority line; nothing was moved')
+    if not MOD.is_dir() or not PAK.is_file():
+        die('the mod folder or the pak is missing (%s, %s); nothing was moved' % (MOD, PAK))
+    q = BACKUPS / time.strftime('g5-absent-%Y%m%d-%H%M%S')
+    q.mkdir(parents=True)
     (q / 'mods.txt.orig').write_bytes(mods_txt)
     files = manifest(MOD)
     lines = ['%s  PalWorkPriority/%s' % (h, n) for n, h in sorted(files.items())]
@@ -56,28 +75,63 @@ def remove():
     print('moved %d mod files and the pak; mods.txt entry set to 0' % len(files))
 
 
+def recorded(q):
+    """{name: sha256} from the quarantine folder's manifest."""
+    path = q / 'manifest.sha256'
+    if not path.is_file():
+        die('no manifest.sha256 in %s; not a mod_absent quarantine folder' % q)
+    out = {}
+    for line in path.read_text().splitlines():
+        h, sep, name = line.partition('  ')
+        if not sep or len(h) != 64:
+            die('%s has an unreadable line: %r' % (path, line))
+        out[name] = h
+    return out
+
+
+def check_quarantine(q, want):
+    """The quarantine folder holds exactly what remove recorded."""
+    have = {'PalWorkPriority/' + n: h for n, h in manifest(q / 'PalWorkPriority').items()} \
+        if (q / 'PalWorkPriority').is_dir() else {}
+    pak = q / 'LogicMods' / 'PalWorkPriority.pak'
+    if pak.is_file():
+        have['LogicMods/PalWorkPriority.pak'] = sha(pak)
+    if (q / 'mods.txt.orig').is_file():
+        have['mods.txt'] = sha(q / 'mods.txt.orig')
+    bad = sorted(n for n in set(want) | set(have) if want.get(n) != have.get(n))
+    if bad:
+        die('the quarantine folder %s does not match its manifest, nothing was moved: %s'
+            % (q, ', '.join(bad[:10])))
+
+
 def restore(q):
     q = Path(q)
-    assert not MOD.exists() and not PAK.exists(), 'mod is already present'
+    if MOD.exists() or PAK.exists():
+        die('the mod is already present (%s or %s); nothing was moved' % (MOD, PAK))
+    want = recorded(q)
+    check_quarantine(q, want)
     shutil.move(str(q / 'PalWorkPriority'), str(MOD))
     shutil.move(str(q / 'LogicMods' / 'PalWorkPriority.pak'), str(PAK))
     (MODS / 'mods.txt').write_bytes((q / 'mods.txt.orig').read_bytes())
     bad = 0
-    for line in (q / 'manifest.sha256').read_text().splitlines():
-        h, name = line.split('  ', 1)
+    for name, h in sorted(want.items()):
         path = (MODS / name) if name.startswith('PalWorkPriority/') else (PAK if name.startswith('LogicMods/') else MODS / 'mods.txt')
-        if sha(path) != h:
+        if not path.is_file() or sha(path) != h:
             bad += 1
             print('MISMATCH', name)
     print('restored; %d hash mismatches' % bad)
     sys.exit(1 if bad else 0)
 
 
-if __name__ == '__main__':
-    assert not game_running(), 'close the game first'
-    if sys.argv[1] == 'remove':
+def main(argv):
+    closed()
+    if argv[:1] == ['remove']:
         remove()
-    elif sys.argv[1] == 'restore':
-        restore(sys.argv[2])
+    elif argv[:1] == ['restore'] and len(argv) == 2:
+        restore(argv[1])
     else:
         sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
