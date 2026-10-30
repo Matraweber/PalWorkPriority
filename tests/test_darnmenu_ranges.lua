@@ -106,6 +106,11 @@ assert(label('interval_seconds') == 'Seconds between rechecks')
 assert(label('run_on_world_load') == 'Recheck when a world loads')
 assert(label('key_pass') == 'Recheck now')
 assert(label('min_suitability_rank') == 'Lowest work level to dedicate')
+-- Review round 4, scheduler P2-1: the old help said a Pal below the level
+-- "may still do it", which is false for an edited Pal (the job is switched
+-- off) and says nothing about Pals with equal numbers (left to the game).
+assert(options.min_suitability_rank.option.help == "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Edited Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game.",
+    'min_suitability_rank help: ' .. tostring(options.min_suitability_rank.option.help))
 assert(options.storage_scope.section == 'Production limits' and options.item_limits_on_rocks.section == 'Production limits')
 -- Review round 2: Off does not free X jobs, and a limit is when Pals stop.
 assert(options.enabled.option.help == 'Off gives back every job the mod switched off and stops steering. Jobs set to X stay off.')

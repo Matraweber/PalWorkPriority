@@ -59,12 +59,16 @@ end
 -- Accept plain pulse evidence. Missing fields may be repaired by a later
 -- pulse, but an unreadable field never erases a previously verified one.
 -- Conflicting known camp/type data is treated as a new identity generation.
-function M.observe(key, camp, value, now)
+-- `reason` is work_suitability's second answer: "ignored" marks a work that
+-- is deliberately not work (the egg incubator), so it is reported as ignored
+-- rather than untyped (review round 4, scheduler P3-4).
+function M.observe(key, camp, value, now, reason)
     if type(key) ~= "string" or key == "" then return false end
     if type(camp) ~= "string" or camp == "" then camp = nil end
     if type(value) ~= "number" or math.tointeger(value) == nil or value <= 0 then
         value = nil
     end
+    if type(now) ~= "number" then now = nil end
     local known = jobs[key]
     if known and ((camp and known.camp and camp ~= known.camp)
         or (value and known.value and value ~= known.value)) then
@@ -80,6 +84,7 @@ function M.observe(key, camp, value, now)
     end
     known.camp = camp or known.camp
     known.value = value or known.value
+    if known.value then known.ignored = nil elseif reason == "ignored" then known.ignored = true end
     known.seen = now or os.time()
     return true
 end
@@ -146,7 +151,12 @@ function M.install()
                     --
                     -- Everything read from it is read now, while the engine
                     -- has just handed it over and it is certainly alive.
-                    if M.observe(key, camp, api.work_suitability(w)) then
+                    -- Both answers, named: passed straight through, the
+                    -- reason "ignored" landed in observe's `now` and became
+                    -- the pulse's timestamp, a string that for_camp then
+                    -- compared with a number (review round 4).
+                    local value, reason = api.work_suitability(w)
+                    if M.observe(key, camp, value, nil, reason) then
                         -- Only a validated work pulse may support authority.
                         -- reset() clears this evidence at a session boundary.
                         M.last_pulse_at = os.clock()
@@ -176,7 +186,7 @@ function M.for_camp(camp_key, at)
     local now = at or os.time()
     local out, live = {}, 0
     local evidence = { source = "recent pulses", ready = out, unknown_scope = 0,
-        unknown_type = 0, jobs = {} }
+        unknown_type = 0, ignored = 0, jobs = {} }
 
     for key, e in pairs(jobs) do
         local dead = now < e.seen or (now - e.seen) > M.FRESH_SECONDS
@@ -191,6 +201,8 @@ function M.for_camp(camp_key, at)
                 if e.value then
                     out[e.value] = (out[e.value] or 0) + 1
                     evidence.jobs[key] = { value = e.value, seen = e.seen }
+                elseif e.ignored then
+                    evidence.ignored = evidence.ignored + 1
                 else
                     evidence.unknown_type = evidence.unknown_type + 1
                 end

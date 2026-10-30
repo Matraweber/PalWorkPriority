@@ -51,7 +51,10 @@ local MAX_TOGGLES_PER_PASS = 40
 -- Work typing memo: camp key -> {work id string -> work suitability}.
 -- Plain strings and numbers only, rebuilt by every works read of a pass
 -- (camp_works_typed in run_camp); never an engine object. A work's type
--- depends on nothing in the settings, so a settings change keeps it.
+-- depends on nothing in the settings, so a settings change keeps it. false
+-- marks a work that is deliberately not work (the egg incubator, Idle), so
+-- it is not typed again every pass: 3 engine reads per incubator per pass
+-- (review round 4, performance P3-3).
 local work_types = {}
 
 -- Whether Mining was still wanted at a camp by the last per-item decision
@@ -353,6 +356,7 @@ end
 -- back to `saving` without making that row durable.
 local function settings_ready(stats, flush)
     if require('settings_gate').blocked() then
+        stats.pass_blocked = true
         stats.blocked=true;stats.blocked_reason=require('settings_gate').status()=='restart_required'
             and 'settings locked; restart the game' or 'settings recovery is in progress'
         return false
@@ -366,7 +370,7 @@ local function settings_ready(stats, flush)
                 and source.state == "saved"
         end
         if not ok then
-            stats.blocked = true
+            stats.blocked, stats.pass_blocked = true, true
             stats.blocked_reason = label .. " are not durable or authority-owned; permission updates blocked"
             return false
         end
@@ -374,7 +378,7 @@ local function settings_ready(stats, flush)
     -- A durability callback may have changed role while saving.
     if require('settings_gate').blocked() or store.decided ~= true or caps.decided ~= true or store.is_client == true
         or caps.is_client == true or store.state == "error" or caps.state == "error" then
-        stats.blocked = true
+        stats.blocked, stats.pass_blocked = true, true
         stats.blocked_reason = "settings changed during save; permission updates blocked"
         return false
     end
@@ -511,9 +515,12 @@ local function plan_fences(cfg, pals, demand, stats, capped)
         report.free = 0 -- no automatic allocation decision was made
     end
     -- The Pals the allocator ordered, for the stand's steering count. A
-    -- reconcile-only camp keeps observed choices, so it orders none.
+    -- reconcile-only camp keeps observed choices, so it orders none, and a
+    -- Pal awaiting assignment evidence only keeps what it had (review round
+    -- 4, scheduler P3-2): neither is steered.
     local reconcile = #ready > 0 and ready[1].reconcile_only
-    stats.steered = (stats.steered or 0) + (reconcile and 0 or (#ready - (report.unsteered or 0)))
+    stats.steered = (stats.steered or 0) + (reconcile and 0
+        or (#ready - (report.unsteered or 0) - (report.manual_unavailable or 0)))
     for key, value in pairs(report) do stats[key] = (stats[key] or 0) + value end
     return plan
 end
@@ -566,7 +573,7 @@ local function ensure_pass_component(stats)
         end
         return true
     end
-    stats.blocked = true
+    stats.blocked, stats.pass_blocked = true, true
     stats.blocked_reason = "no base camp component this machine owns; permission writes deferred"
     if not said_no_component then
         said_no_component = true
@@ -1333,15 +1340,24 @@ local function run_camp(cfg, camp, stats, prepare_stock)
         if not ok or type(got) ~= "table" then return nil end
         if type(keys) ~= "table" then keys = nil end
         local known = work_types[camp_key] or {}
-        local fresh, types, reasons, keyless = {}, {}, {}, {}
+        local memo, fresh, types, reasons, keyless = {}, {}, {}, {}, {}
         local typed = pcall(measured, "scheduler: work typing", function()
             for i, w in ipairs(got) do
                 local key = keys and keys[i] or nil
-                local v, reason = key and known[key] or nil, nil
-                if v == nil then v, reason = api.work_suitability(w) end
+                local v, reason = nil, nil
+                local cached = key and known[key]
+                if cached == false then
+                    reason = "ignored"
+                elseif cached ~= nil then
+                    v = cached
+                else
+                    v, reason = api.work_suitability(w)
+                end
                 types[i], reasons[i] = v, reason
                 if v ~= nil then
-                    if key then fresh[key] = v else keyless[v] = true end
+                    if key then fresh[key], memo[key] = v, v else keyless[v] = true end
+                elseif key and reason == "ignored" then
+                    memo[key] = false
                 end
             end
         end)
@@ -1349,10 +1365,13 @@ local function run_camp(cfg, camp, stats, prepare_stock)
         local complete = works_complete(got, err, keys, skipped, types)
         if not complete then
             for key, v in pairs(known) do
-                if fresh[key] == nil then fresh[key] = v end
+                if memo[key] == nil then
+                    memo[key] = v
+                    if v ~= false then fresh[key] = v end
+                end
             end
         end
-        if keys then work_types[camp_key] = fresh end
+        if keys then work_types[camp_key] = memo end
         works_read = { works = got, keys = keys or {}, types = types, reasons = reasons,
             values = fresh, keyless = keyless, err = err, complete = complete }
         return works_read
@@ -1457,6 +1476,7 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     if pulse_evidence then
         stats.unknown_scope = math.max(stats.unknown_scope, pulse_evidence.unknown_scope or 0)
         stats.unknown_work = stats.unknown_work + (pulse_evidence.unknown_type or 0)
+        stats.ignored = stats.ignored + (pulse_evidence.ignored or 0)
     end
     trace.done()
     local counted = live
@@ -1505,6 +1525,16 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     stats.camps = stats.camps + 1
     stats.pals = stats.pals + #pals
     stats.works = stats.works + counted
+    -- The steering count per guild (review round 4, coverage Gap 6): a co-op
+    -- host's stand shows its own guild's Pals, not every guild's. A camp
+    -- whose guild is unreadable is counted under false.
+    stats.steering_by_guild = stats.steering_by_guild or {}
+    local guild_steering = stats.steering_by_guild[camp_guild or false]
+    if not guild_steering then
+        guild_steering = { steered = 0, pals = 0, left = 0 }
+        stats.steering_by_guild[camp_guild or false] = guild_steering
+    end
+    guild_steering.pals = guild_steering.pals + #pals
 
     for value, n in pairs(demand) do
         stats.demand_types = stats.demand_types + 1
@@ -1607,9 +1637,15 @@ local function run_camp(cfg, camp, stats, prepare_stock)
                     local vacant = (read_ok and type(needing) == "number" and needing or 0) - on
                     if vacant > 0 then
                         if not demand[value] then stats.demand_types = stats.demand_types + 1 end
-                        demand[value] = math.max(demand[value] or 0, vacant)
+                        -- The pulses for this type are already in the summary.
+                        -- Demand is the larger of the two, so only the part
+                        -- the vacancies add on top goes in: pulse 2 and
+                        -- vacancy 3 logged "Mining 5" for a demand of 3
+                        -- (review round 4, scheduler P3-3).
+                        local before = demand[value] or 0
+                        demand[value] = math.max(before, vacant)
                         local name = workdefs.name(value)
-                        stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + vacant
+                        stats.demand_by_name[name] = (stats.demand_by_name[name] or 0) + demand[value] - before
                         stats.station_vacancies = (stats.station_vacancies or 0) + vacant
                     end
                 end
@@ -1618,7 +1654,10 @@ local function run_camp(cfg, camp, stats, prepare_stock)
     end
 
     trace.at("camp: plan_fences")
+    local steered_at, left_at = stats.steered or 0, stats.unsteered or 0
     local plan = measured("scheduler: plan fences", plan_fences, cfg, pals, demand, stats, capped)
+    guild_steering.steered = guild_steering.steered + (stats.steered or 0) - steered_at
+    guild_steering.left = guild_steering.left + (stats.unsteered or 0) - left_at
     trace.done()
     -- Capture/observation can stage settings while planning. No native write
     -- may use those choices until the staged generation is durable.
@@ -1883,14 +1922,31 @@ local function run_pass_body(cfg)
     pass_totals, totals_guild, totals_ambiguous = {}, nil, false
     pass_camps = {}
 
-    for camp_n, camp in ipairs(camps) do
-        trace.at("pass: camp " .. camp_n .. " of " .. #camps)
-        local ok, err = pcall(function() run_camp(cfg, camp, stats, prepare_stock) end)
-        trace.done()
-        if not ok then
-            stats.failed = stats.failed + 1
-            log.warn("pass threw on a camp: " .. tostring(err))
+    -- Every loaded base is handled in this one synchronous callback. Only
+    -- one base was ever measured on a server (about 4 ms per base of 9 Pals
+    -- on top of the enumeration), so a server with 10 or 20 loaded bases
+    -- could hitch for 70-110 ms every pass (review round 4, performance
+    -- P2-2). Not capped or rotated yet: measure first. With profiling on the
+    -- loop is marked by its base count ("scheduler: camps, 3 bases"), so a
+    -- capture shows what each count costs. A later per-pass cap must keep
+    -- the one enumeration per pass, and the memo prune below would then have
+    -- to use the enumerated camps rather than the visited ones.
+    local function camps_loop()
+        for camp_n, camp in ipairs(camps) do
+            trace.at("pass: camp " .. camp_n .. " of " .. #camps)
+            local ok, err = pcall(function() run_camp(cfg, camp, stats, prepare_stock) end)
+            trace.done()
+            if not ok then
+                stats.failed = stats.failed + 1
+                log.warn("pass threw on a camp: " .. tostring(err))
+            end
         end
+    end
+    if log.perf and log.around then
+        measured(#camps >= 20 and "scheduler: camps, 20+ bases"
+            or ("scheduler: camps, " .. #camps .. (#camps == 1 and " base" or " bases")), camps_loop)
+    else
+        camps_loop()
     end
 
     -- Per-camp memos of camps this pass did not visit (unloaded, or gone
@@ -1941,12 +1997,24 @@ end
 -- clear it, so the stand shows no count rather than one that is not true.
 local steering = nil
 
+--
+-- A base whose roster could not be read blocks only that base (its Pals are
+-- not in the count); the other bases' count stays (review round 4,
+-- scheduler P3-6). A block of the whole pass (settings, no component) still
+-- clears it. Counts are kept per guild: see steering_count.
 local function record_steering(cfg, stats)
     steering = nil
-    if type(stats) ~= "table" or stats.blocked or (cfg and cfg.dry_run) or (stats.pals or 0) <= 0 then return end
+    if type(stats) ~= "table" or (cfg and cfg.dry_run) or (stats.pals or 0) <= 0 then return end
+    if stats.blocked and (stats.pass_blocked or (stats.unreadable or 0) == 0) then return end
     local session = package.loaded.session
+    local by_guild, guilds = {}, 0
+    for guild, entry in pairs(stats.steering_by_guild or {}) do
+        by_guild[guild] = { steered = entry.steered, pals = entry.pals, left = entry.left }
+        guilds = guilds + 1
+    end
     steering = {
         steered = stats.steered or 0, pals = stats.pals, left = stats.unsteered or 0,
+        by_guild = by_guild, guilds = guilds,
         at = os.clock(), window = math.max(60, 3 * (tonumber(cfg and cfg.interval_seconds) or 10)),
         epoch = type(session) == "table" and session.epoch or nil,
     }
@@ -1955,13 +2023,26 @@ end
 -- Read only, for ui.lua: steered, all and left-to-the-game Pal counts of the
 -- last pass, or nil when there is none in this session or it is older than
 -- about three passes (the mod was switched off, or passes stopped).
+--
+-- With bases of two or more guilds loaded (a co-op host whose friends run
+-- their own guild), only the host's guild is counted, and nothing is shown
+-- when the host's guild cannot be read or has no loaded base: the stand
+-- shows the host's Pals, so "Steering N of M" must be about them (review
+-- round 4, coverage Gap 6). The guild is asked once per recorded pass.
 function M.steering_count()
     local s = steering
     if not s then return nil end
     local session = package.loaded.session
     if type(session) == "table" and s.epoch ~= session.epoch then return nil end
     if os.clock() - s.at > s.window then return nil end
-    return s.steered, s.pals, s.left
+    if (s.guilds or 0) <= 1 then return s.steered, s.pals, s.left end
+    if s.host == nil then
+        local ok, guild = pcall(api.my_guild)
+        s.host = ok and type(guild) == "string" and guild or false
+    end
+    local mine = s.host and s.by_guild[s.host]
+    if not mine then return nil end
+    return mine.steered, mine.pals, mine.left
 end
 
 function M.run_pass(cfg)

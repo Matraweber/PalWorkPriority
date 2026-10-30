@@ -31,7 +31,7 @@ plan = planner.plan(cfg(nil), { pal("x", { [MINING] = 1, [TRANSPORT] = false }) 
 assert(plan.x[MINING] and not plan.x[TRANSPORT], "X was lifted for an unordered Pal")
 
 -- An unordered Pal takes no seat: the steered Pal still gets the only one.
-local free = pal("free", { [MINING] = 1 })
+local free = pal("free", { [MINING] = 1, [FARMING] = 1 })
 local ordered = pal("ordered", { [MINING] = 1, [TRANSPORT] = 2 })
 plan, report = planner.plan(cfg(nil), { free, ordered }, { [MINING] = 3 }, {}, 100)
 assert(plan.ordered[MINING] and not plan.ordered[TRANSPORT], "an ordered Pal was not steered")
@@ -42,6 +42,40 @@ local lamball = pal("lamball", { [TRANSPORT] = 2, [FARMING] = 1 })
 assert(not planner.unordered(lamball))
 plan = planner.plan(cfg(nil), { lamball }, { [TRANSPORT] = 50, [FARMING] = 1 }, {}, 100)
 assert(plan.lamball[FARMING] and not plan.lamball[TRANSPORT], "Farming 1 did not win")
+
+-- Judged like the stand's "same number" hint (review round 4, scheduler
+-- P3-1): every numbered job counts, capped or not, X does not, and it takes
+-- two numbered jobs. One numbered job is an order of its own.
+assert(not planner.unordered(pal("one", { [MINING] = 1 })), "one numbered job was left to the game")
+assert(planner.unordered(pal("xed", { [MINING] = 1, [TRANSPORT] = 1, [FARMING] = false })),
+    "an X made equal numbers an order")
+-- Mining 1 and the rest 2 with Mining stopped by a limit: base no longer
+-- holds Mining, yet the stand shows an order, so the scheduler steers it.
+local capped = pal("capped", { [MINING] = 1, [TRANSPORT] = 2, [FARMING] = 2 })
+capped.base[MINING] = nil
+capped.capable = { [MINING] = true, [TRANSPORT] = true, [FARMING] = true }
+assert(not planner.unordered(capped), "a stock limit decided whether the Pal is ordered")
+plan, report = planner.plan(cfg(nil), { capped }, { [TRANSPORT] = 5, [FARMING] = 5 }, {}, 100)
+assert(report.unsteered == 0 and report.fenced == 1 and not plan.capped[MINING], "capped Pal was left to the game")
+plan, report = planner.plan(cfg(nil), { pal("single", { [MINING] = 1 }) }, { [MINING] = 1 }, {}, 100)
+assert(report.unsteered == 0 and report.fenced == 1 and plan.single[MINING], "a one-job Pal was not steered")
+
+-- "Lowest work level to dedicate" (min_suitability_rank) as shipped, pinned
+-- (review round 4, scheduler P2-1): it switches a low-level job off for an
+-- edited Pal, and a Pal with equal numbers is left to the game untouched.
+local function ranked(key, priorities, ranks)
+    local p = pal(key, priorities)
+    for value, r in pairs(ranks) do p.ranks[value] = r end
+    return p
+end
+local strict = cfg(nil)
+strict.min_suitability_rank, strict.max_pals_per_work_type = 2, 3
+local equal = ranked("equal", { [MINING] = 1, [TRANSPORT] = 1 }, { [MINING] = 1, [TRANSPORT] = 3 })
+local edited = ranked("edited", { [MINING] = 1, [TRANSPORT] = 2 }, { [MINING] = 1, [TRANSPORT] = 3 })
+plan, report = planner.plan(strict, { equal, edited }, { [MINING] = 5, [TRANSPORT] = 5 }, {}, 100)
+assert(plan.equal[MINING] and plan.equal[TRANSPORT] and report.unsteered == 1,
+    "the minimum level reached a Pal with equal numbers")
+assert(not plan.edited[MINING] and plan.edited[TRANSPORT], "a job below the minimum stayed on for an edited Pal")
 
 -- The switch off steers every Pal, as before.
 plan, report = planner.plan(cfg(false), { pal("all1", { [MINING] = 1, [TRANSPORT] = 1 }) },

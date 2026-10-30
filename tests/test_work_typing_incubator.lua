@@ -22,6 +22,15 @@ for _, id in ipairs({ 'HatchingPalEgg_0', 'HatchingPalEgg_12' }) do
 end
 assert(WARNED == nil, 'the incubator still raised the untyped warning: ' .. tostring(WARNED))
 
+-- Matched anywhere in the id and before the keywords (review round 4,
+-- scheduler P3-4): an incubator id with "Electric" in it is not Generating
+-- Electricity, and one without a _N suffix is still ignored.
+for _, id in ipairs({ 'ElectricHatchingPalEgg_0', 'HatchingPalEgg', 'HatchingPalEgg_Electric_2' }) do
+    local value, reason = api.work_suitability(work('Busy', id, 'PalWorkProgress'))
+    assert(value == nil and reason == 'ignored', id .. ' was typed: ' .. tostring(value))
+end
+assert(WARNED == nil, 'an incubator raised the untyped warning: ' .. tostring(WARNED))
+
 -- A really unknown work still warns, and the text does not claim to know
 -- what it is.
 local value, reason = api.work_suitability(work('Busy', 'SomethingNew_0', 'PalWorkProgress'))

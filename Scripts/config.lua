@@ -75,7 +75,7 @@ return {
     -- limit of 3 means one each, then seconds, then thirds, and no more.
     max_pals_per_work_type = 3,
 
-    -- A Pal whose allowed jobs all have the same number (a fresh install's
+    -- A Pal whose jobs not set to X all have the same number (a fresh install's
     -- "all 1", or a Pal you never edited) is left to the game: it may do every
     -- job that is not X or stopped by a production limit, and the game picks.
     -- Give one job a different number and the mod steers that Pal. false
@@ -89,9 +89,11 @@ return {
     item_limits_on_rocks = true,
 
     -- Lowest work level to dedicate: the Pal's level for that job (the small
-    -- number on the job icon), not the 1-5 priority. 1 means "can do the job
-    -- at all"; raise it to stop level-1 pals clogging jobs a level-3 pal
-    -- should be doing.
+    -- number on the job icon), not the 1-5 priority. Edited Pals only: a job
+    -- below this level is switched off for them. Pals with equal numbers are
+    -- left to the game (see leave_unordered_pals_to_game). 1 means "can do
+    -- the job at all"; raise it to stop level-1 pals clogging jobs a level-3
+    -- pal should be doing.
     min_suitability_rank = 1,
 
     -- Which containers do NOT count as storage for a limit.

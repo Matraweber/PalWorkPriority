@@ -1442,10 +1442,13 @@ M.WORK_IGNORE = {
     ["Idle"] = true,
 }
 
--- The same, keyed by the station id without its _N suffix, for jobs whose
--- display name says nothing. The egg incubator's hatch timer is a work
--- object ("Busy" | HatchingPalEgg_0 | PalWorkProgress, GPortal server
--- 2026-10-29) but no Pal works it: the egg hatches on its own.
+-- The same, by a part of the station id, for jobs whose display name says
+-- nothing. The egg incubator's hatch timer is a work object ("Busy" |
+-- HatchingPalEgg_0 | PalWorkProgress, GPortal server 2026-10-29) but no Pal
+-- works it: the egg hatches on its own. Matched anywhere in the id and
+-- before the keyword table, so another incubator id (only HatchingPalEgg
+-- has been seen) is not typed by a word in it: "electric" would have made
+-- one Generating Electricity (review round 4, scheduler P3-4).
 M.ASSIGN_IGNORE = {
     ["HatchingPalEgg"] = true,
 }
@@ -1510,7 +1513,9 @@ function M.work_suitability(w)
     -- 3. Station identity, for the generic PalWorkProgress objects.
     local assign = work_text(w, "prop", "AssignDefineDataId")
     if assign then
-        if M.ASSIGN_IGNORE[assign:match("^(.-)_%d+$") or assign] then return nil, "ignored" end
+        for part in pairs(M.ASSIGN_IGNORE) do
+            if assign:find(part, 1, true) then return nil, "ignored" end
+        end
         local mapped = M.STATION_SUIT[assign]
         if mapped then return workdefs.value(mapped) end
         local kw = workdefs.from_text(assign)
