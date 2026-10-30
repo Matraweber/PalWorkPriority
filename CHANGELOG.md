@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 - TBD-at-retag
+## 0.5.0 - 2026-10-30
 
 A reliability release. It fixes the problems reported most since 0.4.1, such
 as priorities and X lost after a restart, a second or stuck panel, and Pals
