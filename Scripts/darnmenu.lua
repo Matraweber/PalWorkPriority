@@ -99,7 +99,7 @@ return {
           help = "The most Pals the mod puts on the same job." },
         { path = "min_suitability_rank", label = "Lowest work level to dedicate", kind = "number",
           integer = true, min = 1, max = 5, step = 1,
-          help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Below it a Pal is not dedicated to that job, but it may still do it." },
+          help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Edited Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game." },
         { path = "leave_unordered_pals_to_game", label = "Leave Pals with equal numbers to the game", kind = "bool",
           help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
       },
