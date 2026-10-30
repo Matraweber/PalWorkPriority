@@ -20,22 +20,23 @@ end
 -- stays allowed, X and stock limits still apply (they are already out of
 -- pal.base), and it takes no seat from the Pals the mod steers.
 --
--- Judged on every job the Pal can do that has a number, capped or not, and
--- only with two or more of them: the same rule as the stand's "same number"
--- hint (ui.lua same_number), so the grid and the scheduler agree. Judging on
--- pal.base made a stock limit decide it: Mining 1 and the rest 2 with Mining
--- capped read as unordered, and a Pal with one numbered job was "left to the
--- game" although the stand showed nothing (review round 4, scheduler P3-1).
+-- Judged on every job the Pal can do that has a number, capped or not, so a
+-- stock limit cannot decide it: Mining 1 and the rest 2 with Mining capped is
+-- an order (review round 4, scheduler P3-1). A Pal with one numbered job (or
+-- none) has no order either and stays with the game, as the 2026-10-27
+-- decision says: steering it let max_pals_per_work_type switch off a
+-- Chikipi's only job (round-4 regression review). The stand's "same number"
+-- hint still needs two numbered jobs; that is wording, not scheduling.
 function M.unordered(pal)
-    local seen, count = nil, 0
+    local seen
     for value in pairs(pal.capable or pal.priorities or {}) do
         local p = pal.priorities and pal.priorities[value]
         if type(p) == "number" then
             if seen ~= nil and seen ~= p then return false end
-            seen, count = p, count + 1
+            seen = p
         end
     end
-    return count >= 2
+    return true
 end
 
 local function sorted_pals(pals)
