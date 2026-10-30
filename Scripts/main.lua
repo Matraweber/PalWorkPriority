@@ -1879,7 +1879,10 @@ local function show_limits()
     if #works == 0 then
         log.say(headless and "no shared or config.lua limits; " .. unlisted
             or "no limits in the available view")
-        log.say("add one with: " .. cfg.chat_prefix .. " limit <work> <item> <amount>")
+        -- A dedicated server refuses that command (it has no guild of its own).
+        if not headless then
+            log.say("add one with: " .. cfg.chat_prefix .. " limit <work> <item> <amount>")
+        end
         return
     end
 

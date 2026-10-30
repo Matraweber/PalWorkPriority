@@ -1836,6 +1836,7 @@ test("limit listing on a dedicated server says guild limits are not listed there
     assert(not output:find('Wood',1,true),"the listing showed a random player's guild: "..output)
     assert(not output:find('no limits in the available view',1,true),output)
     assert(output:find('guild limits are not listed here',1,true),output)
+    assert(not output:find('add one with',1,true),'a dedicated server was told to add a limit it refuses')
     -- With a config.lua limit, the list says the same under it.
     local cfg=upvalue(s.commands.status,'cfg')
     cfg.work_caps={Mining={Stone=50}}
