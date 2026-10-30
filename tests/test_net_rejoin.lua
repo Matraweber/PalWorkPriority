@@ -112,13 +112,14 @@ assert(link.hellos == hellos + 1, 'a settled guild kept rejoining')
 
 -- 2. No live guild to compare (an older palapi, or an unreadable
 -- PlayerState), and the server forgot this peer. Counts go unanswered; after
--- two in a row the client joins again on its own.
+-- three in a row the client joins again on its own (two until round 5,
+-- engine P3-3: a busy server drops two as well).
 live_guild = nil
 pump(5)
 server.clients = {}
 hellos = link.hellos
-pump(70)
-assert(link.hellos == hellos + 1, 'two unanswered counts did not lead to a new join: '
+pump(100)
+assert(link.hellos == hellos + 1, 'three unanswered counts did not lead to a new join: '
     .. (link.hellos - hellos) .. ' Hellos')
 assert(client.status == 'ready' and counted(), 'the client did not recover its counts')
 
@@ -137,6 +138,29 @@ assert(link.hellos == same_nonce + 1 and client.local_nonce == nonce, 'no Hello 
 pump(1)
 assert(link.hellos == same_nonce + 1)
 assert(client.status == 'ready', 'a re-made peer stayed stale: ' .. tostring(client.status_reason))
+-- Round 5 (multiplayer P2-1): the count stream goes on from the server's
+-- count too. It started again at 1, which this client, still holding a
+-- higher count revision, refused as stale: no counts, then a forced rejoin.
+pump(60)
+assert(link.hellos == same_nonce + 1, 'a re-made peer was joined again: '
+    .. (link.hellos - same_nonce) .. ' Hellos')
+assert(counted(), "a re-made peer's counts were refused as stale")
+
+-- Round 5 (engine P3-3): a busy server drops a count request without a word
+-- (8 jobs at once, or no interest yet) while it still lists the peer. Two
+-- such drops in a row are not a forgotten peer, and joining again would
+-- throw away the edits in flight.
+local busy = 2
+server.on_storage_interest = function()
+    if busy > 0 then busy = busy - 1; return false end
+    return true
+end
+hellos = link.hellos
+pump(80)
+server.on_storage_interest = function() return true end
+assert(busy == 0, 'the busy server was never asked')
+assert(link.hellos == hellos, 'two dropped counts on a busy server led to a new join')
+assert(client.status == 'ready' and counted(), 'the counts did not come back after a busy spell')
 
 -- 4. P2-2: 128 entries of joins long gone, then a new player's Hello.
 local function fill()

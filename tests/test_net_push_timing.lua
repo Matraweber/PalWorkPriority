@@ -37,7 +37,9 @@ local function run(enabled, failure, direct)
     local net = require('net')
     net.begin_session(1)
     local peer = {guild='guild-A',server=net.local_nonce,client='client',
-        revisions={P=1,R=1},next_revision={P=1,R=1}}
+        revisions={P=1,R=1},next_revision={P=1,R=1},
+        -- A real peer that had its full table (round 5: a delta needs it).
+        full_sent={P=true}}
     net.clients['component-A'] = peer
     log.set_perf(enabled); log.reset_marks()
     local result = net.push_pals(function(guild)

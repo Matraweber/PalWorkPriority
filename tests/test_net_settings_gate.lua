@@ -185,7 +185,10 @@ for _,delay in ipairs({5,10,20,30,30})do
     local old_nonce=client.local_nonce
     time=time+delay-0.01;client.poll();assert(#up==0,'recovering retried early')
     time=time+0.02;client.poll()
-    assert(client.local_nonce~=old_nonce and client.status=='connecting')
+    -- Round 5 (multiplayer P3-2): the retry keeps showing the lock until the
+    -- server answers; it said "connecting" for that moment before.
+    assert(client.local_nonce~=old_nonce and client.status=='unavailable'
+        and client.status_reason=='settings_recovering')
     assert(not client.receive_state(stale_lock) and not client.request_prio('PAL-A',1,3))
     finish_handshake()
     assert(client.status=='unavailable' and client.status_reason=='settings_recovering')
@@ -193,9 +196,11 @@ end
 -- When the server becomes ready, retry negotiates normally, but it still
 -- cannot grant editing before BOTH full snapshot streams have arrived.
 assert(gate.release(retry_token));time=time+31;client.poll();finish_handshake()
-assert(client.status=='connecting')
+-- Round 5 (multiplayer P3-2): still the lock, not "connecting", until both
+-- snapshots prove it lifted.
+assert(client.status=='unavailable')
 assert(push('P'));for _,msg in ipairs(down)do client.receive_state(msg)end;down={}
-assert(client.status=='connecting' and not client.request_prio('PAL-A',1,3))
+assert(client.status=='unavailable' and not client.request_prio('PAL-A',1,3))
 assert(push('R'));for _,msg in ipairs(down)do client.receive_state(msg)end;down={}
 assert(client.status=='ready')
 retry_token=assert(gate.acquire());assert(gate.require_restart(retry_token))
