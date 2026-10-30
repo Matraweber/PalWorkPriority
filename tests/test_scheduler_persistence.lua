@@ -63,6 +63,8 @@ local previous = fs.files.priorities
 fs.fault = function(op, path) return op == "write" and path == "priorities.tmp" end
 local stats = scheduler.run_pass(cfg)
 assert(store.state == "error" and store.data.weak and store.data.weak[8] == 1)
+-- The stand reads this as "retrying", not as a refused file (ui.store_message).
+assert(store.retrying(), "a failed save with its retry pending did not say so")
 assert(#sent == 0 and stats.blocked, "failed baseline capture must prevent fencing")
 assert(fs.files.priorities == previous)
 

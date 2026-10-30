@@ -1730,6 +1730,13 @@ check('host priorities that cannot be used show "?" with the reason and refuse c
         -- A save that keeps failing: the rows are there, editing waits.
         store.data={a={[1]=2}}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.texts(f.cells[1])[1].text=='?' and f.legends()[1].text==f.ui.STORE_UNSAVED)
+        -- A save that failed and is being retried (antivirus, OneDrive):
+        -- the numbers stay and editing goes on (round-4 regression review).
+        store.data={a={[1]=2}}; store.retrying=function() return true end
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.texts(f.cells[1])[1].text~='?','a retrying save blanked the stand')
+        assert(f.ui.legend_text()~=f.ui.STORE_UNSAVED and f.ui.legend_text()~=f.ui.STORE_UNREADABLE)
+        store.retrying=nil
         -- No rows yet and the first save fails: nothing was unreadable.
         store.data={}; store.load_failed=false; f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.legends()[1].text==f.ui.STORE_UNSAVED,f.legends()[1].text)

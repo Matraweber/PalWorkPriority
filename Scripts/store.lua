@@ -546,6 +546,12 @@ function M.set_role(role, session)
     M.submit, M.on_change = nil, nil
 end
 
+-- A failed save that is still being retried. Edits are accepted meanwhile
+-- (apply_set refuses only an error with no retry pending), so the stand must
+-- not lock for it: a short antivirus or OneDrive lock blanked the whole grid
+-- (round-4 regression review, engine P2-1).
+function M.retrying() return dirty_at ~= nil end
+
 function M.get(key, value)
     local by_pal = key and M.data[key]
     if by_pal then return by_pal[value] end

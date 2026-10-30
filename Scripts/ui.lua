@@ -1063,6 +1063,7 @@ function M.store_message()
     local state = store.state
     if state == "unavailable" then return M.STORE_UNREADABLE end
     if state ~= "error" then return nil end
+    if type(store.retrying) == "function" and store.retrying() then return nil end
     if type(store.data) == "table" and next(store.data) ~= nil then return M.STORE_UNSAVED end
     -- No rows and a save failing, as on a fresh install's first save under an
     -- antivirus lock: nothing was unreadable (round-4 regression review).
