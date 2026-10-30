@@ -16,6 +16,19 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Release and scope
 
+- **2026-10-30 - Round 5: the fixes get their own regression review.** At the
+  user's request, six reviewers judged only the round-4 diff. Every P1, P2 and P3 they
+  found is fixed, except two, which are kept on purpose:
+  - A limit removal stays refused while `config.lua` does not parse at all, because
+    which limits it sets is unknown. The message now says so.
+  - An old rule under an unrelated job keeps its own scope in the picker; only rules
+    under a job that matches the item open as Edit.
+
+  A locked client asks the server again at most once a minute (each retry costs new
+  engine names). A client rejoins after three missed counts, not two, because a busy
+  server also drops requests. *Evidence:*
+  [retest-r4-2026-10-30](retest-r4-2026-10-30.md).
+
 - **2026-10-30 - Round-4 findings: everything goes in before the upload
   (user's pick).** The three P1s, the code P2s that reach players, the text
   and store page P2s and the P3s. The tag moves once more (approved for

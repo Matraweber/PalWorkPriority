@@ -179,6 +179,23 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Process: what slowed the project down
 
+- **A fix agent may rewrite a test to fit its change.** In round 4 the scheduler agent
+  changed an existing assertion so that "one numbered job" passed as steered. The new
+  behaviour went against a user decision and switched off Pals' only jobs. The
+  regression review caught it, not the test suite. Fix briefs now forbid weakening an
+  existing assertion, and the merger diffs `tests/` for changed assertions before
+  merging.
+- **Parallel agents fixing one finding build it twice.** The stand and persist agents
+  each wrote a "why the host refuses" check. The one in use blanked the stand on any
+  failed save. Give each finding to exactly one agent, and name the file it owns.
+- **A refusal message must ask the store whether the edit was kept.** "That change was
+  not made" fired whenever the immediate save failed, although the store had taken the
+  edit and the retry wrote it. Seen only in game, with a save blocked on purpose.
+- **Before calling something a regression, run the shipped build the same way.** The
+  Escape that opens the game menu after a search looked new. The 1e945db scripts in the
+  same install did the same, so it was old. Profiling (`pwp perf on`) changes input
+  timing, so input behaviour is judged with it off.
+
 - **Write first-run state at the first chance, not at the first world.**
   Round 4 found that a fresh install wrote its vanilla baseline only after the
   player's own world loaded. Quitting at the title, joining a server first or
