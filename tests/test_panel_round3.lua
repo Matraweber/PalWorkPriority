@@ -326,6 +326,34 @@ assert(acked==1 and notice()~=UPGRADE, 'said or acknowledged twice')
 package.loaded.configuration=nil
 draw()
 
+-- Round 4, test coverage P1-T1 / engine P2-2: a refused config.lua is said
+-- on every opening, with the real configuration module, and a visible draw
+-- never acknowledges it (no pass runs while it is refused).
+package.loaded.configuration=nil
+local configuration=require('configuration')
+local REFUSED='config.lua rejected: invalid interval_seconds. Defaults are in use and nothing is scheduled.'
+configuration.show_rejection(REFUSED)
+for opening=1,3 do
+    panel.close(); panel.toggle(); panel.refresh(cfg); panel.refresh(cfg)
+    assert(overlay.parts.Root.opacity==1, 'opening '..opening..' never became visible')
+    assert(notice()==REFUSED, 'opening '..opening..' does not say config.lua was refused: '..tostring(notice()))
+    assert(configuration.rejection==REFUSED, 'a visible draw acknowledged the rejection')
+end
+-- A world change while open does not replace it with "Now counting".
+rb.stock_key='camp:elsewhere'
+panel.refresh(cfg)
+assert(notice()==REFUSED, 'the scope notice replaced the rejection: '..tostring(notice()))
+configuration.clear_rejection()
+panel.close(); panel.toggle(); panel.refresh(cfg)
+assert(notice()~=REFUSED, 'a cleared rejection is still said')
+package.loaded.configuration=nil
+-- Panel P3-6: a world change (M.reset) forgets the counted base, so the next
+-- world's first draw does not announce a base change over the opening.
+rb.stock_key='camp:old-world'
+panel.reset()
+assert(rb.stock_key==nil, 'M.reset kept the counted base of the old world')
+panel.toggle(); draw()
+
 -- Engine P3-4 / test-coverage P3-4: a queued Enter in the amount editor and
 -- the debug verbs ask the box of the current tree, never one kept from an
 -- earlier one (a rebuilt widget keeps its full name).

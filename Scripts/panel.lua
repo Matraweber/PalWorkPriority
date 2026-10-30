@@ -2937,6 +2937,12 @@ function RB.scope_moved(view)
     RB.stock_key = key
     if was == nil or was == key then return end
     if notice == nil or (os.clock() - notice_at) >= NOTICE_FOR then return end
+    -- Never over the upgrade or config.lua notice, which are said once per
+    -- opening (round 4, panel P3-6).
+    local configuration = package.loaded.configuration
+    if notice == RB.upgrade_ack or (type(configuration) == "table" and notice == configuration.rejection) then
+        return
+    end
     if pending_drop ~= nil or RB.armed ~= nil or editing ~= nil then return end
     announce(RB.counting_said(view))
 end
@@ -5469,8 +5475,16 @@ function M.toggle()
     -- A Workshop or Vortex update that removed config.lua (configuration
     -- reports it once). Said on an opening, in the notice row, until a
     -- visible draw has shown it (refresh acknowledges it then).
-    if not RB.upgrade_said then
-        local configuration = package.loaded.configuration
+    --
+    -- A refused config.lua is said on EVERY opening and never acknowledged
+    -- (round 4, test coverage P1-T1, engine P2-2): no pass runs while it is
+    -- refused, and after the first look the panel read as working.
+    local configuration = package.loaded.configuration
+    local refused = type(configuration) == "table" and configuration.rejection
+    if type(refused) == "string" and refused ~= "" then
+        RB.upgrade_ack = nil
+        announce(refused)
+    elseif not RB.upgrade_said then
         if type(configuration) == "table" and configuration.upgrade_reset == true then
             -- configuration words it: a hand-deleted file is not blamed on
             -- the Workshop (round 2).
@@ -5551,6 +5565,9 @@ function M.reset()
     -- Like close (review B6): nothing said or armed in the old world
     -- survives into the next one (round 2, P3).
     notice, RB.armed, pending_drop, RB.saving = nil, nil, nil, nil
+    -- The counted base too (round 4, panel P3-6): kept, the next world's
+    -- first draw said "Now counting your base." over the opening's notice.
+    RB.stock_key = nil
     RB.search_dirty, RB.search_focused = nil, false
     icons.reset()
 end
