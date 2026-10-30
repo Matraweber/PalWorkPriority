@@ -4719,6 +4719,7 @@ end
 -- list scrolled by the wheel) keeps contradicting itself, and each
 -- contradiction counts towards HOVER_BAD_MAX like a disagreement.
 RB.hover_cal, RB.hover_resets, RB.HOVER_SHIFT_MAX = {}, 0, 120
+RB.hover_sample, RB.hover_retry = nil, 0
 function RB.hover_fit(r, x, y)
     -- dx in [x - right + 1, x - left], dy likewise: the cursor inside r.
     local lox, hix = x - r[4] + 1, x - r[2]
@@ -4757,6 +4758,21 @@ function RB.hover_check(hovered)
     if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
     if hovered == nil and RB.hover_parked(x, y) then return end
     RB.hover_x, RB.hover_y = x, y
+    -- Judged only when steady: the same cursor and the same target named
+    -- on two draws in a row (dedicated-server client, 2026-10-30). Slate's
+    -- hover lags a frame, so the draw right after an instant jump from pick0
+    -- to pick1 still named pick0 with the cursor on pick1, and learning from
+    -- it set an offset of 116,0 that the next draw contradicted. An unsteady
+    -- draw that disagrees asks for another look, at most twice in a row.
+    local prev = RB.hover_sample
+    RB.hover_sample = { x, y, hovered }
+    if not (prev and prev[1] == x and prev[2] == y and prev[3] == hovered) then
+        if RB.hover_lookup(x, y) ~= hovered and RB.hover_retry < 2 then
+            RB.hover_retry, RB.hover_due = RB.hover_retry + 1, true
+        end
+        return
+    end
+    RB.hover_retry = 0
     local mapped = hovered ~= nil and RB.hmap_keys[hovered]
     -- Only positive evidence counts (in game, 2026-10-29): a target the
     -- widgets name and the map does not, or a different one. Silence from
@@ -4772,8 +4788,6 @@ function RB.hover_check(hovered)
         return
     end
     RB.hover_bad = RB.hover_bad + 1
-    -- Slate can answer a beat after the pointer moved, so look once more.
-    if RB.hover_bad == 1 then RB.hover_due = true end
     if RB.hover_bad >= RB.HOVER_BAD_MAX or RB.hover_resets >= RB.HOVER_BAD_MAX then
         local cal = RB.hover_cal[mode] or { dx = 0, dy = 0 }
         RB.hover_stop(string.format("disagreed with the widgets (map said %s %s, widgets %s %s, "
@@ -5091,7 +5105,13 @@ function M.refresh(cfg)
     end
     perf_hover, perf_hits = os.clock() - th, hn
     -- Checks the map this draw's hover request came from.
-    if RB.hmap and not RB.hover_off then RB.hover_check(hover_key) end
+    if RB.hmap and not RB.hover_off then
+        RB.hover_check(hover_key)
+        -- The map's answer where the pointer is, under the offset as it now
+        -- stands: one learned this draw must not leave the fast loop
+        -- comparing against an answer from before it.
+        if RB.hover_x then RB.hover_seen = RB.hover_lookup(RB.hover_x, RB.hover_y) end
+    end
 
     -- What the selection points at, from the map it was chosen in. Every
     -- move between draws (keys, pad, a click) changed sel against this
@@ -5435,6 +5455,7 @@ function M.toggle()
     RB.hover_off, RB.hover_bad, RB.hover_seen = nil, 0, nil
     RB.hover_off_why, RB.hmap_said = nil, {}
     RB.hover_cal, RB.hover_resets = {}, 0
+    RB.hover_sample, RB.hover_retry = nil, 0
     RB.hover_x, RB.hover_y = nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
