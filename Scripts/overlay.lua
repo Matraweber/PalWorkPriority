@@ -1428,9 +1428,10 @@ function M.watch_cursor()
 end
 
 -- The shell takes the keyboard back, from a text box that had it (Escape in
--- the panel's search box ends the typing). Resolved fresh, never kept.
-function M.focus_shell()
-    local _, _, fresh = M.resolve_owned()
+-- the panel's search box ends the typing). The caller passes the widget
+-- M.host() resolved in this same frame (round 5): resolving again here, in
+-- the middle of the panel's draw, reset M.parts and native_cancel under it.
+function M.focus_shell(fresh)
     if not fresh then return false end
     return pcall(function() fresh:SetKeyboardFocus() end)
 end
