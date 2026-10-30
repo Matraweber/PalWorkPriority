@@ -144,7 +144,7 @@ package.loaded.ui=ui0
 local status=require('panel_status')
 assert(select(3,status.save({state='error',error='session_not_admitting'}))
     =='Limits are not confirmed right now. Try again in a moment.')
-assert(select(3,status.save({state='connecting',error='handshake_timeout'})):find('does not run Pal Work Priority',1,true))
+assert(select(3,status.save({state='connecting',error='handshake_timeout'})):find('No answer from Pal Work Priority',1,true))
 assert(select(3,status.save({state='error',error='Disk write failed; retry pending'}))
     =='Disk write failed; retry pending', 'a sentence was replaced')
 

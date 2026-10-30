@@ -30,9 +30,12 @@ local NO_NEW='This item cannot have a limit.'
 local NO_RULE='There is no such limit to remove for your guild.'
 local reasons = {awaiting_session='Connecting to the server...', awaiting_handshake='Waiting for the server handshake.',
     -- The stand's wording (newcomer round 4, P2-1): "did not answer, check
-    -- the version" contradicted the stand's "does not run" beside it.
-    handshake_timeout='This server does not run Pal Work Priority, so limits cannot be set here. '
-        ..'The stand works as in the base game.',
+    -- the version" contradicted the stand's "does not run" beside it. Not
+    -- "does not run" either (multiplayer round 5, P3-3): a modded server
+    -- that does not answer (guild unresolved, offers full, its transport
+    -- failing) ends here too. Under the notice row's 125 characters.
+    handshake_timeout='No answer from Pal Work Priority on this server. Limits cannot be set. '
+        ..'Without the mod, the stand works as in the base game.',
     server_session_changed='The server restarted or changed. Reconnecting...',
     unsupported_limit=NO_NEW,
     no_active_legacy_rule=NO_RULE,

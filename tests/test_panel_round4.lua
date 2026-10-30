@@ -181,7 +181,8 @@ rb.HOVER_GAP=0.033
 
 -- Newcomer P2-1, P2-2, P3-4, P3-5: panel_status and install_check texts.
 local status=require('panel_status')
-local stand='This server does not run Pal Work Priority, so limits cannot be set here. The stand works as in the base game.'
+-- Round 5 (multiplayer P3-3): a modded server that does not answer ends here too.
+local stand='No answer from Pal Work Priority on this server. Limits cannot be set. Without the mod, the stand works as in the base game.'
 assert(status.plain_reason('handshake_timeout')==stand, status.plain_reason('handshake_timeout'))
 assert(status.plain_reason('Session role is not established')=='Still loading. Try again in a moment.')
 local two=status.scope_label({scope='camp', choices={'a','b'}, index=1})
