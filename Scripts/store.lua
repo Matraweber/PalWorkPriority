@@ -101,8 +101,12 @@ local function valid(key, value, prio, clearing)
     return p ~= nil and p >= 1 and p <= M.MAX
 end
 
-local function decode(text)
-    local result = { data = {}, count = 0, baseline = false, transient = 0 }
+-- lenient is datafile's flag for a file with no envelope (0.4.1's, or a hand
+-- edit): a bad row is skipped and named in result.skipped, and a repeated row
+-- replaces the earlier one, as 0.4.1 read them (review round 4).
+local function decode(text, lenient)
+    local result = { data = {}, count = 0, baseline = false, transient = 0,
+        skipped = lenient and {} or nil }
     for line in (text .. '\n'):gmatch('(.-)\n') do
         line = line:gsub('\r$', '')
         if line == '# baseline=vanilla' then result.baseline = true end
@@ -113,15 +117,23 @@ local function decode(text)
             if token == 'X' then prio = false else prio = tonumber(token) end
             if key and key:lower():match('^slot%d+$') then
                 result.transient = result.transient + 1
-            elseif not valid(key, value, prio) then return nil, 'invalid priority row'
+            elseif not valid(key, value, prio) then
+                if not lenient then return nil, 'invalid priority row' end
+                result.skipped[#result.skipped + 1] = line
             else
                 result.data[key] = result.data[key] or {}
-                if result.data[key][value] ~= nil then return nil, 'duplicate priority row' end
+                if result.data[key][value] ~= nil then
+                    if not lenient then return nil, 'duplicate priority row' end
+                    result.count = result.count - 1
+                end
                 result.data[key][value] = prio
                 result.count = result.count + 1
             end
         end
     end
+    -- Not one good row: that is no 0.4.1 file, and unreadable data never
+    -- becomes the defaults.
+    if lenient and result.count == 0 and #result.skipped > 0 then return nil, 'invalid priority row' end
     return result
 end
 
@@ -143,16 +155,19 @@ function M.load(path)
     if settings_gate.blocked() then return 0,'settings_recovering' end
     M.detach_persistence();persistence_blocked=false;M.persisted_revision=nil
     M.path, M.data, M.error, M.generation, M.baseline = path, {}, nil, 0, false
+    M.load_failed = false
     dirty_at, retry_at, failures, notify_pending = nil, 0, 0, false
     pending_scope = nil
     local result, meta = file.read(path, decode)
     if not result then
         M.state, M.error = meta.state, meta.error
+        M.load_failed = meta.state == 'error'
         if M.error then log.error('priorities unavailable: ' .. M.error) end
         return 0
     end
     M.data, M.generation, M.baseline = result.data, meta.generation, result.baseline
     M.state = 'saved'
+    file.warn_skipped('priorities', path, result.skipped)
     if meta.recovered then
         log.warn('recovered priorities from ' .. meta.source)
         dirty_at, M.state = os.clock(), 'saving'
@@ -531,6 +546,18 @@ function M.set_role(role, session)
     M.submit, M.on_change = nil, nil
 end
 
+-- Why the host refuses priority edits right now, or nil. For the stand and
+-- the panel (review round 4, P2-2): while priorities.txt is refused, every
+-- cell read as the default 1, looked saved, and a click failed silently.
+-- True exactly when apply_set refuses for the saved state.
+function M.refusal()
+    if not M.decided or M.is_client then return nil end
+    if M.state == 'unavailable' then return 'Priorities are not loaded. See priority.log.' end
+    if M.state ~= 'error' or dirty_at ~= nil then return nil end
+    if M.load_failed then return 'priorities.txt could not be read. See priority.log.' end
+    return 'Priorities could not be saved. See priority.log.'
+end
+
 function M.get(key, value)
     local by_pal = key and M.data[key]
     if by_pal then return by_pal[value] end
@@ -587,6 +614,25 @@ function M.apply_clear(key, value)
     row[value] = nil
     if next(row) == nil then M.data[key] = nil end
     changed(key)
+    return true
+end
+
+-- A fresh install's vanilla baseline, on disk at once as a header-only
+-- priorities.txt. It used to live in memory until a world was hosted, so a
+-- first launch that quit at the title screen lost it and the next launch
+-- switched on every job the player had unticked (review round 4). Needs no
+-- role: the file holds no Pal yet.
+function M.persist_baseline()
+    if activation_busy() or settings_gate.blocked() or persistence or retiring or persistence_blocked
+        or not M.path or M.state ~= 'missing' then return false end
+    M.baseline = true
+    local ok, err, gen = file.write(M.path, M.serialize(), M.generation, decode)
+    if not ok then
+        log.warn('could not write the vanilla baseline to priorities.txt (kept for this session only): '
+            .. tostring(err))
+        return false
+    end
+    M.state, M.generation = 'saved', gen
     return true
 end
 

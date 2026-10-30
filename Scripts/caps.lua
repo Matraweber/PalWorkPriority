@@ -91,6 +91,11 @@ function M.finish_retirement(expected)
     return true
 end
 local config_rules = {}
+-- While config.lua is refused, config_rules are the shipped defaults. These
+-- are the refused file's work_caps (true when it did not even parse), so a
+-- guild row that overrides one of them is not removed meanwhile.
+local held_rules = nil
+function M.hold_config_rules(rules) held_rules = rules end
 local config_source,config_epoch=nil,0
 local warn_oversized
 function M.configure(cfg)
@@ -144,8 +149,9 @@ local function put(data, guild, work, item, ceiling)
     data[guild][work][item] = ceiling
 end
 
-local function decode(text)
-    local result = { data = {}, count = 0 }
+-- lenient: a file with no envelope, read as 0.4.1 read it (see store.lua).
+local function decode(text, lenient)
+    local result = { data = {}, count = 0, skipped = lenient and {} or nil }
     for line in (text .. "\n"):gmatch("(.-)\n") do
         line = line:gsub("\r$", "")
         if line ~= "" and line:sub(1,1) ~= "#" then
@@ -156,13 +162,23 @@ local function decode(text)
             end
             local ok, _, clean = M.valid_rule(work, item, amount == "OFF" and 1 or amount)
             if amount == "OFF" then clean = false end
-            if not guild_ok(guild) or not ok then return nil, "invalid ceiling row" end
-            if result.data[guild] and result.data[guild][work]
-                and result.data[guild][work][item] ~= nil then return nil, "duplicate ceiling row" end
-            put(result.data, guild, work, item, clean)
-            result.count = result.count + 1
+            if not guild_ok(guild) or not ok then
+                if not lenient then return nil, "invalid ceiling row" end
+                result.skipped[#result.skipped + 1] = line
+            else
+                if result.data[guild] and result.data[guild][work]
+                    and result.data[guild][work][item] ~= nil then
+                    if not lenient then return nil, "duplicate ceiling row" end
+                    result.count = result.count - 1
+                end
+                put(result.data, guild, work, item, clean)
+                result.count = result.count + 1
+            end
         end
     end
+    -- Not one good row: that is no 0.4.1 file, and unreadable data never
+    -- becomes the defaults.
+    if lenient and result.count == 0 and #result.skipped > 0 then return nil, 'invalid ceiling row' end
     return result
 end
 
@@ -235,6 +251,7 @@ function M.load(path)
         return 0
     end
     M.data, M.generation, M.state = decoded.data, meta.generation, "saved"
+    file.warn_skipped("limits", path, decoded.skipped)
     if meta.recovered then
         dirty, M.state = true, "saving"
         log.warn("recovered limits from " .. meta.source)
@@ -588,7 +605,9 @@ function M.view_status()
         return 'unavailable','Settings locked after a session change or save failure. Restart the game to edit priorities and limits.'
     end
     if settings_gate.blocked() then return 'unavailable','Settings recovery is in progress' end
-    if not M.decided then return "unavailable", "Session role is not established" end
+    -- The first seconds after a load, before host or client is known. Shown
+    -- in the panel as it is (review round 4: the old text was jargon).
+    if not M.decided then return "unavailable", "Still loading. Try again in a moment." end
     if M.is_client then return M.remote_state or "connecting", M.remote_error end
     return M.state, M.error
 end
@@ -668,6 +687,14 @@ function M.apply_clear(work,item,guild)
     if (not row or row[item] == nil) and not inherited then
         M.error = "No active legacy rule for this guild"
         return false,'no_active_legacy_rule'
+    end
+    -- Removed now, the guild row would bring the refused file's own limit
+    -- back once that file is fixed, where a mask would have hidden it
+    -- (review round 4). Changing the row stays allowed.
+    if not inherited and held_rules ~= nil and (held_rules == true
+        or (type(held_rules[work]) == 'table' and held_rules[work][item] ~= nil)) then
+        M.error = "config.lua is rejected; fix it before removing this limit"
+        return false,'config_rejected'
     end
     if persistence then
         local data=candidate_data()

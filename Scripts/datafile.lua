@@ -66,6 +66,17 @@ local function unpack_file(text)
     return payload, gen
 end
 
+-- An editor may put a UTF-8 byte order mark in front of a hand edit. It used
+-- to make the edit invalid, so a .bak quietly replaced it (review round 4).
+local BOM = '\239\187\191'
+local function without_bom(bytes)
+    if bytes:sub(1, 3) == BOM then return bytes:sub(4) end
+    return bytes
+end
+
+-- No envelope at all: a 0.4.1 file, or a hand edit that removed the line.
+local function legacy(bytes) return bytes:sub(1, 11) ~= '# PWP-DATA ' end
+
 -- The payload of a live file this version did not write, or nil. 0.5 installs
 -- a live file only by renaming a verified .tmp into place, so a live file
 -- with no envelope (gen 0) or a failed checksum came from 0.4.1 or from a
@@ -79,11 +90,18 @@ local function outside_payload(bytes)
     return bytes:match('^# PWP%-DATA [^\n]*\n(.*)$')
 end
 
--- validate(payload) returns a decoded table or nil,error. Never execute saves.
+-- validate(payload, lenient) returns a decoded table or nil,error. lenient
+-- asks for 0.4.1's rule, which skipped a bad line and kept the rest: it is
+-- used only for a live file with no envelope when nothing else can be read
+-- (review round 4: one such line in a 0.4.1 file stopped the mod for good,
+-- while a hand edit beside a good .bak still falls back to that .bak).
+-- Never execute saves.
 function M.read(path, validate)
     local best, errors, found, outside, highest, backed_up = nil, {}, false, nil, 0, false
+    local old_format, unreadable = nil, false
     for _, suffix in ipairs({ '', '.tmp', '.pending', '.bak' }) do
         local bytes, err, code = M.read_raw(path .. suffix)
+        if bytes and suffix == '' then bytes = without_bom(bytes) end
         if bytes then
             found = true
             if suffix == '.bak' then backed_up = true end
@@ -101,12 +119,17 @@ function M.read(path, validate)
             end
             if payload then
                 local value, why = validate(payload)
+                if value == nil and edited and legacy(bytes) then old_format = payload end
                 if value ~= nil then
                     if edited then
                         -- The newest edit there is: it wins over any older
                         -- generation, whose number it takes so saving goes on.
+                        -- A body shorter than its envelope says may be a
+                        -- copy cut off at a line end, not an edit.
+                        local stated = math.tointeger(tonumber(bytes:match('^# PWP%-DATA 1 %d+ (%d+) ')))
                         outside = { value = value, generation = 0, source = path, recovered = false,
-                            payload = payload, enveloped = bytes:sub(1, 11) == '# PWP-DATA ' }
+                            payload = payload, enveloped = bytes:sub(1, 11) == '# PWP-DATA ',
+                            short = stated ~= nil and #payload < stated }
                     elseif not best or gen > best.generation then
                         best = { value = value, generation = gen, source = path .. suffix,
                             recovered = suffix ~= '', payload = payload }
@@ -116,6 +139,14 @@ function M.read(path, validate)
         elseif code ~= 2 then
             -- ENOENT alone proves absence; access errors must not mean a new install.
             errors[#errors + 1] = tostring(err)
+            unreadable = true
+        end
+    end
+    if old_format and not best and not outside and not unreadable then
+        local value = validate(old_format, true)
+        if value ~= nil then
+            outside = { value = value, generation = 0, source = path, recovered = false,
+                payload = old_format, enveloped = false }
         end
     end
     -- Every finished save of this version leaves a .bak. Without one, an
@@ -127,15 +158,34 @@ function M.read(path, validate)
         -- it is and left unchanged on disk.
         if highest > 0 or outside.enveloped then
             outside.generation, outside.recovered = highest, true
-            log.warn(path .. " was changed outside this version (by hand or by 0.4.1); "
-                .. "using it instead of the older saved copy")
+            if outside.short then
+                -- Review round 4: a copy cut off at a line end reads like an
+                -- edit that removed rows. Say which it may be.
+                log.warn(path .. " is shorter than its first line says: cut off by a crash or a sync "
+                    .. "tool, or rows removed by hand. Using it; check your settings")
+            else
+                log.warn(path .. " was changed outside this version (by hand or by 0.4.1); "
+                    .. "using it instead of the older saved copy")
+            end
         end
-        outside.enveloped = nil
+        outside.enveloped, outside.short = nil, nil
         return outside.value, outside
     end
     if best then return best.value, best end
     if found or #errors > 0 then return nil, { error = table.concat(errors, '; '), state = 'error' } end
     return nil, { state = 'missing', generation = 0 }
+end
+
+-- One warning per skipped row, with the row itself, so the player can find it.
+function M.warn_skipped(what, path, skipped)
+    for i, line in ipairs(skipped or {}) do
+        if i > 20 then
+            log.warn(string.format('%s: %d more unreadable row(s) skipped', what, #skipped - 20))
+            break
+        end
+        log.warn(string.format("%s: skipped unreadable row '%s' in %s, as 0.4.1 did",
+            what, #line > 80 and (line:sub(1, 77) .. '...') or line, tostring(path)))
+    end
 end
 
 function M.write(path, payload, generation, validate)
@@ -179,8 +229,15 @@ function M.write(path, payload, generation, validate)
     if live then
         -- A live file read as written by hand or by 0.4.1 was the one loaded,
         -- so it rotates to .bak like any other good generation.
-        local old_payload = unpack_file(live) or outside_payload(live)
+        local plain = without_bom(live)
+        local old_payload = unpack_file(plain) or outside_payload(plain)
         local valid_old = old_payload ~= nil and (not validate or validate(old_payload) ~= nil)
+        if not valid_old and old_payload ~= nil and legacy(plain) then
+            -- A 0.4.1 file read with 0.4.1's rule rotates to .bak like any
+            -- loaded generation. Beside a .bak it was a refused edit.
+            local _, _, bak_code = M.read_raw(bak, 'inspect backup')
+            valid_old = bak_code == 2 and validate(old_payload, true) ~= nil
+        end
         if not valid_old then
             -- Kept under a name of its own. A second bad edit in a row used to
             -- meet the first one's name and refuse every save for good
@@ -195,7 +252,12 @@ function M.write(path, payload, generation, validate)
                 end
                 if kept == nil or kept == live then previous, dropped = name, kept == live; break end
             end
-            if previous == nil then return false, "too many rejected copies of " .. path end
+            if previous == nil then
+                -- Nothing is overwritten to make room: saving stops until
+                -- the player moves the old copies away (review round 4).
+                return false, "too many rejected copies of " .. path .. " (100 for this generation); "
+                    .. "move the " .. path .. ".rejected.* files out of the folder so saving can go on"
+            end
         end
         if previous == bak then
             local old_bak, bak_err, bak_code = M.read_raw(bak, 'inspect backup')

@@ -111,3 +111,60 @@ do
     value, meta = file.read('first',decode)
     assert(value == 'new' and meta.recovered, 'an interrupted first save lost to the plain file')
 end
+
+-- Review round 4 (Gap 7 / engine P3-3): a live file cut off at a line end
+-- still parses, so it reads like a hand edit and wins over the full .bak.
+-- Nothing tells the two apart, so it is used, but the warning says it may be
+-- cut off instead of calling it an edit.
+do
+    local warned = {}
+    package.loaded.log.warn = function(message) warned[#warned + 1] = tostring(message) end
+    local rows = function(s)
+        local n = 0
+        for line in s:gmatch('[^\n]+') do
+            if not line:match('^row%d+$') then return nil, 'invalid' end
+            n = n + 1
+        end
+        return n
+    end
+    local fs4 = create_fs(); file.fs = fs4
+    assert(file.write('cut', 'row1\nrow2\nrow9\n', 3))
+    assert(file.write('cut', 'row1\nrow2\nrow3\n', 4))
+    assert(fs4.files['cut.bak'] and fs4.files.cut:find('^# PWP%-DATA 1 5 '))
+    fs4.files.cut = fs4.files.cut:sub(1, -6)
+    local count, meta = file.read('cut', rows)
+    assert(count == 2 and meta.generation == 5 and meta.recovered, 'the cut copy was not the one read')
+    assert(#warned == 1 and warned[1]:find('cut is shorter than its first line says: cut off by a crash or a sync tool',
+        1, true), tostring(warned[1]))
+    -- A hand edit of the same length is still called an edit.
+    warned = {}
+    assert(file.write('same', 'row1\nrow2\n', 0))
+    assert(file.write('same', 'row1\nrow3\n', 1))
+    fs4.files.same = fs4.files.same:gsub('row3', 'row4')
+    assert(file.read('same', rows) == 2)
+    assert(#warned == 1 and warned[1]:find('was changed outside this version', 1, true), tostring(warned[1]))
+    package.loaded.log.warn = function() end
+end
+
+-- Review round 4 (persistence P3-1): an editor's byte order mark made a hand
+-- edit invalid, so the .bak quietly replaced it on the next save.
+do
+    local rows = function(s)
+        local n = 0
+        for line in s:gmatch('[^\n]+') do
+            if not line:match('^row%d+$') then return nil, 'invalid' end
+            n = n + 1
+        end
+        return n
+    end
+    local fs5 = create_fs(); file.fs = fs5
+    assert(file.write('bom', 'row1\n', 0))
+    assert(file.write('bom', 'row1\nrow2\n', 1))
+    fs5.files.bom = string.char(239, 187, 191) .. 'row1\nrow2\nrow3\n'
+    local count, meta = file.read('bom', rows)
+    assert(count == 3 and meta.recovered, 'a hand edit with a byte order mark lost to the .bak')
+    -- Its next save keeps the edit as the .bak, not as a rejected copy.
+    assert(file.write('bom', 'row1\nrow2\nrow3\n', meta.generation, rows))
+    assert(fs5.files['bom.bak'] == string.char(239, 187, 191) .. 'row1\nrow2\nrow3\n'
+        and fs5.files['bom.rejected.' .. (meta.generation + 1)] == nil)
+end

@@ -102,3 +102,64 @@ do
     assert(store.flush(nil, true) and store.generation == 2)
     assert(store.load('priorities.txt') and store.get(A, 9) == 3 and store.state == 'saved')
 end
+
+-- Review round 4 (P2-1): rows 0.4.1 skipped. One of them used to refuse the
+-- whole file, and with no .bak to fall back on the mod stopped for good.
+-- 0.4.1 read a file with no envelope line by line and dropped what it could
+-- not parse; 0.5 now does the same for such a file, names each row, and
+-- leaves the bytes alone until its first save rotates them to .bak.
+do
+    local warned = {}
+    quiet.warn = function(message) warned[#warned + 1] = tostring(message) end
+    local function said(text)
+        for _, line in ipairs(warned) do if line:find(text, 1, true) then return true end end
+        return false
+    end
+    local BOM = string.char(239, 187, 191)
+    local prio = BOM .. '# Pal Work Priority - per-pal edits from the Monitoring Stand.\n'
+        .. '# palkey|worktype|priority   (X = never assign)\n'
+        .. 'PAL-A|4|1\nPAL-A|5|3 \nPAL-B|7|1.5\nPAL-B|3|2\nPAL-C|1|'
+    fs.files['p041.txt'] = prio
+    local rows = store.load('p041.txt')
+    assert(store.state == 'saved', 'a skipped row refused the file: ' .. tostring(store.error))
+    assert(rows == 2 and store.get('PAL-A', 4) == 1 and store.get('PAL-B', 3) == 2, 'good rows lost')
+    assert(store.get('PAL-A', 5) == nil and store.get('PAL-B', 7) == nil)
+    for _, row in ipairs({ "'PAL-A|5|3 '", "'PAL-B|7|1.5'", "'PAL-C|1|'" }) do
+        assert(said('priorities: skipped unreadable row ' .. row .. ' in p041.txt, as 0.4.1 did'),
+            'not named: ' .. row)
+    end
+    assert(fs.files['p041.txt'] == prio, 'loading rewrote the file')
+    assert(store.set('PAL-A', 4, 2), 'saving over the old file failed')
+    assert(fs.files['p041.txt.bak'] == prio, 'the original bytes were not kept as .bak')
+    assert(store.load('p041.txt') == 2 and store.get('PAL-A', 4) == 2 and store.state == 'saved')
+
+    warned = {}
+    local limits = BOM .. '# Pal Work Priority - stock limits\n'
+        .. 'guild-1|Mining|Stone|100\nguild-1|Lumbering|Wood|50\nguild-1|Deforest|Wood|30 \n'
+        .. '*|Mining|Ore|1.5\nguild-1|Deforest|Stone|20\nguild-1|Mining|Co'
+    fs.files['c041.txt'] = limits
+    local limit_rows = caps.load('c041.txt')
+    -- A trailing space after the number was always read here (tonumber).
+    assert(limit_rows == 3 and caps.state == 'saved', 'a skipped limit refused the file: '
+        .. tostring(caps.error))
+    assert(caps.data['guild-1'].Mining.Stone == 100 and caps.data['guild-1'].Deforest.Stone == 20
+        and caps.data['guild-1'].Deforest.Wood == 30 and caps.data['*'] == nil)
+    for _, row in ipairs({ "'guild-1|Lumbering|Wood|50'", "'*|Mining|Ore|1.5'",
+        "'guild-1|Mining|Co'" }) do
+        assert(said('limits: skipped unreadable row ' .. row .. ' in c041.txt, as 0.4.1 did'), 'not named: ' .. row)
+    end
+    assert(fs.files['c041.txt'] == limits, 'loading rewrote the caps file')
+
+    -- Not one good row is no 0.4.1 file: unreadable data never becomes the
+    -- defaults.
+    fs.files['bad041.txt'] = 'not a row\nnor this\n'
+    store.load('bad041.txt')
+    assert(store.state == 'error', 'a file of only bad rows became empty priorities')
+    -- P2-2: the reason the stand and the panel show instead of defaults.
+    assert(store.decided and store.refusal() == 'priorities.txt could not be read. See priority.log.',
+        tostring(store.refusal()))
+    assert(not store.set('PAL-A', 4, 2), 'an edit over a refused file was accepted')
+    store.load('p041.txt')
+    assert(store.refusal() == nil, 'a loaded file still reported a refusal')
+    quiet.warn = function() end
+end

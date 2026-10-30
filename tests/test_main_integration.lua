@@ -1650,7 +1650,7 @@ test("a refused config.lua still brings up Alt+F1 with the reason and schedules 
         fs.files[ROOT.."Scripts/default_config.lua"]=defaults
     end,"invalid interval_seconds")
     local output=table.concat(s.console,"\n")
-    local notice="config.lua rejected: invalid interval_seconds. Fix it, or delete config.lua and restart. "
+    local notice="config.lua rejected: invalid interval_seconds. Fix it, or delete it and restart for a new copy. "
         .."The mod is paused until then."
     assert(output:find(notice,1,true),output)
     assert(not output:find("did not start",1,true),output)
@@ -1677,7 +1677,7 @@ test("a refused config.lua still brings up Alt+F1 with the reason and schedules 
     s.console={}; s.commands.reload()
     output=table.concat(s.console,"\n")
     local shown=configuration.upgrade_message
-    assert(#shown<=125 and shown:find("^config.lua rejected: line 1:") and shown:find("%.%.%.%. Fix it, or delete config.lua and restart%. The mod is paused until then%.$"),shown)
+    assert(#shown<=125 and shown:find("^config.lua rejected: line 1:") and shown:find("%.%.%.%. Fix it, or delete it and restart for a new copy%. The mod is paused until then%.$"),shown)
     assert(output:find(string.rep("abcdefghij",8),1,true),"the log lost the whole reason: "..output)
     -- Fixed and reloaded: the notice goes and passes run again.
     s.fs.files[ROOT.."config.lua"]=defaults
@@ -1833,6 +1833,76 @@ test("hello budget: a join, two asks and a reconnect are served; a second reconn
     assert(not hello('again'),'a second reconnect inside the minute was served')
     s.now=s.now+61
     assert(hello('again'),'the second reconnect was never served')
+end)
+
+-- Review round 4 (persistence P1-1): the vanilla baseline lived only in
+-- memory until a world was hosted. A first launch that quit at the title
+-- screen left priorities.txt missing and priority.log present, so the second
+-- launch was not fresh and switched on every job the player had unticked.
+test("a fresh install keeps its vanilla baseline when the first launch hosts no world",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local first=boot(true,true,function(fs)
+        fs.files[ROOT.."config.lua"]=nil
+        fs.files[ROOT.."priorities.txt"]=nil
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end)
+    assert(first.store.baseline==true,"launch 1 was not fresh")
+    assert(first.store.decided==false,"launch 1 must never set a role here")
+    local carried={}
+    for path,text in pairs(first.fs.files) do carried[path]=text end
+    assert(carried[ROOT.."priority.log"]~=nil,"launch 1 left no log, so launch 2 would still be fresh")
+    assert((carried[ROOT.."priorities.txt"] or ""):find("\n# baseline=vanilla\n",1,true),
+        "launch 1 did not write the baseline")
+    local second=boot(true,true,function(fs)
+        for path,text in pairs(carried) do fs.files[path]=text end
+    end)
+    assert(second.store.baseline==true,"launch 2 lost the vanilla baseline")
+    second.timers.role.fn()
+    local captured
+    second.handler=function()
+        local store=package.loaded.store
+        -- The first pass only: a later one finds the row already there.
+        if captured==nil then captured=store.capture_baseline("PAL-B",{[1]=true,[2]=true},{[2]=true}) end
+        second.scheduler.pass_id=second.scheduler.pass_id+1
+        return {camps=1,pals=1,failed=0}
+    end
+    second.keys.F2.fn(); second.timers.ui.fn(); second:background()
+    assert(second.scheduler_calls==1,"the first pass of launch 2 did not run")
+    assert(captured==true and second.store.data["PAL-B"][2]==false and second.store.data["PAL-B"][1]==1,
+        "the first pass of launch 2 did not capture X for a job that was off")
+    assert(second.fs.files[ROOT.."priorities.txt"]:find("PAL-B|2|X",1,true),"the captured X was not saved")
+end)
+
+-- Review round 4 (engine P3-2): while config.lua is refused, caps runs on the
+-- shipped defaults, so a guild row overriding one of the file's own limits
+-- was removed outright. Fixed, the lower config limit came back.
+test("a refused config.lua holds its limits: a guild row over one is not removed meanwhile",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local refused="return {interval_seconds=2, work_caps={Mining={Stone=50}}}"
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."config.lua"]=refused
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end,"invalid interval_seconds")
+    -- Newcomer P3-4: plain words before the role is known.
+    local state,why=s.caps.view_status()
+    assert(state=="unavailable" and why=="Still loading. Try again in a moment.",tostring(why))
+    s.timers.role.fn()
+    local ok,reason=s.caps.apply_clear("Mining","Stone","guild-local")
+    assert(ok==false and reason=="config_rejected","a held config limit lost its guild override: "..tostring(reason))
+    assert(s.caps.data["guild-local"].Mining.Stone==100)
+    -- Changing the row stays allowed.
+    assert(s.caps.apply_set("Mining","Stone",120,"guild-local"))
+    -- A still refused reload keeps holding them.
+    s.commands.reload()
+    assert(select(2,s.caps.apply_clear("Mining","Stone","guild-local"))=="config_rejected")
+    -- Fixed: the clear masks the config limit instead of exposing it.
+    s.fs.files[ROOT.."config.lua"]="return {interval_seconds=10, work_caps={Mining={Stone=50}}}"
+    s.console={}; s.commands.reload()
+    assert(table.concat(s.console,"\n"):find("config reloaded",1,true))
+    assert(s.caps.apply_clear("Mining","Stone","guild-local"))
+    assert(s.caps.data["guild-local"].Mining.Stone==false,"the fixed file's limit was exposed")
 end)
 
 io.open,io.popen=original_io.open,original_io.popen

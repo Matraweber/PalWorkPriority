@@ -9,8 +9,10 @@ local M = {}
 -- on later launches until the panel has shown it and calls ack_upgrade_reset
 -- (review round 2: a notice held only in memory was gone after one session).
 M.upgrade_reset = false
-M.UPGRADE_MESSAGE = "Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
-    .. "Default settings are in use; options page settings are kept."
+-- At most 125 characters for the panel's notice row (review round 4: the
+-- old text ran past it, and the stand dropped the mod's name to fit it).
+M.UPGRADE_MESSAGE = "Update removed the old Scripts\\config.lua, so defaults are in use. "
+    .. "Priorities, limits and Options page settings are kept."
 -- The root config.lua is ours, outside the shipped Scripts, so no loader
 -- removes it. Gone while config.migration.bak exists means it was deleted.
 M.MISSING_MESSAGE = "config.lua was missing, defaults are in use. Options page settings are kept."
@@ -21,6 +23,9 @@ M.MARKER = 'config.reset.txt'
 -- syntax), not after a read error. main then comes up without scheduling and
 -- says why, instead of not starting at all (review round 3).
 M.refused = false
+-- The refused file's work_caps, for caps.hold_config_rules: true when the
+-- file did not even parse, nil when nothing was refused.
+M.held_caps = nil
 local marker_path = nil
 local BOM = '\239\187\191'
 local MAX_INTEGER = 2147483647
@@ -220,38 +225,58 @@ local function same(a, b)
     return true
 end
 
--- The three tables are compared entry by entry, so changing one work
--- priority keeps 0.4.1's rules for the untouched entries beside it.
-local BY_ENTRY = { work_priority = true, pal_overrides = true, work_caps = true }
+-- How deep the three tables are compared: work_priority per job,
+-- pal_overrides per Pal per job, work_caps per job per item. Changing one
+-- value keeps 0.4.1's rules for the untouched ones beside it (review round
+-- 4: one edit inside a Pal's overrides made its other 0.4.1 values strict).
+local DEPTH = { work_priority = 1, pal_overrides = 2, work_caps = 2 }
 
 -- 0.4.1's rules for every value still equal to base (the parsed
--- config.migration.bak), strict ones for the rest.
+-- config.migration.bak), strict ones for the rest. The unchanged values are
+-- copied into old, made lenient there, and put back one by one.
 local function lenient_where_unchanged(c, base)
-    local old, entries = {}, {}
-    for key, value in pairs(c) do
-        local before = base[key]
-        if BY_ENTRY[key] and type(value) == 'table' and type(before) == 'table' then
-            local kept, names = {}, {}
-            for entry, setting in pairs(value) do
-                if same(setting, before[entry]) then kept[entry], names[#names + 1] = setting, entry end
+    local old, paths, inner = {}, {}, {}
+    local function walk(value, before, into, path, depth)
+        for key, setting in pairs(value) do
+            local here = { table.unpack(path) }
+            here[#here + 1] = key
+            if depth > 1 and type(setting) == 'table' and type(before[key]) == 'table' then
+                into[key], inner[#inner + 1] = {}, here
+                walk(setting, before[key], into[key], here, depth - 1)
+            elseif same(setting, before[key]) then
+                into[key], paths[#paths + 1] = setting, here
             end
-            old[key], entries[key] = kept, names
-        elseif same(value, before) then
-            old[key] = value
         end
     end
-    local unchanged = {}
-    for key in pairs(old) do unchanged[#unchanged + 1] = key end
-    M.lenient(old)
-    for _, key in ipairs(unchanged) do
-        if entries[key] then
-            local fixed = old[key]
-            for _, entry in ipairs(entries[key]) do
-                if type(fixed) == 'table' then c[key][entry] = fixed[entry] else c[key][entry] = nil end
-            end
-        else
-            c[key] = old[key]
+    for key, value in pairs(c) do
+        local before = base[key]
+        if DEPTH[key] and type(value) == 'table' and type(before) == 'table' then
+            old[key] = {}
+            walk(value, before, old[key], { key }, DEPTH[key])
+        elseif same(value, before) then
+            old[key], paths[#paths + 1] = value, { key }
         end
+    end
+    M.lenient(old)
+    local function find(path)
+        local from, to = old, c
+        for i = 1, #path - 1 do
+            from = type(from) == 'table' and from[path[i]] or nil
+            to = to[path[i]]
+        end
+        local fixed = nil -- not "and ... or nil": false is a value here
+        if type(from) == 'table' then fixed = from[path[#path]] end
+        return fixed, to, path[#path]
+    end
+    for _, path in ipairs(paths) do
+        local fixed, to, last = find(path)
+        to[last] = fixed
+    end
+    -- A whole entry 0.4.1 dropped (an unknown work type) goes too, once
+    -- nothing typed under 0.5 is left in it. Deepest first.
+    for i = #inner, 1, -1 do
+        local fixed, to, last = find(inner[i])
+        if fixed == nil and type(to[last]) == 'table' and next(to[last]) == nil then to[last] = nil end
     end
     return c
 end
@@ -306,14 +331,12 @@ function M.clear_rejection()
     M.upgrade_reset, M.upgrade_message = waiting[1], waiting[2]
 end
 
--- Called by the panel once it has shown the reset notice.
+-- Called by the panel once it has shown the reset notice. A rejection is
+-- not acknowledged: the mod stays paused until a reload or a restart reads a
+-- valid file, so the notice stays up for every opening (review round 4; it
+-- used to go after the first look while nothing was scheduled).
 function M.ack_upgrade_reset()
-    if M.rejection ~= nil then
-        -- The panel showed the rejection, not the reset notice.
-        M.clear_rejection()
-        M.upgrade_reset, M.upgrade_message = false, nil
-        return true
-    end
+    if M.rejection ~= nil then return false end
     M.upgrade_reset, M.upgrade_message = false, nil
     if marker_path == nil then return true end
     local removed, err, code = file.fs.remove(marker_path)
@@ -350,6 +373,17 @@ function M.load(root, scripts)
         local base = original ~= nil and evaluate(original, backup) or nil
         local cfg, why = parse(text, target, original == text or base or false)
         M.refused = cfg == nil
+        M.held_caps = nil
+        if M.refused then
+            local raw = evaluate(text, target)
+            M.held_caps = raw == nil or (type(raw.work_caps) == 'table' and raw.work_caps or {})
+        end
+        -- A manual 0.4.1 upgrade keeps the old file beside the new scripts.
+        -- Edits to it did nothing without a word (review round 4).
+        local leftover = file.read_raw(scripts .. 'config.lua')
+        if leftover ~= nil and file.read_raw(scripts .. 'default_config.lua') ~= nil then
+            log.info(scripts .. 'config.lua is not read; the settings are in ' .. target)
+        end
         return cfg, why, false
     end
     if code ~= 2 then return nil, 'cannot read user config: ' .. tostring(err) end
@@ -373,13 +407,24 @@ function M.load(root, scripts)
         remember_reset(message)
         log.warn(message)
     end
-    -- Preserve the exact original before creating the editable copy.
+    -- Preserve the exact original before creating the editable copy. A
+    -- failed write (a full disk, a read-only folder) no longer stops the mod:
+    -- the settings were read fine, so they are used, and the next launch
+    -- tries again (review round 4). The copy waits for the backup, which
+    -- keeps 0.4.1's rules for its values.
     if existing == nil and missing == 2 then
         local saved, save_err = install(backup, original, 'backup')
-        if not saved then return nil, save_err end
+        if not saved then
+            log.warn(tostring(save_err) .. '; using the settings from ' .. source
+                .. ' this session, the next launch tries again')
+            return cfg, nil, fresh
+        end
     elseif existing == nil then return nil, 'config backup unavailable' end
     local saved, save_err = install(target, original, 'migration')
-    if not saved then return nil, save_err end
+    if not saved then
+        log.warn(tostring(save_err) .. '; using the settings from ' .. source
+            .. ' this session, the next launch tries again')
+    end
     return cfg, nil, fresh
 end
 
