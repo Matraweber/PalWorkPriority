@@ -1817,6 +1817,39 @@ test("limit on a dedicated server is refused instead of filed under a random pla
     assert(s.caps.data['guild-random'].Mining.Stone==300)
 end)
 
+-- Round 5 (multiplayer P3-4, engine P3-2): the headless listing showed only
+-- shared and config.lua limits and said "no limits" while guilds had some.
+-- And caps.all got own_guild's second value as a third argument.
+test("limit listing on a dedicated server says guild limits are not listed there",function()
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."caps.txt"]="guild-random|Deforest|Wood|7\n"
+    end)
+    s.timers.role.fn()
+    s.api.my_guild=function() return 'guild-random' end
+    local all=s.caps.all
+    s.caps.all=function(...)
+        assert(select('#',...)==2,'caps.all got '..select('#',...)..' arguments')
+        return all(...)
+    end
+    s.console={}; s.commands.limit('')
+    local output=table.concat(s.console,'\n')
+    assert(not output:find('Wood',1,true),"the listing showed a random player's guild: "..output)
+    assert(not output:find('no limits in the available view',1,true),output)
+    assert(output:find('guild limits are not listed here',1,true),output)
+    -- With a config.lua limit, the list says the same under it.
+    local cfg=upvalue(s.commands.status,'cfg')
+    cfg.work_caps={Mining={Stone=50}}
+    s.console={}; s.commands.limit('')
+    output=table.concat(s.console,'\n')
+    assert(output:find('Stone',1,true) and output:find('guild limits are not listed here',1,true),output)
+    -- A host with a screen lists its own guild as before, with no such line.
+    s.viewport=true
+    s.console={}; s.commands.limit('')
+    output=table.concat(s.console,'\n')
+    assert(output:find('Wood',1,true) and not output:find('not listed here',1,true),output)
+    s.caps.all=all
+end)
+
 -- Multiplayer round 4 P3-4, test coverage Gap 4: the comment promised that a
 -- new nonce is always served. The cap is kept (a loop of new nonces is a loop
 -- too) and the comment now says what this pins.

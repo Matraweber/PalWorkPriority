@@ -1864,14 +1864,21 @@ local function match_stock_id(totals, wanted)
 end
 
 local function show_limits()
-    local all = caps.all(cfg, own_guild())
+    -- One value: own_guild's second ("headless") is not caps.all's argument.
+    local guild, headless = own_guild()
+    local all = caps.all(cfg, guild)
+    -- A dedicated server has no player, so no guild's limits are in this
+    -- view; "no limits" read as if no guild had any (multiplayer round 5,
+    -- P3-4).
+    local unlisted = "guild limits are not listed here: a dedicated server has no player of its own"
 
     local works = {}
     for work in pairs(all) do works[#works + 1] = work end
     table.sort(works)
 
     if #works == 0 then
-        log.say("no limits in the available view")
+        log.say(headless and "no shared or config.lua limits; " .. unlisted
+            or "no limits in the available view")
         log.say("add one with: " .. cfg.chat_prefix .. " limit <work> <item> <amount>")
         return
     end
@@ -1880,6 +1887,7 @@ local function show_limits()
         local totals, verified, scope, explained = stock_across_camps()
 
         log.say("limits; " .. scope .. ((verified or explained) and "" or " (stock unavailable)"))
+        if headless then log.say("shared and config.lua limits only; " .. unlisted) end
         for _, work in ipairs(works) do
             local items = {}
             for item in pairs(all[work]) do items[#items + 1] = item end
