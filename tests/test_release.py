@@ -170,7 +170,17 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("including the empty enabled.txt\nin it.", install)
             self.assertIn('If it says "config.lua rejected"', install)
             self.assertIn('If it says "did not start"', install)
-            self.assertIn("delete config.lua and restart", install)
+            self.assertIn("delete config.lua and restart\nfor a new copy.", install)
+            # Round 4 (2026-10-30, onboarding P2-2 to P2-5): one copy is step 0, the
+            # test click is a right click, NVIDIA and a missing priority.log are named.
+            self.assertLess(install.index("0. One copy only."), install.index("1. UE4SS first."))
+            self.assertEqual(install.count("One copy only"), 1)
+            self.assertIn("To test the mod, right\n   click a 1: it becomes 2", install)
+            self.assertIn("NVIDIA", install)
+            self.assertIn("No priority.log at all?", install)
+            self.assertIn("Mods folder next to the server's UE4SS.dll", install)
+            self.assertIn("https://github.com/Matraweber/PalWorkPriority#readme", install)
+            self.assertTrue(all(len(line) <= 80 for line in install.splitlines()), "fits a narrow editor")
             self.assertNotIn("Scripts/config.lua", w.namelist())
             self.assertIn("Scripts/default_config.lua", w.namelist())
             self.assertIn(release.MANUAL_ROOT + "enabled.txt", m.namelist())
