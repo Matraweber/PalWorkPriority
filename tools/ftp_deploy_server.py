@@ -87,9 +87,27 @@ def fetch(ftp, path):
     return buf.getvalue()
 
 
-def do_install(ftp, files, tag, dry_run=False, say=print):
-    """Back up Scripts, upload files, read every one back. Returns True on success."""
+def again(box, reconnect, op, say=print, tries=3):
+    """One upload, read-back or listing, tried again on a new connection when
+    the host drops it. Only for steps that are safe to repeat: storing the
+    same file twice leaves the same file. GPortal dropped transfers after 0-6
+    files on 2026-10-30, and one dropped file stopped the whole install."""
+    for attempt in range(tries):
+        try:
+            return op(box[0])
+        except (ftplib.error_temp, OSError, EOFError) as e:
+            if reconnect is None or attempt == tries - 1:
+                raise
+            say(f"transfer dropped ({type(e).__name__}); reconnecting, trying that step again")
+            box[0] = reconnect()
+
+
+def do_install(ftp, files, tag, dry_run=False, say=print, reconnect=None):
+    """Back up Scripts, upload files, read every one back. Returns True on success.
+    reconnect, when given, returns a new logged-in connection; then a dropped
+    upload or read-back is tried again (the rename and the new folder never are)."""
     backup = "Scripts-before-" + tag
+    box = [ftp]
     present = names(ftp, MOD_DIR)
     if "Scripts" not in present:
         say(f"{MOD_DIR}/Scripts not found (saw {sorted(present)}); nothing done")
@@ -105,13 +123,15 @@ def do_install(ftp, files, tag, dry_run=False, say=print):
     say(f"backup: Scripts -> {backup}")
     ftp.mkd(f"{MOD_DIR}/Scripts")
     for name, data in sorted(files.items()):
-        ftp.storbinary(f"STOR {MOD_DIR}/Scripts/{name}", io.BytesIO(data))
+        again(box, reconnect, lambda f, n=name, d=data: f.storbinary(
+            f"STOR {MOD_DIR}/Scripts/{n}", io.BytesIO(d)), say)
     bad = []
     for name, data in sorted(files.items()):
-        back = fetch(ftp, f"{MOD_DIR}/Scripts/{name}")
+        back = again(box, reconnect, lambda f, n=name: fetch(f, f"{MOD_DIR}/Scripts/{n}"), say)
         if hashlib.sha256(back).digest() != hashlib.sha256(data).digest():
             bad.append(name)
-    extra = {n for n in names(ftp, MOD_DIR + "/Scripts") if not n.startswith(".")} - set(files)
+    listed = again(box, reconnect, lambda f: names(f, MOD_DIR + "/Scripts"), say)
+    extra = {n for n in listed if not n.startswith(".")} - set(files)
     if bad or extra:
         say(f"VERIFY FAILED: mismatched {bad}, unexpected {sorted(extra)}")
         say(f"undo with: --rollback {backup}")

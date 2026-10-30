@@ -143,7 +143,15 @@ def handle(session, rid, op, args, lines):
         else:
             files = deploy.lua_files(args[0])
             say(f"{len(files)} Lua files from {args[0]}")
-            ok = session.call(lambda f: deploy.do_install(f, files, args[1], say=say), retry=False)
+            # A fresh login first: the host drops an idle one, and an install
+            # is never retried as a whole (round 5, 2026-10-30).
+            session.connect()
+
+            def reconnect():
+                session.connect()
+                return session.ftp
+            ok = session.call(lambda f: deploy.do_install(f, files, args[1], say=say,
+                                                          reconnect=reconnect), retry=False)
     elif op == "rollback" and len(args) == 1:
         ok = session.call(lambda f: deploy.do_rollback(f, args[0], say=say), retry=False)
     else:
