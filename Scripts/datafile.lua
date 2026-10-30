@@ -101,7 +101,8 @@ function M.read(path, validate)
     local old_format, unreadable = nil, false
     for _, suffix in ipairs({ '', '.tmp', '.pending', '.bak' }) do
         local bytes, err, code = M.read_raw(path .. suffix)
-        if bytes and suffix == '' then bytes = without_bom(bytes) end
+        -- Every suffix: a hand edit with a mark rotates to .bak as it is.
+        if bytes then bytes = without_bom(bytes) end
         if bytes then
             found = true
             if suffix == '.bak' then backed_up = true end
@@ -230,13 +231,22 @@ function M.write(path, payload, generation, validate)
         -- A live file read as written by hand or by 0.4.1 was the one loaded,
         -- so it rotates to .bak like any other good generation.
         local plain = without_bom(live)
-        local old_payload = unpack_file(plain) or outside_payload(plain)
+        local verified = unpack_file(plain)
+        local old_payload = verified or outside_payload(plain)
         local valid_old = old_payload ~= nil and (not validate or validate(old_payload) ~= nil)
         if not valid_old and old_payload ~= nil and legacy(plain) then
             -- A 0.4.1 file read with 0.4.1's rule rotates to .bak like any
             -- loaded generation. Beside a .bak it was a refused edit.
             local _, _, bak_code = M.read_raw(bak, 'inspect backup')
             valid_old = bak_code == 2 and validate(old_payload, true) ~= nil
+        end
+        if valid_old and verified == nil and not legacy(plain) then
+            -- Review round 5: an envelope whose checksum fails is a hand
+            -- edit or a copy cut off by a crash or a sync tool. This save
+            -- already holds what was read from it, so it is kept aside and
+            -- the .bak beside it stays. Without a .bak it rotates as before.
+            local _, _, bak_code = M.read_raw(bak, 'inspect backup')
+            if bak_code ~= 2 then valid_old = false end
         end
         if not valid_old then
             -- Kept under a name of its own. A second bad edit in a row used to
