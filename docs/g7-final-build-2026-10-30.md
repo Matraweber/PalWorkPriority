@@ -60,6 +60,9 @@ Logs: `test-results/g7-final-20261030c/` (local). The earlier runs below are on 
     `D:\PalWorkPriority-backups\workshop-stale-root-lua-20261030-171215`.
   - `check` then said PASS: the Steam copy equals the staged 0.5.0 Workshop archive.
 - **Nexus:** the files were still in Nexus's virus scan about 6 minutes after upload.
+- **Store pages:** the 0.5.0 descriptions from
+  [store-page-0.5.0-draft](store-page-0.5.0-draft.md) were posted on Steam and Nexus.
+  Steam's change notes list "Update: 30 Oct @ 4:59pm, 0.5.0 - 2026-10-30".
 
 ## Build
 

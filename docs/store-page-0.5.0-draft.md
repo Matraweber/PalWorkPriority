@@ -1,9 +1,18 @@
 ---
 date: 2026-10-29
 tags: [release]
-status: current
+status: history
 ---
-# Store page text for 0.5.0 (draft, not posted)
+# Store page text for 0.5.0 (posted 2026-10-30)
+
+**Posted 2026-10-30 (about 17:20):**
+- **Steam Workshop:** the description, as BBCode. The required item Experimental UE4SS
+  (3625223587) was already set.
+- **Nexus mod 5376:** the long description, through the editor's source view. One line
+  was added there pointing servers to the optional "Dedicated server files" download.
+
+The 0.4.1 texts of both pages, and the posted BBCode, are kept in
+`D:\PalWorkPriority-backups\store-pages-0.4.1-20261030`.
 
 Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [vortex-2026-10-28](vortex-2026-10-28.md) · [g1-workshop-2026-10-20](g1-workshop-2026-10-20.md) · [release-replies-0.5.0-draft](release-replies-0.5.0-draft.md) · [review-round4-2026-10-30](review-round4-2026-10-30.md)
 
