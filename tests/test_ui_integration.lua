@@ -1534,6 +1534,35 @@ end)
 -- Round 3 (onboarding P2-4): the config reset notice was panel-only. The
 -- stand shows it once, for a few seconds or until the stand opens again,
 -- and leaves the acknowledgement (and the marker file) to the panel.
+check('a rejected config.lua keeps the host stand saying the mod is paused',function()
+    local f=fixture(); f.authority=true
+    local configuration=package.loaded.configuration
+    local clock,now=os.clock,5000
+    os.clock=function() return now end
+    local ok,err=pcall(function()
+        package.loaded.configuration={upgrade_reset=true,upgrade_message='config.lua rejected: invalid interval_seconds.',
+            rejection='config.lua rejected: invalid interval_seconds.',ack_upgrade_reset=function() end}
+        assert(f.ui.refresh(f.cfg))
+        -- First the reason, for its seconds.
+        assert(f.ui.legend_text()=='Pal Work Priority: config.lua rejected: invalid interval_seconds.',f.ui.legend_text())
+        -- Then the stand keeps saying it, on every later opening too.
+        now=now+f.ui.RESET_NOTICE_SECONDS+1
+        assert(f.ui.legend_text()==f.ui.CONFIG_PAUSED,f.ui.legend_text())
+        package.loaded.stand_lifecycle.generation=package.loaded.stand_lifecycle.generation+1
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text==f.ui.CONFIG_PAUSED)
+        assert(#f.ui.CONFIG_PAUSED<=f.ui.LEGEND_MAX_CHARS)
+        -- A client never says it: the server's own state reaches it through net.
+        f.authority=false
+        assert(f.ui.config_message()==nil)
+        -- Fixed and reloaded: the normal legend is back.
+        f.authority=true; package.loaded.configuration.rejection=nil
+        assert(f.ui.config_message()==nil)
+    end)
+    os.clock=clock; package.loaded.configuration=configuration; f.authority=false
+    assert(ok,err)
+end)
+
 check('the config reset notice shows once on the stand and is not acknowledged there',function()
     local f=fixture(); assert(f.ui.refresh(f.cfg))
     local configuration=package.loaded.configuration

@@ -1164,9 +1164,20 @@ local function selection_issue()
     if #text <= M.LEGEND_MAX_CHARS then return text end
 end
 
+-- The host's config.lua was rejected: nothing is scheduled until it is fixed.
+-- The full reason shows once (reset_notice); after it the stand keeps saying
+-- the mod is paused, like the panel does on every opening (round 4, P1-2).
+M.CONFIG_PAUSED = "Pal Work Priority is paused: config.lua was rejected. The Limits panel says why."
+function M.config_message()
+    if api.has_authority() ~= true then return nil end
+    local configuration = package.loaded.configuration
+    if type(configuration) == "table" and configuration.rejection ~= nil then return M.CONFIG_PAUSED end
+end
+
 function M.legend_text()
     return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
-        or pak_message() or refused_notice() or reset_notice() or selection_issue() or shared_edit_legend()
+        or pak_message() or refused_notice() or reset_notice() or M.config_message() or selection_issue()
+        or shared_edit_legend()
 end
 
 -- One small legend in a known multi-child root. Ownership is names only; each
