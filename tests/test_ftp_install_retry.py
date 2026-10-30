@@ -113,5 +113,26 @@ class InstallRetry(unittest.TestCase):
                               reconnect=lambda: Always(host))
 
 
+class Put(unittest.TestCase):
+    def test_config_is_kept_before_it_is_replaced(self):
+        host = Host()
+        host.dirs[MOD].add("config.lua")
+        host.data[f"{MOD}/config.lua"] = b"old"
+        host.drops = {("STOR", "config.lua")}
+        said = []
+        ok = deploy.do_put(FakeFTP(host), "config.lua", b"new", say=said.append,
+                           reconnect=lambda: FakeFTP(host))
+        self.assertTrue(ok, said)
+        self.assertEqual(host.data[f"{MOD}/config.lua"], b"new")
+        kept = [k for k in host.data if "/config.lua.before-" in k]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(host.data[kept[0]], b"old")
+
+    def test_only_two_names(self):
+        host = Host()
+        self.assertFalse(deploy.do_put(FakeFTP(host), "main.lua", b"x", say=lambda *_: None))
+        self.assertNotIn(f"{MOD}/main.lua", host.data)
+
+
 if __name__ == "__main__":
     unittest.main()

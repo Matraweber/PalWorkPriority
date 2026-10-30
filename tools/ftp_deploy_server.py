@@ -144,6 +144,36 @@ def do_install(ftp, files, tag, dry_run=False, say=print, reconnect=None):
     return True
 
 
+# The only files put may write: the mod's command file and its settings.
+PUT_NAMES = ("remote.txt", "config.lua")
+
+
+def do_put(ftp, name, data, say=print, reconnect=None):
+    """Write one of PUT_NAMES in the mod folder and read it back. A config.lua
+    already there is first copied to config.lua.before-<time> (a new file, so
+    nothing is overwritten unseen). Returns True when the read-back matches."""
+    if name not in PUT_NAMES:
+        say(f"refused: put writes only {', '.join(PUT_NAMES)}")
+        return False
+    box = [ftp]
+    target = f"{MOD_DIR}/{name}"
+    if name == "config.lua":
+        present = again(box, reconnect, lambda f: names(f, MOD_DIR), say)
+        if name in present:
+            old = again(box, reconnect, lambda f: fetch(f, target), say)
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            keep = f"{MOD_DIR}/config.lua.before-{stamp}"
+            again(box, reconnect, lambda f: f.storbinary("STOR " + keep, io.BytesIO(old)), say)
+            say(f"kept the old config.lua as config.lua.before-{stamp}")
+    again(box, reconnect, lambda f: f.storbinary("STOR " + target, io.BytesIO(data)), say)
+    back = again(box, reconnect, lambda f: fetch(f, target), say)
+    if hashlib.sha256(back).digest() != hashlib.sha256(data).digest():
+        say(f"VERIFY FAILED: {name} read back different")
+        return False
+    say(f"wrote {name} ({len(data)} bytes), read back identical")
+    return True
+
+
 def do_rollback(ftp, backup, say=print):
     present = names(ftp, MOD_DIR)
     if backup not in present:

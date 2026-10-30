@@ -19,6 +19,8 @@ Queue: test-results/ftp-session/queue.txt, one line per request:
     <id> get <remote file>                  whole file, at most 5 MB
     <id> install <zip> <tag>                ftp_deploy_server install (backup + readback)
     <id> rollback <backup name>
+    <id> put remote.txt|config.lua           write test-results/ftp-session/put/<name>
+                                            to the mod folder (config.lua: old one kept)
     <id> quit
 Results: test-results/ftp-session/out/<id>.txt (and <id>.bin for get/tail).
 Lines already in the queue when this starts are ignored, never replayed.
@@ -152,6 +154,20 @@ def handle(session, rid, op, args, lines):
                 return session.ftp
             ok = session.call(lambda f: deploy.do_install(f, files, args[1], say=say,
                                                           reconnect=reconnect), retry=False)
+    elif op == "put" and len(args) == 1:
+        local = HOME / "put" / args[0]
+        if args[0] not in deploy.PUT_NAMES or not local.is_file():
+            ok = False
+            say(f"refused: put takes one of {', '.join(deploy.PUT_NAMES)} from {HOME / 'put'}")
+        else:
+            data = local.read_bytes()
+            session.connect()  # a fresh login, as for install
+
+            def reconnect_put():
+                session.connect()
+                return session.ftp
+            ok = session.call(lambda f: deploy.do_put(f, args[0], data, say=say,
+                                                      reconnect=reconnect_put), retry=False)
     elif op == "rollback" and len(args) == 1:
         ok = session.call(lambda f: deploy.do_rollback(f, args[0], say=say), retry=False)
     else:
