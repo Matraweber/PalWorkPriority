@@ -52,8 +52,14 @@ Logs: `test-results/g7-final-20261030c/` (local). The earlier runs below are on 
 - "Dedicated server files 0.5.0" (server zip) is an optional file, with mod-manager
   download off so Vortex cannot install it into a game.
 - Mod version 0.5.0. The files were in Nexus's virus scan right after upload.
-- **Workshop:** the uploader is open at the filled change note (7,978 bytes). Pressing OK
-  is the user's step.
+- **Workshop:** the user pressed OK, and the uploader recorded 0.5.0 as published.
+  - `workshop_upload.py check` first said NOT YET. Steam's local copy also held 23 loose
+    `.lua` files from August in the item's top folder: leftovers from an old local
+    layout, not part of either upload. Every published file was present and identical.
+  - The 23 files were moved (not deleted) to
+    `D:\PalWorkPriority-backups\workshop-stale-root-lua-20261030-171215`.
+  - `check` then said PASS: the Steam copy equals the staged 0.5.0 Workshop archive.
+- **Nexus:** the files were still in Nexus's virus scan about 6 minutes after upload.
 
 ## Build
 
