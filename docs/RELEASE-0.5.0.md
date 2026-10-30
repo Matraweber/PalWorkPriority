@@ -40,7 +40,7 @@ Status: `[ ]` open, `[x]` done (link evidence), `[-]` moved out of scope (say wh
 ## G2. Saving backend decision
 
 - [x] **0.5.0 ships the synchronous writer; the native async DLL is not in
-  PASS 2026-10-28 on the v0.5.0 build of that day (35366bf; to update at the retag with the new commit) ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)): neither archive holds a DLL; clean manual, clean Workshop and a real 0.4.1 upgrade all ran the synchronous writer with no lock, no "restart to edit" and no warning.
+  PASS 2026-10-30 on the final v0.5.0 build (1e945db) ([g7-final-build-2026-10-30](g7-final-build-2026-10-30.md); earlier run on 35366bf: [g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)): neither archive holds a DLL; clean manual, clean Workshop and a real 0.4.1 upgrade all ran the synchronous writer with no lock, no "restart to edit" and no warning.
   the package** (G2b moved to 0.5.x on 2026-10-20). 2026-10-20: the rc1
   archives hold no DLL, and a clean manual install ran the synchronous writer
   with no fence, and so did a clean Workshop install on 2026-10-21 ([evidence](g7-install-2026-10-20.md)). Open: the G1 upgrade
@@ -181,7 +181,7 @@ Judge by the Pal's Current Task and by output, never by fence log lines alone.
   Workable again.
 
 - [x] **One clean build for both stores.** 2026-10-20: clean manual install loads one copy, pak mounted, no fence; the Workshop/manual conflict is warned in the log and on the panel; a Workshop copy switched on but never installed overwrites a manual install unseen, so the changelog says "use one copy" ([evidence](g7-install-2026-10-20.md)). 2026-10-21: the clean Workshop install passes too (one copy, pak mounted, no false warning). Open: the tagged final build (rerun A and C on it with tools/g7_install_matrix.py). **Done when:** `tools/release.py`
-  PASS 2026-10-28: tag v0.5.0 (35366bf; to update at the retag with the new commit and the new `release.json` hashes), `tools/release.py` built both archives reproducibly with identical Lua and pak bytes; reruns A (manual) and C (Workshop) pass on them ([g7-final-build-2026-10-28](g7-final-build-2026-10-28.md)). Server RAM runs 0.5.0; a 0.5.0 client syncs.
+  PASS 2026-10-30: tag v0.5.0 moved to 1e945db and force-pushed; `tools/release.py` built both archives from the commit's blobs, reproducibly (manual `bdb10fcb...`, Workshop `c39cdd89...`); A (manual), C (Workshop) and the 0.4.1 upgrade pass on them, each archive tied to the tag; Workshop stage prepared and the upload dry run passed ([g7-final-build-2026-10-30](g7-final-build-2026-10-30.md)). Server RAM runs 99a2e26 (tag differs only in the client-side panel.lua); a 0.5.0 client syncs. Left: the real upload and Nexus (user).
   builds the Workshop and Nexus archives from one tagged commit with matching
   hashes. Clean installs from each load exactly one copy (pak mounted), and the
   Workshop/manual conflict is detected and explained.
