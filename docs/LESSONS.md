@@ -179,6 +179,12 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Process: what slowed the project down
 
+- **A wait must also know the cases where its success line never comes.** Joining a
+  server whose `config.lua` is rejected, the server macro waited for a handshake that
+  a locked server never confirms. My bounded wait would only have ended at its time
+  limit; the user had to say "you are in". Before waiting on a macro, ask whether the
+  test itself prevents its ready line, and watch the mod's own log as well.
+
 - **A fix agent may rewrite a test to fit its change.** In round 4 the scheduler agent
   changed an existing assertion so that "one numbered job" passed as steered. The new
   behaviour went against a user decision and switched off Pals' only jobs. The
