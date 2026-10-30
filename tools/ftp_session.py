@@ -5,6 +5,13 @@ and carries out a fixed set of actions queued in a file. The password lives only
 in this process's memory (used to reconnect) and is never written or printed.
 
     python tools/ftp_session.py [--tls]
+    python tools/ftp_session.py --save-login    type the login once, keep it
+    python tools/ftp_session.py --forget-login  remove the kept login
+
+--save-login keeps host, port, user and password in Windows Credential
+Manager (encrypted for your Windows account, never in a file) after one good
+login; later starts use it without asking. Any program running as you can read
+it there, like any saved password.
 
 Queue: test-results/ftp-session/queue.txt, one line per request:
     <id> ls <remote dir>
@@ -21,6 +28,7 @@ import argparse
 import ftplib
 import getpass
 import io
+import json
 import os
 import sys
 import time
@@ -28,6 +36,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ftp_deploy_server as deploy  # noqa: E402
+import win_credential  # noqa: E402
+
+CREDENTIAL = "PalWorkPriority FTP session"
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = ROOT / "test-results" / "ftp-session"
@@ -37,13 +48,39 @@ ZIP_DIRS = [Path(r"D:\PalWorkPriority-backups\server-upload").resolve(), ROOT.re
 GET_LIMIT = 5 * 1024 * 1024
 
 
+def ask_login():
+    host = input("FTP host (from the GPortal panel): ").strip()
+    port = int(input("FTP port [21]: ").strip() or "21")
+    user = input("FTP user: ").strip()
+    return {"host": host, "port": port, "user": user,
+            "password": getpass.getpass("FTP password (hidden): ")}
+
+
+def saved_login(store=win_credential):
+    """The kept login, or None. Never printed."""
+    if not store.available():
+        return None
+    found = store.read(CREDENTIAL)
+    if found is None:
+        return None
+    user, secret = found
+    data = json.loads(secret)
+    return {"host": data["host"], "port": int(data["port"]), "user": user,
+            "password": data["password"]}
+
+
+def save_login(login, store=win_credential):
+    secret = json.dumps({"host": login["host"], "port": login["port"],
+                         "password": login["password"]})
+    store.write(CREDENTIAL, login["user"], secret)
+
+
 class Session:
-    def __init__(self, tls):
+    def __init__(self, tls, login=None):
         self.tls = tls
-        self.host = input("FTP host (from the GPortal panel): ").strip()
-        self.port = int(input("FTP port [21]: ").strip() or "21")
-        self.user = input("FTP user: ").strip()
-        self._pw = getpass.getpass("FTP password (hidden): ")
+        login = login or ask_login()
+        self.host, self.port, self.user = login["host"], login["port"], login["user"]
+        self._pw = login["password"]
         self.ftp = None
         self.connect()
 
@@ -120,11 +157,35 @@ def handle(session, rid, op, args, lines):
 def main():
     p = argparse.ArgumentParser(description="Hold an FTP login open for queued server actions.")
     p.add_argument("--tls", action="store_true")
+    p.add_argument("--save-login", action="store_true",
+                   help="type the login, and keep it in Windows Credential Manager after it works")
+    p.add_argument("--forget-login", action="store_true",
+                   help="remove the kept login and exit")
     a = p.parse_args()
+    if a.forget_login:
+        gone = win_credential.available() and win_credential.delete(CREDENTIAL)
+        print("kept login removed" if gone else "no kept login")
+        return
     OUT.mkdir(parents=True, exist_ok=True)
     QUEUE.touch()
     seen = len(QUEUE.read_text(encoding="utf-8").splitlines())  # never replay old requests
-    session = Session(a.tls)
+    login = None if a.save_login else saved_login()
+    if login:
+        print(f"using the kept FTP login for {login['user']} (Windows Credential Manager; "
+              "--forget-login removes it, --save-login replaces it)")
+    else:
+        login = ask_login()
+    try:
+        session = Session(a.tls, login)
+    except ftplib.error_perm as e:
+        print(f"login refused: {e}")
+        if not a.save_login:
+            print("run again with --save-login to type a new login")
+        sys.exit(1)
+    if a.save_login:
+        save_login(login)
+        print(f"login kept in Windows Credential Manager as '{CREDENTIAL}'; "
+              "next time start with: python tools/ftp_session.py")
     print(f"connected. Watching {QUEUE} (Ctrl+C to stop)")
     last_noop = time.time()
     while True:
