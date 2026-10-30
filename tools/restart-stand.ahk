@@ -9,6 +9,9 @@
 ; Append -absent instead when PalWorkPriority is removed (G5 mod-absent frame
 ; captures): no priority.log exists, so readiness is a fixed 60 s wait.
 ; Use this for multiple-world tests: list order changes with last-played time.
+; --sample: log the colours at the relaunch click points and the menu tab on
+; the current screen; no key or click is sent. The title and world-select
+; clicks are still blind: run it once on each screen to calibrate them.
 ; Window-relative 16:9 calibration. Never kills the game or edits its saves.
 GAME := 'D:\Steam\steamapps\common\Palworld'
 EXE := GAME '\Pal\Binaries\Win64\Palworld-Win64-Shipping.exe'
@@ -28,10 +31,26 @@ HELD_VK := 0
 HELD_SC := 0
 if MODE = '--check'
     ExitApp FileExist(EXE) && FileExist(GAME_LOG) ? 0 : 2
-if !(MODE = '--stand' || MODE = '--world' || MODE = '--title' || MODE = '--launch' || MODE = '--open-only')
+if !(MODE = '--stand' || MODE = '--world' || MODE = '--title' || MODE = '--launch' || MODE = '--open-only' || MODE = '--sample')
     ExitApp 2
 CoordMode 'Mouse', 'Client'
 CoordMode 'Pixel', 'Client'
+if MODE = '--sample' {
+    ; Round 4 (2026-10-30, tooling P3-10): a pixel check for the title and
+    ; world-select screens needs measured colours, like MenuOpen() got on
+    ; 2026-10-28. This records them without touching the game.
+    try {
+        size := Focus()
+        line := 'SAMPLE ' size[1] 'x' size[2]
+        for pt in [[639, 486], [639, 412], [599, 170], [971, 654], [1041, 40], [1080, 45]]
+            line .= Format(' ({},{})={:06X}', pt[1], pt[2], Integer(PixelGetColor(Round(pt[1] * size[1] / 1280), Round(pt[2] * size[2] / 720))))
+        Note(line)
+    } catch as err {
+        Note('STOPPED: ' err.Message)
+        ExitApp 1
+    }
+    ExitApp 0
+}
 SetKeyDelay 70, 90
 SetMouseDelay 80
 OnExit ReleaseKeys
