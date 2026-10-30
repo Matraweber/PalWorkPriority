@@ -1730,6 +1730,10 @@ check('host priorities that cannot be used show "?" with the reason and refuse c
         -- A save that keeps failing: the rows are there, editing waits.
         store.data={a={[1]=2}}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.texts(f.cells[1])[1].text=='?' and f.legends()[1].text==f.ui.STORE_UNSAVED)
+        -- No rows yet and the first save fails: nothing was unreadable.
+        store.data={}; store.load_failed=false; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text==f.ui.STORE_UNSAVED,f.legends()[1].text)
+        store.load_failed=nil
         -- Never loaded.
         store.state='unavailable'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.legends()[1].text==f.ui.STORE_UNREADABLE)

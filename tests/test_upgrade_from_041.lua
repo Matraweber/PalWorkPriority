@@ -155,11 +155,10 @@ do
     fs.files['bad041.txt'] = 'not a row\nnor this\n'
     store.load('bad041.txt')
     assert(store.state == 'error', 'a file of only bad rows became empty priorities')
-    -- P2-2: the reason the stand and the panel show instead of defaults.
-    assert(store.decided and store.refusal() == 'priorities.txt could not be read. See priority.log.',
-        tostring(store.refusal()))
+    -- P2-2: the stand says why (ui.store_message, test_ui_integration).
+    assert(store.load_failed, 'a refused load was not marked')
     assert(not store.set('PAL-A', 4, 2), 'an edit over a refused file was accepted')
     store.load('p041.txt')
-    assert(store.refusal() == nil, 'a loaded file still reported a refusal')
+    assert(not store.load_failed, 'a loaded file still reported a refusal')
     quiet.warn = function() end
 end

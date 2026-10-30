@@ -546,18 +546,6 @@ function M.set_role(role, session)
     M.submit, M.on_change = nil, nil
 end
 
--- Why the host refuses priority edits right now, or nil. For the stand and
--- the panel (review round 4, P2-2): while priorities.txt is refused, every
--- cell read as the default 1, looked saved, and a click failed silently.
--- True exactly when apply_set refuses for the saved state.
-function M.refusal()
-    if not M.decided or M.is_client then return nil end
-    if M.state == 'unavailable' then return 'Priorities are not loaded. See priority.log.' end
-    if M.state ~= 'error' or dirty_at ~= nil then return nil end
-    if M.load_failed then return 'priorities.txt could not be read. See priority.log.' end
-    return 'Priorities could not be saved. See priority.log.'
-end
-
 function M.get(key, value)
     local by_pal = key and M.data[key]
     if by_pal then return by_pal[value] end

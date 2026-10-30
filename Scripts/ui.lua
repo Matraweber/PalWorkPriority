@@ -1064,6 +1064,9 @@ function M.store_message()
     if state == "unavailable" then return M.STORE_UNREADABLE end
     if state ~= "error" then return nil end
     if type(store.data) == "table" and next(store.data) ~= nil then return M.STORE_UNSAVED end
+    -- No rows and a save failing, as on a fresh install's first save under an
+    -- antivirus lock: nothing was unreadable (round-4 regression review).
+    if store.load_failed == false then return M.STORE_UNSAVED end
     return M.STORE_UNREADABLE
 end
 
