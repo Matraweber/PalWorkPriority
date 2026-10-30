@@ -86,3 +86,23 @@ assert(#warnings == 1 and warnings[1]:find("required-work pulse could not be rea
 assert(warnings[1]:find("injected work read failure", 1, true) and demand.last_pulse_at == nil)
 counts = demand.for_camp("camp-c")
 assert(next(counts) == nil)
+
+-- An ignored work (the egg incubator) that pulses is reported as ignored,
+-- not untyped (review round 4, scheduler P3-4). Its reason used to reach
+-- observe as the timestamp, and for_camp then compared a number with the
+-- string "ignored" on every pass.
+demand.reset()
+local typing = package.loaded.palapi.work_suitability
+package.loaded.palapi.work_suitability = function(w)
+    if w.egg then return nil, "ignored" end
+    return w.value
+end
+director.BaseCampId = "camp-e"
+hook(context, {get = function() return {id = "egg", egg = true} end})
+hook(context, {get = function() return {id = "bench", value = 6} end})
+local ok_read, egg_counts, egg_live, egg_evidence = pcall(demand.for_camp, "camp-e")
+assert(ok_read, "an ignored pulse broke the demand index: " .. tostring(egg_counts))
+assert(egg_counts[6] == 1 and egg_live == 2)
+assert(egg_evidence.ignored == 1 and egg_evidence.unknown_type == 0, "the incubator counted as untyped")
+package.loaded.palapi.work_suitability = typing
+demand.reset()
