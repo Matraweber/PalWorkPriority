@@ -1172,6 +1172,8 @@ end
 -- The host's config.lua was rejected: nothing is scheduled until it is fixed.
 -- The full reason shows once (reset_notice); after it the stand keeps saying
 -- the mod is paused, like the panel does on every opening (round 4, P1-2).
+-- A selected cell's "!" reason comes first: it shows only while that cell is
+-- selected, and keyboard and pad players had no other way to read it.
 M.CONFIG_PAUSED = "Pal Work Priority is paused: config.lua was rejected. The Limits panel says why."
 function M.config_message()
     if api.has_authority() ~= true then return nil end
@@ -1181,7 +1183,7 @@ end
 
 function M.legend_text()
     return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
-        or pak_message() or refused_notice() or reset_notice() or M.config_message() or selection_issue()
+        or pak_message() or refused_notice() or reset_notice() or selection_issue() or M.config_message()
         or shared_edit_legend()
 end
 
