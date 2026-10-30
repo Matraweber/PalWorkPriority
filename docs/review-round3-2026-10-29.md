@@ -1,7 +1,7 @@
 ---
 date: 2026-10-29
 tags: [release, testing, records]
-status: current
+status: history
 ---
 # Third strict review round after the round-2 fixes (2026-10-29)
 

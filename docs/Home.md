@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [Fourth strict review round, final pre-ship check (2026-10-30)](review-round4-2026-10-30.md) · 2026-10-30
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, Workshop dry run (2026-10-30)](g7-final-build-2026-10-30.md) · 2026-10-30
 - [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md) · 2026-10-29
 - [UI crowding and clarity review (2026-10-29)](review-ux-crowding-2026-10-29.md) · 2026-10-29
@@ -32,14 +33,14 @@ and a Related line. Superseded notes were merged into these and deleted on
 - [Performance check of the 0.5.0 build (2026-10-29)](perf-final-2026-10-29.md) · 2026-10-29
 - [Workshop upload macro (2026-10-28)](workshop-upload-2026-10-28.md) · 2026-10-28
 - [Vortex install, update and removal (2026-10-28)](vortex-2026-10-28.md) · 2026-10-28
-- [Reliability candidate testing](testing.md) · 2026-10-28
 
 ## Release and reports
 
+- [Fourth strict review round, final pre-ship check (2026-10-30)](review-round4-2026-10-30.md)
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, Workshop dry run (2026-10-30)](g7-final-build-2026-10-30.md)
 - [Store page text for 0.5.0 (draft, not posted)](store-page-0.5.0-draft.md)
 - [UI crowding and clarity review (2026-10-29)](review-ux-crowding-2026-10-29.md)
-- [Third strict review round after the round-2 fixes (2026-10-29)](review-round3-2026-10-29.md)
+- [Third strict review round after the round-2 fixes (2026-10-29)](review-round3-2026-10-29.md) (history)
 - [Second strict review round after the audit fixes (2026-10-29)](review-round2-2026-10-29.md) (history)
 - [Retest of the round-3 fixes (2026-10-29)](retest-r3-2026-10-29.md)
 - [Retest of the round-2 fixes (2026-10-29)](retest-r2-2026-10-29.md)
