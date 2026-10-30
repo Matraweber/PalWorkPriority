@@ -2039,6 +2039,13 @@ local function bump(cfg, dir, cell_name, key, work, token, revision)
     if next_prio == current then paint_input(cfg, cells, cell, previous); return end
 
     local saved = store.set(pal.key, t, next_prio)
+    -- A save that failed and is being retried kept the edit in memory; the
+    -- retry writes it. Saying "That change was not made" there was false
+    -- (seen in game 2026-10-30, round-4 regression).
+    if not saved and type(store.retrying) == "function" and store.retrying()
+        and type(store.get) == "function" and store.get(pal.key, t) == next_prio then
+        saved = true
+    end
     if not saved and api.has_authority() == true then edit_refused() end
     paint_input(cfg, cells, cell, previous)
     if not saved then return end

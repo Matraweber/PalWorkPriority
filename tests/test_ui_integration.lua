@@ -1758,6 +1758,15 @@ check('host priorities that cannot be used show "?" with the reason and refuse c
         assert(f.ui.refresh(f.cfg)); assert(f.legends()[1].text==f.ui.EDIT_REFUSED)
         now=now+f.ui.EDIT_REFUSED_SECONDS+1
         assert(f.ui.legend_text()~=f.ui.EDIT_REFUSED,'the refusal outstayed its time')
+        -- The store took the edit but its save is being retried: no refusal,
+        -- the retry writes it (seen in game 2026-10-30).
+        local taken
+        store.set=function(_,_,v) taken=v; return false end
+        store.retrying=function() return true end
+        store.get=function() return taken end
+        f.click(-1); f.session.drain(error)
+        assert(taken~=nil and f.ui.legend_text()~=f.ui.EDIT_REFUSED,'a kept edit was called not made')
+        store.retrying, store.get=nil, nil
         store.set=set
     end)
     os.clock=clock; f.authority=false
