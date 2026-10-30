@@ -48,8 +48,10 @@ do
     local loaded, why, is_fresh = upgraded.load('up/', 'upScripts/')
     assert(loaded and is_fresh == false, why)
     assert(upgraded.upgrade_reset == true, 'removed config.lua went unnoticed')
-    assert(#warned == 1 and warned[1]:find('Your earlier config.lua was not found', 1, true)
-        and warned[1]:find('options page settings are kept', 1, true), 'no upgrade warning')
+    assert(#warned == 1 and warned[1]:find('Update removed the old Scripts\\config.lua', 1, true)
+        and warned[1]:find('Priorities, limits and Options page settings are kept', 1, true), 'no upgrade warning')
+    -- Review round 4: the panel's notice row holds 125 characters.
+    assert(#upgraded.UPGRADE_MESSAGE <= 125, #upgraded.UPGRADE_MESSAGE)
     -- The next launch reads the copy it made and says nothing more.
     assert(upgraded.load('up/', 'upScripts/') and #warned == 1)
 

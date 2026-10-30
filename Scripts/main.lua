@@ -326,13 +326,16 @@ local function refused_config(why)
     -- characters, so a long reason (a Lua syntax error names the token and
     -- the line it pairs with) is cut and the next step always stays (UX
     -- crowding P3-7). The log keeps the whole reason.
-    local NEXT = ". Fix it, or delete config.lua and restart. The mod is paused until then."
+    -- "A new copy", not "the defaults": after a manual 0.4.1 upgrade the
+    -- copy is made from the old Scripts/config.lua again (review round 4).
+    local NEXT = ". Fix it, or delete it and restart for a new copy. The mod is paused until then."
     local full = reason:gsub("%s+", " ")
     local room = 125 - #"config.lua rejected: " - #NEXT
     local shown = full
     if #shown > room then shown = shown:sub(1, room - 3) .. "..." end
     config_rejected = "config.lua rejected: " .. shown .. NEXT
     configuration.show_rejection(config_rejected)
+    caps.hold_config_rules(configuration.held_caps)
     log.error(shown == full and config_rejected or ("config.lua rejected: " .. full .. NEXT))
 end
 
@@ -362,7 +365,7 @@ local function load_config(at_startup)
         if not loaded then return false end
         fallback, fresh = true, false
     end
-    if fresh and store.state == "missing" then store.baseline = true end
+    if fresh then store.persist_baseline() end
 
     -- Whatever the player set in DarnMenu, on top of config.lua and before
     -- validate sees it, so a value from the menu is checked by exactly the
@@ -380,6 +383,7 @@ local function load_config(at_startup)
     if not fallback and config_rejected then
         config_rejected = nil
         configuration.clear_rejection()
+        caps.hold_config_rules(nil)
     end
 
     -- Written on every load, so an edit to the schema reaches the menu without
