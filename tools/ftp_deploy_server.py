@@ -108,14 +108,17 @@ def do_install(ftp, files, tag, dry_run=False, say=print, reconnect=None):
     upload or read-back is tried again (the rename and the new folder never are)."""
     backup = "Scripts-before-" + tag
     box = [ftp]
-    present = names(ftp, MOD_DIR)
+    present = again(box, reconnect, lambda f: names(f, MOD_DIR), say)
+    ftp = box[0]
     if "Scripts" not in present:
         say(f"{MOD_DIR}/Scripts not found (saw {sorted(present)}); nothing done")
         return False
     if backup in present:
         say(f"{backup} already exists; pick another tag. Nothing done")
         return False
-    say(f"found {MOD_DIR}/Scripts with {len(names(ftp, MOD_DIR + '/Scripts'))} entries")
+    found = again(box, reconnect, lambda f: names(f, MOD_DIR + "/Scripts"), say)
+    ftp = box[0]
+    say(f"found {MOD_DIR}/Scripts with {len(found)} entries")
     if dry_run:
         say("dry run: connection and paths are fine, nothing changed")
         return True

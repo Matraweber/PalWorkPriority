@@ -80,6 +80,22 @@ class InstallRetry(unittest.TestCase):
         for name, data in FILES.items():
             self.assertEqual(host.data[f"{MOD}/Scripts/{name}"], data)
 
+    def test_a_dropped_first_listing_is_tried_again(self):
+        host = Host()
+
+        class FirstListingDrops(FakeFTP):
+            dropped = []
+
+            def nlst(self, path):
+                if not self.dropped:
+                    self.dropped.append(path)
+                    raise TimeoutError(10060, "dropped")
+                return super().nlst(path)
+        ok = deploy.do_install(FirstListingDrops(host), FILES, "t4", say=lambda *_: None,
+                               reconnect=lambda: FakeFTP(host))
+        self.assertTrue(ok)
+        self.assertEqual(host.renames, 1)
+
     def test_without_reconnect_a_drop_stops_the_install(self):
         host = Host()
         host.drops = {("STOR", "b.lua")}
