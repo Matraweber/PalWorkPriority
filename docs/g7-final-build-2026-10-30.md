@@ -45,6 +45,16 @@ manifest named the tag's commit.
 
 Logs: `test-results/g7-final-20261030c/` (local). The earlier runs below are on 1e945db.
 
+**Published on Nexus (2026-10-30, 17:07-17:09), mod 5376.**
+- The 0.4.1 main file was updated in place: "Pal Work Priority 0.5.0" (manual zip,
+  version 0.5.0) is now the primary main file, and 0.4.1 is under previous files (not
+  archived).
+- "Dedicated server files 0.5.0" (server zip) is an optional file, with mod-manager
+  download off so Vortex cannot install it into a game.
+- Mod version 0.5.0. The files were in Nexus's virus scan right after upload.
+- **Workshop:** the uploader is open at the filled change note (7,978 bytes). Pressing OK
+  is the user's step.
+
 ## Build
 
 - **Tag:** v0.5.0 moved to **1e945db** (CHANGELOG dated 2026-10-30) and force-pushed;
