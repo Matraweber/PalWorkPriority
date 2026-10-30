@@ -7,6 +7,44 @@ status: evidence
 
 Related: [RELEASE-0.5.0](RELEASE-0.5.0.md) · [g7-final-build-2026-10-28](g7-final-build-2026-10-28.md) · [perf-final-2026-10-29](perf-final-2026-10-29.md) · [retest-r3-2026-10-29](retest-r3-2026-10-29.md) · [workshop-upload-2026-10-28](workshop-upload-2026-10-28.md)
 
+## Final build after rounds 4 and 5 (86a76e4, same day)
+
+Tag v0.5.0 was moved to **86a76e4** and force-pushed (approved for this tag only); `git
+ls-remote` shows it. Tests: 255 Lua scripts, luacheck clean, 832 Python tests (85
+skipped) plus 4 new ones for the kept FTP login. The release is now three archives,
+built from git blobs. `--verify-reproducible` gave the same hashes on a second build.
+
+| Archive | sha256 |
+| --- | --- |
+| `PalWorkPriority-0.5.0-manual.zip` (Nexus, 69 files) | `83d22604491d5b7fa5c316b6c8140133888f0b66b3b6ba56fcab8657900fcc69` |
+| `PalWorkPriority-0.5.0-workshop.zip` (67 files) | `6975701f824214200daad82d63db3bd756c9212ed74c66eccba555f28b76745e` |
+| `PalWorkPriority-0.5.0-server.zip` (Nexus optional file, 61 files) | `ae7607085ed7873afe726fa78c5327533093614b0c4043f40c7b18376788cec6` |
+
+Rig state `D:\PalWorkPriority-backups\g7-install-20261030-153154`. Each archive's
+manifest named the tag's commit.
+
+- **A. Clean manual install: PASS.**
+  - "0.5.0 loaded" once, `PWP_READY`, no warning.
+  - `priorities.txt` starts with `# baseline=vanilla`.
+  - World load: "14 left to the game, 0 permission request(s)". The earlier 3 steered
+    Pals had one numbered job each, and are left to the game again after the round-5
+    scheduler fix.
+  - Earlier on 907a5eb, a fresh install stopped at world selection (`--launch-select`)
+    still wrote the baseline at startup. The world loaded afterwards kept all 21 unticked
+    jobs as X, with 0 permission requests (round-4 P1-3).
+- **C. Clean Workshop install: PASS.** Loaded once, no warning, no false "two copies".
+- **G2. Upgrade from a real 0.4.1: PASS.**
+  - The 0.4.1 package ran once, then the new manual archive went over it.
+  - `priorities.txt` and `caps.txt` are byte-identical to the 0.4.1-written files.
+  - `interval_seconds = 11` was carried over, `config.migration.bak` was kept, and 0.5.0
+    logged no warning.
+- **Restore:** "dev install, pak, Workshop item and ManagedMods identical: True".
+- **Workshop:** `prepare` staged 67 files (note 7,978 of 8,000 bytes). `upload
+  --dry-run` selected "PalWorkPriority 0.5.0", filled in the note and cancelled. Nothing
+  was sent.
+
+Logs: `test-results/g7-final-20261030c/` (local). The earlier runs below are on 1e945db.
+
 ## Build
 
 - **Tag:** v0.5.0 moved to **1e945db** (CHANGELOG dated 2026-10-30) and force-pushed;
