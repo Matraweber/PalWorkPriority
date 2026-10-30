@@ -403,7 +403,11 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   no, and is asked fresh on every call. When the route gives nothing the old
   walk runs, so a failure costs what it did before. The controller walk's
   gap now doubles from 10 s to a 120 s cap on repeated misses (the fixed 10 s
-  never engaged at 11.5 s passes). Clients, listen hosts and singleplayer keep
+  never engaged at 11.5 s passes). **2026-10-30:** the cap is 30 s, and a
+  confirmed Hello resets the gap. Players without the mod send no Hello, so
+  they only have the shorter gap to rely on. The price is an empty server
+  walking every 30 s instead of every 120 s: about 0.7 ms/s at 20.5 ms a
+  walk (1.2-1.5 ms/s in an aged session), with nobody online to notice. Clients, listen hosts and singleplayer keep
   their viewport paths. *Rejected:* caching the authority answer across
   passes (rejected 2026-08-27). Supersedes the 2026-08-28 pulse entry below.
   *Evidence:* the 2026-10-29 server measurement (perf review, server
