@@ -98,7 +98,15 @@ class Fixture(unittest.TestCase):
 
     def prepare(self):
         _, out = self.quiet(g7.prepare)
-        return Path(out.strip().splitlines()[-1])
+        self.backup = Path(out.strip().splitlines()[-1])
+        return self.backup
+
+    # Both archive commands need the prepare backup (round 4, tooling P3-5).
+    def manual(self, archive, expected=None):
+        return g7.manual(archive, expected, self.backup)
+
+    def workshop_content(self, archive, expected=None):
+        return g7.workshop_content(archive, expected, self.backup)
 
     def release(self, kind, version="0.5.0", manifest=True, sha=None, commit=None, folder=None):
         """What tools/release.py leaves in build/release-<version>: the
@@ -185,7 +193,7 @@ class Restore(Fixture):
         self.backup = self.prepare()
         self.assertFalse(g7.MOD.exists(), "prepare moved the dev install aside")
         # A test install from the matrix, which restore replaces.
-        self.quiet(g7.manual, self.manual_zip())
+        self.quiet(self.manual, self.manual_zip())
         write(g7.WS / "Info.json", '{"Version": "0.5.0"}')
 
     def restore_code(self):
@@ -283,7 +291,7 @@ class Wipe(Fixture):
 
     def test_wipe_after_restore_refused(self):
         backup = self.prepare()
-        self.quiet(g7.manual, self.manual_zip())
+        self.quiet(self.manual, self.manual_zip())
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
             g7.restore(backup)
         # The backup's dev install is back in the game: wiping now would delete it.
@@ -292,7 +300,7 @@ class Wipe(Fixture):
 
     def test_wipe_with_the_prepare_backup(self):
         backup = self.prepare()
-        self.quiet(g7.manual, self.manual_zip())
+        self.quiet(self.manual, self.manual_zip())
         _, out = self.quiet(g7.main, ["wipe", "--state", str(backup)])
         self.assertIn("no PalWorkPriority install left", out)
         self.assertFalse(g7.MOD.exists())
@@ -306,7 +314,7 @@ class Manual(Fixture):
         self.prepare()
 
     def test_matching_archive_extracts(self):
-        _, out = self.quiet(g7.manual, self.manual_zip())
+        _, out = self.quiet(self.manual, self.manual_zip())
         self.assertIn("extracted 3 files", out)
         self.assertIn("built from %s = tag v0.5.0" % self.tagged, out)
         self.assertEqual(g7.PAK.read_bytes(), b"release pak")
@@ -315,13 +323,13 @@ class Manual(Fixture):
         # 2026-10-29 (round 3, tooling P2-2): the old build moved aside to
         # build/release-0.5.0-old still matches its own release.json.
         archive = self.manual_zip(commit=self.old_commit, folder="build/release-0.5.0-old")
-        msg = self.refused(g7.manual, archive)
+        msg = self.refused(self.manual, archive)
         self.assertIn("was built from %s, but tag v0.5.0 is %s" % (self.old_commit[:12], self.tagged[:12]), msg)
         self.assertFalse(g7.MOD.exists())
         self.assertFalse(g7.PAK.exists())
 
     def test_missing_tag_refused(self):
-        msg = self.refused(g7.manual, self.manual_zip(version="0.5.1"))
+        msg = self.refused(self.manual, self.manual_zip(version="0.5.1"))
         self.assertIn("tag v0.5.1 does not exist", msg)
         self.assertFalse(g7.MOD.exists())
 
@@ -331,12 +339,12 @@ class Manual(Fixture):
         at = data.index(b"release pak")
         data[at] ^= 1
         archive.write_bytes(bytes(data))
-        msg = self.refused(g7.manual, archive, hashlib.sha256(bytes(data)).hexdigest())
+        msg = self.refused(self.manual, archive, hashlib.sha256(bytes(data)).hexdigest())
         self.assertIn("damaged", msg)
         self.assertFalse(g7.PAK.exists())
 
     def test_hash_mismatch_refused_before_extracting(self):
-        msg = self.refused(g7.manual, self.manual_zip(sha="0" * 64))
+        msg = self.refused(self.manual, self.manual_zip(sha="0" * 64))
         self.assertIn("not the archive that was built", msg)
         self.assertFalse(g7.MOD.exists())
         self.assertFalse(g7.PAK.exists())
@@ -345,61 +353,107 @@ class Manual(Fixture):
         archive = self.manual_zip()
         with zipfile.ZipFile(archive, "a") as z:
             z.writestr("extra.txt", "rebuilt")
-        self.assertIn("not the archive that was built", self.refused(g7.manual, archive))
+        self.assertIn("not the archive that was built", self.refused(self.manual, archive))
         self.assertFalse(g7.MOD.exists())
 
     def test_without_manifest_needs_sha256(self):
         archive = self.manual_zip(version="0.4.1", manifest=False)
-        self.assertIn("--sha256", self.refused(g7.manual, archive))
+        self.assertIn("--sha256", self.refused(self.manual, archive))
         self.assertFalse(g7.MOD.exists())
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        self.assertIn("not the archive", self.refused(g7.manual, archive, "f" * 64))
-        _, out = self.quiet(g7.manual, archive, digest.upper())
+        self.assertIn("not the archive", self.refused(self.manual, archive, "f" * 64))
+        _, out = self.quiet(self.manual, archive, digest.upper())
         self.assertIn("extracted 3 files", out)
         self.assertIn("not tied to a tag", out)
 
     def test_sha256_option_must_agree_with_manifest(self):
-        self.assertIn("differs from the release manifest", self.refused(g7.manual, self.manual_zip(), "1" * 64))
+        self.assertIn("differs from the release manifest", self.refused(self.manual, self.manual_zip(), "1" * 64))
         self.assertFalse(g7.MOD.exists())
 
     def test_main_passes_sha256(self):
         archive = self.manual_zip(version="0.4.1", manifest=False)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        _, out = self.quiet(g7.main, ["manual", str(archive), "--sha256", digest])
+        _, out = self.quiet(g7.main, ["manual", str(archive), "--sha256", digest, "--state", str(self.backup)])
         self.assertIn("extracted 3 files", out)
 
     def test_missing_archive_refused(self):
-        self.assertIn("archive not found", self.refused(g7.manual, self.tmp / "missing.zip"))
+        self.assertIn("archive not found", self.refused(self.manual, self.tmp / "missing.zip"))
+
+    def test_without_a_checked_backup_refused(self):
+        # 2026-10-30 (round 4, tooling P3-5): manual extracted over whatever
+        # was installed, with no checked backup of the dev install.
+        archive = self.manual_zip()
+        self.assertIn("manual needs --state", self.refused(g7.main, ["manual", str(archive)]))
+        self.assertIn("no state.json", self.refused(g7.main, ["manual", str(archive), "--state", str(self.tmp)]))
+        self.assertFalse(g7.MOD.exists())
+        self.assertFalse(g7.PAK.exists())
+
+
+class PrepareMoveFails(Fixture):
+    def test_state_is_written_first_and_a_failed_move_is_undone(self):
+        # 2026-10-30 (round 4, tooling P3-6): state.json came after the moves,
+        # so a failed pak move left the dev install in a folder restore refused.
+        real_move = g7.shutil.move
+
+        def move(src, dst):
+            if str(src) == str(g7.PAK):
+                self.assertTrue((Path(dst).parent.parent / "state.json").is_file(), "state.json before the moves")
+                raise PermissionError("the pak is in use")
+            return real_move(src, dst)
+        with mock.patch.object(g7.shutil, "move", move):
+            msg = self.refused(g7.prepare)
+        self.assertIn("the pak is in use", msg)
+        self.assertIn("it is back in place", msg)
+        self.assertEqual((g7.MOD / "priorities.txt").read_text(encoding="utf-8"), "dev data\n")
+        self.assertEqual(g7.PAK.read_bytes(), b"dev pak")
+        backup = next(g7.BACKUPS.glob("g7-install-*"))
+        self.assertTrue((backup / "state.json").is_file())
+        self.assertFalse((backup / "dev-PalWorkPriority").exists())
+        # A wipe with that folder is refused: it holds no dev install.
+        self.assertIn("dev-PalWorkPriority is missing", self.refused(g7.main, ["wipe", "--state", str(backup)]))
+        self.assertTrue(g7.MOD.is_dir())
 
 
 class WorkshopContent(Fixture):
     def setUp(self):
         super().setUp()
+        self.prepare()
         self.before = g7.tree(g7.WS)
 
+    def test_without_a_checked_backup_refused_untouched(self):
+        # 2026-10-30 (round 4, tooling P3-5): workshop-content deleted the
+        # subscribed folder with rmtree with no checked copy anywhere.
+        archive = self.release("workshop")
+        self.assertIn("workshop-content needs --state", self.refused(g7.main, ["workshop-content", str(archive)]))
+        self.assertEqual(g7.tree(g7.WS), self.before)
+        (self.backup / "workshop-3786408856/Info.json").write_text("changed", encoding="utf-8")
+        msg = self.refused(g7.main, ["workshop-content", str(archive), "--state", str(self.backup)])
+        self.assertIn("workshop-3786408856 differs", msg)
+        self.assertEqual(g7.tree(g7.WS), self.before)
+
     def test_tagged_build_replaces_the_files_and_keeps_workshop_json(self):
-        _, out = self.quiet(g7.main, ["workshop-content", str(self.release("workshop"))])
+        _, out = self.quiet(g7.main, ["workshop-content", str(self.release("workshop")), "--state", str(self.backup)])
         self.assertIn("built from %s = tag v0.5.0" % self.tagged, out)
         self.assertEqual(json.loads((g7.WS / "Info.json").read_text())["Version"], "0.5.0")
         self.assertEqual((g7.WS / ".workshop.json").read_text(), '{"publishedfileid": "3786408856"}')
 
     def test_missing_archive_leaves_the_workshop_folder_untouched(self):
         # Before, the folder was deleted first and the zip opened after.
-        self.assertIn("archive not found", self.refused(g7.workshop_content, self.tmp / "missing.zip"))
+        self.assertIn("archive not found", self.refused(self.workshop_content, self.tmp / "missing.zip"))
         self.assertEqual(g7.tree(g7.WS), self.before)
 
     def test_unlisted_hash_and_other_commit_refused_untouched(self):
         self.assertIn("not the archive that was built",
-                      self.refused(g7.workshop_content, self.release("workshop", sha="0" * 64)))
+                      self.refused(self.workshop_content, self.release("workshop", sha="0" * 64)))
         self.assertEqual(g7.tree(g7.WS), self.before)
         old = self.release("workshop", commit=self.old_commit, folder="build/release-0.5.0-old")
-        self.assertIn("but tag v0.5.0 is", self.refused(g7.workshop_content, old))
+        self.assertIn("but tag v0.5.0 is", self.refused(self.workshop_content, old))
         self.assertEqual(g7.tree(g7.WS), self.before)
 
     def test_not_a_zip_refused_untouched(self):
         archive = self.tmp / "PalWorkPriority-0.5.0-workshop.zip"
         archive.write_bytes(b"not a zip")
-        msg = self.refused(g7.workshop_content, archive, hashlib.sha256(b"not a zip").hexdigest())
+        msg = self.refused(self.workshop_content, archive, hashlib.sha256(b"not a zip").hexdigest())
         self.assertIn("cannot be read as a zip", msg)
         self.assertEqual(g7.tree(g7.WS), self.before)
 
