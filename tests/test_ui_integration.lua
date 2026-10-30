@@ -1073,7 +1073,7 @@ local function no_unknown(f)
     return true
 end
 for _,case in ipairs({
-    {status='connecting',reason='handshake_timeout',says='does not run Pal Work Priority'},
+    {status='connecting',reason='handshake_timeout',says='No answer from Pal Work Priority'},
 }) do
     check('server without a finished handshake gives the stand back: '..case.status..'/'..case.reason,function()
         local f=fixture({'a','b'}); assert(f.ui.refresh(f.cfg))
@@ -1153,8 +1153,8 @@ check('the vanilla legend says what the panel says; the version and the incompat
     assert(version and f.ui.MOD_VERSION==version,'ui.MOD_VERSION is not main.lua VERSION '..tostring(version))
     -- Round 4 (newcomer P2-1): word for word the panel's handshake_timeout
     -- line, so stand and panel say the same thing on a server without the mod.
-    assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority, so limits cannot be set here. '
-        ..'The stand works as in the base game.',f.ui.VANILLA_ABSENT)
+    assert(f.ui.VANILLA_ABSENT=='No answer from Pal Work Priority on this server. Limits cannot be set. '
+        ..'Without the mod, the stand works as in the base game.',f.ui.VANILLA_ABSENT)
     -- Round 3 (onboarding P2-1): the same advice as the panel. A Workshop
     -- player cannot go back to an older version; the host updates the server.
     assert(f.ui.LOCKED_INCOMPATIBLE=='This server runs another Pal Work Priority version, which controls work here. '

@@ -190,9 +190,10 @@ M.MOD_VERSION = "0.5.0"
 -- own stand back (audit A5, 2026-10-28): no "?" cells, the vanilla checkboxes,
 -- and one line saying why. The same words as the panel's handshake_timeout
 -- line (panel_status), so the two never contradict each other (newcomer
--- round 4, P2-1). No version: the server runs none.
-M.VANILLA_ABSENT = "This server does not run Pal Work Priority, so limits cannot be set here. "
-    .. "The stand works as in the base game."
+-- round 4, P2-1). Not "does not run": a modded server that never answers
+-- ends here too (multiplayer round 5, P3-3).
+M.VANILLA_ABSENT = "No answer from Pal Work Priority on this server. Limits cannot be set. "
+    .. "Without the mod, the stand works as in the base game."
 -- A server with another version of the mod still schedules: a 0.4.1 server
 -- rewrites the work flags every pass, so base-game checkboxes would show a
 -- choice it overwrites (review round 2, 2026-10-29). The stand stays
