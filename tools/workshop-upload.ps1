@@ -4,7 +4,9 @@
 # Any other dialog stops the run with its text; nothing is clicked in it.
 # -Submit writes the uploader's final status text to -StatusFile; the Python
 # side classifies it (classify_status), so this script exits 0 once it has
-# an answer, whatever the answer is.
+# an answer, whatever the answer is. A failure while the Change Notes window
+# is open presses Cancel there (or ends the uploader) and exits 1: nothing
+# was sent. A failure after OK exits 3: the upload may be running.
 param(
     [Parameter(Mandatory)][string]$Exe,
     [Parameter(Mandatory)][string]$Stage,
@@ -80,6 +82,43 @@ function NoteProblem([string]$held, [string]$want, [int]$max) {
     }
     return $null
 }
+# The first button named $name in $window, or $null.
+function Button($window, [string]$name) {
+    $window.FindAll($Scope::Descendants, (Cond $AE::ControlTypeProperty $CT::Button)) |
+        Where-Object { $_.Current.Name -eq $name } | Select-Object -First 1
+}
+function IsOpen($procId, $handle) { @(Windows $procId | ForEach-Object { $_.Current.NativeWindowHandle }) -contains $handle }
+# How long Cancel may take to close the Change Notes window.
+$CancelWait = 5
+# Runs $body while the Change Notes window is open and returns its result.
+# Any failure in it presses Cancel there (or ends the uploader) and rethrows:
+# a window left open with a note this script rejected is one OK away from
+# publishing it (round 4, 2026-10-30).
+function WhileNotesOpen($dialog, [scriptblock]$body) {
+    try { return (& $body) }
+    catch { throw "$($_.Exception.Message) $(CloseNotes $dialog)" }
+}
+# Closes the Change Notes window without publishing; says what it did.
+function CloseNotes($dialog) {
+    $handle = 0
+    try { $handle = $dialog.Current.NativeWindowHandle } catch { }
+    try {
+        $cancel = Button $dialog 'Cancel'
+        if ($cancel) {
+            Press $cancel
+            $end = (Get-Date).AddSeconds($CancelWait)
+            do {
+                if (-not (IsOpen $proc.Id $handle)) { return 'Cancel was pressed in the uploader: nothing was sent.' }
+                Start-Sleep -Milliseconds 300
+            } while ((Get-Date) -lt $end)
+        }
+    } catch { }
+    try {
+        Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+        return 'Cancel did not close the Change Notes window, so the uploader was ended: nothing was sent.'
+    } catch { }
+    return 'The Change Notes window may still be open: press Cancel there, never OK.'
+}
 function CellTexts($cell) {
     if (-not $cell) { return @() }
     $names = @($cell.Current.Name)
@@ -145,21 +184,24 @@ $dialog = WaitFor {
     }
 } 30 'the Change Notes window'
 
-$box = ById $dialog 'ChangeNotesTextBox'
-$box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($notes)
-$typed = Value $box
-$problem = NoteProblem $typed $notes $NoteMax
-if ($problem) { throw $problem }
-Say "Change note filled in ($([Text.Encoding]::UTF8.GetByteCount($typed)) bytes)."
-
-$buttons = $dialog.FindAll($Scope::Descendants, (Cond $AE::ControlTypeProperty $CT::Button))
-$ok = $buttons | Where-Object { $_.Current.Name -eq 'OK' } | Select-Object -First 1
-$cancel = $buttons | Where-Object { $_.Current.Name -eq 'Cancel' } | Select-Object -First 1
+$ok = WhileNotesOpen $dialog {
+    $box = ById $dialog 'ChangeNotesTextBox'
+    $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($notes)
+    $typed = Value $box
+    $problem = NoteProblem $typed $notes $NoteMax
+    if ($problem) { throw $problem }
+    Say "Change note filled in ($([Text.Encoding]::UTF8.GetByteCount($typed)) bytes)."
+    $found = Button $dialog 'OK'
+    if (-not $found -or -not (Button $dialog 'Cancel')) { throw 'The Change Notes window has no OK and Cancel buttons.' }
+    $found
+}
 
 if ($DryRun) {
-    Press $cancel
-    $status = WaitFor { $t = Status; if ($t -match 'canceled') { $t } } 10 'the cancel'
-    Say "Dry run: $status Nothing was sent."
+    WhileNotesOpen $dialog {
+        Press (Button $dialog 'Cancel')
+        $status = WaitFor { $t = Status; if ($t -match 'canceled') { $t } } 10 'the cancel'
+        Say "Dry run: $status Nothing was sent."
+    }
     $proc.CloseMainWindow() | Out-Null
     if (-not $proc.WaitForExit(10000)) { throw 'The uploader did not close.' }
     exit 0
@@ -173,21 +215,28 @@ if (-not $Submit) {
 # The status text from before OK (for example a startup "Failed to read
 # workshop subscriptions") is not Steam's answer: wait for a new text that is
 # not one of the progress texts.
-$baseline = Status
-$known = @(Windows $proc.Id | ForEach-Object { $_.Current.NativeWindowHandle })
-Press $ok
-Say 'OK pressed: uploading to Steam.'
-$late = '. Nothing was clicked in it; look at the uploader, then run check.'
-$status = WaitFor {
-    StopOnDialog $proc.Id $known $late
-    $t = Status
-    if ($t -and $t -ne $baseline -and $Progress -notcontains $t) { $t }
-} 900 "Steam's answer (the upload may still finish: look at the uploader, then run check)"
-# OnItemSubmitted can replace the success text with "Submitted, but ...":
-# read once more after a moment and keep the latest final text.
-Start-Sleep -Seconds 2
-$again = Status
-if ($again -and $Progress -notcontains $again) { $status = $again }
-[IO.File]::WriteAllText($StatusFile, $status, (New-Object System.Text.UTF8Encoding($false)))
-Say "Uploader: $status"
+$baseline = WhileNotesOpen $dialog { Status }
+$known = @(WhileNotesOpen $dialog { Windows $proc.Id | ForEach-Object { $_.Current.NativeWindowHandle } })
+# From here on the upload may be running: never Cancel or end the uploader.
+# Exit code 3 tells workshop_upload.py that OK was (or may have been) pressed.
+try {
+    Press $ok
+    Say 'OK pressed: uploading to Steam.'
+    $late = '. Nothing was clicked in it; look at the uploader, then run check.'
+    $status = WaitFor {
+        StopOnDialog $proc.Id $known $late
+        $t = Status
+        if ($t -and $t -ne $baseline -and $Progress -notcontains $t) { $t }
+    } 900 "Steam's answer (the upload may still finish: look at the uploader, then run check)"
+    # OnItemSubmitted can replace the success text with "Submitted, but ...":
+    # read once more after a moment and keep the latest final text.
+    Start-Sleep -Seconds 2
+    $again = Status
+    if ($again -and $Progress -notcontains $again) { $status = $again }
+    [IO.File]::WriteAllText($StatusFile, $status, (New-Object System.Text.UTF8Encoding($false)))
+    Say "Uploader: $status"
+} catch {
+    [Console]::Error.WriteLine("After OK: $($_.Exception.Message)")
+    exit 3
+}
 exit 0
