@@ -41,9 +41,10 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   instead of looking like a working mod. A limit the refused file had set
   cannot be removed in the panel until the file is fixed. *Rejected:* a
   once-per-session notice (round 3), which left the mod paused without a word.
-- **2026-10-30 - "Unordered" means two or more numbered jobs.** The steering
-  warning for a Pal whose jobs are all equal now counts only numbered jobs
-  (X excluded, limited jobs included); one numbered job is an order.
+- **2026-10-30 - "Unordered" is judged like the stand.** A Pal counts as
+  unordered by every numbered job it can do, limited or not, X left out, and
+  only with at least two numbered jobs. That is the rule of the stand's
+  same-number hint, so the two never disagree.
 
 - **2026-10-29 - Release archives are packaged from git.** `release.py`
   reads every tracked file as the revision's blob, so line endings on disk

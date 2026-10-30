@@ -189,10 +189,11 @@ discovers a new one, with the date and a link to the evidence.
   paused a refused `config.lua` correctly in singleplayer, but on a
   dedicated server the clients still saw a working mod. When a fix changes
   what the host does, check what a client sees.
-- **A grown return list breaks callers by position.** A scheduler helper
-  gained an "ignored" reason as a new return value, and one caller took it as
-  the demand timestamp, which crashed the demand pulse. Return a table, or
-  grep every caller when a function gets another return value.
+- **A grown return list breaks callers by position.** `work_suitability`'s
+  "ignored" reason reached `demand.observe` in the slot of the pulse
+  timestamp, and `for_camp` then compared a number with a string (round 4).
+  Return a table, or grep every caller when a function gets another return
+  value.
 - **Check guessed game ids against the game's list.** A fix agent added four
   ore ids "assumed from the game's deposits". They were real, but the list
   missed four other ores the icon index knows. Ids come from `icondex.lua`
