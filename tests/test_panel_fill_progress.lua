@@ -26,7 +26,7 @@ local function up(fn,name)
 end
 local rb=assert(up(panel.refresh,'RB'))
 rb.SLICE=0.008
--- A catalogue of 190 job items, as "Every item with a job, 190 items".
+-- A catalogue of 190 job items, as "Everything a base can make, 190 items".
 local cat={}
 for i=0,189 do
     cat[#cat+1]='Stone'..string.char(65+i//26)..string.char(65+i%26)
@@ -79,7 +79,7 @@ assert(panel.apply(cfg,{kind='toggle_all'},-1,true)); panel.refresh(cfg)
 
 -- 1: Show all settles. Every tile on page 1, and then no more fill work.
 play(3)
-assert(caption():find('Every item with a job, 190 items',1,true), 'not the Show all list: '..caption())
+assert(caption():find('Everything a base can make, 190 items',1,true), 'not the Show all list: '..caption())
 assert(tiles()==27, 'Show all page stopped at '..tiles()..' of 27 tiles')
 assert(not rb.pending, 'a full page still asks for fill frames')
 local idle=play(10)

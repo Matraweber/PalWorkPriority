@@ -163,6 +163,26 @@ panel.refresh(cfg)
 now=now+rb.REVEAL_S+0.1; panel.refresh(cfg)
 assert(rb.reveal_rule==nil, 'a reveal waited forever')
 assert(notice()==said, 'a row that never came was promised: '..tostring((notice())))
+-- Test coverage round 4, Gap 5: while the add is still open (a save
+-- stall, the ack, the snapshot) the reveal waits past RB.REVEAL_S; the row
+-- arriving at 3.5 s still takes the selection.
+local view0=caps.view_status
+local state='pending'
+caps.view_status=function() return state, nil end
+data.StoneNew=nil; draw()
+client_add()
+for _=1,7 do now=now+0.5; panel.refresh(cfg) end -- 3.5 s, still pending
+assert(rb.reveal_rule, 'the reveal gave up while the add was still open')
+state='applied'; data.StoneNew=100; panel.refresh(cfg)
+w=selected()
+assert(w and w.kind=='rule' and w.rule.item=='StoneNew', 'the row at 3.5 s did not take the selection')
+-- Open for good: given up at RB.REVEAL_MAX_S all the same.
+data.StoneNew=nil; state='pending'; draw()
+client_add(); panel.refresh(cfg)
+now=now+rb.REVEAL_MAX_S+0.1; panel.refresh(cfg)
+assert(rb.reveal_rule==nil, 'a reveal waited past the ack timeout')
+caps.view_status=view0
+data.StoneNew=nil; draw()
 -- An input while waiting cancels it: the selection stays where it was put.
 client_add(); panel.refresh(cfg)
 panel.move(-1); local moved=rb.ident(selected())
@@ -183,7 +203,7 @@ data.Stone01=101; panel.nav(cfg,'down'); draw()
 assert(notice()==rb.LIMIT_HELP.rocks, 'help row: '..tostring((notice())))
 assert(footer()==rb.FOOT.keys, 'footer: '..tostring((footer())))
 assert(not notice():find('Right/Enter',1,true) and not notice():find('Click a limit',1,true))
-assert(rendered('ALT+F2 RECHECK NOW') and not footer():find('rechecks',1,true))
+assert(rendered('Alt+F2: recheck') and not footer():find('rechecks',1,true))
 cfg.item_limits_on_rocks=false; draw()
 assert(notice()==rb.LIMIT_HELP.group)
 status.verdict=verdict
@@ -205,8 +225,51 @@ assert(footer(), 'footer gone with limits')
 panel.set_screen('item'); draw()
 w=selected()
 assert(w and w.kind=='item', 'picker selection: '..tostring(w and w.kind))
-assert(border(rb.TILE_SEL,nil,36), 'selected tile has no tint')
+assert(border(rb.TILE_SEL,nil,38), 'selected tile has no tint')
 assert(not same(rb.TILE_SEL,0.080,0.105,0.140) and not same(rb.TILE_SEL,0.060,0.080,0.110))
+-- Accessibility round 4, P3-1: a mouse player chose no tile, so none is
+-- tinted; the keys or the pad bring the tint back.
+rb.last_device='mouse'; draw()
+assert(not border(rb.TILE_SEL,nil,38), 'a mouse player sees a tile tinted as chosen')
+rb.last_device=nil; panel.nav(cfg,'right'); panel.nav(cfg,'left'); draw()
+assert(border(rb.TILE_SEL,nil,38), 'the keys lost the tile tint')
+panel.set_screen('list'); draw()
+
+-- Accessibility round 4, P2-1: WCAG contrast from the LINEAR tokens the
+-- brushes are given (0.08 renders as sRGB 80, so no gamma step): every
+-- text colour a tile or row carries, on every fill it can sit on.
+local T=rb.TOKENS
+local function lum(c) return 0.2126*c.R+0.7152*c.G+0.0722*c.B end
+local function ratio(a,b)
+    local x,y=lum(a),lum(b)
+    if x<y then x,y=y,x end
+    return (x+0.05)/(y+0.05)
+end
+for fill_name,fill in pairs({TILE_SEL=rb.TILE_SEL, ROW_SEL=T.ROW_SEL, ROW_HOVER=T.ROW_HOVER, ROW_BG=T.ROW_BG}) do
+    for _,text in ipairs({'item','atlimit','limit'}) do
+        local r=ratio(T.COLOUR[text],fill)
+        assert(r>=4.5, string.format('%s on %s is %.2f:1, under 4.5', text, fill_name, r))
+    end
+end
+-- The token that failed (3.57:1 measured in game) would fail here too.
+assert(ratio(T.COLOUR.atlimit,{R=0.075,G=0.200,B=0.270})<4.5, 'the contrast check is too lenient')
+
+-- Accessibility round 4, P2-3: the tile label is 13pt and nine rows of
+-- 42 px still fit the 387 px the pager and footers leave.
+panel.set_screen('item'); draw()
+local labels=0
+for _,w in ipairs(registry) do
+    if not w.dead and w.parent and w.Font and type(w.text)=='string' and w.text~=''
+        and require('picker_presentation') and (w.text:find(' limit$') or w.text=='Cannot be limited'
+            or w.text=='Support unknown' or w.text:find(' to add$')) then
+        labels=labels+1
+        assert(w.Font.Size>=13, 'tile label under 13pt: '..w.text..' at '..tostring(w.Font.Size))
+    end
+end
+assert(labels>0, 'no tile label drawn')
+local G=rb.GRID
+assert(G.rows==9 and G.rows*G.pitch<=G.budget and G.h>=38 and G.pitch>=G.h+4,
+    string.format('grid %d rows of %d px in %d', G.rows, G.pitch, G.budget))
 panel.set_screen('list'); draw()
 
 -- P3-2: "Limits saved" for a few seconds after a save, then nothing.

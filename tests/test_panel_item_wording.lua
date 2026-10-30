@@ -80,7 +80,7 @@ status.verdict=verdict
 -- C: uncounted texts, host and client.
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.' or
-    notice():find("Mining limits stop only that item's rocks; Stone Pits keep producing",1,true), 'host help: '..tostring(notice()))
+    notice():find("Mining limits stop only that item's rocks; pits stop once no Mining is wanted",1,true), 'host help: '..tostring(notice()))
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
 assert(notice()=='? or No count yet: storage is not counted yet. Alt+F2 rechecks now.', 'host uncounted: '..tostring(notice()))
@@ -106,6 +106,10 @@ assert(border(0.060,0.080,0.110), 'selected row fill is not ROW_SEL')
 assert(border(0.42,0.80,1.00,3,30), 'selected row has no cyan rail')
 
 -- C: picker wording for Mining item limits, the help and the caption.
+-- The fixture's Stone* ids stand for stone rocks (workdefs.rock_drop).
+local wd=require('workdefs')
+local real_rock=wd.rock_drop
+wd.rock_drop=function(id) return real_rock(id) or tostring(id):find('^Stone')~=nil end
 caps.support=function() return true end
 caps.rule_kind=function(_,item) return data[item] and 'legacy' or 'item' end
 stock.Stone01=95 -- first on page 1: the picker sorts by quantity
@@ -119,9 +123,9 @@ assert(notice()=='Click an item to add a limit. Items saying Edit already have o
 for _,w in ipairs(registry) do
     assert(w.dead or not (w.text and w.text:find('Under each item',1,true)), 'caption still explains the label')
 end
--- E: 12pt labels in the item colour, 14pt names.
+-- E: 13pt labels in the item colour (12pt until round 4), 14pt names.
 local label=assert(rendered('Edit item limit'))
-assert(label.Font.Size==12 and same(label.tint,0.86,0.89,0.95), 'tile label not 12pt item colour')
+assert(label.Font.Size==13 and same(label.tint,0.86,0.89,0.95), 'tile label not 13pt item colour')
 assert(rendered('Stone01').Font.Size==14, 'tile name not 14pt')
 -- E: a selected tile that has a limit keeps the green rail and adds the cyan.
 for _=1,200 do
@@ -131,8 +135,8 @@ for _=1,200 do
 end
 assert(selected().item=='Stone01')
 panel.refresh(cfg); panel.refresh(cfg)
-assert(border(0.558,0.847,0.631,3,36), 'green has-a-limit rail lost on the selected tile')
-assert(border(0.42,0.80,1.00,3,36), 'cyan selection rail missing on the selected tile')
+assert(border(0.558,0.847,0.631,3,38), 'green has-a-limit rail lost on the selected tile')
+assert(border(0.42,0.80,1.00,3,38), 'cyan selection rail missing on the selected tile')
 local opened=assert(panel.apply(cfg,{kind='item',item='Stone01'},-1,true))
 panel.refresh(cfg)
 assert(notice():find('Item limit for Mining',1,true), 'existing item limit notice: '..tostring(notice()))
@@ -162,7 +166,7 @@ stock.Stone01=37
 -- game's flag (round 3: that flag is frozen while the panel is open).
 panel.set_screen('list'); panel.refresh(cfg)
 panel.native_pad(2); panel.refresh(cfg)
-assert(not rendered('ALT+F2 RECHECK NOW') and not rendered('ESC / ALT+F1') and rendered('B'),
+assert(not rendered('Alt+F2: recheck') and not rendered('ESC / ALT+F1') and rendered('B'),
     'controller header still names keyboard keys')
 assert(rendered('Controller: Up/Down move, Y (top)/Right raise, Left lowers, X (left) removes, LB/RB tabs, LT/RT pages, B closes.'))
 -- Only the mouse opens the editor; a pad press inside it is the pad again.
@@ -175,8 +179,10 @@ panel.escape(); panel.refresh(cfg)
 cfg.item_limits_on_rocks=false
 
 -- C: an upgrade that reset config.lua is said once, on opening.
-local UPGRADE='Your earlier config.lua was not found (the Workshop or Vortex update removed it). '
-    ..'Default settings are in use; options page settings are kept.'
+-- Newcomer round 4, P2-6: the panel's own wording fits the notice row.
+local UPGRADE=[[Update removed the old Scripts\config.lua, so default settings are in use. ]]
+    ..'Options page settings are kept.'
+assert(rb.UPGRADE_FALLBACK==UPGRADE and #UPGRADE<=125, 'upgrade fallback: '..rb.UPGRADE_FALLBACK)
 package.loaded.configuration={upgrade_reset=true}
 panel.close(); panel.toggle(); panel.refresh(cfg)
 assert(notice()==UPGRADE, 'upgrade reset not said: '..tostring(notice()))

@@ -147,11 +147,11 @@ stock.StoneNew=50
 scheduler.last_storage_by_camp.base2={guild='guild',scope='camp',verified=true,pass=1,sampled_at=now,ttl=30}
 scheduler.last_totals_by_camp.base2={StoneNew=600,Stone01=18}
 draw()
-local line=assert(rendered('Storage: Base 1 of 2, counted alone - change base'), 'two-base label')
+local line=assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'), 'two-base label')
 -- Accessibility P2-1: the keyboard selection shows on "change base".
 local plain_tint=line.tint
 rule(); assert(panel.nav(cfg,'up') and selected().kind=='stock_scope'); draw()
-local focused=assert(rendered('> Storage: Base 1 of 2, counted alone - change base'), 'no caret on change base')
+local focused=assert(rendered('> Storage: Base 1 of 2, each base stops on its own count - change base'), 'no caret on change base')
 assert(focused.tint and plain_tint and (focused.tint.R~=plain_tint.R or focused.tint.B~=plain_tint.B),
     'change base keeps its plain tone when selected')
 panel.nav(cfg,'down'); draw()
@@ -159,7 +159,7 @@ panel.nav(cfg,'down'); draw()
 scheduler.last_storage_by_camp.base2.verified=false
 before=writes
 assert(not panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
-assert(notice()=='StoneNew: not added. Each base is counted alone; choose one with change base first.',
+assert(notice()=='StoneNew: not added. Each base stops on its own count; choose one with change base first.',
     'unpicked base with an uncounted base: '..tostring(notice()))
 assert(not rb.armed and writes==before)
 -- Every base counted: above the fullest one (600 at base2), not base1's 50.
@@ -175,9 +175,9 @@ data.StoneNew=nil
 -- A base the player picked seeds from its own count: base2, then base1.
 panel.set_screen('list'); draw()
 assert(panel.apply(cfg,{kind='stock_scope'},-1,true)); draw()
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'))
 assert(panel.apply(cfg,{kind='stock_scope'},-1,true)); draw()
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'))
 assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
 assert(notice():find('add a limit of 100.',1,true), 'a picked base was not used: '..tostring(notice()))
 panel.escape(); draw()
@@ -189,9 +189,9 @@ package.loaded.net={epoch=5, request_stock=function() return true end,
 caps.is_client=true
 rb.stock_picked, rb.stock_camp=nil, nil
 draw()
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'), 'client label from net')
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'), 'client label from net')
 assert(not panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
-assert(notice()=='StoneNew: not added. Each base is counted alone; choose one with change base first.',
+assert(notice()=='StoneNew: not added. Each base stops on its own count; choose one with change base first.',
     'client seeded from a base nobody picked: '..tostring(notice()))
 caps.is_client=nil; package.loaded.net=net0
 scheduler.last_storage_by_camp.base2=nil; scheduler.last_totals_by_camp.base2=nil
@@ -326,6 +326,34 @@ assert(acked==1 and notice()~=UPGRADE, 'said or acknowledged twice')
 package.loaded.configuration=nil
 draw()
 
+-- Round 4, test coverage P1-T1 / engine P2-2: a refused config.lua is said
+-- on every opening, with the real configuration module, and a visible draw
+-- never acknowledges it (no pass runs while it is refused).
+package.loaded.configuration=nil
+local configuration=require('configuration')
+local REFUSED='config.lua rejected: invalid interval_seconds. Defaults are in use and nothing is scheduled.'
+configuration.show_rejection(REFUSED)
+for opening=1,3 do
+    panel.close(); panel.toggle(); panel.refresh(cfg); panel.refresh(cfg)
+    assert(overlay.parts.Root.opacity==1, 'opening '..opening..' never became visible')
+    assert(notice()==REFUSED, 'opening '..opening..' does not say config.lua was refused: '..tostring(notice()))
+    assert(configuration.rejection==REFUSED, 'a visible draw acknowledged the rejection')
+end
+-- A world change while open does not replace it with "Now counting".
+rb.stock_key='camp:elsewhere'
+panel.refresh(cfg)
+assert(notice()==REFUSED, 'the scope notice replaced the rejection: '..tostring(notice()))
+configuration.clear_rejection()
+panel.close(); panel.toggle(); panel.refresh(cfg)
+assert(notice()~=REFUSED, 'a cleared rejection is still said')
+package.loaded.configuration=nil
+-- Panel P3-6: a world change (M.reset) forgets the counted base, so the next
+-- world's first draw does not announce a base change over the opening.
+rb.stock_key='camp:old-world'
+panel.reset()
+assert(rb.stock_key==nil, 'M.reset kept the counted base of the old world')
+panel.toggle(); draw()
+
 -- Engine P3-4 / test-coverage P3-4: a queued Enter in the amount editor and
 -- the debug verbs ask the box of the current tree, never one kept from an
 -- earlier one (a rebuilt widget keeps its full name).
@@ -368,9 +396,18 @@ local verdict=require('panel_status').verdict
 require('panel_status').verdict=function() return false,nil,1 end
 data.Stone01=1000; draw()
 panel.nav(cfg,'down'); panel.nav(cfg,'up'); draw()
-assert(notice()=="Mining limits stop only that item's rocks; Stone Pits keep producing. Other (group) limits stop their whole job.",
+assert(notice()=="Mining limits stop only that item's rocks; pits stop once no Mining is wanted. Other (group) limits stop their whole job.",
     'rules help: '..tostring(notice()))
 assert(#notice()<=125)
+-- Release truth P1-1 (round 4): a stone-only base whose Stone is reached
+-- stops Mining, its pit included (scheduler, DECISIONS), so no panel text
+-- may say pits keep producing or simply go on.
+for _,text in ipairs({rb.LIMIT_HELP.rocks, rb.LIMIT_HELP.group,
+        require('picker_presentation').describe({support=function() return true end}, {},
+            'Mining', 'Stone', 'guild', {}).detail}) do
+    assert(not text:find('keep producing',1,true) and not text:find('pits go on',1,true),
+        'claims pits keep producing: '..text)
+end
 cfg.item_limits_on_rocks=false; draw()
 assert(notice()=='Each limit is a group limit: it stops its whole job.', 'group help: '..tostring(notice()))
 for _,text in ipairs({rb.LIMIT_HELP.rocks, rb.LIMIT_HELP.group}) do
@@ -392,7 +429,7 @@ local status=require('panel_status')
 assert(status.scope_label(nil)=='not counted yet')
 assert(status.scope_label({scope='camp', choices={}, label='Storage unavailable'})=='not counted yet')
 assert(status.scope_label({scope='camp', choices={'a'}, index=1})=='your base')
-assert(status.scope_label({scope='camp', choices={'a','b'}, index=2, label='Base 2 of 2'})=='Base 2 of 2, counted alone')
+assert(status.scope_label({scope='camp', choices={'a','b'}, index=2, label='Base 2 of 2'})=='Base 2 of 2, each base stops on its own count')
 assert(status.scope_label({scope='guild', choices={'a','b'}})=='All loaded bases in your guild')
 local sched={pass_id=4,
     last_storage_by_camp={a={pass=4,guild='g',scope='camp',verified=true,sampled_at=os.clock(),ttl=30},

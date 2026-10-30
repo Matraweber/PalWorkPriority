@@ -40,7 +40,7 @@ scheduler.last_totals_by_camp.base1={StonePower=999999999}
 panel.refresh(cfg); panel.toggle(); panel.refresh(cfg)
 panel.set_screen('item'); panel.refresh(cfg)
 local label=assert(rendered('Edit group limit'))
-assert(label.Font.Size==12, 'capability label is not the readable 12pt')
+assert(label.Font.Size==13, 'capability label is not the readable 13pt')
 local count=assert(rendered('999,999,999'))
 assert(count.Slot.position.Y + 14*1.35 <= label.Slot.position.Y,
     'storage count extends into the capability line')

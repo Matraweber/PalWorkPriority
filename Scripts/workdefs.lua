@@ -166,10 +166,31 @@ end
 -- Core. No base work makes these. Checked first; a match means "nothing makes
 -- this". Seen in game 2026-10-22, when the picker started saying "Group limit
 -- applies" on them; ids read from the running game's item table.
+--
+-- Leather, Horn and Bone are Pal drops, not ranch products, and the Thermal
+-- Core ("ore" in "core") is one too (newcomer review round 4, P2-5): a
+-- Leather limit had stopped all ranch work.
 M.NOT_PRODUCED = {
     "growth_stone", "upgradestone", "throwstone", "manticore", "aicore",
     "carbonfiber", "predatorcrystal", "palcrystal_ex",
+    "leather", "horn", "bone", "thermal_core",
 }
+
+-- Items that a natural rock gives as its main drop (item_sources.lua counts a
+-- rock as its largest drop), by lowercased id. A per-item Mining limit is
+-- offered only for these (newcomer round 4, P2-5): on any other item no rock
+-- would ever stop, so the limit would do nothing it says. Stone, Ore
+-- (CopperOre) and Paldium (Pal_crystal_S) were read off rocks in game
+-- (docs/per-item-limits-2026-10-27.md); the rest are the game's other ore
+-- deposits.
+M.ROCK_DROPS = {
+    stone = true, copperore = true, pal_crystal_s = true, coal = true,
+    sulfur = true, quartz = true, chromium = true,
+}
+
+function M.rock_drop(item_id)
+    return type(item_id) == "string" and M.ROCK_DROPS[item_id:lower()] == true
+end
 
 local function not_produced(hay)
     for _, pattern in ipairs(M.NOT_PRODUCED) do
@@ -203,9 +224,6 @@ M.ITEM_WORK = {
     { "egg",          "MonsterFarm" },
     { "honey",        "MonsterFarm" },
     { "palfluids",    "MonsterFarm" },
-    { "leather",      "MonsterFarm" },
-    { "horn",         "MonsterFarm" },
-    { "bone",         "MonsterFarm" },
 
     -- the plantation. seeds before the crops they grow into, or BerrySeeds
     -- matches Berries and lands on the wrong job.

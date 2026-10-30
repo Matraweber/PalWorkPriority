@@ -29,7 +29,10 @@ local RESYNC='Waiting for fresh data from the server.'
 local NO_NEW='This item cannot have a limit.'
 local NO_RULE='There is no such limit to remove for your guild.'
 local reasons = {awaiting_session='Connecting to the server...', awaiting_handshake='Waiting for the server handshake.',
-    handshake_timeout='The server did not answer. Check that it runs the same Pal Work Priority version.',
+    -- The stand's wording (newcomer round 4, P2-1): "did not answer, check
+    -- the version" contradicted the stand's "does not run" beside it.
+    handshake_timeout='This server does not run Pal Work Priority, so limits cannot be set here. '
+        ..'The stand works as in the base game.',
     server_session_changed='The server restarted or changed. Reconnecting...',
     unsupported_limit=NO_NEW,
     no_active_legacy_rule=NO_RULE,
@@ -63,6 +66,9 @@ local reasons = {awaiting_session='Connecting to the server...', awaiting_handsh
     wrong_storage_request=RESYNC, stale_revision=RESYNC, wrong_session=RESYNC,
     snapshot_changed='Limits changed while saving. Check them and try again.',
     ['scope unavailable']='Your guild could not be read. Try again in a moment.',
+    -- caps.lua's answer in the first seconds after a load (newcomer round 4,
+    -- P3-4), shown raw before.
+    ['Session role is not established']='Still loading. Try again in a moment.',
     -- caps.lua's own sentences, which used internal terms.
     ['No active legacy rule for this guild']=NO_RULE,
     ['ceiling out of range']='Enter a whole number from 1 to 9,999,999.',
@@ -134,7 +140,9 @@ end
 -- client's view (built by net) reads like the host's (round 3, newcomer).
 -- Which base the player is in is not known (palapi has no player or camp
 -- position), so with two or more the shown one is only "Base N of M" and the
--- line says each is counted alone. One base is just "your base" (P3-2).
+-- line says each base stops on its own count (newcomer round 4, P2-2: "counted
+-- alone" did not say that the base shown is not the one a player stands in).
+-- One base is just "your base" (P3-2).
 -- Nothing counted is "not counted yet": "Storage: Storage unavailable"
 -- said the word twice (P3-1).
 function M.scope_label(view)
@@ -143,7 +151,7 @@ function M.scope_label(view)
     local n=type(view.choices)=='table' and #view.choices or 0
     if view.scope=='camp' and math.type(view.index)=='integer' and view.index>=1 and view.index<=n then
         if n==1 then return 'your base' end
-        return 'Base '..view.index..' of '..n..', counted alone'
+        return 'Base '..view.index..' of '..n..', each base stops on its own count'
     end
     return 'not counted yet'
 end

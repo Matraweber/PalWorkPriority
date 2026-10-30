@@ -124,11 +124,13 @@ end
 -- A second copy of the mod comes first: it can run the mod twice.
 function M.short(found)
     if found.old_copy then return 'Second copy in Pal/Binaries/Win64/ue4ss: remove it.' end
+    -- Within the sub line beside a two-base storage label (newcomer round 4,
+    -- P3-5: 150 characters ran off the panel). The log has the full text.
     if found.old_ue4ss then
-        return 'Pal/Binaries/Win64/dwmapi.dll found: if it is an old UE4SS, remove it (or disable UE4SS in Vortex).'
+        return 'Old UE4SS? Remove Pal/Binaries/Win64/dwmapi.dll.'
     end
     if found.managed == nil then
-        return 'Steam Workshop copy also on, not installed yet: use one copy.'
+        return 'Workshop copy also on (not installed yet): use one.'
     end
     return 'Steam Workshop copy ' .. found.managed .. ' also on: use one copy.'
 end

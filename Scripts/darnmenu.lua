@@ -46,7 +46,7 @@ return {
   tab = "Pal Work Priority",
   order = 100,
   target = "PalWorkPriority_user",
-  note = "Applies after you restart Palworld. Set priorities on the Monitoring Stand, limits in Production Limits (Alt+F1). In co-op the host's settings count; a dedicated server uses its own config.lua.",
+  note = "Applies after you restart Palworld. Set priorities on the Monitoring Stand, limits in Production Limits (its key is under Hotkeys). In co-op the host's settings count; a dedicated server uses its own config.lua.",
   applyNote = "Saved. Restart Palworld to apply.",
   live = false,
   defaults = {
@@ -114,7 +114,7 @@ return {
           },
           help = "Whether a limit is measured at each base on its own or over all of them. A base nobody is near may not be loaded and is then not counted." },
         { path = "item_limits_on_rocks", label = "Mining limits per item", kind = "bool",
-          help = "A reached Mining limit stops only the rocks that mainly give that item; other mining goes on. Off: the whole Mining job stops." },
+          help = "A reached Mining limit stops only the rocks that mainly give that item; other mining goes on while it is still wanted. Off: the whole Mining job stops." },
       },
     },
     {

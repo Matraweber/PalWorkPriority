@@ -43,7 +43,7 @@ local function search_box()
     end
 end
 caps.support=function() return true end
-package.loaded.items.catalogue_ids=function() return {'Stone01','StoneNew','Wood'}, 'ready' end
+package.loaded.items.catalogue_ids=function() return {'Stone01','Coal','Wood'}, 'ready' end
 
 rules(3)
 panel.refresh(cfg); panel.toggle(); panel.refresh(cfg); panel.refresh(cfg)
@@ -144,14 +144,14 @@ assert(not panel.nav(cfg,'right') and selected()==was, 'arrow in the search box 
 box.focus=false
 
 -- B3: no limit while storage is not counted.
-data.StoneNew=nil
+data.Coal=nil
 scheduler.last_storage_by_camp.base1.verified=false
 panel.refresh(cfg)
-local tile={kind='item',item='StoneNew'}
+local tile={kind='item',item='Coal'}
 assert(not panel.apply(cfg,tile,-1,true) and not panel.apply(cfg,tile,-1,true))
-assert(writes==before and data.StoneNew==nil, 'a limit was created on unknown storage')
+assert(writes==before and data.Coal==nil, 'a limit was created on unknown storage')
 panel.refresh(cfg)
-assert(notice()=='StoneNew: storage is not counted yet, so no limit was added. Alt+F2 rechecks now.',
+assert(notice()=='Coal: storage is not counted yet, so no limit was added. Alt+F2 rechecks now.',
     'unknown storage refusal: '..tostring(notice()))
 scheduler.last_storage_by_camp.base1.verified=true
 scheduler.last_storage_by_camp.base1.sampled_at=os.clock()
@@ -159,11 +159,11 @@ scheduler.last_storage_by_camp.base1.sampled_at=os.clock()
 -- B4: two clicks. The first says what the limit stops and the amount, and
 -- the tile says the next click adds it; the second creates and follows it.
 cfg.item_limits_on_rocks=nil
-stock.StoneNew=95 -- first on the page: sorted by quantity
+stock.Coal=95 -- first on the page: sorted by quantity
 panel.set_screen('item'); panel.refresh(cfg)
 assert(panel.apply(cfg,tile,-1,true) and writes==before, 'the first click created a limit')
 panel.refresh(cfg)
-assert(notice()=='StoneNew: stops its rocks once reached; Stone Pits keep producing. Click again to add a limit of 100.',
+assert(notice()=='Coal: stops its rocks once reached; pits stop once no Mining is wanted. Click again to add a limit of 100.',
     'first click notice: '..tostring(notice()))
 assert(rendered('Click again to add'), 'armed tile does not say the next click adds')
 -- Any other input in between disarms.
@@ -171,12 +171,12 @@ panel.nav(cfg,'right'); panel.refresh(cfg)
 assert(not rendered('Click again to add') and not rb.armed, 'moving away kept the tile armed')
 assert(panel.apply(cfg,tile,-1,true) and writes==before, 'a disarmed tile created on one click')
 later()
-assert(panel.apply(cfg,tile,-1,true) and writes==before+1 and data.StoneNew==100, 'second click did not create')
+assert(panel.apply(cfg,tile,-1,true) and writes==before+1 and data.Coal==100, 'second click did not create')
 panel.refresh(cfg)
-assert(notice()=='Saved: Mining limit 100 for StoneNew, just above storage. Click the number to change it.',
+assert(notice()=='Saved: Mining limit 100 for Coal, just above storage. Click the number to change it.',
     'created notice: '..tostring(notice()))
 -- B6: the new limit is followed, like opening an existing one.
-assert(selected() and selected().kind=='rule' and selected().rule.item=='StoneNew', 'new limit not selected')
+assert(selected() and selected().kind=='rule' and selected().rule.item=='Coal', 'new limit not selected')
 -- Other work types stop their whole job.
 stock.Wood=7
 panel.set_screen('item'); panel.refresh(cfg)
@@ -190,22 +190,22 @@ data.Wood, stock.Wood=nil, nil
 
 -- B3: past the top step (1,000 in this fixture) the seed goes above storage
 -- instead of seeding a limit that is already reached.
-data.StoneNew, stock.StoneNew=nil, 1500
+data.Coal, stock.Coal=nil, 1500
 panel.set_screen('item'); panel.refresh(cfg)
 before=writes
 assert(panel.apply(cfg,tile,-1,true)); later(); assert(panel.apply(cfg,tile,-1,true))
-assert(data.StoneNew==10000 and writes==before+1, 'big stock seeded '..tostring(data.StoneNew))
-data.StoneNew, stock.StoneNew=nil, 9999999
+assert(data.Coal==10000 and writes==before+1, 'big stock seeded '..tostring(data.Coal))
+data.Coal, stock.Coal=nil, 9999999
 panel.set_screen('item'); panel.refresh(cfg)
-assert(not panel.apply(cfg,tile,-1,true) and data.StoneNew==nil, 'created a limit below storage at the maximum')
+assert(not panel.apply(cfg,tile,-1,true) and data.Coal==nil, 'created a limit below storage at the maximum')
 panel.refresh(cfg)
-assert(notice()=='StoneNew: storage already holds more than the largest limit (9,999,999). No limit was added.')
-stock.StoneNew=nil
+assert(notice()=='Coal: storage already holds more than the largest limit (9,999,999). No limit was added.')
+stock.Coal=nil
 cfg.item_limits_on_rocks=false
 
 -- B6: closing the panel forgets its notice.
 panel.close(); panel.toggle(); panel.refresh(cfg)
-assert(notice()~='StoneNew: storage already holds more than the largest limit (9,999,999). No limit was added.',
+assert(notice()~='Coal: storage already holds more than the largest limit (9,999,999). No limit was added.',
     'an old notice greeted the next opening')
 assert(stale==0)
 ]=], '@panel-input-safety-fixture'))()
