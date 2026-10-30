@@ -1970,6 +1970,23 @@ test("a refused config.lua holds its limits: a guild row over one is not removed
     assert(s.caps.data["guild-local"].Mining.Stone==false,"the fixed file's limit was exposed")
 end)
 
+-- Review round 5 (scheduler P3-5): a refused file that does not parse may set
+-- any limit, so no guild limit is removed meanwhile, and the reason says so.
+test("a config.lua that does not parse holds every guild limit and says why",function()
+    local shipped=assert(original_io.open(TEST_ROOT.."/Scripts/config.lua","rb"))
+    local defaults=shipped:read("*a"); shipped:close()
+    local s=boot(true,false,function(fs)
+        fs.files[ROOT.."config.lua"]="return {work_caps={Mining={Stone=50}}"
+        fs.files[ROOT.."Scripts/default_config.lua"]=defaults
+    end,"expected near <eof>")
+    s.timers.role.fn()
+    local ok,reason=s.caps.apply_clear("Mining","Stone","guild-local")
+    assert(ok==false and reason=="config_rejected" and s.caps.data["guild-local"].Mining.Stone==100)
+    assert(s.caps.error=="config.lua does not load, so its limits are unknown; fix it before removing a limit",
+        tostring(s.caps.error))
+    assert(s.caps.apply_set("Mining","Stone",120,"guild-local"),"changing the row was refused")
+end)
+
 io.open,io.popen=original_io.open,original_io.popen
 os.rename,os.remove,os.execute,os.clock,os.time=original_os.rename,original_os.remove,original_os.execute,original_os.clock,original_os.time
 for _,name in ipairs(native_names) do _G[name]=original_native[name] end
