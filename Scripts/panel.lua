@@ -258,6 +258,8 @@ local tab_hits = 0              -- how many order entries the tab bar owns
 local pending_drop = nil
 local pending_at = 0
 RB.ARM_S = 8.0
+-- How soon a second Escape closes over a search box that kept the keyboard.
+RB.ESC_AGAIN_S = 2.0
 -- The longest the opening panel stays invisible while it lays out.
 RB.UNVEIL_S = 0.5
 local perf_worst, perf_at = 0, 0
@@ -776,6 +778,9 @@ end
 local function ensure_root()
     if root_checked == frame_id and root ~= nil then return root end
     local host, host_tree, host_widget = overlay.host()
+    -- The shell this frame resolved, for overlay.focus_shell (round 5), used
+    -- only while RB.shell_frame is this frame, like root itself.
+    RB.shell_widget, RB.shell_frame = host_widget, frame_id
     if not alive(host) or not alive(host_tree) then RB.clear_widgets() return nil end
     if RB.overlay_generation ~= overlay.generation then
         RB.edit_cleanup = nil
@@ -2230,6 +2235,21 @@ function RB.job_cell(work, item_row)
     if #label > RB.JOB_CHARS and RB.SHORT_JOB[work] then label = RB.SHORT_JOB[work] end
     return fit_name(label, RB.JOB_CHARS)
 end
+-- Whether no base work makes this item (workdefs.NOT_PRODUCED, matched as
+-- workdefs matches it). Remembered per id: asked for the visible rules on
+-- every draw, and the answer never changes.
+RB.not_made_memo = {}
+function RB.not_made(item)
+    local known = RB.not_made_memo[item]
+    if known ~= nil then return known end
+    known = false
+    local hay = tostring(item):lower()
+    for _, pattern in ipairs(workdefs.NOT_PRODUCED or {}) do
+        if hay:find(pattern, 1, true) then known = true break end
+    end
+    RB.not_made_memo[item] = known
+    return known
+end
 -- What changes a limit the panel has just moved the selection to, by
 -- device (round 3, P2-4): "Click the number" was said after Enter and Y too.
 RB.CHANGE = { mouse = "Click the number to change it.", keys = "Left/Right now step it.",
@@ -2749,9 +2769,12 @@ local function ensure_search(row)
     end
 
     -- Escape ended the typing (M.escape): the shell takes the keyboard back.
+    -- With the shell host() resolved for this frame (round 5): resolving it
+    -- again here, mid-draw, reset the overlay's parts and native_cancel.
     if RB.search_blur then
         RB.search_blur = nil
-        pcall(function() if overlay.focus_shell then overlay.focus_shell() end end)
+        local shell = RB.shell_frame == frame_id and RB.shell_widget or nil
+        pcall(function() if overlay.focus_shell and shell then overlay.focus_shell(shell) end end)
     end
 
     local text, focused
@@ -2769,12 +2792,16 @@ local function ensure_search(row)
     -- (review round 2, P1). A new search also disarms the tile it moved.
     RB.search_focused = focused == true
     if type(text) == "string" and text ~= search_text then
+        -- Said, not silent (panel round 5): the "click again to add" prompt
+        -- stayed up after the tile it named had moved away.
+        if RB.armed ~= nil then announce("Search changed; no limit was added.") end
         RB.search_dirty, RB.armed = true, nil
-        -- From page 1 (panel bugs round 4, P3-3): page 3 of a Show all list
-        -- stayed page 3 of the matches, with the best ones on page 1.
-        page = 0
+        -- The new search starts on page 1 in draw_item_picker (RB.page_query).
     end
     if RB.search_focused then RB.search_dirty = true end
+    -- The shell has the keyboard back: the next Escape in the box keeps
+    -- the search again (M.escape).
+    if not RB.search_focused then RB.search_esc_at = nil end
     if type(text) == "string" then search_text = text end
 
     return search_box
@@ -3280,11 +3307,17 @@ local function draw_list(cfg, totals)
                 break
             end
         end
-        if pending_drop.guild ~= mine() or pending_drop.amount ~= current then
+        local guild = mine()
+        if pending_drop.guild ~= guild or pending_drop.amount ~= current then
             -- Said (panel bugs round 4, P3-2): the prompt "press Delete
             -- again" stayed while the button already read Remove again.
+            -- "Changed" only when the rule is still listed with another
+            -- amount (round 5): a guild not known for a moment, or a
+            -- client's rows dropped for a resync, changed nothing.
+            local changed = pending_drop.guild == guild and current ~= nil
             pending_drop = nil
-            announce("This limit changed; Remove cancelled.")
+            announce(changed and "This limit changed; Remove cancelled."
+                or "Remove cancelled; limits are reloading.")
         end
     end
     -- Expired here, not only on the next click, and with its notice: one
@@ -3365,6 +3398,18 @@ local function draw_list(cfg, totals)
         end
     end
 
+    -- A group limit on an item no base work makes (Leather, Horn, Bone):
+    -- none can be added since 2026-10-30, but one kept from 0.4.1 still
+    -- switches off its whole job once reached (scheduler round 5, P3-1).
+    -- Nothing on its row said so; the help row does while one is showing.
+    local stray
+    for _, rule in ipairs(rules) do
+        if not (per_item and rule.work == "Mining") and RB.not_made(rule.item) then
+            stray = rule
+            break
+        end
+    end
+
     -- Keep one help row allocated. Editing, errors and transient notices
     -- replace its contents without moving the limits or Remove controls.
     RB.use_row("Notice")
@@ -3401,6 +3446,9 @@ local function draw_list(cfg, totals)
         line("why", 0, PAD, caps.is_client and "Waiting for the server's count."
             or ("? or No count yet: storage is not counted yet. "
                 .. RB.key_prose("key_pass", "ALT+F2") .. " rechecks now."), "dim", 14)
+    elseif stray then
+        line("why", 0, PAD, string.format("%s: no base work makes it, so this limit stops all %s work once reached.",
+            fit_name(pretty_name(stray.item), 20), workdefs.label(stray.work)), "dim", 14)
     elseif reached then
         line("why", 0, PAD, string.format("Reached %d/%d: this job is off at %d of your %d bases.",
             reached[1], reached[2], reached[1], reached[2]), "dim", 14)
@@ -4072,6 +4120,13 @@ local function draw_item_picker(cfg, totals)
 
     local source, everything, catalogue_state = picker_source(totals, RB.stock_camp)
     if catalogue_state == "pending" then RB.pending = true end
+    -- A new search from page 1 (panel bugs round 4, P3-3), decided here
+    -- from the text this list was built from (round 5): ensure_search reads
+    -- the box later in the draw, and resetting there drew one frame of page
+    -- 1 of the old list.
+    if RB.page_query ~= search_text then
+        page, RB.page_query = 0, search_text
+    end
     local pages = math.max(1, math.ceil(#source / LIST_PER_PAGE))
     if page >= pages then page = pages - 1 end
     if page < 0 then page = 0 end
@@ -4137,8 +4192,10 @@ local function draw_item_picker(cfg, totals)
 
     -- One space after a comma, and no page counter on a single page. The
     -- double spaces were a join artefact and read as broken kerning.
+    -- The query the list was built from (round 5): the box's newer text
+    -- beside the old list's count read "Matching s, 2466 items".
     local caption = string.format("%s, %d %s",
-        search_text ~= "" and ("Matching " .. search_text)
+        RB.page_query ~= "" and ("Matching " .. RB.page_query)
             or (everything and "Everything a base can make"
                 or "What your storage holds"),
         #source, #source == 1 and "item" or "items")
@@ -4146,7 +4203,7 @@ local function draw_item_picker(cfg, totals)
         caption = "Preparing item search..."
     elseif catalogue_state == "unavailable" then
         caption = "Item catalogue unavailable"
-    elseif search_text == "" and not everything and not (RB.stock and RB.stock.verified) then
+    elseif RB.page_query == "" and not everything and not (RB.stock and RB.stock.verified) then
         -- Show all was a dead end here (review round 2): nothing can be
         -- added until storage is counted, so the caption says how to count.
         caption = caps.is_client and "Waiting for the server's count."
@@ -4165,7 +4222,7 @@ local function draw_item_picker(cfg, totals)
     -- A search that matched nothing said nothing: empty column headings and
     -- no tiles (review P2-13). Only once the catalogue is ready, so a search
     -- still being prepared is never reported as having no results.
-    local no_match = search_text ~= "" and #source == 0
+    local no_match = RB.page_query ~= "" and #source == 0
         and (catalogue_state == nil or catalogue_state == "ready")
     if RB.save_state == "incompatible" and RB.save_error then
         -- The version mismatch is why nothing here works; say it on this
@@ -4202,7 +4259,7 @@ local function draw_item_picker(cfg, totals)
     if no_match then
         -- In place of the headings, which head nothing. Keys not drawn this
         -- frame are emptied by blank_unused, so the headings come back alone.
-        line("nomatch", 0, PAD, 'No item matches "' .. fit_name(search_text, 40)
+        line("nomatch", 0, PAD, 'No item matches "' .. fit_name(RB.page_query, 40)
             .. '". Try a shorter name or clear the search.', "item", 14, RB.HEAD_DROP)
     else
         for c = 0, LIST_COLS - 1 do
@@ -5154,6 +5211,24 @@ function M.refresh(cfg)
         end
     end
     perf_hover, perf_hits = os.clock() - th, hn
+    -- Without the map (switched off, or never built on the local canvas)
+    -- nothing saw the pointer move, so one key press kept the caret, the
+    -- rail and the item name on the keys' target until a click (panel round
+    -- 5). The pointer naming another target on two draws of one layout is a
+    -- move. Never from the two readings after a key or pad press (the nav
+    -- functions reset the count): the first is of the layout before the
+    -- press, and the press may have moved what lies under a pointer that
+    -- never moved (a page, a tab, the amount editor).
+    if RB.kbd_focus and (RB.hmap == nil or RB.hover_off) then
+        if RB.hover_base_n == nil or RB.hover_base_sig ~= RB.hmap_sig then
+            RB.hover_base_n, RB.hover_base_sig = 0, RB.hmap_sig
+        elseif RB.hover_base_n == 0 then
+            RB.hover_base_n = 1
+        elseif hover_key ~= nil and hover_key ~= RB.hover_base_key then
+            RB.kbd_focus = nil
+        end
+        RB.hover_base_key = hover_key
+    end
     -- Checks the map this draw's hover request came from.
     if RB.hmap and not RB.hover_off then
         RB.hover_check(hover_key)
@@ -5421,7 +5496,7 @@ function M.close()
     -- An old notice must not greet the next opening (review B6).
     notice, RB.armed, RB.saving = nil, nil, nil
     RB.prev_save_state, RB.saved_at, RB.stock_key = nil, nil, nil
-    RB.search_dirty, RB.search_focused = nil, false
+    RB.search_dirty, RB.search_focused, RB.search_esc_at = nil, false, nil
     -- The search box goes with the widgets, so its text goes too (round 3,
     -- P3-1): kept, the next opening drew one stale "Matching" grid and the
     -- empty new box then swallowed the next Enter as a search commit.
@@ -5435,8 +5510,13 @@ function M.escape()
     if editing then return M.cancel_edit() end
     -- Typing a search: Escape ends the typing and keeps the text (panel bugs
     -- round 4, P3-5). It closed the panel and dropped the query.
-    if RB.typing() then
+    -- A second Escape within RB.ESC_AGAIN_S goes on to close even when the
+    -- box kept the keyboard (round 5): if the shell could not take it back,
+    -- every Escape said "Search kept" and none closed.
+    local again = RB.search_esc_at ~= nil and (os.clock() - RB.search_esc_at) <= RB.ESC_AGAIN_S
+    if RB.typing() and not again then
         RB.search_focused, RB.search_dirty, RB.search_blur = false, nil, true
+        RB.search_esc_at = os.clock()
         announce("Search kept. Esc again closes.")
         return true
     end
@@ -5621,7 +5701,7 @@ function M.reset()
     -- The counted base too (round 4, panel P3-6): kept, the next world's
     -- first draw said "Now counting your base." over the opening's notice.
     RB.stock_key = nil
-    RB.search_dirty, RB.search_focused = nil, false
+    RB.search_dirty, RB.search_focused, RB.search_esc_at = nil, false, nil
     icons.reset()
 end
 
@@ -5702,7 +5782,7 @@ end
 
 function M.move(delta)
     RB.input()
-    RB.kbd_focus = true
+    RB.kbd_focus, RB.hover_base_n = true, nil
     pending_drop, RB.armed = nil, nil
     RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
@@ -5726,7 +5806,7 @@ end
 -- to the row's first entry otherwise.
 function M.move_row(delta)
     RB.input()
-    RB.kbd_focus = true
+    RB.kbd_focus, RB.hover_base_n = true, nil
     pending_drop, RB.armed = nil, nil
     RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
@@ -5768,7 +5848,7 @@ function M.row_action(cfg, kind, origin)
     if RB.typing() then return false end
     -- Delete, or X when a controller route passes "pad" (round 3, P2-1).
     RB.last_device = origin == "pad" and "pad" or "keys"
-    RB.kbd_focus = true
+    RB.kbd_focus, RB.hover_base_n = true, nil
 
     local r = rows[sel]
     if r == nil then return false end
@@ -5850,7 +5930,7 @@ function M.nav(cfg, what, origin)
     end
     RB.input()
     RB.last_device = origin == "pad" and "pad" or "keys"
-    RB.kbd_focus = true
+    RB.kbd_focus, RB.hover_base_n = true, nil
 
     -- The Enter that committed the search box (review round 2, P1). Its
     -- focus is already gone when this runs, so RB.typing says no; the
@@ -7085,7 +7165,9 @@ function M.apply(cfg, what, dir, from_mouse)
             announce(string.format("%s, now %s. %s", capability.detail, group_digits(capability.amount),
                 RB.CHANGE[RB.device(from_mouse)] or RB.CHANGE.mouse))
             mode = "list"
-            RB.reveal_rule = { work = work, item = what.item, guild = guild, at = os.clock() }
+            -- The work the rule is under, which may not be the item's own
+            -- (picker_presentation, round 5).
+            RB.reveal_rule = { work = capability.work or work, item = what.item, guild = guild, at = os.clock() }
             want_first_row = true
             return true
         end

@@ -39,4 +39,27 @@ ExecuteInGameThread=nil
 assert(clears==2 and data.Stone01==303,'queued removal deleted a newer value')
 assert(drop(303)); data.Stone01=nil
 assert(not drop(303) and clears==2,'missing current data permitted removal')
+-- Round 5: "This limit changed" only while the rule is still listed with
+-- another amount. A guild not known for a moment, or a client's rows
+-- dropped for a resync (net.on_session), cancel the Remove in other words.
+package.loaded.palapi.my_guild=function() return 'guild' end
+data.Stone01=101; panel.refresh(cfg); later()
+assert(drop(101)); panel.refresh(cfg)
+assert(not rendered('This limit changed; Remove cancelled.'), 'fixture: an older notice is still showing')
+data.Stone01=202; panel.refresh(cfg)
+assert(rendered('This limit changed; Remove cancelled.'), 'a changed amount is not said')
+data.Stone01=101; panel.refresh(cfg); later()
+assert(drop(101))
+package.loaded.palapi.my_guild=function() return nil end
+panel.refresh(cfg)
+assert(rendered('Remove cancelled; limits are reloading.') and not rendered('This limit changed; Remove cancelled.'),
+    'an unknown guild was called a changed limit')
+package.loaded.palapi.my_guild=function() return 'guild' end
+panel.refresh(cfg); later()
+assert(drop(101))
+data.Stone01=nil
+panel.refresh(cfg)
+assert(rendered('Remove cancelled; limits are reloading.') and not rendered('This limit changed; Remove cancelled.'),
+    'dropped rows were called a changed limit')
+assert(clears==2 and not drop(101), 'a cancelled Remove deleted something')
 ]=], '@remove-conflict-fixture'))()

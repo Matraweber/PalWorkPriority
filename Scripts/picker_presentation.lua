@@ -40,6 +40,23 @@ function M.describe(caps, rules, work, item, guild, cfg)
         return {state='unavailable', label='No guild for limits', detail='Join a guild before editing limits.'}
     end
     local amount = (rules[work] or {})[item]
+    -- A rule for this item under another work type that also matches it is
+    -- its rule too (scheduler round 5, P3-2): a Mining Sandwich limit from
+    -- before Sandwich moved to Kindling offered "Add group limit", and a
+    -- second rule for the same item. The result names that work, so a click
+    -- opens the rule that exists. A rule under a work that does not match
+    -- the item stays its own scope (test_picker_capability).
+    if (amount == nil or amount == false) and workdefs.works_for_item then
+        for _, other in ipairs(workdefs.works_for_item(item)) do
+            local by_item = other ~= work and rules[other]
+            local there = by_item and by_item[item]
+            if there ~= nil and there ~= false then
+                local found = M.describe(caps, rules, other, item, guild, cfg)
+                found.work = other
+                return found
+            end
+        end
+    end
     local kind = caps.rule_kind and caps.rule_kind(work, item, guild)
     -- A Mining limit with per-item on is an item limit whatever its stored
     -- kind: it stops only that item's rocks (review C, 2026-10-28). The tile
