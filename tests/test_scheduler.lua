@@ -2,6 +2,7 @@ local workdefs = require("workdefs")
 local fixture, sends, capture_count, captures_ok, synchronous
 local component_reads, component_available, replication_requests
 local demand_available, required, work_error, works, rules
+local pulse_ignored
 local store = { MAX = 5, decided = true, state = "saved", baseline = false, data = {} }
 store.flush = function() store.state = "saved"; return true end
 store.durable_key = function(key)
@@ -86,7 +87,7 @@ package.loaded.demand = { live = function() return demand_available end,
     for_camp = function()
         local out, n = {}, 0
         for value, count in pairs(required) do out[value], n = count, n + count end
-        return out, n, {unknown_scope = 0, unknown_type = 0}
+        return out, n, {unknown_scope = 0, unknown_type = 0, ignored = pulse_ignored}
     end }
 local station_needing, cooler_needing, rocks_needing = 0, 0, 0
 package.loaded.stations = { GENERATOR = 4, COOLER = 11, KINDS = {
@@ -185,6 +186,29 @@ works = {
 stats = scheduler.run_pass(config)
 assert(stats.unknown_work == 2 and stats.needed == 1 and stats.covered == 1)
 assert(stats.demand_by_name.Mining == 1)
+
+-- With profiling on, the camps loop is marked by its base count, so a
+-- server capture shows what each count costs (review round 4, performance
+-- P2-2: measure before capping). Off, nothing is marked.
+do
+    local plog, labels = package.loaded.log, {}
+    reset({ {key = "a", ranks = {[8] = 1}, off = {}} })
+    plog.around = function(label, fn, ...) labels[label] = true; return fn(...) end
+    scheduler.run_pass(config)
+    assert(next(labels) == nil, "profiling off still marked")
+    plog.perf = true
+    scheduler.run_pass(config)
+    plog.perf, plog.around = nil, nil
+    assert(labels["scheduler: camps, 1 base"], "no per base count mark")
+end
+
+-- An ignored work's pulses (the egg incubator) count as ignored in the pass
+-- line, not untyped (review round 4, scheduler P3-4).
+reset({ {key = "a", ranks = {[8] = 1}, off = {}} })
+pulse_ignored = 2
+stats = scheduler.run_pass(config)
+pulse_ignored = nil
+assert(stats.ignored == 2 and stats.unknown_work == 0, "ignored pulses: " .. tostring(stats.ignored))
 
 -- Fresh installs persist checked=1 / unchecked=X before touching a toggle.
 reset({ {key = "a", ranks = {[5] = 2, [8] = 1}, off = {[5] = true}} })
@@ -700,6 +724,26 @@ station_needing = 1
 stats = scheduler.run_pass(config)
 assert(stats.station_vacancies == nil, "a manned generator was counted twice")
 
+-- The log's "wanted:" summary says what demand is: the larger of the pulses
+-- and the vacancies, not their sum (review round 4, scheduler P3-3). Pulse 2
+-- and vacancy 3 is "Generating Electricity 3", not 5; a vacancy below the
+-- pulses adds nothing.
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5} })
+store.data.g = {[4] = 1, [5] = 3}
+required = {[4] = 2}
+station_needing = 3
+stats = scheduler.run_pass(config)
+assert(stats.demand_by_name.GenerateElectricity == 3,
+    "wanted summary: " .. tostring(stats.demand_by_name.GenerateElectricity) .. " for a demand of 3")
+assert(scheduler.format_stats(config, stats):find("wanted: Generating Electricity 3", 1, true),
+    scheduler.format_stats(config, stats))
+reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}, current = 5} })
+store.data.g = {[4] = 1, [5] = 3}
+required = {[4] = 4}
+station_needing = 2
+stats = scheduler.run_pass(config)
+assert(stats.demand_by_name.GenerateElectricity == 4 and stats.station_vacancies == 2)
+
 -- A ranch worker reads no current suitability, only an occupied assignment
 -- (2026-10-27). That record mans the station; a ready one does not.
 reset({ {key = "g", camp = "camp", ranks = {[4] = 1, [5] = 1}, off = {}} })
@@ -820,6 +864,28 @@ scheduler.forget()
 typed_calls = 0
 stats = scheduler.run_pass(config)
 assert(typed_calls == #works, "forget() kept remembered work types")
+-- An ignored work (the egg incubator, Idle) is remembered as well and not
+-- typed again on every pass (review round 4, performance P3-3); it still
+-- counts as ignored, not untyped, and forget() starts over.
+works, work_keys = { {value = 4}, {ignored = true} }, {"w4", "egg"}
+api.work_suitability = function(work)
+    typed_calls = typed_calls + 1
+    if work.ignored then return nil, "ignored" end
+    return work.value
+end
+scheduler.forget()
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 2, "first pass did not type both works")
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 0, "an ignored work was typed again (" .. typed_calls .. " calls)")
+assert(seen[4] == 1, "the remembered generator did not reach its counter")
+scheduler.forget()
+typed_calls = 0
+stats = scheduler.run_pass(config)
+assert(typed_calls == 2, "forget() kept the ignored marker")
+api.work_suitability = function(work) typed_calls = typed_calls + 1; return work.value end
 api.camp_works = function() return works, work_error end
 -- A throw while typing drops the station counts for the pass, nothing else.
 api.work_suitability = function() error("unreadable work") end
@@ -968,6 +1034,88 @@ do
         package.loaded.session.epoch = 9
         scheduler.run_pass(config)
         assert(scheduler.steering_count() == nil)
+
+        -- A Pal awaiting assignment evidence keeps what it had and is not
+        -- steered (review round 4, scheduler P3-2).
+        reset({ {key = "a", camp = "camp", ranks = {[5] = 1, [8] = 1}, off = {}},
+            {key = "b", camp = "camp", ranks = {[5] = 1, [8] = 1}, off = {}} })
+        store.data.a, store.data.b = {[5] = 1, [8] = 2}, {[5] = 1, [8] = 2}
+        scheduler.assignment_reader = function(pal)
+            if pal.key == "b" then return {state = "ready"} end -- no manual flag
+            return {state = "ready", manual = false}
+        end
+        stats = scheduler.run_pass(config)
+        assert(stats.manual_unavailable == 1)
+        steered, pals, left = scheduler.steering_count()
+        assert(steered == 1 and pals == 2 and left == 0,
+            "a Pal the plan only preserved was counted as steered: " .. tostring(steered))
+
+        -- Two bases, two guilds: a co-op host counts its own guild only
+        -- (review round 4, coverage Gap 6). Then one base's roster fails:
+        -- the other base's count stays (scheduler P3-6).
+        local saved_camps, saved_guild, saved_pals = api.base_camps, api.camp_guild, api.camp_pals
+        local saved_my = api.my_guild
+        local ok2, err2 = pcall(function()
+            reset({ {key = "h1", camp = "home", ranks = {[5] = 1, [8] = 1}, off = {}},
+                {key = "h2", camp = "home", ranks = {[5] = 1, [8] = 1}, off = {}},
+                {key = "f1", camp = "friend", ranks = {[5] = 1, [8] = 1}, off = {}},
+                {key = "f2", camp = "friend", ranks = {[5] = 1, [8] = 1}, off = {}},
+                {key = "f3", camp = "friend", ranks = {[5] = 1, [8] = 1}, off = {}} })
+            store.data.h1 = {[5] = 1, [8] = 2}
+            local broken = nil
+            api.base_camps = function() return { { id = "home", guild = "host" }, { id = "friend", guild = "other" } } end
+            api.camp_guild = function(camp) return camp.guild end
+            api.camp_pals = function(camp)
+                if camp.id == broken then return nil, "roster unreadable" end
+                local out = {}
+                for _, p in ipairs(fixture) do
+                    if p.camp == camp.id then out[#out + 1] = { key = p.key, id = p.key, param = p, name = p.key } end
+                end
+                return out
+            end
+            local asked = 0
+            api.my_guild = function() asked = asked + 1; return "host" end
+            stats = scheduler.run_pass(config)
+            assert(stats.pals == 5 and stats.steered == 1)
+            steered, pals, left = scheduler.steering_count()
+            assert(steered == 1 and pals == 2 and left == 1,
+                "the host's count included another guild: " .. tostring(steered) .. " of " .. tostring(pals))
+            scheduler.steering_count()
+            assert(asked == 1, "the host's guild was asked on every read")
+            -- The host's guild unreadable, or none of its bases loaded: no
+            -- count rather than another guild's.
+            api.my_guild = function() return nil end
+            scheduler.run_pass(config)
+            assert(scheduler.steering_count() == nil, "an unknown host guild showed a count")
+            api.my_guild = function() return "nobody" end
+            scheduler.run_pass(config)
+            assert(scheduler.steering_count() == nil, "a host with no loaded base showed a count")
+            -- One base whose roster cannot be read hides only that base.
+            api.my_guild = function() return "host" end
+            broken = "friend"
+            stats = scheduler.run_pass(config)
+            assert(stats.blocked and stats.unreadable == 1)
+            steered, pals = scheduler.steering_count()
+            assert(steered == 1 and pals == 2, "one unreadable base hid the count of every base")
+            -- The host's own base unreadable and only the friend's left: one
+            -- guild read, and that is the friend's, so no count is better.
+            -- With one guild loaded the count is that guild's, as before.
+            broken = "home"
+            api.base_camps = function() return { { id = "home", guild = "host" } } end
+            stats = scheduler.run_pass(config)
+            assert(stats.blocked and stats.pals == 0 and scheduler.steering_count() == nil)
+            -- A whole-pass block still clears it.
+            broken = nil
+            scheduler.run_pass(config)
+            assert(scheduler.steering_count() ~= nil)
+            store.state = "error"
+            assert(scheduler.run_pass(config).blocked)
+            assert(scheduler.steering_count() == nil, "a whole-pass block kept the count")
+            store.state = "saved"
+        end)
+        api.base_camps, api.camp_guild, api.camp_pals, api.my_guild = saved_camps, saved_guild, saved_pals, saved_my
+        scheduler.assignment_reader = function() return {state = "ready", manual = false} end
+        assert(ok2, err2)
     end)
     os.clock, package.loaded.session = clock, session
     config.leave_unordered_pals_to_game, config.dry_run = false, false
