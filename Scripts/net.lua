@@ -650,6 +650,13 @@ local function now() return os.clock() end
 
 local unavailable_reason
 local recovery_retry_at,recovery_retries=nil,0
+-- The lock a retry (poll) is asking about again. Until the server answers,
+-- it is still the truth: the retry's new session said "connecting" until
+-- the next lock message, and the stand and the panel dropped the reason
+-- for that moment, every retry (multiplayer round 5, P3-2). The server's
+-- lock message, a complete handshake, any other final status or the
+-- handshake timeout ends it. keep_lock carries it into begin_session.
+local held_lock,keep_lock
 -- Schema 3 already has a reason field. Only known codes may cross the wire;
 -- handler errors and old peers' unknown reasons collapse to generic rejection.
 local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,too_many_limits=true,
@@ -659,7 +666,10 @@ local function rejection_reason(reason)
     return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'
 end
 local function set_status(status, reason, force)
-    if unavailable_reason then status,reason='unavailable',unavailable_reason end
+    if unavailable_reason then status,reason='unavailable',unavailable_reason
+    elseif held_lock then
+        if status=='connecting' then status,reason='unavailable',held_lock else held_lock=nil end
+    end
     if status == "ready" and (M.save_failures.P or M.save_failures.R) then
         status, reason = "applied_unsaved", "save_failed"
     end
@@ -699,6 +709,7 @@ function M.begin_session(epoch)
     if deferred then deferred:close() end
     deferred,deferred_jobs,deferred_order,deferred_bindings=nil,{},{},{}
     unavailable_reason=nil
+    held_lock,keep_lock=keep_lock,nil
     recovery_retry_at,recovery_retries=nil,0
     command_context = nil
     told_old, told_count = {}, 0
@@ -712,7 +723,8 @@ function M.begin_session(epoch)
     M.pals_gen, M.pending_gen = M.pals_gen + 1, M.pending_gen + 1
     receiver, requests, cells, offers, sequence = nil, {}, {}, {}, 0
     hello_at, hello_tries, hello_failures = nil, 0, 0
-    M.revisions = { P = 0, R = 0 }
+    -- S counts every count reply this server built, for every peer.
+    M.revisions = { P = 0, R = 0, S = 0 }
     M.save_failures, durable_ack = {}, { P = 0, R = 0 }
     set_status("connecting", "awaiting_handshake")
     -- Also fires when a Welcome reveals a restarted server without a local
@@ -721,6 +733,9 @@ function M.begin_session(epoch)
         local ok, err = pcall(M.on_session, epoch)
         if not ok then log.warn("network session callback failed: " .. tostring(err)) end
     end
+    -- Main's session callback resets its view to "connecting"; a held lock
+    -- says it again.
+    if held_lock then set_status("connecting", "awaiting_handshake", true) end
     return M.local_nonce
 end
 
@@ -1163,6 +1178,7 @@ local function pump_stock()
                 copy.limits, view = limits, copy
             end
         end
+        M.revisions.S = M.revisions.S + 1
         peer.stock_revision = (peer.stock_revision or 0) + 1
         local batch = ok and view and push_phase('network storage: encode',wire.storage_snapshot,job.server,job.client,job.guild,
             peer.stock_revision,job.request,view)
@@ -1239,10 +1255,13 @@ function M.storage_tick()
         clear_stock_view(true); stock.due=t+10
         -- The server answers no count for a peer it no longer lists (a guild
         -- change it noticed in a push, or a pruned entry) and never says so.
-        -- Two in a row while connected: join again (multiplayer round 4, P2-1).
+        -- Three in a row while connected: join again (multiplayer round 4,
+        -- P2-1). Not two: a busy server (8 count jobs at once) also drops a
+        -- request without a word while it still lists the peer, and a join
+        -- throws away the edits in flight (engine round 5, P3-3).
         stock.missed = (stock.missed or 0) + 1
-        if stock.missed >= 2 and can_edit() then
-            log.say("the server answered no count twice; reconnecting to it")
+        if stock.missed >= 3 and can_edit() then
+            log.say("the server answered no count three times; reconnecting to it")
             M.rejoin(); return
         end
     end
@@ -1399,11 +1418,16 @@ function M.receive_command(comp, command, value)
             if not peer and count >= MAX_PEERS then return false end
             -- Revisions go on from the server's own count, not from 0: the
             -- client may still hold snapshots from an entry pruned under it,
-            -- and a lower revision reads as stale there.
+            -- and a lower revision reads as stale there. The count stream
+            -- too: started at 1, its replies were refused for ~50 s and then
+            -- the client joined again (multiplayer round 5, P2-1).
+            -- full_sent.P: this entry's full priority table went out, so a
+            -- delta may follow (push_pals).
             peer = { server = M.local_nonce, client = p[4], guild = guild,
                 at = now(), acks = {}, order = {}, high = 0,
                 revisions = { P = M.revisions.P, R = M.revisions.R },
-                next_revision = { P = M.revisions.P, R = M.revisions.R } }
+                next_revision = { P = M.revisions.P, R = M.revisions.R },
+                stock_revision = M.revisions.S, full_sent = {} }
         end
         challenge_serial = challenge_serial + 1
         local challenge = tostring(challenge_serial)
@@ -1693,6 +1717,10 @@ local function push_snapshot(comp, peer, stream, mode, rows, current)
         if not current() then return false end
     end
     peer.revisions[stream] = revision
+    if mode == "F" then
+        peer.full_sent = peer.full_sent or {}
+        peer.full_sent[stream] = true
+    end
     return true
 end
 
@@ -1772,7 +1800,10 @@ function M.push_pals(rows_for, comp, only_key, extra)
         end
         if only_key and #rows == 0 then return false end
         -- A delta must never be the first state a newly joined peer receives.
-        if only_key and peer.revisions.P == 0 then return false end
+        -- Not revisions.P == 0: a new peer starts at the server's count, so
+        -- once anything was pushed that never held (multiplayer round 5,
+        -- P3-1). The rules stream sends only full tables.
+        if only_key and not (peer.full_sent and peer.full_sent.P) then return false end
         return push_snapshot(c, peer, "P", only_key and "D" or "F", rows, current)
     end)
 end
@@ -1969,11 +2000,15 @@ function M.receive_state(message)
         if #p~=6 or (p[6]~='settings_restart_required' and p[6]~='settings_recovering'
             and p[6]~='server_config_rejected') then return false end
         if unavailable_reason=='settings_restart_required' then return true end
-        unavailable_reason=p[6]
+        unavailable_reason,held_lock=p[6],nil
         -- A refused config.lua is retried like a recovery: the host can fix
-        -- the file and reload it without anybody reconnecting.
+        -- the file and reload it without anybody reconnecting. Only the host
+        -- can, by editing a file, so that one is asked once a minute at most
+        -- instead of every 30 s: each retry is four RPCs, each a new FName
+        -- the engine never frees (multiplayer round 5, P3-2).
         if unavailable_reason~='settings_restart_required' and not recovery_retry_at then
-            recovery_retry_at=now()+math.min(30,5*2^recovery_retries)
+            local most=unavailable_reason=='server_config_rejected' and 60 or 30
+            recovery_retry_at=now()+math.min(most,5*2^recovery_retries)
         elseif unavailable_reason=='settings_restart_required' then recovery_retry_at=nil end
         wire.invalidate(receiver,'P');wire.invalidate(receiver,'R')
         clear_stock_view()
@@ -2124,8 +2159,9 @@ function M.poll()
     local t = now()
     if unavailable_reason then
         if unavailable_reason~='settings_restart_required' and recovery_retry_at and t>=recovery_retry_at then
-            local retries=math.min(3,recovery_retries+1)
+            local retries=math.min(4,recovery_retries+1)
             local epoch=M.epoch
+            keep_lock=unavailable_reason -- still shown until the server answers
             M.begin_session(epoch) -- discard partial state; old packets have the old nonce
             recovery_retries=retries
             M.hello() -- only matching negotiation plus both snapshots can make ready
@@ -2163,8 +2199,12 @@ function M.poll()
         if not entry.id and t >= entry.expires then finish_entry(entry, "timed_out", "queue_timeout") end
     end
     local retry_delay = math.min(30, 5 * 2 ^ math.max(0, hello_tries - 1))
-    if M.status == "connecting" and (not hello_at or t - hello_at >= retry_delay) then
-        if hello_tries >= 4 then set_status("connecting", "handshake_timeout") end
+    -- A held lock shows "unavailable" but is still a handshake in progress.
+    if (M.status == "connecting" or held_lock) and (not hello_at or t - hello_at >= retry_delay) then
+        if hello_tries >= 4 then
+            held_lock = nil -- no answer to the retry: the lock is no longer known
+            set_status("connecting", "handshake_timeout")
+        end
         M.hello() -- bounded backoff; late server availability remains recoverable
     end
     if not can_edit() then return end
