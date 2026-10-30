@@ -155,6 +155,9 @@ M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_PANEL}
 M.PAD_CONTROLS = "LB/A (bottom button): toward 1 (1 wraps to X) | RB: toward X | X (left button): set X"
 M.PAD_PANEL = "View button: Limits"
 M.PAD_LEGEND = table.concat({M.LEGEND_START, M.PAD_CONTROLS, M.PAD_PANEL}, " | ")
+-- On a client: the plain scale (see M.edit_legend).
+M.CLIENT_LEGEND = table.concat({M.LEGEND_SCALE, M.LEGEND_CONTROLS, M.LEGEND_PANEL}, " | ")
+M.PAD_CLIENT_LEGEND = table.concat({M.LEGEND_SCALE, M.PAD_CONTROLS, M.PAD_PANEL}, " | ")
 -- What the legend line no longer has room for, in each cell's tooltip.
 M.MARKS_HELP = "1 highest, 5 lowest, X off.  * sending  ! not saved  ? unknown"
 -- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
@@ -164,9 +167,16 @@ M.LEGEND_MAX_CHARS = 160
 -- How far the legend sits above the bottom edge, in slate units. At 8 it
 -- covered the game's "You have unused Stat Points" bar, which starts about
 -- 35 px above the bottom of a 1280x720 screen (UX crowding P3-4, ScreenShot
--- 00405). 47 lifts it 26 px there (39 units at 720p's 0.667 scale): the bar's
--- text stays readable under it and the HUD's Build hint stays clear above.
-M.LEGEND_LIFT = 47
+-- 00405). 47 then put it on the HUD instead (round 4, measured in 00405 at
+-- 720p, scale 0.667, legend 18 px high and up to about 826 px wide): its
+-- right end on the weapon box (x 1027-1245, y 636-682) and its left end on
+-- the temperature and time icons (x 210-290, bottom at y 680).
+-- 163 puts it in the stand's own dark bottom margin, y 593-611 at 720p:
+-- below the last stand row (its border at y 591) and above everything on
+-- the HUD (the weapon name at y 614 is the highest). In units that band is
+-- 159-193 above the bottom on any 16:9 or 16:10 screen, because the game
+-- scales by height and keeps both the stand and the HUD where they are.
+M.LEGEND_LIFT = 163
 -- The config reset notice (configuration.upgrade_message) used to appear
 -- only in the Production Limits panel, which a player who was updated by
 -- the Workshop may never open (onboarding P2-4). The stand shows it once
@@ -178,9 +188,11 @@ M.RESET_NOTICE_SECONDS = 12
 M.MOD_VERSION = "0.5.0"
 -- A client whose server never completes the mod's handshake gets the game's
 -- own stand back (audit A5, 2026-10-28): no "?" cells, the vanilla checkboxes,
--- and one line saying why.
-M.VANILLA_ABSENT = "This server does not run Pal Work Priority " .. M.MOD_VERSION
-    .. ". The stand works as in the base game."
+-- and one line saying why. The same words as the panel's handshake_timeout
+-- line (panel_status), so the two never contradict each other (newcomer
+-- round 4, P2-1). No version: the server runs none.
+M.VANILLA_ABSENT = "This server does not run Pal Work Priority, so limits cannot be set here. "
+    .. "The stand works as in the base game."
 -- A server with another version of the mod still schedules: a 0.4.1 server
 -- rewrites the work flags every pass, so base-game checkboxes would show a
 -- choice it overwrites (review round 2, 2026-10-29). The stand stays
@@ -195,6 +207,16 @@ M.LOCKED_NEWER_SERVER = "This server runs a newer Pal Work Priority version, whi
 -- The receivers that take clicks, number keys and controller buttons live in
 -- the pak. Without it the stand can show numbers but nothing on it edits them.
 M.PAK_MISSING = "Stand editing unavailable: PalWorkPriority.pak is missing. Reinstall the mod."
+-- The host's priorities.txt was refused at load, or a save keeps failing
+-- (persistence round 4, P2-2). The store then refuses edits and main runs no
+-- pass, so a grid of 1s would look like wiped priorities that still count.
+M.STORE_UNREADABLE = "Priorities unavailable: priorities.txt could not be read; see priority.log. "
+    .. "Stand editing is off."
+M.STORE_UNSAVED = "Priorities not saved: priorities.txt could not be written; see priority.log. "
+    .. "Stand editing waits for a save."
+-- A click the store refused for any other reason (it used to fail silently).
+M.EDIT_REFUSED = "That change was not made: priorities cannot be saved right now. Try again in a moment."
+M.EDIT_REFUSED_SECONDS = 6
 -- Shown in a cell's tooltip for a Pal the scheduler leaves to the game
 -- (scheduler_plan.unordered: every job it may do has the same number).
 M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs different numbers to steer this Pal."
@@ -204,7 +226,9 @@ M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs differ
 -- scheduler.steering_count answers from its last pass, or nil while it has
 -- none that is current. A client runs no passes and is told no count, so it
 -- shows none rather than a number that is not true. Plain numbers only.
--- Returns the full and the short wording.
+-- The count is the host's guild in every base, while the stand lists one
+-- base, so it says "(all bases)" where that fits (newcomer round 4, P3-3).
+-- Returns the full, the short and the shortest wording.
 local function steering_status()
     if api.has_authority() ~= true then return nil end
     local scheduler = package.loaded.scheduler
@@ -213,11 +237,12 @@ local function steering_status()
     if not ok then return nil end
     steered, pals, left = math.tointeger(steered), math.tointeger(pals), math.tointeger(left)
     if not steered or not pals or pals <= 0 or steered < 0 or steered > pals then return nil end
-    local short = string.format("Steering %d of %d %s", steered, pals, pals == 1 and "Pal" or "Pals")
+    local short = string.format("Steering %d of %d (all bases)", steered, pals)
+    local shortest = string.format("Steering %d of %d %s", steered, pals, pals == 1 and "Pal" or "Pals")
     -- Only when every Pal was left to the game for equal numbers; Pals the
     -- pass could not read are neither steered nor equal.
-    if steered == 0 and left == pals then return short .. ": all jobs equal", short end
-    return short, short
+    if steered == 0 and left == pals then return short .. ": all jobs equal", short, shortest end
+    return short, short, shortest
 end
 
 -- The first choice whose joined text fits one line.
@@ -235,6 +260,9 @@ end
 -- equal: game picks)". "Steering 0 of 14 Pals: all jobs equal" does not fit
 -- beside every control, and then the starting-state wording says the same
 -- thing without the number. The scale is never dropped.
+-- A client has no count and does not know how this server's priorities
+-- stand, so it gets the plain scale: "all start equal" read as a claim
+-- about this server (onboarding round 4, P3).
 function M.edit_legend()
     local controls, panel = M.LEGEND_CONTROLS, M.LEGEND_PANEL
     if api.last_input_type == 1 then
@@ -250,15 +278,37 @@ function M.edit_legend()
             panel = (panel:gsub("ALT%+F1", function() return label end))
         end
     end
-    local status, short = steering_status()
+    if api.has_authority() ~= true then return fit_legend({{M.LEGEND_SCALE, controls, panel}}) end
+    local status, short, shortest = steering_status()
     if status then
         local choices = {{M.LEGEND_SCALE, status, controls, panel}}
         if status ~= short then choices[#choices + 1] = {M.LEGEND_START, controls, panel} end
         choices[#choices + 1] = {M.LEGEND_SCALE, short, controls, panel}
+        choices[#choices + 1] = {M.LEGEND_SCALE, shortest, controls, panel}
         choices[#choices + 1] = {M.LEGEND_SCALE, controls, panel}
         return fit_legend(choices)
     end
     return fit_legend({{M.LEGEND_START, controls, panel}, {M.LEGEND_SCALE, controls, panel}})
+end
+
+-- One edit legend per refresh (performance round 4, P3-2): every cell's
+-- tooltip carries it, and building it asks the scheduler for its count, so
+-- it was built about 100 times a second with the stand open. legend_round
+-- exists only while one refresh runs; an input paint touches two cells.
+local legend_round
+local function shared_edit_legend()
+    if not legend_round then return M.edit_legend() end
+    if legend_round.text == nil then legend_round.text = M.edit_legend() end
+    return legend_round.text
+end
+
+local function with_one_legend(fn, ...)
+    if legend_round then return fn(...) end
+    legend_round = {}
+    local result = table.pack(pcall(fn, ...))
+    legend_round = nil
+    if not result[1] then error(result[2], 0) end
+    return table.unpack(result, 2, result.n)
 end
 
 local function warn_once(key, message)
@@ -1001,10 +1051,38 @@ function M.lock_message()
     if net.status == "unavailable" then return M.settings_message() end
 end
 
+-- Can the machine that runs the passes use its own priorities.txt? Only
+-- the host's store counts; a client's local file is never read for the grid.
+-- "error" with no rows is a refused load (store.load leaves the table
+-- empty); with rows it is a save that keeps failing. "unavailable" is a
+-- store that was never loaded. Plain reads of store fields only.
+function M.store_message()
+    if api.has_authority() ~= true or store.decided ~= true or store.is_client == true then return nil end
+    local state = store.state
+    if state == "unavailable" then return M.STORE_UNREADABLE end
+    if state ~= "error" then return nil end
+    if type(store.data) == "table" and next(store.data) ~= nil then return M.STORE_UNSAVED end
+    return M.STORE_UNREADABLE
+end
+
 -- Edits are refused while the settings fence holds, the server locks the
--- stand, or the stand is the game's again.
+-- stand, the stand is the game's again, or the host's priorities are unusable.
 local function editing_blocked()
     return M.settings_message() ~= nil or M.lock_message() ~= nil or M.vanilla_message() ~= nil
+        or M.store_message() ~= nil
+end
+
+-- A refused click says so in the legend for a few seconds. Most refusals
+-- already have a lasting reason there (a lock, the store); this covers the
+-- rest, which used to fail without a word.
+local refused_until = nil
+local function edit_refused()
+    refused_until = os.clock() + M.EDIT_REFUSED_SECONDS
+    invalidate_cells()
+end
+local function refused_notice()
+    if refused_until and os.clock() <= refused_until then return M.EDIT_REFUSED end
+    refused_until = nil
 end
 
 local function pak_message()
@@ -1035,11 +1113,6 @@ local function reset_notice()
     reset_note.text, reset_note.until_at = text, now + M.RESET_NOTICE_SECONDS
     reset_note.generation = stand_lifecycle.generation
     return text
-end
-
-function M.legend_text()
-    return M.vanilla_message() or M.lock_message() or M.settings_message() or pak_message()
-        or reset_notice() or M.edit_legend()
 end
 
 local function edit_presentation(key, work)
@@ -1073,6 +1146,25 @@ local function edit_presentation(key, work)
         return "?","unknown","Not saved yet; it will be retried."
     end
     return "",nil,status and EDIT_MESSAGES[status] or "This is the priority you set, not what the Pal is doing now."
+end
+
+-- Why the selected cell carries "!" (not saved, rejected, timed out). The
+-- tooltip says it only under the mouse; keyboard and pad players move a
+-- selection instead and read it here (accessibility round 4, P2-4).
+local function selection_issue()
+    local selection = M.selection
+    if type(selection) ~= "table" or type(selection.key) ~= "string" or type(selection.work) ~= "number" then
+        return nil
+    end
+    local marker, _, detail = edit_presentation(selection.key, selection.work)
+    if marker ~= "!" or type(detail) ~= "string" then return nil end
+    local text = "! " .. detail
+    if #text <= M.LEGEND_MAX_CHARS then return text end
+end
+
+function M.legend_text()
+    return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
+        or pak_message() or refused_notice() or reset_notice() or selection_issue() or shared_edit_legend()
 end
 
 -- One small legend in a known multi-child root. Ownership is names only; each
@@ -1361,9 +1453,12 @@ local function handle_cell(cfg, cell, known_name)
     local unavailable = not api.has_authority() and net.status~="ready" and net.status~="rejected"
         and net.status~="applied_unsaved"
     local glyph, colour
-    local known = not (prio == nil or not ranks or unavailable or M.settings_message())
+    -- The host's own priorities.txt refused: "?" with the reason, not 1s.
+    local store_blocked = M.store_message()
+    local known = not (prio == nil or not ranks or unavailable or M.settings_message() or store_blocked)
     if not known then
         glyph,colour="?","unknown"
+        if store_blocked then marker, edit_colour = "", nil end
         if unavailable then
             detail=M.lock_message() or M.settings_message() or EDIT_MESSAGES[net.status] or "Priority data unavailable."
         end
@@ -1377,11 +1472,11 @@ local function handle_cell(cfg, cell, known_name)
 
     glyph=glyph..marker
     colour=edit_colour or colour
-    local locked=M.lock_message() or M.settings_message()
+    local locked=M.lock_message() or M.settings_message() or store_blocked
     if locked then detail=locked end
     -- The legend line names the controls; the number scale and the marks
     -- live here (M.MARKS_HELP).
-    local help=(pak_message() or M.edit_legend()).."\n"..M.MARKS_HELP
+    local help=(pak_message() or shared_edit_legend()).."\n"..M.MARKS_HELP
         .."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
         .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
     if known and same_number(cfg,pal,ranks) then help=help.."\n"..M.SAME_NUMBER_HINT end
@@ -1758,8 +1853,10 @@ function M.refresh(cfg,flush_receipt)
     -- code did not implement it. refresh_cells returned nothing, and every
     -- per-cell paint inside it is a discarded pcall, so all 62 could fail and
     -- the epoch still committed. The gate then returned early for ever after.
-    refresh_legend(menu)
-    local painted, complete, tree_meta = refresh_cells(cfg, menu)
+    local painted, complete, tree_meta = with_one_legend(function()
+        refresh_legend(menu)
+        return refresh_cells(cfg, menu)
+    end)
 
     if painted == 0 or not complete then
         if not said_painted_none then
@@ -1889,7 +1986,9 @@ end
 
 -- dir -1 for left click (towards priority 1), +1 for right click.
 local function bump(cfg, dir, cell_name, key, work, token, revision)
-    if editing_blocked() then return false end
+    -- Blocked after the cell was armed: repaint now, so the "?" and the
+    -- legend's reason replace the number the click was aimed at.
+    if editing_blocked() then invalidate_cells(); return false end
     if not menu_likely_open or not store.decided then return end
 
     -- Fresh discovery also invalidates queued actions when the visible menu
@@ -1923,6 +2022,7 @@ local function bump(cfg, dir, cell_name, key, work, token, revision)
     if next_prio == current then paint_input(cfg, cells, cell, previous); return end
 
     local saved = store.set(pal.key, t, next_prio)
+    if not saved and api.has_authority() == true then edit_refused() end
     paint_input(cfg, cells, cell, previous)
     if not saved then return end
 
@@ -1995,6 +2095,8 @@ function M.nav(cfg,direction,origin)
         if not session.enqueue(M.direct,true,cfg,false,intent) then return false end
     end
     paint_input(cfg,cells,selected and selected.cell,previous)
+    -- The legend names a "!" on the new selection now, not a second later.
+    if not previous or previous.key~=wanted.key or previous.work~=wanted.work then refresh_legend(menu) end
     return true
 end
 
@@ -2057,6 +2159,7 @@ function M.direct(cfg,priority,intent)
     -- a click. Without hover, retain the navigation marker on the selected cell.
     if intent.pointer and intent.selection_revision==(M.selection_revision or 0) then M.selection=nil end
     local saved=store.set(pal.key,work,priority)
+    if not saved and api.has_authority()==true then edit_refused() end
     paint_input(cfg,cells,cell,previous)
     if not saved then return false end
     M.wants_pass=true

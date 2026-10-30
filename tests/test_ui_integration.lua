@@ -448,7 +448,7 @@ check('no asset registry to ask is not a missing pak',function()
     assert(f.ui.refresh(f.cfg))
     assert(require('stand_pointer').created==0)
     assert(require('stand_pointer').asset_missing~=true,'a lookup that could not run was called a missing pak')
-    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND,f.ui.legend_text())
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND,f.ui.legend_text())
     assert(not f.cells[1].tooltip:find('pak is missing',1,true))
 end)
 
@@ -956,7 +956,7 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     assert(tb.colour.SpecifiedColor~=normal,'pending value kept confirmed colour')
     assert(f.cells[1].tooltip:find('Sending',1,true),'cell lacks readable pending explanation')
     local legends=f.legends()
-    assert(#legends==1 and legends[1].text==f.ui.EDIT_LEGEND and legends[1].visibility==3,
+    assert(#legends==1 and legends[1].text==f.ui.CLIENT_LEGEND and legends[1].visibility==3,
         'visible legend not attached to current menu')
     -- Readable over the world (audit E, 2026-10-28): a dark backing behind
     -- 14 pt near-white text, and the backing takes no clicks.
@@ -975,7 +975,10 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     -- One line: the mouse first, then the panel key. A second line ran into
     -- the game's "unused Stat Points" bar (in game, 2026-10-22).
     assert(legends[1].text:find('Left click/Enter: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
-    assert(legends[1].text:find('(all start equal: game picks)',1,true))
+    -- A client opens with the plain scale: it cannot know how this server's
+    -- priorities stand (onboarding round 4, P3).
+    assert(legends[1].text:find('1 first, X never | ',1,true)==1)
+    assert(not legends[1].text:find('(all start equal: game picks)',1,true),'a client claimed the starting state')
     assert(not legends[1].text:find('\n',1,true),'stand legend must stay one line')
     assert(legends[1].text:find('ALT+F1: Limits panel',1,true),'legend lost the panel key')
     -- A rebound panel key is named as bound; an absent label keeps the default.
@@ -983,11 +986,11 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     package.loaded.darnmenu={labels={key_panel='ALT+F7'}}
     assert(f.ui.edit_legend():find('ALT+F7: Limits panel',1,true) and not f.ui.edit_legend():find('F1',1,true))
     package.loaded.darnmenu={labels={}}
-    assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND)
+    assert(f.ui.edit_legend()==f.ui.CLIENT_LEGEND)
     package.loaded.darnmenu=dm
     f.menu.visibility=2; f.ui.refresh(f.cfg)
     f.menu.visibility=0; f.bind(f.rows[1]); assert(f.ui.refresh(f.cfg))
-    assert(#f.legends()==1 and f.legends()[1].text==f.ui.EDIT_LEGEND,'reopening duplicated the footer legend')
+    assert(#f.legends()==1 and f.legends()[1].text==f.ui.CLIENT_LEGEND,'reopening duplicated the footer legend')
 end)
 
 check('unsaved X survives snapshot, acknowledgement and retry until durable acceptance',function()
@@ -1138,18 +1141,20 @@ for _,case in ipairs({
         f.net.status,f.net.status_reason='ready',nil; f.net.pals.a={ranks={[1]=1},prios={[1]=3}}
         f.net.pals_gen=f.net.pals_gen+1; assert(f.ui.refresh(f.cfg))
         assert(f.texts(f.cells[1])[1].text=='3' and receiver_of(f.cells[1]).visibility==0,'grid did not come back')
-        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+        assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
     end)
 end
 
-check('the vanilla legend names this version and the incompatible case',function()
+check('the vanilla legend says what the panel says; the version and the incompatible case',function()
     local f=fixture()
     local file=assert(io.open(TEST_ROOT..'/Scripts/main.lua','rb'))
     local main=file:read('a'); file:close()
     local version=main:match('local%s+VERSION%s*=%s*"([^"]+)"')
     assert(version and f.ui.MOD_VERSION==version,'ui.MOD_VERSION is not main.lua VERSION '..tostring(version))
-    assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority '..version
-        ..'. The stand works as in the base game.')
+    -- Round 4 (newcomer P2-1): word for word the panel's handshake_timeout
+    -- line, so stand and panel say the same thing on a server without the mod.
+    assert(f.ui.VANILLA_ABSENT=='This server does not run Pal Work Priority, so limits cannot be set here. '
+        ..'The stand works as in the base game.',f.ui.VANILLA_ABSENT)
     -- Round 3 (onboarding P2-1): the same advice as the panel. A Workshop
     -- player cannot go back to an older version; the host updates the server.
     assert(f.ui.LOCKED_INCOMPATIBLE=='This server runs another Pal Work Priority version, which controls work here. '
@@ -1166,7 +1171,7 @@ check('brief connecting stays unknown; the handshake timeout latches until a Wel
     assert(f.texts(f.cells[1])[1].text=='?','a normal join lost its brief unknown state')
     assert(f.cells[1].PalCheckBox.visibility==2)
     assert(f.cells[1].tooltip:find('Connecting',1,true))
-    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
     f.net.status_reason='handshake_timeout'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
     assert(f.cells[1].PalCheckBox.visibility==0 and f.texts(f.cells[1])[1].text=='')
     -- The next Hello that cannot be sent reports transport_unavailable for a
@@ -1256,7 +1261,7 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
     -- The wrap the legend promises is what a left click does.
     assert(require('store').cycle(1,-1)==false)
     local api=package.loaded.palapi; api.last_input_type=1
-    assert(f.ui.legend_text()==f.ui.PAD_LEGEND); api.last_input_type=nil
+    assert(f.ui.legend_text()==f.ui.PAD_CLIENT_LEGEND); api.last_input_type=nil
 end)
 
 check('stand editing without the pak is named for every input, not just the mouse',function()
@@ -1325,7 +1330,7 @@ check('legend refresh resolves replacement wrapper in the current root',function
     local f=fixture(); assert(f.ui.refresh(f.cfg))
     local old,index
     for i,w in ipairs(f.root.children) do if w.class=='Border' then old,index=w,i end end
-    assert(old and old.children[1] and old.children[1].text==f.ui.EDIT_LEGEND,'legend absent')
+    assert(old and old.children[1] and old.children[1].text==f.ui.CLIENT_LEGEND,'legend absent')
     -- Same names, new wrappers: both the backing and its text are resolved again.
     local replacement=f.object('Border','newlegendbox'); replacement.name=old.name
     replacement.Slot=f.object('VerticalBoxSlot','newlegendslot')
@@ -1334,12 +1339,12 @@ check('legend refresh resolves replacement wrapper in the current root',function
     f.root.children[index]=replacement; old.dead=true; old.children[1].dead=true
     f.ui.detach(); assert(f.ui.refresh(f.cfg))
     -- Same name, same widget: its style is already written, only the text is.
-    assert(f.stale_calls==0 and text.text==f.ui.EDIT_LEGEND)
+    assert(f.stale_calls==0 and text.text==f.ui.CLIENT_LEGEND)
     -- A backing whose text never attached is filled, not duplicated, and the
     -- new text block gets the style.
     replacement.children={}
     f.ui.detach(); assert(f.ui.refresh(f.cfg))
-    assert(#replacement.children==1 and replacement.children[1].text==f.ui.EDIT_LEGEND)
+    assert(#replacement.children==1 and replacement.children[1].text==f.ui.CLIENT_LEGEND)
     assert(replacement.children[1].Font.Size==f.ui.LEGEND_FONT_SIZE and replacement.children[1].visibility==3
         and replacement.children[1].colour and replacement.brush,'refilled legend was not styled')
     assert(#f.legends()==1,'retry added a second legend')
@@ -1395,7 +1400,7 @@ check('unknown root uses tooltip legend without replacing native content',functi
     assert(f.ui.refresh(f.cfg))
     assert(#root.children==1 and root.children[1]==inner,'legend replaced native single-child content')
     assert(f.ui.legend_mode=='tooltip')
-    assert(f.cells[1].tooltip:find(f.ui.EDIT_LEGEND,1,true),'fallback lost the help legend')
+    assert(f.cells[1].tooltip:find(f.ui.CLIENT_LEGEND,1,true),'fallback lost the help legend')
 end)
 
 check('row recycling clears another Pals tooltip on incapable vanilla cells',function()
@@ -1425,7 +1430,7 @@ check('settings fence explains recovery and terminal closure, blocks queued edit
     assert(f.legends()[1].text==f.ui.legend_text(),'footer did not change on closure')
     f.key(f.cells[1],false); f.session.drain(error); assert(#f.writes==0)
     assert(gate.release(token));assert(f.ui.refresh(f.cfg))
-    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
     assert(f.texts(f.cells[1])[1].text~='?')
 end)
 
@@ -1452,7 +1457,7 @@ check('server settings fence explains host action and cancels queued input',func
     f.net.status_reason='settings_recovering';assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text():find('server is loading',1,true))
     f.net.status='ready';f.net.status_reason=nil;assert(f.ui.refresh(f.cfg))
-    assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
     assert(f.texts(f.cells[1])[1].text=='3' and f.cells[1].PalCheckBox.visibility==2,'grid did not come back')
 end)
 
@@ -1468,7 +1473,7 @@ check('the legend shows the steering count only where the passes run',function()
         -- A client: the stub answers, but a client's own scheduler runs no
         -- passes, so the number would not be about this server.
         f.authority=false
-        assert(f.ui.edit_legend()==f.ui.EDIT_LEGEND,'a client showed a steering count')
+        assert(f.ui.edit_legend()==f.ui.CLIENT_LEGEND,'a client showed a steering count')
         f.authority=true
         -- Every Pal equal: "Steering 0 of 14 Pals: all jobs equal" beside
         -- the scale and every control is wider than the line, so the
@@ -1476,13 +1481,19 @@ check('the legend shows the steering count only where the passes run',function()
         local zero=f.ui.edit_legend()
         assert(zero==f.ui.EDIT_LEGEND,zero)
         -- Some Pals could not be read: not all of them are "equal".
+        -- Round 4 (newcomer P3-3): the count covers every base of the host's
+        -- guild while the stand lists one base, and says so.
         count={0,14,12}
-        assert(f.ui.edit_legend():find('1 first, X never | Steering 0 of 14 Pals | ',1,true)==1,f.ui.edit_legend())
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 0 of 14 (all bases) | ',1,true)==1,f.ui.edit_legend())
         count={3,14,11}
         local some=f.ui.edit_legend()
-        assert(some:find('1 first, X never | Steering 3 of 14 Pals | Left click/Enter',1,true)==1,some)
+        assert(some:find('1 first, X never | Steering 3 of 14 (all bases) | Left click/Enter',1,true)==1,some)
+        assert(some:find('ALT+F1: Limits panel',1,true) and #some<=f.ui.LEGEND_MAX_CHARS,some)
         count={1,1,0}
-        assert(f.ui.edit_legend():find('1 first, X never | Steering 1 of 1 Pal | ',1,true)==1,f.ui.edit_legend())
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 1 of 1 (all bases) | ',1,true)==1,f.ui.edit_legend())
+        -- Three-digit counts do not fit with "(all bases)": the plain count.
+        count={120,200,0}
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 120 of 200 Pals | ',1,true)==1,f.ui.edit_legend())
         -- The longest counts with the longest rebound key still fit one line
         -- and keep every control and the panel key.
         local dm=package.loaded.darnmenu
@@ -1502,7 +1513,7 @@ check('the legend shows the steering count only where the passes run',function()
         assert(pad_text==f.ui.PAD_LEGEND,pad_text)
         count={3,14,11}
         pad_text=f.ui.edit_legend()
-        assert(pad_text=='1 first, X never | Steering 3 of 14 Pals | '..f.ui.PAD_CONTROLS..' | '..f.ui.PAD_PANEL,pad_text)
+        assert(pad_text=='1 first, X never | Steering 3 of 14 (all bases) | '..f.ui.PAD_CONTROLS..' | '..f.ui.PAD_PANEL,pad_text)
         assert(#pad_text<=f.ui.LEGEND_MAX_CHARS)
         api.last_input_type=nil
         -- No current pass, an impossible answer or a throwing reader: no count.
@@ -1514,7 +1525,7 @@ check('the legend shows the steering count only where the passes run',function()
         -- And it is what the footer draws.
         package.loaded.scheduler={steering_count=function() return 2,5,3 end}
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
-        assert(f.legends()[1].text:find('1 first, X never | Steering 2 of 5 Pals | ',1,true)==1,f.legends()[1].text)
+        assert(f.legends()[1].text:find('1 first, X never | Steering 2 of 5 (all bases) | ',1,true)==1,f.legends()[1].text)
     end)
     package.loaded.scheduler=scheduler; f.authority=false
     assert(ok,err)
@@ -1549,10 +1560,10 @@ check('the config reset notice shows once on the stand and is not acknowledged t
         package.loaded.configuration.upgrade_reset=true
         now=now+2
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
-        assert(f.legends()[1].text==f.ui.EDIT_LEGEND,'the notice outstayed its time')
+        assert(f.legends()[1].text==f.ui.CLIENT_LEGEND,'the notice outstayed its time')
         -- Once only, even while the marker is still there.
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
-        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND)
+        assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
         assert(acked==0 and package.loaded.configuration.upgrade_reset==true,'the stand acknowledged the notice')
         -- A fresh process: the notice is gone when the stand is opened again.
         f=fixture(); lifecycle=package.loaded.stand_lifecycle
@@ -1561,7 +1572,7 @@ check('the config reset notice shows once on the stand and is not acknowledged t
         assert(f.ui.legend_text()=='Pal Work Priority: config.lua was missing, defaults are in use. Options page settings are kept.',
             f.ui.legend_text())
         lifecycle.generation=lifecycle.generation+1
-        assert(f.ui.legend_text()==f.ui.EDIT_LEGEND,'the notice survived the next stand open')
+        assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND,'the notice survived the next stand open')
         -- A lock still comes first; the notice waits for a stand that can show it.
         f=fixture()
         f.net.status,f.net.status_reason='incompatible','schema_or_work_width'
@@ -1629,11 +1640,132 @@ check('a missing-pal ask with no answer is asked again, a pending one counts as 
     assert(ok,err)
 end)
 
+-- Round 4 (accessibility P2-4): why a cell carries "!" was only in the mouse
+-- tooltip. Keyboard and pad players move a selection; the legend says it.
+check('the legend names why the selected cell carries "!"',function()
+    local f=fixture({'a','b'}); assert(f.ui.refresh(f.cfg)); f.ui.bind_mouse(function() return f.cfg end)
+    f.ui.edit_status('a',1,'rejected','not_authorized')
+    assert(f.ui.refresh(f.cfg)); assert(f.texts(f.cells[1])[1].text=='3!')
+    -- Nothing selected: the legend keeps the controls.
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
+    -- Native Down then Up: the footer follows the selection at once.
+    f.focus_cell(f.cells[1]); f.key(f.cells[1],7); assert(f.ui.selection.key=='b')
+    assert(f.legends()[1].text==f.ui.CLIENT_LEGEND,'a clean cell showed a warning')
+    f.key(f.cells[2],6); assert(f.ui.selection.key=='a')
+    assert(f.ui.legend_text()=='! The server did not authorize this edit.',f.ui.legend_text())
+    assert(f.legends()[1].text==f.ui.legend_text(),'the footer waited for the next refresh')
+    -- A retry keeps the warning and says so; acceptance clears it.
+    f.ui.edit_status('a',1,'pending')
+    assert(f.ui.legend_text():find('! The server did not authorize this edit. It will be retried',1,true)==1)
+    assert(#f.ui.legend_text()<=f.ui.LEGEND_MAX_CHARS)
+    f.ui.edit_status('a',1,'accepted')
+    assert(f.ui.legend_text()==f.ui.CLIENT_LEGEND)
+    -- The longest reason with its retry note still fits one line.
+    f.ui.edit_status('a',1,'applied_unsaved','save_failed'); f.ui.edit_status('a',1,'pending')
+    local text=f.ui.legend_text()
+    assert(text:find('! The server applied this change but could not save it',1,true)==1,text)
+    assert(#text<=f.ui.LEGEND_MAX_CHARS and not text:find('\n',1,true),text)
+    -- A lock still comes first.
+    f.net.status,f.net.status_reason='incompatible','schema_or_work_width'
+    assert(f.ui.legend_text()==f.ui.LOCKED_INCOMPATIBLE)
+end)
+
+-- Round 4 (persistence P2-2): a priorities.txt the host refused left the
+-- store empty, so every cell read 1 as if the priorities were wiped (main
+-- runs no pass then), and a click went to a store that refuses it, silently.
+check('host priorities that cannot be used show "?" with the reason and refuse clicks',function()
+    local f=fixture({'a','b'})
+    local store=package.loaded.store
+    local clock,now=os.clock,1000
+    os.clock=function() return now end
+    local ok,err=pcall(function()
+        f.authority=true
+        for _,row in ipairs(f.rows) do f.bind(row) end
+        store.state='saved'; store.data={a={[1]=3}}
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.texts(f.cells[1])[1].text=='3' and receiver_of(f.cells[1]).visibility==0)
+        f.cells[1].hovered=true; f.ui.bind_mouse(function() return f.cfg end)
+        -- The load was refused: store.load keeps no rows.
+        store.state='error'; store.data={}
+        f.click(-1); f.session.drain(error) -- the cell was armed by the paint before
+        assert(#f.writes==0,'a click went to a store that refuses it')
+        assert(f.ui.refresh(f.cfg))
+        for _,cell in ipairs(f.cells) do
+            assert(f.texts(cell)[1].text=='?','a refused priorities.txt drew '..f.texts(cell)[1].text)
+            assert(cell.tooltip==f.ui.STORE_UNREADABLE,cell.tooltip)
+        end
+        assert(receiver_of(f.cells[1]).visibility~=0,'an unusable store left the cell armed')
+        assert(f.ui.legend_text()==f.ui.STORE_UNREADABLE and f.legends()[1].text==f.ui.STORE_UNREADABLE)
+        assert(f.ui.STORE_UNREADABLE:find('priorities.txt could not be read; see priority.log',1,true))
+        f.focus_cell(f.cells[1]); assert(not f.ui.nav(f.cfg,'down') and #f.writes==0)
+        -- A save that keeps failing: the rows are there, editing waits.
+        store.data={a={[1]=2}}; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.texts(f.cells[1])[1].text=='?' and f.legends()[1].text==f.ui.STORE_UNSAVED)
+        -- Never loaded.
+        store.state='unavailable'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.legends()[1].text==f.ui.STORE_UNREADABLE)
+        for _,text in ipairs({f.ui.STORE_UNREADABLE,f.ui.STORE_UNSAVED,f.ui.EDIT_REFUSED}) do
+            assert(#text<=f.ui.LEGEND_MAX_CHARS and not text:find('\n',1,true),text)
+        end
+        -- Saved again: the numbers and the receivers come back.
+        store.state='saved'; f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.texts(f.cells[1])[1].text=='3' and receiver_of(f.cells[1]).visibility==0)
+        -- Any other refusal is said for a few seconds instead of nothing.
+        local set=store.set
+        store.set=function() return false end
+        f.click(-1); f.session.drain(error)
+        assert(f.ui.legend_text()==f.ui.EDIT_REFUSED,f.ui.legend_text())
+        assert(f.ui.refresh(f.cfg)); assert(f.legends()[1].text==f.ui.EDIT_REFUSED)
+        now=now+f.ui.EDIT_REFUSED_SECONDS+1
+        assert(f.ui.legend_text()~=f.ui.EDIT_REFUSED,'the refusal outstayed its time')
+        store.set=set
+    end)
+    os.clock=clock; f.authority=false
+    assert(ok,err)
+    -- A client's own priorities.txt is never the grid's: no store reason.
+    f=fixture(); package.loaded.store.state='error'; package.loaded.store.data={}
+    assert(f.ui.refresh(f.cfg)); assert(f.texts(f.cells[1])[1].text=='3' and f.ui.store_message()==nil)
+end)
+
+-- Round 4 (performance P3-2): every cell's tooltip carries the edit legend,
+-- and building it asks the scheduler for its count. It is built once.
+check('one refresh builds the edit legend once, not once per cell',function()
+    local f=fixture({'a','b','c'})
+    local scheduler=package.loaded.scheduler
+    local calls=0
+    package.loaded.scheduler={steering_count=function() calls=calls+1; return 2,5,3 end}
+    local ok,err=pcall(function()
+        f.authority=true
+        for _,row in ipairs(f.rows) do f.bind(row) end
+        for _=1,2 do
+            f.ui.detach(); calls=0
+            assert(f.ui.refresh(f.cfg))
+            assert(calls==1,'steering_count asked '..calls..' times in one refresh')
+        end
+        assert(f.legends()[1].text:find('Steering 2 of 5 (all bases)',1,true))
+        for _,cell in ipairs(f.cells) do
+            assert(cell.tooltip:find('Steering 2 of 5 (all bases)',1,true),cell.tooltip)
+        end
+        -- Outside a refresh it is built fresh, not taken from the last one.
+        package.loaded.scheduler.steering_count=function() return 4,5,1 end
+        assert(f.ui.legend_text():find('Steering 4 of 5',1,true),f.ui.legend_text())
+    end)
+    package.loaded.scheduler=scheduler; f.authority=false
+    assert(ok,err)
+end)
+
 -- UX crowding P3-4 (round 3, ScreenShot00405): 8 units above the bottom
--- edge, the legend covered the game's "You have unused Stat Points" bar,
--- which starts about 35 px above the bottom of a 1280x720 screen. It sits
--- about 26 px higher there now, in a canvas root and an overlay root alike.
-check('the legend sits clear of the unused Stat Points bar',function()
+-- edge, the legend covered the game's "You have unused Stat Points" bar.
+-- Round 4 (newcomer): the 47 chosen then put it on the weapon box and the
+-- temperature icons instead. Measured in 00405 at 1280x720 (scale 0.667):
+-- the legend is 18 px high and about 5.08 px a character plus 13 px of
+-- backing (156 characters drew 805 px); the last stand row's border is at
+-- y 591; the HUD's highest part under the legend is the weapon name at
+-- y 614, then the weapon box (636) and the Stat Points bar (684). The stand
+-- and its info panel are dark from x 82 to 1170 down to y 626.
+local SHOT = {scale=720/1080, height=18, row_border=591, weapon_name=614, weapon_box=636,
+    stat_bar=684, dark_left=82, dark_right=1170, per_char=5.08, backing=13.3}
+check('the legend sits in the stand margin, clear of the HUD and the Stat Points bar',function()
     for _,kind in ipairs({'CanvasPanel','Overlay'}) do
         local f=fixture()
         local root=f.object(kind,'menu.'..kind)
@@ -1654,9 +1786,15 @@ check('the legend sits clear of the unused Stat Points bar',function()
         local lift=kind=='CanvasPanel' and slot.position and -slot.position.Y
             or slot.padding and slot.padding.Bottom
         assert(lift==f.ui.LEGEND_LIFT,kind..' legend lift: '..tostring(lift))
-        -- In screen pixels at 720p (slate scale 720/1080): at least 26 above
-        -- where it was, and not so high that it meets the HUD's Build hint.
-        assert((lift-8)*720/1080>=25.9 and (lift-8)*720/1080<=30,kind..' legend lift in pixels')
+        local bottom=720-lift*SHOT.scale
+        local top=bottom-SHOT.height
+        assert(top>=SHOT.row_border+2,kind..' legend reaches the last stand row: top '..top)
+        assert(bottom<=SHOT.weapon_name-2,kind..' legend reaches the weapon name: bottom '..bottom)
+        assert(bottom<SHOT.weapon_box and bottom<SHOT.stat_bar)
+        -- The widest legend stays over the stand's and the info panel's
+        -- dark backing, well inside the HUD icons at the screen edges.
+        local half=(f.ui.LEGEND_MAX_CHARS*SHOT.per_char+SHOT.backing)/2
+        assert(640-half>SHOT.dark_left and 640+half<SHOT.dark_right,'legend wider than the stand backing: '..half*2)
     end
 end)
 
