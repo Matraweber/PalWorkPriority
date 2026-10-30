@@ -215,6 +215,7 @@ M.ITEM_WORK = {
     { "quiche",       "EmitFlame" },
     { "soup",         "EmitFlame" },
     { "stew",         "EmitFlame" },
+    { "sandwich",     "EmitFlame" }, -- before the mine's "sand" (seen in game 2026-10-30)
     { "charcoal",     "EmitFlame" },
     { "cement",       "EmitFlame" },
     { "brick",        "EmitFlame" },
