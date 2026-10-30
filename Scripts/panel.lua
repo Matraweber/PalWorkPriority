@@ -1,4 +1,4 @@
--- The work rules panel.
+-- The Production Limits panel.
 --
 -- A rule is "work this job until the base holds N of an item, then move on".
 -- No rule means unlimited, which is what every work type starts as.
@@ -419,7 +419,8 @@ local LIST_GUTTER  = 12
 -- sideways on every tab switch.
 local LIST_W       = math.floor((ROW_W - LIST_GUTTER * (LIST_COLS - 1))
                                 / LIST_COLS)
-local LIST_H       = 36
+-- 38, for the 13pt label under the name (accessibility round 4, P2-3).
+local LIST_H       = 38
 local LIST_PITCH   = LIST_H + 4
 -- Nine, from the space that is actually there.
 --
@@ -438,13 +439,15 @@ local LIST_PITCH   = LIST_H + 4
 --
 -- Measured off the drawn panel: the grid starts at y=402 and the backdrop
 -- ends at 891, so 489 to spend. The pager takes 34 and the two footer rows 68,
--- which leaves 387 - nine pitches of 40 with 27 to spare, where ten would need
--- 400 and overrun by 13.
+-- which leaves 387 - nine pitches of 42 take 378 with 9 to spare, where ten
+-- would need 420 (test_panel_ux_crowding checks the sum).
 --
 -- Twenty seven per page rather than eighteen still takes the full list from
 -- thirteen pages to eight.
 local LIST_ROWS    = 9
 local LIST_PER_PAGE = LIST_COLS * LIST_ROWS
+-- For the layout test: nine rows must fit the 387 px above.
+RB.GRID = { rows = LIST_ROWS, pitch = LIST_PITCH, h = LIST_H, budget = 387 }
 local LIST_ICON    = 28
 local LIST_NAME_X  = 44
 local LIST_COUNT_R = LIST_W - 10
@@ -614,6 +617,9 @@ local RAIL_W_HOT  = 6
 -- failed 4.5:1 when measured from a screenshot. The selected rules row now
 -- also gets a 3 px cyan rail, so the fill no longer carries the cursor alone.
 local ROW_SEL   = { R = 0.060, G = 0.080, B = 0.110, A = 1.00 }
+-- For the contrast test (accessibility round 4, P2-1): the fills and the
+-- text colours, as the linear values written to the brushes.
+RB.TOKENS = { ROW_BG = ROW_BG, ROW_HOVER = ROW_HOVER, ROW_SEL = ROW_SEL, COLOUR = COLOUR }
 -- The cyan edge that says "this one", independent of fill luminance. A row
 -- has the caret; a tile has no room for one and gets this instead.
 local ACCENT    = { R = 0.42,  G = 0.80,  B = 1.00,  A = 1.00 }
@@ -760,7 +766,7 @@ function RB.clear_widgets()
     RB.filled, RB.pending, RB.edit_layout = {}, false, {}
     RB.hmap, RB.hmap_keys, RB.hrect, RB.hover_due = nil, {}, {}, false
     RB.validated, root_checked = -1, -1
-    pin_count = 0
+    pin_count, RB.pin_at = 0, {}
     RB.shelf_name, RB.shelf_skip, RB.shelf_read = nil, nil, nil
     search_box, amount_box, editing, edit_focus = nil, nil, nil, false
     styled_boxes, picker_key, picker_hit = {}, nil, nil
@@ -1389,7 +1395,7 @@ local function text_at(key, px, py, text, colour_key, points, passthrough)
     -- Exactly one row is current. The pointer wins when it is over
     -- something, otherwise the keyboard position stands. Treating both as
     -- selected marked two rows at once, which the video shows plainly.
-    local current = hover_key or was_sel
+    local current = RB.current_key()
     local selected = (key == current)
     -- Tabs keep their own colour. The selection tint was overriding it, so on
     -- the picker the inactive RULES tab rendered brighter than the active ADD
@@ -1533,8 +1539,15 @@ local GLYPH_SLOT = 42
 -- pointer happens to be over. The pointer wins when it is over something,
 -- otherwise the keyboard position stands, which is the same rule the stripe
 -- tint uses so the two can never disagree.
+-- The row the keys or the pad act on wins until the pointer moves
+-- (accessibility round 4, P2-2): a resting pointer kept the caret and the
+-- rail on its row while Right raised the keyboard's.
+function RB.current_key()
+    if RB.kbd_focus then return was_sel end
+    return hover_key or was_sel
+end
 local function row_is_current(...)
-    local cur = hover_key or was_sel
+    local cur = RB.current_key()
     if cur == nil then return false end
     for i = 1, select("#", ...) do
         if select(i, ...) == cur then return true end
@@ -1621,6 +1634,11 @@ end
 -- open Creative Menu costs, and beyond the cap the picker simply behaves as
 -- it does today - swept when resident, reloaded when not.
 local PIN_MAX = 400
+-- Where each pin sits on the shelf, as plain values: icon name ->
+-- { child index, widget name } (performance round 4, P3-1). A draw that
+-- wants one pin asks the shelf for that child alone; it read every child,
+-- up to 400 pins and 800 engine calls, before it looked at this one.
+RB.pin_at = {}
 
 -- The pins live on one shelf (perf P2-3, 2026-10-29).
 --
@@ -1657,6 +1675,27 @@ function RB.read_shelf()
     return ok
 end
 
+-- One pin's widget, from the shelf of the current snapshot: its child at the
+-- index it was added at, if that child still has the pin's name. Anything
+-- else reads the whole shelf as before.
+function RB.pin_widget(name)
+    local at = RB.pin_at[name]
+    if at == nil then return nil end
+    local w = pinned[name]
+    if w ~= nil and alive(w) then return w end
+    local objects = RB.runtime.objects
+    local shelf = RB.shelf_name and objects[RB.shelf_name]
+    if not alive(shelf) then return nil end
+    local child
+    pcall(function() child = shelf:GetChildAt(at[1]) end)
+    if child ~= nil and RB.logic.name(child) == at[2] then
+        objects[at[2]] = child
+        return child
+    end
+    if RB.read_shelf() then return pinned[name] end
+    return nil
+end
+
 -- The shelf itself, made on the first pin of a tree.
 function RB.shelf()
     if not RB.read_shelf() then return nil end
@@ -1677,9 +1716,11 @@ end
 local function pin(texture, item_id)
     if pin_count >= PIN_MAX then return end
     if not (alive(root) and alive(root_tree)) then return end
-    -- The shelf first: until it is read, an existing pin looks missing.
+    -- Known pins from RB.pin_at, with no shelf read (performance round 4,
+    -- P3-1); the shelf is read only to add one.
+    if RB.pin_at[item_id] ~= nil then return end
     local shelf = RB.shelf()
-    if shelf == nil or pinned[item_id] ~= nil then return end
+    if shelf == nil then return end
 
     local cls = api.cdo("/Script/UMG.Image")
     if not cls then return end
@@ -1705,6 +1746,7 @@ local function pin(texture, item_id)
     -- other widgets: we made it, it is parented to our tree, and it is
     -- validated with alive() before every use.
     pinned[item_id] = img
+    RB.pin_at[item_id] = { pin_count, RB.logic.name(img) }
     pin_count = pin_count + 1
 end
 
@@ -1737,7 +1779,7 @@ local function pin_from_sweep(found)
         if left <= 0 then return end
         -- The sweep is keyed by icon NAME; pins are keyed by item id. Only
         -- ids already resolved can be matched up, which is most of them.
-        if pinned[name] == nil and tex ~= nil then
+        if RB.pin_at[name] == nil and tex ~= nil then
             pin(tex, name)
             left = left - 1
         end
@@ -1851,7 +1893,7 @@ local function picture(key, px, py, size, item_id, token)
         local texture
         local icon_name = item_id and icons.name_for
             and icons.name_for(item_id) or nil
-        local pin_w = icon_name and RB.read_shelf() and pinned[icon_name] or nil
+        local pin_w = icon_name and RB.pin_widget(icon_name) or nil
         if pin_w ~= nil and pin_w ~= true and alive(pin_w) then
             pcall(function()
                 local b = pin_w.Brush
@@ -2197,7 +2239,7 @@ RB.CHANGE = { mouse = "Click the number to change it.", keys = "Left/Right now s
 RB.PICK_HELP = {
     mouse = "Click an item to add a limit. Items saying Edit already have one: click to open it.",
     keys = "Press Enter on an item to add a limit. Items saying Edit already have one: Enter opens it.",
-    pad = "Press Y on an item to add a limit. Items saying Edit already have one: Y opens it." }
+    pad = "Press Y (not A) on an item to add a limit. Items saying Edit already have one: Y opens it." }
 -- The rules help row says what a limit does; the footer alone says how to
 -- change one (UX crowding P2-4: every control was explained twice). "Group"
 -- is the word the picker's tiles use, so the two read as one idea (P3-3).
@@ -2225,12 +2267,23 @@ RB.AGAIN_TILE = { mouse = "Click again to add", pad = "Press Y to add", keys = "
 -- bounce that armed it, not a decision (review round 2, P2).
 RB.CONFIRM_MIN_S = 0.4
 -- A picker tile's fill while the keys or the pad have it (UX crowding P2-7):
--- a blue tint, well apart from ROW_BG and from the green "has a limit" rail,
--- and about 10:1 under the tile's text.
-RB.TILE_SEL = { R = 0.075, G = 0.200, B = 0.270, A = 1.00 }
+-- a blue tint, apart from ROW_BG and from the green "has a limit" rail.
+-- Darker on 2026-10-30 (accessibility round 4, P2-1): these tokens are
+-- LINEAR values (0.08 renders as sRGB 80), and 0.075/0.200/0.270 rendered as
+-- (77,124,142), where the green name measured 3.57:1. This one renders about
+-- (48,82,105): 6.4:1 for the green name, 6.5 for the count, 7.3 for the item
+-- text (test_panel_ux_crowding computes them from these values).
+RB.TILE_SEL = { R = 0.030, G = 0.085, B = 0.140, A = 1.00 }
 -- How long a new limit's reveal waits for its row (UX crowding P2-3). A
 -- client's row arrives from the server some beats after the add.
 RB.REVEAL_S = 3.0
+-- The longest a client's reveal waits while its add is still open: net.lua's
+-- ACK_TIMEOUT (8 s), after which the request has failed anyway.
+RB.REVEAL_MAX_S = 8.0
+-- The upgrade notice when configuration words none, within the notice
+-- row's 125 characters (newcomer round 4, P2-6: the old one was 144).
+RB.UPGRADE_FALLBACK = "Update removed the old Scripts\\config.lua, so default settings are in use. "
+    .. "Options page settings are kept."
 -- How long "Limits saved" stays after a save (UX crowding P3-2). It was
 -- shown for as long as the panel was open, a line that said nothing new.
 RB.SAVED_S = 5.0
@@ -2314,9 +2367,17 @@ function RB.place_sel()
         -- Kept until its row is drawn (UX crowding P2-3). On a client the
         -- row comes from the server some beats after the add, and clearing
         -- this on the first draw left the selection on "Add a limit", where
-        -- Right reopens the picker. Given up after RB.REVEAL_S. Any input
-        -- in between clears it (M.move, M.apply).
-        if placed_sel or (os.clock() - (reveal.at or 0)) > RB.REVEAL_S then RB.reveal_rule = nil end
+        -- Right reopens the picker. Given up after RB.REVEAL_S, or on a
+        -- client once its add has finished (test coverage round 4, Gap 5:
+        -- a save stall of 2.5 s plus the ack and the snapshot ran past 3 s),
+        -- and after RB.REVEAL_MAX_S whatever the request says. Any input in
+        -- between clears it (M.move, M.apply).
+        local waited = os.clock() - (reveal.at or 0)
+        local open = caps.is_client and (RB.save_state == "pending" or RB.save_state == "acknowledged"
+            or RB.save_state == "saving")
+        if placed_sel or (waited > RB.REVEAL_S and not open) or waited > RB.REVEAL_MAX_S then
+            RB.reveal_rule = nil
+        end
         -- What changes it was held back until the selection is really on it.
         if placed_sel and reveal.hint and notice == reveal.said then
             announce(reveal.said .. " " .. reveal.hint)
@@ -2370,8 +2431,8 @@ local function list_row(key, at, item, have, top, capability)
     -- the caller because this is where both halves are already worked out.
     RB.slot = row_host(row, "ItemList", LIST_PITCH)
     -- Centred in its host for the same reason the rules rows are, though this
-    -- one never clipped: a 36 tall tile in a 40 tall row was flush against the
-    -- top with all four spare pixels below it.
+    -- one never clipped: a LIST_H tile in a LIST_PITCH row was flush against
+    -- the top with all four spare pixels below it.
     RB.base = RB.slot
         and (top + row * LIST_PITCH - (LIST_PITCH - LIST_H) / 2) or 0
     local px = ROW_INSET + col * (LIST_W + LIST_GUTTER)
@@ -2383,8 +2444,10 @@ local function list_row(key, at, item, have, top, capability)
     local _ts = os.clock()
     -- Selected by keys or pad, the tile takes a tint of its own (UX crowding
     -- P2-7): its cyan rail alone looked like the green rail of a tile that
-    -- has a limit.
-    slab(key, px, py, LIST_W, LIST_H, TILE_BG, true, nil, RB.TILE_SEL)
+    -- has a limit. Not for the mouse (accessibility round 4, P3-1): a mouse
+    -- player saw a tile tinted as chosen that they never chose.
+    slab(key, px, py, LIST_W, LIST_H, TILE_BG, true, nil,
+        RB.device() ~= "mouse" and RB.TILE_SEL or TILE_BG)
     RB.t_slab = (RB.t_slab or 0) + (os.clock() - _ts)
     tile_face[key] = stripes[key]
 
@@ -2442,10 +2505,10 @@ local function list_row(key, at, item, have, top, capability)
     --
     -- 12pt in the item colour, name 14pt (review E, 2026-10-28): the label
     -- was 10pt dim, under 4.5:1 and too small to read at 720p, and it is
-    -- what says what a click does. Both lines moved up a pixel so the
-    -- bigger label still ends inside the 36px tile.
-    text_at("set:" .. key, px + LIST_NAME_X, py + 19,
-        capability.label, "item", 12, true)
+    -- what says what a click does. 13pt since 2026-10-30 (accessibility
+    -- round 4, P2-3: 6 px x-height at 720p), in a tile two pixels taller.
+    text_at("set:" .. key, px + LIST_NAME_X, py + 20,
+        capability.label, "item", 13, true)
     text_at("n:" .. key, px + LIST_NAME_X, py,
         fit_name(pretty_name(item), fits(item, room, 14)),
         limited and "atlimit" or "item", 14, true)
@@ -2685,6 +2748,12 @@ local function ensure_search(row)
         pcall(function() search_box:SetKeyboardFocus() end)
     end
 
+    -- Escape ended the typing (M.escape): the shell takes the keyboard back.
+    if RB.search_blur then
+        RB.search_blur = nil
+        pcall(function() if overlay.focus_shell then overlay.focus_shell() end end)
+    end
+
     local text, focused
     pcall(function()
         local ft = search_box:GetText()
@@ -2701,6 +2770,9 @@ local function ensure_search(row)
     RB.search_focused = focused == true
     if type(text) == "string" and text ~= search_text then
         RB.search_dirty, RB.armed = true, nil
+        -- From page 1 (panel bugs round 4, P3-3): page 3 of a Show all list
+        -- stayed page 3 of the matches, with the best ones on page 1.
+        page = 0
     end
     if RB.search_focused then RB.search_dirty = true end
     if type(text) == "string" then search_text = text end
@@ -3087,8 +3159,10 @@ local function draw_tabs(active)
     -- A hint, not a button; the pass belongs to main.lua. Not on a
     -- controller either, which has no Alt+F2.
     if not caps.is_client and not pad then
-        local pass_text = RB.key_label("key_pass", "ALT+F2") .. " RECHECK NOW"
-        line("tab_pass", 0, right_x(esc_x - 28, pass_text, 13, CAPS_W), pass_text, "faint", 13, 4)
+        -- "Alt+F2: recheck", not caps like the clickable ESC beside it
+        -- (newcomer round 4, P3-2): it has no click target.
+        local pass_text = RB.key_prose("key_pass", "ALT+F2") .. ": recheck"
+        line("tab_pass", 0, right_x(esc_x - 28, pass_text, 13), pass_text, "faint", 13, 4)
     end
 
     -- What this is and what it does, which the panel never said. Opening it
@@ -3206,7 +3280,12 @@ local function draw_list(cfg, totals)
                 break
             end
         end
-        if pending_drop.guild ~= mine() or pending_drop.amount ~= current then pending_drop = nil end
+        if pending_drop.guild ~= mine() or pending_drop.amount ~= current then
+            -- Said (panel bugs round 4, P3-2): the prompt "press Delete
+            -- again" stayed while the button already read Remove again.
+            pending_drop = nil
+            announce("This limit changed; Remove cancelled.")
+        end
     end
     -- Expired here, not only on the next click, and with its notice: one
     -- timer for both (review B5). The notice used to last 7 s and the arm 4,
@@ -3666,9 +3745,11 @@ local function draw_list(cfg, totals)
             if can_prev then tile_face["rprev"] = stripes["rprevbox"] end
             if can_next then tile_face["rnext"] = stripes["rnextbox"] end
 
-            line("rprev", row, PAD + 16, "<   Previous",
+            -- A spent one says so in words (accessibility round 4, P3-3):
+            -- grey alone, it read brighter than the live one.
+            line("rprev", row, PAD + 16, can_prev and "<   Previous" or "First page",
                 can_prev and "action" or "spent", ROW_PT)
-            line("rnext", row, PAD + 228, "Next   >",
+            line("rnext", row, PAD + 228, can_next and "Next   >" or "Last page",
                 can_next and "action" or "spent", ROW_PT)
             line("rpageno", row, PAD + 440, string.format(
                 "page %d of %d, %d limits", RB.rule_page + 1, rule_pages,
@@ -4000,7 +4081,7 @@ local function draw_item_picker(cfg, totals)
     -- The name of whatever the pointer is on, spelled out above the grid.
     -- A grid of pictures is quick to scan and useless for telling Ore from
     -- Ore, so the name has to be somewhere, and Creative Menu puts it here.
-    local current = hover_key or was_sel
+    local current = RB.current_key()
     local under = current and was_hit[current]
     -- The echo of the cursor's item used to sit on the row above the search
     -- field, bold and white, at the exact x a field label would use - so it
@@ -4038,7 +4119,9 @@ local function draw_item_picker(cfg, totals)
     RB.use_row("Search")
     text_at("hint", ROW_INSET + 13,
         (SEARCH_H - ROW_PT * 1.35) / 2 - ROW_PT * 0.13,
-        search_text == "" and (on_search and (RB.device() == "pad" and "Search items (needs a keyboard)"
+        -- The Enter hint only on the keyboard's row (accessibility round 4,
+        -- P3-2): under the pointer Enter acts on the keyboard selection.
+        search_text == "" and (was_sel == "search" and (RB.device() == "pad" and "Search items (needs a keyboard)"
             or "Search items: press Enter, then type") or "Search items") or "",
         "hint_on_field", ROW_PT, true)
     -- The selection on the search row, the cyan rail a row gets.
@@ -4056,7 +4139,7 @@ local function draw_item_picker(cfg, totals)
     -- double spaces were a join artefact and read as broken kerning.
     local caption = string.format("%s, %d %s",
         search_text ~= "" and ("Matching " .. search_text)
-            or (everything and "Every item with a job"
+            or (everything and "Everything a base can make"
                 or "What your storage holds"),
         #source, #source == 1 and "item" or "items")
     if catalogue_state == "pending" then
@@ -4069,11 +4152,8 @@ local function draw_item_picker(cfg, totals)
         caption = caps.is_client and "Waiting for the server's count."
             or ("Storage not counted yet. " .. RB.key_prose("key_pass", "ALT+F2") .. " rechecks now.")
     end
-    if pages > 1 then
-        -- A caption that is already a sentence gets one more.
-        caption = caption .. string.format(caption:sub(-1) == "." and " Page %d of %d." or ", page %d of %d",
-            page + 1, pages)
-    end
+    -- No page counter here (newcomer round 4, P3-6): the pager below says
+    -- "page 1 of 8" already, and the two read as one thing said twice.
     -- "Under each item: what Enter does" left the caption (UX crowding
     -- P3-1): the help row above says it by device, the label on each tile
     -- shows it.
@@ -4264,9 +4344,9 @@ local function draw_item_picker(cfg, totals)
         if can_prev then tile_face["prev"] = stripes["prevbox"] end
         if can_next then tile_face["next"] = stripes["nextbox"] end
 
-        line("prev", row, PAD + 16, "<   Previous",
+        line("prev", row, PAD + 16, can_prev and "<   Previous" or "First page",
             can_prev and "action" or "spent", ROW_PT)
-        line("next", row, PAD + PAGE_W + 28, "Next   >",
+        line("next", row, PAD + PAGE_W + 28, can_next and "Next   >" or "Last page",
             can_next and "action" or "spent", ROW_PT)
         line("pageno", row, PAD + PAGE_W * 2 + 40,
             string.format("page %d of %d", page + 1, pages), "dim", 13)
@@ -4428,52 +4508,6 @@ if not pcall(function() icons.on_sweep = pin_from_sweep end) then
         "re-sweeping every time it draws")
 end
 
--- One row's tint, recomputed in place. The frame-rate half of hover.
---
--- Ignores the keyboard-selection state on purpose: this runs between full
--- draws, and a row that was both selected and hovered falls back to its base
--- colour for at most one body beat before the full draw restores the finer
--- distinction. The alternative was recomputing row_is_current here, which
--- drags half the draw's context into a path that exists to avoid the draw.
-RB.retint = function(key)
-    if key == nil then return end
-    local border = stripes[key]
-    if not alive(border) then return end
-    pcall(function()
-        border:SetBrushColor((key == hover_key and ROW_HOVER)
-            or RB.base_col[key]
-            or ROW_BG)
-    end)
-    -- The token is stale now; the next full draw recomputes it honestly.
-    drawn["s:" .. key] = nil
-
-    -- The picker tile's rail, whose hover channel is WIDTH - 3px wide, 6px
-    -- under the pointer, per the note at its draw site. The tint above moves
-    -- at frame rate now, so a rail waiting for the 100ms body pass reads as
-    -- the one part of the highlight still trailing - which is exactly what
-    -- it was. Rules rows have no rail; the lookup just misses for them.
-    --
-    -- Width only. The rail's colour also reacts to the cursor, but its base
-    -- colour encodes "a rule exists" (green), and this path cannot know that
-    -- without dragging the draw's context in - a briefly stale colour for
-    -- one body beat is invisible next to a stale width, which is the thing
-    -- being fixed.
-    local rail = stripes["rail:" .. key]
-    if alive(rail) then
-        local slot
-        pcall(function() slot = rail.Slot end)
-        if alive(slot) then
-            pcall(function()
-                slot:SetSize({
-                    X = (key == hover_key) and RAIL_W_HOT or RAIL_W,
-                    Y = LIST_H,
-                })
-            end)
-            placed["s:rail:" .. key] = nil
-        end
-    end
-end
-
 -- The pointer's map: where each target was on screen at the last draw, as
 -- plain numbers (perf, 2026-10-29).
 --
@@ -4509,14 +4543,17 @@ RB.hmap, RB.hmap_keys, RB.hrect = nil, {}, {}
 RB.hover_bad, RB.HOVER_BAD_MAX, RB.HOVER_GAP = 0, 8, 0.033
 RB.BODY_PAD, RB.FOOT_ROW = 18, { "Foot", 76 }
 
--- Why the map is or is not there, said once per reason per opening (INFO,
--- so it reaches priority.log at the default level). Added for the in-game
--- check of 2026-10-29, where no map was ever built and nothing said why.
+-- Why the map is or is not there, said once per reason per opening. Added
+-- for the in-game check of 2026-10-29, where no map was ever built and
+-- nothing said why; at debug since (performance round 4, P3-4), as it was
+-- written on every opening, except the map switching itself off.
 RB.hmap_said = {}
 function RB.hover_note(why)
     if RB.hmap_said[why] then return end
     RB.hmap_said[why] = true
-    log.info("panel: hover map " .. why)
+    -- Switching itself off is still said at INFO: it changes what hover does.
+    local say = why:find("^off: ") and log.info or log.debug
+    say("panel: hover map " .. why)
 end
 
 -- Off, with the reason kept for the note.
@@ -4705,6 +4742,8 @@ function RB.hover_watch()
     if x == nil then RB.hover_stop("cursor unreadable (fast loop)") return end
     if x == RB.hover_x and y == RB.hover_y then return end
     if RB.hover_parked(x, y) then return end
+    -- A pointer that moved takes the highlight back from the keys.
+    if RB.hover_x ~= nil then RB.kbd_focus = nil end
     RB.hover_x, RB.hover_y = x, y
     local key = RB.hover_lookup(x, y)
     if key ~= RB.hover_seen then RB.hover_seen, RB.hover_due = key, true end
@@ -4755,7 +4794,7 @@ function RB.hover_fit(r, x, y)
     local dy = math.min(math.max(cal.dy, loy), hiy)
     if (dx ~= cal.dx or dy ~= cal.dy) and not cal.said then
         cal.said = true
-        log.info(string.format("panel: hover map offset on %s: %.1f,%.1f, from %s at cursor "
+        log.debug(string.format("panel: hover map offset on %s: %.1f,%.1f, from %s at cursor "
             .. "%.1f,%.1f (map rect %s)", tostring(mode), dx, dy, tostring(r[1]), x, y, RB.fmt_rect(r)))
     end
     cal.dx, cal.dy = dx, dy
@@ -4765,6 +4804,7 @@ function RB.hover_check(hovered)
     local x, y = RB.cursor()
     if x == nil then RB.hover_stop("cursor unreadable (draw)") return end
     if hovered == nil and RB.hover_parked(x, y) then return end
+    if RB.hover_x ~= nil and (x ~= RB.hover_x or y ~= RB.hover_y) then RB.kbd_focus = nil end
     RB.hover_x, RB.hover_y = x, y
     -- Judged only when steady: the same cursor and the same target named
     -- on two draws in a row (dedicated-server client, 2026-10-30). Slate's
@@ -4808,7 +4848,7 @@ function RB.hover_check(hovered)
     end
 end
 
--- Poll the pointer and move the highlight, WITHOUT drawing anything else.
+-- Poll the pointer, and ask for a draw when it reaches another target.
 --
 -- The highlight used to move only when the whole panel redrew - ten times a
 -- second, up to 100ms behind the pointer, which is what "hovering is not
@@ -4817,10 +4857,12 @@ end
 -- paid five full redraws, ~30-50ms each, with the 9ms owner check inside
 -- every one.
 --
--- The scan is 0.05ms, measured. The retint is two token-guarded brush writes.
--- So this runs from a persistent 16ms game-thread loop - BreedingHelper
--- drives its whole panel this way, off its widget's own Tick - and the full
--- draw stays on its 100ms deadline for data changes, exactly as before.
+-- This runs from a persistent 16ms game-thread loop - BreedingHelper drives
+-- its whole panel this way, off its widget's own Tick. It reads the cursor
+-- against the last draw's map (RB.hover_watch, plain numbers) and, when the
+-- pointer has reached another target, fill_tick draws once, at most every
+-- RB.HOVER_GAP (2026-10-29). The retint that used to run here is gone; the
+-- full draw stays on its 100ms deadline for data changes as before.
 -- The pad, read at frame rate rather than on the body beat.
 --
 -- IsInputKeyDown is a LEVEL read, and the body beat is clock's 100ms floor,
@@ -5121,6 +5163,14 @@ function M.refresh(cfg)
         if RB.hover_x then RB.hover_seen = RB.hover_lookup(RB.hover_x, RB.hover_y) end
     end
 
+    -- An armed tile expires like an armed Remove (panel bugs round 4, P3-1):
+    -- its explanation was gone from the notice row after a minute, and a
+    -- click two minutes later still created the limit.
+    if RB.armed ~= nil and (os.clock() - (RB.armed.at or 0)) > RB.ARM_S then
+        RB.armed = nil
+        announce("Timed out. No limit was added.")
+    end
+
     -- What the selection points at, from the map it was chosen in. Every
     -- move between draws (keys, pad, a click) changed sel against this
     -- map, so this is the one place that names it correctly (review B2).
@@ -5191,15 +5241,12 @@ function M.refresh(cfg)
     -- contents in the switch from ADD back to RULES. Drawing it again is
     -- cheaper than living with it, and only happens on the frame the height
     -- actually changes rather than every frame.
-    -- Anchored by its top edge, not centred.
-    --
-    -- Centring meant the panel's height decided where its header sat, so
-    -- switching from the rules list to the picker moved the tab bar a hundred
-    -- pixels up: the tab you just clicked jumped out from under the pointer,
-    -- and clicking again in the same place hit empty panel.
-    -- Y is set from TOP_Y at load and nothing else ever writes it, so the
-    -- redraw-on-move branch that used to sit here could not run. It was left
-    -- over from the centred layout, where the height decided the offset.
+    -- Y is set from TOP_Y at load and nothing else ever writes it; that keeps
+    -- the local canvas top-anchored. The blueprint shell that draws in every
+    -- real session centres its backdrop, though, so there the tab bar still
+    -- moves with the panel's height (y 265 on Limits, 146 on Items, panel
+    -- bugs round 4, P3-7). The two-click add keeps a missed second click
+    -- harmless.
 
     -- The same row count the local backdrop uses, handed to the shell, which
     -- is the one that actually draws when the blueprint mounted. ensure_backdrop
@@ -5386,6 +5433,13 @@ end
 function M.escape()
     RB.input()
     if editing then return M.cancel_edit() end
+    -- Typing a search: Escape ends the typing and keeps the text (panel bugs
+    -- round 4, P3-5). It closed the panel and dropped the query.
+    if RB.typing() then
+        RB.search_focused, RB.search_dirty, RB.search_blur = false, nil, true
+        announce("Search kept. Esc again closes.")
+        return true
+    end
     -- An armed Remove ("Sure?") is disarmed first, like an unfinished amount:
     -- Escape with it armed closed the whole panel (review P2-14, screenshot).
     -- A second Escape closes.
@@ -5464,7 +5518,7 @@ function M.toggle()
     RB.hover_off_why, RB.hmap_said = nil, {}
     RB.hover_cal, RB.hover_resets = {}, 0
     RB.hover_sample, RB.hover_retry = nil, 0
-    RB.hover_x, RB.hover_y = nil, nil
+    RB.hover_x, RB.hover_y, RB.kbd_focus = nil, nil, nil
 
     -- Prompts name the input the player is on (round 3, P2-1): the game's
     -- flag asked once now, since nothing refreshes it while the panel is
@@ -5489,8 +5543,7 @@ function M.toggle()
             -- configuration words it: a hand-deleted file is not blamed on
             -- the Workshop (round 2).
             RB.upgrade_ack = configuration.upgrade_message or configuration.UPGRADE_MESSAGE
-                or ("Your earlier config.lua was not found (the Workshop or Vortex update removed it). "
-                .. "Default settings are in use; options page settings are kept.")
+                or RB.UPGRADE_FALLBACK
             announce(RB.upgrade_ack)
         end
     end
@@ -5649,6 +5702,7 @@ end
 
 function M.move(delta)
     RB.input()
+    RB.kbd_focus = true
     pending_drop, RB.armed = nil, nil
     RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
@@ -5672,6 +5726,7 @@ end
 -- to the row's first entry otherwise.
 function M.move_row(delta)
     RB.input()
+    RB.kbd_focus = true
     pending_drop, RB.armed = nil, nil
     RB.reveal_rule = nil
     if not M.open or #order == 0 then return false end
@@ -5713,6 +5768,7 @@ function M.row_action(cfg, kind, origin)
     if RB.typing() then return false end
     -- Delete, or X when a controller route passes "pad" (round 3, P2-1).
     RB.last_device = origin == "pad" and "pad" or "keys"
+    RB.kbd_focus = true
 
     local r = rows[sel]
     if r == nil then return false end
@@ -5794,6 +5850,7 @@ function M.nav(cfg, what, origin)
     end
     RB.input()
     RB.last_device = origin == "pad" and "pad" or "keys"
+    RB.kbd_focus = true
 
     -- The Enter that committed the search box (review round 2, P1). Its
     -- focus is already gone when this runs, so RB.typing says no; the
@@ -5818,6 +5875,21 @@ function M.nav(cfg, what, origin)
             local to = at + (what == "up" and -LIST_COLS or LIST_COLS)
             if to >= 0 and to < grid_count then
                 sel, RB.armed = grid_from + to, nil
+                return true
+            end
+            -- Past an edge of the grid: out of it, not one tile sideways
+            -- (panel bugs round 4, P3-4). Up from the top row goes to what
+            -- is above the grid (the search row), Down from the bottom row
+            -- to what is below it (the pager, Show all).
+            if what == "up" and to < 0 then sel = grid_from return M.move(-1) end
+            if what == "down" and math.floor(at / LIST_COLS) == math.floor((grid_count - 1) / LIST_COLS) then
+                sel = grid_from + grid_count - 1
+                return M.move(1)
+            end
+            -- A last row shorter than this column (or a page still
+            -- filling): its last tile, not the next one sideways.
+            if what == "down" then
+                sel, RB.armed = grid_from + grid_count - 1, nil
                 return true
             end
         end
@@ -5891,6 +5963,17 @@ function M.command(cfg, args)
         local dir=require('reload').scripts_dir
         if not dir then return 'diagnostic scripts path unavailable' end
         return assert(loadfile(dir..'stand_lifecycle_probe.lua'))().read()
+    end
+
+    -- The hover draw spacing, live (performance round 4, P2-1): a frame
+    -- capture tries 0.033 against 0.05-0.066 without a restart.
+    if verb == "hovergap" then
+        local v = tonumber(rest)
+        if v == nil or v < 0.016 or v > 0.5 then
+            return "usage: panel hovergap <seconds 0.016-0.5>, now " .. tostring(RB.HOVER_GAP)
+        end
+        RB.HOVER_GAP = v
+        return "hover draws at most every " .. v .. " s"
     end
 
     if verb == "lazyicons" then
@@ -6838,6 +6921,7 @@ function M.handle_click(cfg, dir)
     -- dropped valid clicks between maintenance beats despite that fresh proof.
 
     local what = hovered()
+    RB.kbd_focus = nil
 
     -- Says which of two very different failures is happening when a click
     -- does nothing. Reaching here at all means UE4SS saw the button, so the
@@ -6851,10 +6935,9 @@ function M.handle_click(cfg, dir)
     end
 
     if what == nil then
-        -- A click on nothing still ends an edit, which is how "click away to
-        -- set it" is honoured when the click lands on empty panel. It takes
-        -- back an armed tile or Remove too (round 2, P3), like any other
-        -- input that is not the confirming one.
+        -- A click on nothing leaves an open edit alone: the box keeps its
+        -- number until Confirm or Esc. It takes back an armed tile or Remove
+        -- (round 2, P3), like any other input that is not the confirming one.
         if RB.armed ~= nil or pending_drop ~= nil then
             RB.armed, pending_drop = nil, nil
             announce("Cancelled. Nothing was changed.")
@@ -6881,8 +6964,9 @@ function M.apply(cfg, what, dir, from_mouse)
     if what.kind ~= "drop" then pending_drop = nil end
     if what.kind ~= "item" then RB.armed = nil end
     RB.reveal_rule = nil -- A newer explicit action supersedes a pending reveal.
-    -- A click is not the Enter that commits the search box (M.nav).
-    if from_mouse then RB.last_device, RB.search_dirty = "mouse", nil end
+    -- A click is not the Enter that commits the search box (M.nav), and
+    -- gives the highlight back to the pointer (RB.current_key).
+    if from_mouse then RB.last_device, RB.search_dirty, RB.kbd_focus = "mouse", nil, nil end
     -- The mouse put the selection on Confirm or Cancel, which go away with
     -- the editor; the row that was edited keeps it (round 2, P3).
     if (what.kind == "edit_save" or what.kind == "edit_cancel") and editing then
@@ -6905,7 +6989,7 @@ function M.apply(cfg, what, dir, from_mouse)
         -- Named for the input (round 3, accessibility P2-2); the keyboard
         -- reaches the box as a row above the items (P2-4).
         local by = RB.device(from_mouse)
-        announce(by == "pad" and "Press Y on an item to add a limit."
+        announce(by == "pad" and "Press Y (not A) on an item to add a limit."
             or (by == "keys" and "Press Enter on an item to add a limit. Up from the items reaches the search box.")
             or "Click an item to add a limit. Click the search box to search by name.")
         return true
@@ -7048,7 +7132,7 @@ function M.apply(cfg, what, dir, from_mouse)
                 and RB.status.highest(scheduler, guild, RB.stock.choices, what.item) or nil
             if type(most) ~= "number" then
                 RB.armed = nil
-                announce(name .. ": not added. Each base is counted alone; choose one with change base first.")
+                announce(name .. ": not added. Each base stops on its own count; choose one with change base first.")
                 return false
             end
             have, fullest = math.max(have, most), true
@@ -7068,6 +7152,7 @@ function M.apply(cfg, what, dir, from_mouse)
         local armed = RB.armed
         local same = armed and armed.item == what.item and armed.work == work
             and armed.guild == guild and armed.seed == seed
+            and (os.clock() - (armed.at or 0)) <= RB.ARM_S
         -- Right click never adds (round 2, P3): on an armed tile it takes
         -- the arm back, on any other it says which click does.
         if dir ~= nil and dir > 0 then

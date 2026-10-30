@@ -147,11 +147,11 @@ stock.StoneNew=50
 scheduler.last_storage_by_camp.base2={guild='guild',scope='camp',verified=true,pass=1,sampled_at=now,ttl=30}
 scheduler.last_totals_by_camp.base2={StoneNew=600,Stone01=18}
 draw()
-local line=assert(rendered('Storage: Base 1 of 2, counted alone - change base'), 'two-base label')
+local line=assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'), 'two-base label')
 -- Accessibility P2-1: the keyboard selection shows on "change base".
 local plain_tint=line.tint
 rule(); assert(panel.nav(cfg,'up') and selected().kind=='stock_scope'); draw()
-local focused=assert(rendered('> Storage: Base 1 of 2, counted alone - change base'), 'no caret on change base')
+local focused=assert(rendered('> Storage: Base 1 of 2, each base stops on its own count - change base'), 'no caret on change base')
 assert(focused.tint and plain_tint and (focused.tint.R~=plain_tint.R or focused.tint.B~=plain_tint.B),
     'change base keeps its plain tone when selected')
 panel.nav(cfg,'down'); draw()
@@ -159,7 +159,7 @@ panel.nav(cfg,'down'); draw()
 scheduler.last_storage_by_camp.base2.verified=false
 before=writes
 assert(not panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
-assert(notice()=='StoneNew: not added. Each base is counted alone; choose one with change base first.',
+assert(notice()=='StoneNew: not added. Each base stops on its own count; choose one with change base first.',
     'unpicked base with an uncounted base: '..tostring(notice()))
 assert(not rb.armed and writes==before)
 -- Every base counted: above the fullest one (600 at base2), not base1's 50.
@@ -175,9 +175,9 @@ data.StoneNew=nil
 -- A base the player picked seeds from its own count: base2, then base1.
 panel.set_screen('list'); draw()
 assert(panel.apply(cfg,{kind='stock_scope'},-1,true)); draw()
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'))
 assert(panel.apply(cfg,{kind='stock_scope'},-1,true)); draw()
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'))
 assert(panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
 assert(notice():find('add a limit of 100.',1,true), 'a picked base was not used: '..tostring(notice()))
 panel.escape(); draw()
@@ -189,9 +189,9 @@ package.loaded.net={epoch=5, request_stock=function() return true end,
 caps.is_client=true
 rb.stock_picked, rb.stock_camp=nil, nil
 draw()
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'), 'client label from net')
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'), 'client label from net')
 assert(not panel.apply(cfg,{kind='item',item='StoneNew'},-1,true)); draw()
-assert(notice()=='StoneNew: not added. Each base is counted alone; choose one with change base first.',
+assert(notice()=='StoneNew: not added. Each base stops on its own count; choose one with change base first.',
     'client seeded from a base nobody picked: '..tostring(notice()))
 caps.is_client=nil; package.loaded.net=net0
 scheduler.last_storage_by_camp.base2=nil; scheduler.last_totals_by_camp.base2=nil
@@ -429,7 +429,7 @@ local status=require('panel_status')
 assert(status.scope_label(nil)=='not counted yet')
 assert(status.scope_label({scope='camp', choices={}, label='Storage unavailable'})=='not counted yet')
 assert(status.scope_label({scope='camp', choices={'a'}, index=1})=='your base')
-assert(status.scope_label({scope='camp', choices={'a','b'}, index=2, label='Base 2 of 2'})=='Base 2 of 2, counted alone')
+assert(status.scope_label({scope='camp', choices={'a','b'}, index=2, label='Base 2 of 2'})=='Base 2 of 2, each base stops on its own count')
 assert(status.scope_label({scope='guild', choices={'a','b'}})=='All loaded bases in your guild')
 local sched={pass_id=4,
     last_storage_by_camp={a={pass=4,guild='g',scope='camp',verified=true,sampled_at=os.clock(),ttl=30},

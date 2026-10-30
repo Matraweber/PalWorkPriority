@@ -1427,6 +1427,14 @@ function M.watch_cursor()
     M.cursor_log_last = now
 end
 
+-- The shell takes the keyboard back, from a text box that had it (Escape in
+-- the panel's search box ends the typing). Resolved fresh, never kept.
+function M.focus_shell()
+    local _, _, fresh = M.resolve_owned()
+    if not fresh then return false end
+    return pcall(function() fresh:SetKeyboardFocus() end)
+end
+
 function M.reassert_input()
     if not M.open or M.vanilla_ui() ~= false then return false end
     local pc = api.player_controller()

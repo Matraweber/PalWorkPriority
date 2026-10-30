@@ -55,7 +55,7 @@ local function refresh(ticks,deliver)
     for _=1,ticks do network.tick(deliver);panel.refresh(cfg) end
 end
 refresh(15)
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'),'initial base never arrived')
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'),'initial base never arrived')
 assert(network.client().storage_view('guild-A',nil).totals.Stone01==27867)
 assert(rendered('27,867'),'live-matched Base 1 count did not reach panel')
 assert(panel.command(cfg,'click stock_scope'):find('true',1,true))
@@ -66,13 +66,13 @@ refresh(15,false)
 assert(built[#built]=='camp-B','real panel replaced requested Base 2 with Base 1 while pending')
 assert(not network.client().storage_view('guild-A','camp-B').verified)
 network.drain();panel.refresh(cfg)
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'),'delayed reply did not select Base 2')
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'),'delayed reply did not select Base 2')
 assert(rendered('777'),'Base 2 count did not reach real panel')
 refresh(10)
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'),'maintenance reverted Base 2')
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'),'maintenance reverted Base 2')
 assert(panel.click_named(cfg,'stock_scope',nil,-1):find('true',1,true))
 panel.refresh(cfg);refresh(15)
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'),'selector did not wrap to Base 1')
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'),'selector did not wrap to Base 1')
 -- Native callbacks queue the action; intervening refreshes must not change it.
 local queued={}
 ExecuteInGameThread=function(fn)queued[#queued+1]=fn end
@@ -87,7 +87,7 @@ refresh(15,false)
 assert(built[#built]=='camp-B','queued named click lost Base 2 during pending redraws')
 network.drain();panel.refresh(cfg)
 assert(rendered('777'),'queued named click did not publish delayed Base 2')
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'))
 
 -- Live candidate 2: a verified Base 2 reply can have less than eight seconds
 -- left. Expiry removes quantities, not the user's selected/requested base.
@@ -116,13 +116,13 @@ network.advance(short.expires_at-os.clock())
 panel.refresh(cfg) -- UI observes the deadline even before the network heartbeat.
 assert(rendered('?') and not rendered('5,498'),'expired amount still looked current')
 assert(not network.client().storage_view('guild-A','camp-B').verified)
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'),
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'),
     'expiry removed the base selector header/action while counts became unknown')
 phase='unknown_no_camp'
 for _=1,100 do panel.refresh(cfg) end
 refresh(5) -- expire() clears the committed view and schedules bounded retry.
 assert(#phase_builds==1,'expiry caused an immediate refresh storm')
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'),
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'),
     'expiry heartbeat discarded selector metadata')
 -- The expired count keeps the 10 s poll already due for it (round 3: the
 -- poll used to restart from the expiry), so each phase below is one poll
@@ -146,7 +146,7 @@ local renewed=network.client().storage_view('guild-A','camp-B')
 assert(#phase_builds==4 and phase_builds[4].selected=='camp-B')
 assert(renewed.verified and renewed.camp=='camp-B' and renewed.index==2)
 assert(renewed.totals.Stone01==5499 and rendered('5,499'))
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'))
 for i=first_request,#network.sent do
     assert(network.sent[i]:match('|camp%-B$'),'expiry/unavailable renewal reverted to auto/Base 1')
 end
@@ -177,7 +177,7 @@ assert(not pending_a.verified and #pending_a.choices==0 and next(pending_a.total
 refresh(15)
 assert(network.sent[#network.sent]:match('|camp%-A$'),'expired physical selector did not request Base 1')
 assert(rendered('111') and not rendered('5,499'),'Base 1 borrowed expired Base 2 stock')
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'))
 
 -- Lose all but B on a background renewal. Absolute snapshot timeout must keep
 -- metadata usable while exposing no previous amounts or partial new counts.
@@ -187,13 +187,13 @@ network.drop()
 refresh(110,false);network.drop()
 panel.refresh(cfg)
 assert(not rendered('111'),'timed-out refresh left old totals looking verified')
-assert(rendered('Storage: Base 1 of 2, counted alone - change base'),
+assert(rendered('Storage: Base 1 of 2, each base stops on its own count - change base'),
     'snapshot timeout removed selector metadata')
 expired_header_click('camp-A')
 refresh(15)
 assert(network.sent[#network.sent]:match('|camp%-B$'),'timeout selector did not request Base 2')
 assert(rendered('5,499') and not rendered('111'),'timeout selector borrowed another base count')
-assert(rendered('Storage: Base 2 of 2, counted alone - change base'))
+assert(rendered('Storage: Base 2 of 2, each base stops on its own count - change base'))
 assert(network.client().status=='ready','storage expiry changed settings readiness')
 assert(writes==0,'storage selection wrote limits')
 assert(stale==0,'storage roundtrip touched stale widgets')

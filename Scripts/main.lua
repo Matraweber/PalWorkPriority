@@ -701,8 +701,10 @@ end
 -- 100ms - the number was a wish. And the gate meant a hover change forced a
 -- FULL redraw, so sweeping the pointer across five rows paid five 30-50ms
 -- draws it never paid before. Hover now lives on its own persistent 16ms
--- game-thread loop (see start_ui), which moves the highlight with two brush
--- writes and never draws.
+-- game-thread loop (see start_ui). Since 2026-10-29 that loop asks for one
+-- full draw when the pointer reaches another target, at most one per
+-- panel.lua's RB.HOVER_GAP (33 ms); IsHovered in that draw decides what is
+-- lit (performance review round 4, P3-5).
 local UI_BEAT = 100
 local body_owed = 0
 
@@ -758,9 +760,10 @@ local function start_ui()
     clock.start()
 
     -- The pointer's own loop: one persistent registration, 16ms, game
-    -- thread. This is the other half of the hover fix - the highlight moves
-    -- at frame rate through panel.hover_tick, which retints two rows and
-    -- draws nothing. The body above keeps redrawing on its 100ms deadline
+    -- thread. This is the other half of the hover fix: panel.hover_tick
+    -- reads the cursor against the last draw's map and, when the pointer
+    -- has reached another target, asks fill_tick for one draw (spaced by
+    -- RB.HOVER_GAP). The body above keeps redrawing on its 100ms deadline
     -- for data changes, exactly as before.
     --
     -- LoopInGameThreadWithDelay registers once and fires forever: no per-arm

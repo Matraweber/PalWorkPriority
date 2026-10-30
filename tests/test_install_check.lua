@@ -77,7 +77,7 @@ assert(text:find('Win64/dwmapi.dll found', 1, true) and text:find('If it is an o
 -- Other loaders use that file name too (round 2, 2026-10-29): the text names
 -- the condition rather than claiming it is UE4SS and ordering a delete.
 assert(not text:find('a second UE4SS is installed', 1, true) and text:find('Other mod loaders', 1, true), text)
-assert(check.short(found) == 'Pal/Binaries/Win64/dwmapi.dll found: if it is an old UE4SS, remove it (or disable UE4SS in Vortex).',
+assert(check.short(found) == 'Old UE4SS? Remove Pal/Binaries/Win64/dwmapi.dll.',
     check.short(found))
 
 -- Both problems and the Workshop conflict: every one in the log, the second

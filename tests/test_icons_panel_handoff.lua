@@ -48,6 +48,7 @@ assert(not timers.icons_pump and loads==1)
 -- more widget for every icon a session pinned, up to 400. Counted here as
 -- GetFullName calls in a settled refresh, the rescan's per-widget cost.
 local rb=assert(upvalue(panel.refresh,'RB'))
+local function up_objects() return rb.runtime.objects end
 local Widget=getmetatable(pin).__index
 local full,named=Widget.GetFullName,0
 Widget.GetFullName=function(self) named=named+1 return full(self) end
@@ -84,7 +85,17 @@ items_stub.prepare_picker=function() return {}, 'ready' end
 items_stub.search_picker=function() return {} end
 panel.set_screen('item'); panel.refresh(rb.cfg)
 assert(panel.apply(rb.cfg,{kind='toggle_all'},-1,true))
+-- Performance round 4, P3-1: a tile asks the shelf for its own pin, not
+-- for every child of it. Counted as GetChildAt calls on the shelf while
+-- the page draws its pictures from 51 pins.
+local child_at, on_shelf=Widget.GetChildAt, 0
+Widget.GetChildAt=function(self, i)
+    if rb.shelf_name and self==up_objects()[rb.shelf_name] then on_shelf=on_shelf+1 end
+    return child_at(self, i)
+end
 for _=1,6 do panel.refresh(rb.cfg) end
+Widget.GetChildAt=child_at
+assert(on_shelf>0 and on_shelf<=27, on_shelf..' shelf reads for one page of 27 tiles')
 local from_pin=0
 for id, tex in pairs(textures) do
     if pins[id] == nil then rb.read_shelf() end

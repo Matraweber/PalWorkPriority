@@ -34,9 +34,11 @@ local function up(fn,name)
 end
 local rb=assert(up(panel.refresh,'RB'))
 rb.SLICE=math.huge
--- The INFO notes that say why a map is or is not there.
-local notes={}
-package.loaded.log.info=function(m) notes[#notes+1]=m end
+-- The notes that say why a map is or is not there: debug, and INFO only
+-- for the map switching itself off (performance round 4, P3-4).
+local notes, info_notes={}, {}
+package.loaded.log.info=function(m) notes[#notes+1]=m; info_notes[#info_notes+1]=m end
+package.loaded.log.debug=function(m) notes[#notes+1]=m end
 local function noted(pat)
     for _,m in ipairs(notes) do if m:find(pat) then return m end end
 end
@@ -72,7 +74,10 @@ overlay.show = function(...)
 end
 local fitted
 function overlay.fit_width()
-    local h = math.max(220, math.min(700, math.floor(overlay.height or 700)))
+    -- 716, not 700, since the 42 px tile pitch (accessibility round 4,
+    -- P2-3): at 700 the viewport centre fell in the gap between two tiles,
+    -- and the parked-pointer case below needs a tile there.
+    local h = math.max(220, math.min(716, math.floor(overlay.height or 716)))
     overlay.parts.Backdrop.Slot.size = { X = overlay.width + 36, Y = h }
     fitted = { overlay.width + 36, h }
 end
@@ -170,9 +175,9 @@ package.loaded.palapi.cdo = function(path)
     return cdo(path)
 end
 
-local function surface(key) return up(rb.retint, 'stripes')[key] end
-local ROW_HOVER = assert(up(rb.retint, 'ROW_HOVER'))
-local function hovered() return up(rb.retint, 'hover_key') end
+local function surface(key) return up(rb.clear_widgets, 'stripes')[key] end
+local ROW_HOVER = assert(rb.TOKENS.ROW_HOVER)
+local function hovered() return up(rb.current_key, 'hover_key') end
 local function lit(key) local b = surface(key) return b and b.colour == ROW_HOVER end
 -- The cursor on the middle of a surface, from the Slate model.
 -- fy: how far down the surface, 0.5 by default.

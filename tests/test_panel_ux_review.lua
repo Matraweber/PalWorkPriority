@@ -89,7 +89,7 @@ panel.toggle(); panel.refresh(cfg)
 
 -- Key hints: both close keys, the host-only recheck and the mouse line.
 assert(rendered('ESC / ALT+F1'), 'close key hint missing')
-assert(rendered('ALT+F2 RECHECK NOW'), 'host recheck hint missing')
+assert(rendered('Alt+F2: recheck'), 'host recheck hint missing')
 -- The keys too (round 2): the arrows were never hinted. One footer per
 -- device since round 3 (P1-1), each true to its input
 -- (test_panel_round3.lua drives them); each fits the row.
@@ -106,11 +106,11 @@ assert(esc.Slot.position.X+#esc.text*13*0.76<=close.Slot.position.X-9, 'close ke
 local dm0=package.loaded.darnmenu
 package.loaded.darnmenu={labels={key_panel='ALT+F7',key_pass='ALT+F8'}}
 panel.refresh(cfg)
-assert(rendered('ESC / ALT+F7') and rendered('ALT+F8 RECHECK NOW'), 'rebound keys not named')
+assert(rendered('ESC / ALT+F7') and rendered('Alt+F8: recheck'), 'rebound keys not named')
 package.loaded.darnmenu=dm0
 caps.is_client=true
 panel.refresh(cfg)
-assert(not rendered('ALT+F2 RECHECK NOW'), 'client shown a recheck it cannot do')
+assert(not rendered('Alt+F2: recheck'), 'client shown a recheck it cannot do')
 assert(rendered(FOOT), 'client footer missing')
 caps.is_client=nil
 panel.refresh(cfg)
@@ -144,7 +144,7 @@ package.loaded.ui=ui0
 local status=require('panel_status')
 assert(select(3,status.save({state='error',error='session_not_admitting'}))
     =='Limits are not confirmed right now. Try again in a moment.')
-assert(select(3,status.save({state='connecting',error='handshake_timeout'})):find('did not answer',1,true))
+assert(select(3,status.save({state='connecting',error='handshake_timeout'})):find('does not run Pal Work Priority',1,true))
 assert(select(3,status.save({state='error',error='Disk write failed; retry pending'}))
     =='Disk write failed; retry pending', 'a sentence was replaced')
 
