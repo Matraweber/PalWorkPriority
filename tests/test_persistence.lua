@@ -136,6 +136,17 @@ do
     assert(count == 2 and meta.generation == 5 and meta.recovered, 'the cut copy was not the one read')
     assert(#warned == 1 and warned[1]:find('cut is shorter than its first line says: cut off by a crash or a sync tool',
         1, true), tostring(warned[1]))
+    -- Review round 5 (persistence P2-1): its recovery save used to remove the
+    -- full .bak and keep the cut copy in its place, so the third row (row9
+    -- in gen 4) was gone before anyone read the warning.
+    local full, cut_bytes = fs4.files['cut.bak'], fs4.files.cut
+    assert(full:find('^# PWP%-DATA 1 4 ') and full:find('\nrow9\n', 1, true))
+    assert(file.write('cut', 'row1\nrow2\n', meta.generation, rows))
+    assert(fs4.files['cut.bak'] == full, 'the full .bak was replaced by the cut copy')
+    assert(fs4.files['cut.rejected.6'] == cut_bytes, 'the cut copy was not kept aside')
+    -- The next save rotates as usual and keeps no further copy.
+    assert(file.write('cut', 'row1\nrow2\n', 6, rows))
+    assert(fs4.files['cut.bak']:find('^# PWP%-DATA 1 6 ') and fs4.files['cut.rejected.7'] == nil)
     -- A hand edit of the same length is still called an edit.
     warned = {}
     assert(file.write('same', 'row1\nrow2\n', 0))
@@ -143,6 +154,19 @@ do
     fs4.files.same = fs4.files.same:gsub('row3', 'row4')
     assert(file.read('same', rows) == 2)
     assert(#warned == 1 and warned[1]:find('was changed outside this version', 1, true), tostring(warned[1]))
+    -- Its save keeps the .bak too: one copy aside per edit, none after.
+    local older = fs4.files['same.bak']
+    assert(file.write('same', 'row1\nrow4\n', 2, rows))
+    assert(fs4.files['same.bak'] == older and fs4.files['same.rejected.3'])
+    assert(file.write('same', 'row1\nrow4\n', 3, rows))
+    assert(fs4.files['same.bak']:find('^# PWP%-DATA 1 3 ') and fs4.files['same.rejected.4'] == nil)
+    -- No .bak yet: the edit rotates to .bak as before.
+    assert(file.write('lone', 'row1\n', 0))
+    fs4.files.lone = fs4.files.lone:gsub('row1', 'row5')
+    local edited = fs4.files.lone
+    assert(file.read('lone', rows) == 1)
+    assert(file.write('lone', 'row5\n', 1, rows))
+    assert(fs4.files['lone.bak'] == edited and fs4.files['lone.rejected.2'] == nil)
     package.loaded.log.warn = function() end
 end
 
@@ -167,4 +191,8 @@ do
     assert(file.write('bom', 'row1\nrow2\nrow3\n', meta.generation, rows))
     assert(fs5.files['bom.bak'] == string.char(239, 187, 191) .. 'row1\nrow2\nrow3\n'
         and fs5.files['bom.rejected.' .. (meta.generation + 1)] == nil)
+    -- Review round 5 (persistence P3-2): that .bak keeps the mark, and a
+    -- fallback to it failed while the live file was cut mid-row.
+    fs5.files.bom = fs5.files.bom:sub(1, -3)
+    assert(file.read('bom', rows) == 3, 'a .bak with a byte order mark could not be read')
 end

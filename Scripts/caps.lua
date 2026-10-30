@@ -690,10 +690,13 @@ function M.apply_clear(work,item,guild)
     end
     -- Removed now, the guild row would bring the refused file's own limit
     -- back once that file is fixed, where a mask would have hidden it
-    -- (review round 4). Changing the row stays allowed.
+    -- (review round 4). Changing the row stays allowed. A file that does
+    -- not parse may set any limit, so every removal waits (review round 5).
     if not inherited and held_rules ~= nil and (held_rules == true
         or (type(held_rules[work]) == 'table' and held_rules[work][item] ~= nil)) then
-        M.error = "config.lua is rejected; fix it before removing this limit"
+        M.error = held_rules == true
+            and "config.lua does not load, so its limits are unknown; fix it before removing a limit"
+            or "config.lua is rejected; fix it before removing this limit"
         return false,'config_rejected'
     end
     if persistence then
