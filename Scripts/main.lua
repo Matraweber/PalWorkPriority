@@ -1810,6 +1810,16 @@ local function resolve_work(text)
     return workdefs.from_label(text)
 end
 
+-- The guild a typed command speaks for: this machine's own player's. A
+-- dedicated server has no player of its own, and my_guild there falls back
+-- to whichever controller a walk finds first, so a remote.txt `limit` was
+-- filed under a random player's guild (multiplayer round 4, P3-2). There it
+-- is nil, and the second value says why.
+local function own_guild()
+    if api.has_authority() == true and api.has_viewport() ~= true then return nil, "headless" end
+    return api.my_guild()
+end
+
 local function stock_across_camps()
     -- Reuse the same positively scoped evidence as the panel. Commands must
     -- not scan another guild's chests or present failed reads as zero stock.
@@ -1825,7 +1835,7 @@ local function stock_across_camps()
     if remote and not panel.open then
         return {}, false, "open the panel (Alt+F1) to see the server's counts", true
     end
-    local view = status.stock(cfg, scheduler, api.my_guild(), nil,
+    local view = status.stock(cfg, scheduler, own_guild(), nil,
         client, package.loaded.net)
     if remote and not view.verified then
         return {}, false, "waiting for the server's count; try again in a moment", true
@@ -1847,7 +1857,7 @@ local function match_stock_id(totals, wanted)
 end
 
 local function show_limits()
-    local all = caps.all(cfg, api.my_guild())
+    local all = caps.all(cfg, own_guild())
 
     local works = {}
     for work in pairs(all) do works[#works + 1] = work end
@@ -1936,14 +1946,20 @@ COMMANDS.limit = function(args)
     end
 
     run_now(function()
+        local guild, headless = own_guild()
+        if headless then
+            log.say("limits belong to a guild, and a dedicated server has no player of its own; "
+                .. "set them in Production Limits (Alt+F1) as a player of that guild")
+            return
+        end
         local totals, verified, scope = stock_across_camps()
         local id = match_stock_id(totals, item_text) or item_text
         local written, outcome
 
         if clearing then
-            written, outcome = caps.clear(work, id, api.my_guild())
+            written, outcome = caps.clear(work, id, guild)
         else
-            written, outcome = caps.set(work, id, ceiling, api.my_guild())
+            written, outcome = caps.set(work, id, ceiling, guild)
         end
         if not written then
             if outcome == "pending" then
@@ -2169,10 +2185,12 @@ local rule_budget = {}
 -- A client's transport sends one per join (net.poll, once the role is
 -- decided), and its stand grid may ask again for a pal caught later or for
 -- camps that had not streamed in. Each join or reconnect starts a new client
--- nonce. The first answered Hello of a new nonce is always served, so a
--- reconnect soon after a join is not left "connecting" for up to a minute
--- (round 3). HELLO_PER_CLIENT bounds one nonce; HELLO_CAP bounds a player who
--- keeps making new ones. Either way a loop is refused outright.
+-- nonce. HELLO_PER_CLIENT bounds one nonce and HELLO_CAP all of one player's
+-- in the window, new nonces included: a player who keeps making new ones is a
+-- loop too. Four is a join, two grid asks and one reconnect, so a reconnect
+-- soon after a join is served (round 3). A second reconnect inside the same
+-- minute waits, on the client's own Hello backoff, for the window to pass
+-- (round 4, P3-4: the comment here used to promise every new nonce).
 local HELLO_PER_CLIENT = 3
 local HELLO_CAP = 4
 local HELLO_WINDOW = 60.0
@@ -2386,6 +2404,12 @@ net.on_command = function(command, _, comp, command_token)
     local verb = parts[1]
 
     if verb == net.PREFIX .. "Hello" then
+        -- A confirmed Hello proves a player is connected, so the controller
+        -- walk may look again now instead of serving out a backoff earned
+        -- while the server was empty. The ClientRestart hook was meant to do
+        -- this, but on a dedicated server that is a client RPC and very
+        -- likely never runs here (test coverage round 4, Gap 3).
+        if api.pc_walk_retry then api.pc_walk_retry() end
 
         -- "I cannot tell yet" is not "you have nothing".
         --
@@ -2422,6 +2446,12 @@ net.on_command = function(command, _, comp, command_token)
         log.debug("a modded client said hello, rules sent")
         return
     end
+
+    -- A refused config.lua runs the mod on defaults and schedules nothing, so
+    -- an accepted edit would be confirmed and saved and then do nothing
+    -- (engine round 4, P2-1). net locks clients out first (net.server_lock
+    -- below); this refusal stands on its own for any path that reaches here.
+    if config_rejected then return false, "server_config_rejected" end
 
     -- Nothing below writes to disk, broadcasts, or runs a pass until the
     -- request has been checked. It used to do all three unconditionally on
@@ -2608,6 +2638,8 @@ end
 -- Hellos wait for the role decision: an R snapshot answering one sent before
 -- it was refused by on_snapshot below and thrown away (round 3).
 net.may_hello = function() return store.decided == true and store.is_client == true end
+-- While config.lua is refused, every client is told so and takes no edits.
+net.server_lock = function() if config_rejected then return "server_config_rejected" end end
 if net.set_version then net.set_version(VERSION) end
 
 -- Only complete, negotiated snapshots reach this callback.
@@ -2808,11 +2840,20 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
   if async_trial then async_trial.transition() end
   -- The last spawn's world key, read before begin() clears it.
   local was_world = session.world
+  -- A listen host respawning in its own world is still the server of it, and
+  -- its clients are still connected: dropping them all with nothing said left
+  -- every client "ready" until an edit timed out (multiplayer round 4, P3-3).
+  -- Only where this machine was the decided authority with modded clients;
+  -- any doubt (no key, another key) takes the full reset below.
+  local carry = net.carry_session ~= nil and store.decided == true and store.is_client == false
+      and next(net.clients or {}) ~= nil and type(was_world) == "string"
+      and was_world == api.world_key()
   session.begin(nil)
   store.set_role(nil, session.epoch)
   caps.set_role(nil, session.epoch)
   api.reset()
-  if net.begin_session then net.begin_session(session.epoch) end
+  if carry then net.carry_session(session.epoch)
+  elseif net.begin_session then net.begin_session(session.epoch) end
 
   -- Every line below runs under one pcall.
   --
@@ -2844,7 +2885,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", measurement.callba
             { "api", api.reset }, { "clock", clock.reset },
             { "scheduler", scheduler.forget }, { "demand", demandidx.reset },
             { "ui", ui.reset }, { "items", items.reset },
-            { "panel", panel.reset }, { "net", net.reset },
+            { "panel", panel.reset },
+            { "net", function() if not carry then net.reset() end end },
             { "overlay", overlay.reset },
         }) do
             local ok_step, err_step = pcall(step[2])

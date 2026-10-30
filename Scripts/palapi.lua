@@ -65,7 +65,10 @@ local pc_walk_misses = 0
 local pc_walk_next = 0
 local PC_WALK_PATIENCE = 5
 local PC_WALK_GAP = 10.0
-local PC_WALK_GAP_MAX = 120.0
+-- Thirty seconds, not two minutes (test coverage round 4, Gap 3): a player
+-- who joins an empty server waits at most this long for a write route, and
+-- a walk every 30 s costs about 0.7 ms a second on the GPortal server.
+local PC_WALK_GAP_MAX = 30.0
 
 -- Whether UEHelpers.GetGameInstance (a FindFirstOf on its first call) has
 -- already come back empty in this world. headless_game_instance explains it;
@@ -466,14 +469,20 @@ local function headless_game_instance()
     return gi
 end
 
--- A player just spawned on this machine (main.lua's ClientRestart hook on a
--- dedicated server), so a controller exists now: the next walk is not held
--- back by misses earned while the server was empty. Without this, the first
--- player after a long empty spell waited up to the two-minute cap before
+-- A player just joined this server (main.lua: a confirmed Hello, or the
+-- ClientRestart hook where it fires), so a controller exists now: the next
+-- walk is not held back by misses earned while the server was empty. Without
+-- this, the first player after a long empty spell waited up to the cap before
 -- the pass could find a controller, and so a write route.
+--
+-- The game instance search gets another try too. A dedicated server never
+-- runs api.reset (remote spawns return early in main), so one miss before the
+-- game instance existed switched that route off for the whole process
+-- (scheduler round 4, P3-5). This runs once per join, not per pass.
 function M.pc_walk_retry()
     pc_walk_misses = 0
     pc_walk_next = 0
+    gi_search_missed = false
 end
 
 function M.player_controller()
@@ -500,7 +509,7 @@ function M.player_controller()
                 pc_walk_misses = 0
             else
                 -- The gap doubles with every miss past the patience, up to
-                -- two minutes. A fixed 10 s never engaged on the GPortal
+                -- PC_WALK_GAP_MAX. A fixed 10 s never engaged on the GPortal
                 -- server (2026-10-29): its passes are 11.5 s apart, so every
                 -- pass walked the whole array to find no player. A hit resets
                 -- it, and so does a world change.

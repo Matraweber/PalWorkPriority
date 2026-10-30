@@ -73,6 +73,14 @@ walks = {}
 assert(api.latch_authority() == nil and walks.GameInstance == 1 and walks.PalGameMode == 1)
 walks = {}
 assert(api.latch_authority() == nil and walks.GameInstance == nil, 'the game instance search repeated after a miss')
+-- A dedicated server never runs api.reset, so one early miss switched the
+-- route off for the whole process (scheduler round 4, P3-5). A join gives it
+-- one more try, and a miss then switches it off again.
+api.pc_walk_retry()
+walks = {}
+assert(api.latch_authority() == nil and walks.GameInstance == 1, 'a join did not retry the game instance search')
+walks = {}
+assert(api.latch_authority() == nil and walks.GameInstance == nil, 'the retried search repeated after its miss')
 package.loaded.UEHelpers.GetGameInstance = function() walks.GameInstance = (walks.GameInstance or 0) + 1; return gi end
 api.reset()
 walks = {}

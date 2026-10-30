@@ -942,6 +942,8 @@ function M.settings_message()
             return 'Server settings are locked. The host must restart the game or server before editing can resume.'
         elseif net.status_reason=='settings_recovering' then
             return 'The server is loading saved settings. Priority and limit editing is temporarily locked.'
+        elseif net.status_reason=='server_config_rejected' then
+            return "The server's config.lua was rejected; ask the host."
         end
         return 'Server settings are unavailable. Priority and limit editing is locked.'
     end

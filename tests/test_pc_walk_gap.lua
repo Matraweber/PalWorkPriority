@@ -23,11 +23,13 @@ local ok, err = pcall(function()
         assert(api.player_controller() == nil)
         now = now + 11.5
     end
-    assert(walks <= 12, 'the walk did not back off: ' .. walks .. ' walks in 40 passes')
-    -- The gap stops growing at two minutes, so a player who joins is found.
+    assert(walks <= 18, 'the walk did not back off: ' .. walks .. ' walks in 40 passes')
+    -- The gap stops growing at 30 s (it was two minutes until round 4, Gap 3),
+    -- so a player who joins an empty server is found within half a minute:
+    -- every third pass at 11.5 s apart.
     walks = 0
     for _ = 1, 40 do api.player_controller(); now = now + 11.5 end
-    assert(walks >= 3 and walks <= 5, 'the gap did not settle at two minutes: ' .. walks)
+    assert(walks >= 12 and walks <= 15, 'the gap did not settle at 30 s: ' .. walks)
 
     -- A hit resets it: the next misses walk on every call again.
     found = live({})
@@ -57,4 +59,4 @@ local ok, err = pcall(function()
 end)
 os.clock = clock
 assert(ok, err)
-print('palapi: player controller walk backs off to two minutes, resets on a hit')
+print('palapi: player controller walk backs off to 30 s, resets on a hit')

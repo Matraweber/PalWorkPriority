@@ -225,6 +225,7 @@ function M.to_server(command, value, current)
     M.stats.owner_route = route
 
     local ok, err = pcall(function()
+        -- A new engine name per message; see to_client for why that stays.
         local name = FName(command)
         if current and not current() then return false end
         comp:Request_Server_int32(ZERO_GUID, name, value or 0)
@@ -281,6 +282,13 @@ function M.to_client(comp, message, current, authorize)
     if current and not current() then return false end
 
     local ok, err = pcall(function()
+        -- Every message becomes a new FName, and the engine never frees an
+        -- FName. Session nonces, request ids and revisions make nearly every
+        -- message text unique, so the name table grows for as long as the
+        -- process runs: about 0.9 MB an hour per open Production Limits
+        -- panel, on the server and on that client (multiplayer round 4,
+        -- P3-1). The RPC carries its payload in the name, so this transport
+        -- has no way around it; a server restart gives the memory back.
         local name = FName(message)
         if current and not current() then return false end
         -- Conversion can dispatch native callbacks. Prove storage ownership
@@ -628,6 +636,7 @@ function M.enable_deferred(enabled)
 end
 local hello_at, hello_tries = nil, 0
 local hello_failures = 0 -- sends that failed this session; see hello()
+local GUILD_CHECK, guild_checked_at = 5, nil -- see poll
 local ACK_TIMEOUT, COALESCE = 8, 0.10
 local durable_ack = { P = 0, R = 0 }
 M.SCHEMA = wire.SCHEMA
@@ -645,7 +654,7 @@ local recovery_retry_at,recovery_retries=nil,0
 -- handler errors and old peers' unknown reasons collapse to generic rejection.
 local rejection_reasons={unsupported_limit=true,no_active_legacy_rule=true,too_many_limits=true,
     rejected=true,handler_error=true,invalid_edit=true,request_id_reused=true,stale_request=true,
-    rate_limited=true}
+    rate_limited=true,server_config_rejected=true}
 local function rejection_reason(reason)
     return type(reason)=='string' and rejection_reasons[reason] and reason or 'rejected'
 end
@@ -718,6 +727,22 @@ end
 -- main owns the epoch and may call reset after begin_session in its reset list.
 function M.reset() return M.begin_session(M.epoch) end
 
+-- A listen host's own respawn in the same world (main's ClientRestart). The
+-- world and every client's connection to it go on, but begin_session emptied
+-- the client list and made a new server nonce without telling anybody, so
+-- clients stayed "ready" until an edit timed out (multiplayer round 4, P3-3).
+-- Keep the peers and the nonce and take the new epoch: whatever was in flight
+-- captured the old one and stops. Server-side state only; main calls this
+-- only where this machine was the decided authority with clients connected.
+function M.carry_session(epoch)
+    if deferred then deferred:close() end
+    deferred,deferred_jobs,deferred_order,deferred_bindings=nil,{},{},{}
+    command_context = nil
+    stock = { open=false, serial=0, jobs={}, order={}, later={} }
+    M.epoch = epoch
+    return M.local_nonce
+end
+
 -- Main sets this to "the role is decided and this is a client". A Hello sent
 -- before that was answered with an R snapshot that on_snapshot had to refuse,
 -- which threw the stream away and spent one of the server's announcements
@@ -745,6 +770,16 @@ function M.hello()
         set_status("connecting", "transport_unavailable")
     end
     return sent
+end
+
+-- A fresh join: a new nonce, nothing kept from the old one, one Hello. For a
+-- connected client whose server has stopped listing it (multiplayer round 4,
+-- P2-1). A new nonce, so no request or snapshot of the old join can settle
+-- against the new one, and the Welcome brings the guild the server sees now.
+function M.rejoin()
+    if api.has_authority() ~= false then return false end
+    M.begin_session(M.epoch)
+    return M.hello()
 end
 
 -- The stand grid asking again for the full pal table: a pal caught after the
@@ -791,12 +826,28 @@ local function peer_current(peer)
                 and peer.client==client and peer.guild==guild
         end
 end
+-- Main sets this to "a reason this server takes no edits", or nil. Today the
+-- one reason is a refused config.lua: the mod runs on defaults and schedules
+-- nothing, so a client that looked connected saw its edits confirmed and
+-- saved while nothing they set ever took effect (engine round 4, P2-1).
+M.server_lock = nil
+local function server_lock()
+    if not M.server_lock then return nil end
+    local ok, reason = pcall(M.server_lock)
+    if ok and reason == 'server_config_rejected' then return reason end
+    return nil
+end
 local function unavailable(comp,peer,current)
     current=current or peer_current(peer)
     if not current() then return true end -- invalidated: stop this operation
-    if not settings_gate.blocked() then return false end
-    local reason=settings_gate.status()=='restart_required'
-        and 'settings_restart_required' or 'settings_recovering'
+    local reason
+    if settings_gate.blocked() then
+        reason=settings_gate.status()=='restart_required'
+            and 'settings_restart_required' or 'settings_recovering'
+    else
+        reason=server_lock()
+        if not reason then return false end
+    end
     M.to_client(comp,wire.envelope('L',peer.server,peer.client,peer.guild)..'|'..reason,current)
     if not current() then return true end
     return true
@@ -1186,6 +1237,14 @@ function M.storage_tick()
     if stock.pending then
         if t-stock.pending.started < 20 then return end
         clear_stock_view(true); stock.due=t+10
+        -- The server answers no count for a peer it no longer lists (a guild
+        -- change it noticed in a push, or a pruned entry) and never says so.
+        -- Two in a row while connected: join again (multiplayer round 4, P2-1).
+        stock.missed = (stock.missed or 0) + 1
+        if stock.missed >= 2 and can_edit() then
+            log.say("the server answered no count twice; reconnecting to it")
+            M.rejoin(); return
+        end
     end
     if not interest or not receiver or interest.guild ~= receiver.guild
         or (stock.due and t < stock.due) then return end
@@ -1230,7 +1289,7 @@ local function receive_stock_state(message)
     -- a reference to the expired totals. Lifecycle/selection clears both.
     state.metadata = {epoch=event.epoch, guild=event.guild, session=event.session,
         client_session=event.client_session, storage={scope=view.scope,camp=view.camp,choices=view.choices}}
-    state.view, state.pending, state.due = event, nil, now()+10
+    state.view, state.pending, state.due, state.missed = event, nil, now()+10, 0
     if pending.refresh then
         state.due = stock_soon()
         -- Possibly built before the edit: its verdict lives only until the
@@ -1271,6 +1330,42 @@ function M.command_guild(token, comp, epoch)
     return c.guild
 end
 
+-- One entry per join, and every reconnect is a new join under a new
+-- transmitter name. Entries left only after three pushes to everybody missed
+-- them, and pushes follow accepted edits, so a long-running server with many
+-- reconnects and few edits filled all 128 and refused every new modded player
+-- until a restart (multiplayer round 4, P2-2). At the cap, and only there, one
+-- component scan names the joins still connected and the rest go. A scan that
+-- cannot see even the sender is not trusted: the entry heard from longest ago
+-- makes room instead, and if that one was still connected, its next Hello
+-- makes it a new entry.
+local MAX_PEERS = 128
+local function prune_peers(sender)
+    local live, trusted, list = {}, false, nil
+    pcall(function() list = FindAllOf("PalNetworkBaseCampComponent") end)
+    for _, c in ipairs(list or {}) do
+        if api.valid(c) then
+            local found = M.who(c)
+            if found then live[found] = true end
+            if found == sender then trusted = true end
+        end
+    end
+    if trusted then
+        for who in pairs(M.clients) do
+            if not live[who] then M.clients[who] = nil end
+        end
+    else
+        local oldest, at = nil, nil
+        for who, peer in pairs(M.clients) do
+            if at == nil or (peer.at or 0) < at then oldest, at = who, peer.at or 0 end
+        end
+        if oldest then M.clients[oldest] = nil end
+    end
+    local count = 0
+    for _ in pairs(M.clients) do count = count + 1 end
+    return count
+end
+
 function M.receive_command(comp, command, value)
     -- A reentrant invocation invalidates the outer lookup, even if rejected.
     command_context = nil
@@ -1300,10 +1395,15 @@ function M.receive_command(comp, command, value)
         if not peer or peer.client ~= p[4] or peer.guild ~= guild then
             local count = 0
             for _ in pairs(M.clients) do count = count + 1 end
-            if not peer and count >= 128 then return false end
+            if not peer and count >= MAX_PEERS then count = prune_peers(name) end
+            if not peer and count >= MAX_PEERS then return false end
+            -- Revisions go on from the server's own count, not from 0: the
+            -- client may still hold snapshots from an entry pruned under it,
+            -- and a lower revision reads as stale there.
             peer = { server = M.local_nonce, client = p[4], guild = guild,
-                at = now(), acks = {}, order = {}, high = 0, revisions = { P = 0, R = 0 },
-                next_revision = { P = 0, R = 0 } }
+                at = now(), acks = {}, order = {}, high = 0,
+                revisions = { P = M.revisions.P, R = M.revisions.R },
+                next_revision = { P = M.revisions.P, R = M.revisions.R } }
         end
         challenge_serial = challenge_serial + 1
         local challenge = tostring(challenge_serial)
@@ -1866,10 +1966,13 @@ function M.receive_state(message)
     if not receiver or p[1] ~= "PWP_V2" or p[3] ~= receiver.server
         or p[4] ~= receiver.client or p[5] ~= receiver.guild then return false end
     if p[2]=='L' then
-        if #p~=6 or (p[6]~='settings_restart_required' and p[6]~='settings_recovering') then return false end
+        if #p~=6 or (p[6]~='settings_restart_required' and p[6]~='settings_recovering'
+            and p[6]~='server_config_rejected') then return false end
         if unavailable_reason=='settings_restart_required' then return true end
         unavailable_reason=p[6]
-        if unavailable_reason=='settings_recovering' and not recovery_retry_at then
+        -- A refused config.lua is retried like a recovery: the host can fix
+        -- the file and reload it without anybody reconnecting.
+        if unavailable_reason~='settings_restart_required' and not recovery_retry_at then
             recovery_retry_at=now()+math.min(30,5*2^recovery_retries)
         elseif unavailable_reason=='settings_restart_required' then recovery_retry_at=nil end
         wire.invalidate(receiver,'P');wire.invalidate(receiver,'R')
@@ -2020,7 +2123,7 @@ function M.poll()
     if api.has_authority() ~= false then return end
     local t = now()
     if unavailable_reason then
-        if unavailable_reason=='settings_recovering' and recovery_retry_at and t>=recovery_retry_at then
+        if unavailable_reason~='settings_restart_required' and recovery_retry_at and t>=recovery_retry_at then
             local retries=math.min(3,recovery_retries+1)
             local epoch=M.epoch
             M.begin_session(epoch) -- discard partial state; old packets have the old nonce
@@ -2028,6 +2131,21 @@ function M.poll()
             M.hello() -- only matching negotiation plus both snapshots can make ready
         end
         return -- terminal locks never initiate a retry
+    end
+    -- A guild change while connected (multiplayer round 4, P2-1). The panel
+    -- asks with the live guild, the transport holds the one the server
+    -- welcomed, and the server drops a peer whose guild moved without a word:
+    -- the panel said "Storage unavailable" and the first edit timed out after
+    -- 8 s. A Welcome for a new join carries the new guild. Every 5 s, a few
+    -- property reads on this machine's own controller.
+    if can_edit() and api.my_guild and (not guild_checked_at or t - guild_checked_at >= GUILD_CHECK) then
+        guild_checked_at = t
+        local ok, live = pcall(api.my_guild)
+        if ok and wire.token(live) and live ~= M.guild then
+            log.say("guild changed; reconnecting to the server")
+            M.rejoin()
+            return
+        end
     end
     if receiver and wire.expire(receiver, t) then set_status("connecting", "snapshot_timeout") end
     for _, entry in pairs(requests) do
