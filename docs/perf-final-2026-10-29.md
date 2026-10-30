@@ -98,8 +98,8 @@ On the client, the picker's hover follow drew once per tile change (12 extra dra
 
 ## Open
 
-- The hover offset learning can be misled by an instant pointer jump (the game's own
-  hovered answer lags one frame); seen twice as "contradicted itself" in a synthetic
-  sweep. A real mouse moves continuously. Follow-up: require two agreeing samples.
+- ~~The hover offset learning can be misled by an instant pointer jump~~: fixed on
+  2026-10-30 (5ce28a6, learning only from steady samples). In game: 12 redraws for 12
+  tile changes, no contradictions, offset 0,7 learned once, map stayed on.
 - No frame capture with the panel open exists.
 - The 2-3 frames per minute over 33 ms with the UI closed are not attributed.
