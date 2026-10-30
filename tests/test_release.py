@@ -187,7 +187,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(code, 0, out.getvalue())
         self.assertEqual(sorted(p.name for p in expected.iterdir()),
                          ["PalWorkPriority-1.2.3-manual.zip", "PalWorkPriority-1.2.3-release.json",
-                          "PalWorkPriority-1.2.3-workshop.zip"])
+                          "PalWorkPriority-1.2.3-server.zip", "PalWorkPriority-1.2.3-workshop.zip"])
         self.assertFalse((self.root / "build" / "release").exists(), "the old unversioned default is gone")
         self.assertEqual(release.build(self.root, None, self.pak, self.expected),
                          json.loads((expected / "PalWorkPriority-1.2.3-release.json").read_text(encoding="utf-8")))
@@ -295,6 +295,67 @@ class ReleaseTests(unittest.TestCase):
                                            "--pak-sha256", self.expected]), 1)
         self.assertIn("Rename-Item", err.getvalue())
 
+    def test_server_archive_is_the_mod_folder_with_scripts_and_enabled_txt(self):
+        # 2026-10-30 (round 4, onboarding P2-7): hosts had to re-zip the
+        # inside of Scripts from the manual archive.
+        result = release.build(self.root, self.output, self.pak, self.expected)
+        record = result["archives"]["server"]
+        self.assertEqual(record["file"], "PalWorkPriority-1.2.3-server.zip")
+        server = self.output / record["file"]
+        self.assertEqual(record["sha256"], release.sha256(server.read_bytes()))
+        listed = json.loads((self.output / "PalWorkPriority-1.2.3-release.json").read_text(encoding="utf-8"))
+        self.assertEqual(listed["archives"]["server"], record)
+        with zipfile.ZipFile(server) as s, zipfile.ZipFile(self.output / result["archives"]["workshop"]["file"]) as w:
+            self.assertEqual(sorted(s.namelist()), ["PalWorkPriority/Scripts/default_config.lua",
+                                                    "PalWorkPriority/Scripts/main.lua", "PalWorkPriority/enabled.txt"])
+            self.assertEqual(s.read("PalWorkPriority/enabled.txt"), b"")
+            for name in ("Scripts/main.lua", "Scripts/default_config.lua"):
+                self.assertEqual(s.read("PalWorkPriority/" + name), w.read(name), "the same bytes as the Workshop copy")
+            self.assertEqual(s.read("PalWorkPriority/Scripts/main.lua"), self.committed("Scripts/main.lua"))
+            for name in s.namelist():
+                self.assertEqual(s.getinfo(name).date_time, release.FIXED_TIME)
+                self.assertNotIn(".pak", name)
+
+    def test_verify_reproducible_records_the_second_build(self):
+        # 2026-10-30 (round 4, tooling P3-9): "a second build gave the same
+        # two hashes" had no file behind it.
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            code = release.main(["--root", str(self.root), "--pak", str(self.pak), "--pak-sha256", self.expected,
+                                 "--output", str(self.output), "--verify-reproducible"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("reproducible", out.getvalue())
+        record = json.loads((self.output / "PalWorkPriority-1.2.3-reproducible.json").read_text(encoding="utf-8"))
+        listed = json.loads((self.output / "PalWorkPriority-1.2.3-release.json").read_text(encoding="utf-8"))
+        self.assertTrue(record["identical"])
+        self.assertEqual(record["first"], listed["archives"])
+        self.assertEqual(record["second"], listed["archives"])
+        self.assertEqual(sorted(record["first"]), ["manual", "server", "workshop"])
+        self.assertEqual(record["source_commit"], listed["source_commit"])
+        self.assertEqual(sorted(p.name for p in self.output.iterdir()),
+                         ["PalWorkPriority-1.2.3-manual.zip", "PalWorkPriority-1.2.3-release.json",
+                          "PalWorkPriority-1.2.3-reproducible.json", "PalWorkPriority-1.2.3-server.zip",
+                          "PalWorkPriority-1.2.3-workshop.zip"], "the second build stays out of the output")
+
+    def test_verify_reproducible_records_and_refuses_a_difference(self):
+        real = release.archive_entries
+        calls = []
+
+        def drifting(payload, manifest, kind):
+            calls.append(kind)
+            entries = real(payload, manifest, kind)
+            if len(calls) > len(release.KINDS) and kind == "manual":  # the second build only
+                entries["drift.txt"] = b"build time"
+            return entries
+        with mock.patch.object(release, "archive_entries", drifting),                 mock.patch("sys.stderr", new_callable=io.StringIO) as err,                 mock.patch("sys.stdout", new_callable=io.StringIO):
+            code = release.main(["--root", str(self.root), "--pak", str(self.pak), "--pak-sha256", self.expected,
+                                 "--output", str(self.output), "--verify-reproducible"])
+        self.assertEqual(code, 1)
+        self.assertIn("a second build is not identical (manual)", err.getvalue())
+        record = json.loads((self.output / "PalWorkPriority-1.2.3-reproducible.json").read_text(encoding="utf-8"))
+        self.assertFalse(record["identical"])
+        self.assertNotEqual(record["first"]["manual"], record["second"]["manual"])
+        self.assertEqual(record["first"]["workshop"], record["second"]["workshop"])
+
     def test_unsafe_archive_paths_are_refused(self):
         with self.assertRaisesRegex(release.ReleaseFailure, "unsafe"):
             release.write_archive(Path(self.temp.name) / "bad.zip", {"../outside": b"no"})
@@ -332,7 +393,8 @@ class SourceGateTests(unittest.TestCase):
                 with self.subTest(distribution=kind), zipfile.ZipFile(Path(directory) / "out" / record["file"]) as archive:
                     install = Path(directory) / kind
                     archive.extractall(install)
-                    mod = install if kind == "workshop" else install / release.MANUAL_ROOT
+                    mod = {"workshop": install, "manual": install / release.MANUAL_ROOT,
+                           "server": install / release.SERVER_ROOT}[kind]
                     scripts = mod / "Scripts"
                     self.assertFalse((scripts / "config.lua").exists())
                     self.assertTrue((scripts / "default_config.lua").is_file())

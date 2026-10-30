@@ -1,10 +1,18 @@
-"""Build deterministic Workshop and manual archives from one clean source tree.
+"""Build deterministic Workshop, manual and server archives from one clean source tree.
 
 No native build or game access occurs. A reviewed, existing pak and its expected
-SHA-256 are required. Both archives carry the same logical manifest and identical
-Lua/asset bytes. Native widget compatibility remains a separate acceptance gate.
+SHA-256 are required. The Workshop and manual archives carry the same logical
+manifest and identical Lua/asset bytes. The server archive holds only
+PalWorkPriority/Scripts/* (the same bytes) and PalWorkPriority/enabled.txt: the
+folder a dedicated server's UE4SS Mods folder needs, without a pak. Native
+widget compatibility remains a separate acceptance gate.
 
   python tools/release.py --pak LogicMods/PalWorkPriority.pak --pak-sha256 <hash>
+                          [--verify-reproducible]
+
+--verify-reproducible builds a second time into a temporary folder and writes
+PalWorkPriority-<version>-reproducible.json next to the release manifest:
+both builds' archive hashes and whether they are identical (exit 1 when not).
 
 The tracked sources are packaged as committed at HEAD (git's blobs, read
 with git cat-file), not as they sit on disk: with eol=lf, git status does not
@@ -39,6 +47,8 @@ import zipfile
 
 MOD = "PalWorkPriority"
 MANUAL_ROOT = f"Mods/NativeMods/UE4SS/Mods/{MOD}/"
+SERVER_ROOT = f"{MOD}/"
+KINDS = ("workshop", "manual", "server")
 PAK_LOGICAL = f"LogicMods/{MOD}.pak"
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 ASSET_CLASS = "/Game/Mods/PalWorkPriority/UI/WBP_WorkRules.WBP_WorkRules_C"
@@ -227,6 +237,12 @@ def distribution_path(logical: str, kind: str) -> str:
 
 
 def archive_entries(payload: dict[str, bytes], manifest: dict, kind: str) -> dict[str, bytes]:
+    if kind == "server":
+        # The mod folder as a server's UE4SS Mods folder holds it: the Lua and
+        # the empty enabled.txt without which UE4SS does not start the mod.
+        entries = {SERVER_ROOT + name: value for name, value in payload.items() if name.startswith("Scripts/")}
+        entries[SERVER_ROOT + "enabled.txt"] = b""
+        return entries
     entries = {distribution_path(name, kind): value for name, value in payload.items()}
     manifest_name = "MANIFEST.json" if kind == "workshop" else MANUAL_ROOT + "MANIFEST.json"
     entries[manifest_name] = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode("utf-8")
@@ -371,7 +387,7 @@ def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> d
     output.mkdir(parents=True, exist_ok=True)
     result = {"version": manifest["version"], "source_commit": revision, "archives": {}}
     with tempfile.TemporaryDirectory(prefix=".pwp-release-", dir=output) as scratch:
-        for kind in ("workshop", "manual"):
+        for kind in KINDS:
             filename = f"{MOD}-{manifest['version']}-{kind}.zip"
             destination = output / filename
             entries = archive_entries(payload, manifest, kind)
@@ -383,7 +399,7 @@ def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> d
                     f"refusing to overwrite a different release: {destination}. Move the old folder aside "
                     f"(rename it, never delete it), then build again:\n  {move_aside_command(output, manifest['version'])}")
             result["archives"][kind] = {"file": filename, "sha256": sha256(staged.read_bytes())}
-        # Validate both distributions before publishing either file into the output folder.
+        # Validate every distribution before publishing any file into the output folder.
         for record in result["archives"].values():
             os.replace(Path(scratch) / record["file"], output / record["file"])
         manifest_path = Path(scratch) / "release.json"
@@ -392,19 +408,47 @@ def build(root: Path, output: Path | None, pak: Path, expected_sha256: str) -> d
     return result
 
 
+def verify_reproducible(root: Path, output: Path, pak: Path, expected_sha256: str, first: dict) -> dict:
+    """Build again into a temporary folder and record, next to the release
+    manifest, whether every archive came out byte-identical. A claim like
+    "a second build gave the same hashes" then has a file behind it."""
+    with tempfile.TemporaryDirectory(prefix="pwp-release-second-") as directory:
+        second = build(root, Path(directory), pak, expected_sha256)
+    record = {"version": first["version"], "source_commit": first["source_commit"],
+              "identical": second == first, "first": first["archives"], "second": second["archives"],
+              "second_source_commit": second["source_commit"]}
+    path = output.resolve() / f"{MOD}-{first['version']}-reproducible.json"
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp, path)
+    if not record["identical"]:
+        differ = sorted(kind for kind in first["archives"] if first["archives"][kind] != second["archives"].get(kind))
+        raise ReleaseFailure(f"a second build is not identical ({', '.join(differ) or 'source commit'}); "
+                             f"recorded in {path}")
+    return record
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path, help="default: build/release-<version>")
     parser.add_argument("--pak", type=Path)
     parser.add_argument("--pak-sha256", required=True)
+    parser.add_argument("--verify-reproducible", action="store_true",
+                        help="build again into a temporary folder and record the comparison")
     args = parser.parse_args(argv)
+    pak = args.pak or args.root / PAK_LOGICAL
     try:
-        result = build(args.root, args.output, args.pak or args.root / PAK_LOGICAL, args.pak_sha256)
+        result = build(args.root, args.output, pak, args.pak_sha256)
+        if args.verify_reproducible:
+            output = args.output if args.output is not None else default_output(args.root.resolve(), result["version"])
+            verify_reproducible(args.root, output, pak, args.pak_sha256, result)
     except (ReleaseFailure, OSError, subprocess.SubprocessError) as exc:
         print(f"RELEASE BLOCKED: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
+    if args.verify_reproducible:
+        print("reproducible: a second build gave the same archive hashes (recorded next to the release manifest)")
     return 0
 
 
