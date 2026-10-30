@@ -1523,7 +1523,10 @@ function M.work_suitability(w)
     local assign = work_text(w, "prop", "AssignDefineDataId")
     if assign then
         for part in pairs(M.ASSIGN_IGNORE) do
-            if assign:find(part, 1, true) then return nil, "ignored" end
+            -- true: a station that never takes a Pal, safe to remember. A
+            -- display name like "Idle" may become a real job under the same
+            -- id (a lab before research is picked), so it is asked again.
+            if assign:find(part, 1, true) then return nil, "ignored", true end
         end
         local mapped = M.STATION_SUIT[assign]
         if mapped then return workdefs.value(mapped) end

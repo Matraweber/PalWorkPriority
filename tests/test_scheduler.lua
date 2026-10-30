@@ -864,27 +864,29 @@ scheduler.forget()
 typed_calls = 0
 stats = scheduler.run_pass(config)
 assert(typed_calls == #works, "forget() kept remembered work types")
--- An ignored work (the egg incubator, Idle) is remembered as well and not
+-- An ignored station (the egg incubator) is remembered as well and not
 -- typed again on every pass (review round 4, performance P3-3); it still
--- counts as ignored, not untyped, and forget() starts over.
-works, work_keys = { {value = 4}, {ignored = true} }, {"w4", "egg"}
+-- counts as ignored, not untyped, and forget() starts over. An "Idle" name
+-- is asked again: the same work may become a real job later.
+works, work_keys = { {value = 4}, {ignored = true}, {idle = true} }, {"w4", "egg", "lab"}
 api.work_suitability = function(work)
     typed_calls = typed_calls + 1
-    if work.ignored then return nil, "ignored" end
+    if work.ignored then return nil, "ignored", true end
+    if work.idle then return nil, "ignored" end
     return work.value
 end
 scheduler.forget()
 typed_calls = 0
 stats = scheduler.run_pass(config)
-assert(typed_calls == 2, "first pass did not type both works")
+assert(typed_calls == 3, "first pass did not type every work")
 typed_calls = 0
 stats = scheduler.run_pass(config)
-assert(typed_calls == 0, "an ignored work was typed again (" .. typed_calls .. " calls)")
+assert(typed_calls == 1, "an ignored station was typed again, or Idle was remembered (" .. typed_calls .. " calls)")
 assert(seen[4] == 1, "the remembered generator did not reach its counter")
 scheduler.forget()
 typed_calls = 0
 stats = scheduler.run_pass(config)
-assert(typed_calls == 2, "forget() kept the ignored marker")
+assert(typed_calls == 3, "forget() kept the ignored marker")
 api.work_suitability = function(work) typed_calls = typed_calls + 1; return work.value end
 api.camp_works = function() return works, work_error end
 -- A throw while typing drops the station counts for the pass, nothing else.

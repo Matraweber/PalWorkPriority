@@ -26,6 +26,8 @@ for _, id in ipairs({ 'Stone', 'CopperOre', 'Pal_crystal_S', 'Coal', 'Sulfur', '
     assert(workdefs.rock_drop(id), id .. ' is not a rock drop')
 end
 assert(not workdefs.rock_drop('Thermal_Core') and not workdefs.rock_drop('AIcore'))
+-- They reach the picker as Mining at all (round-4 regression review, P3-3).
+for _, id in ipairs({ 'Chromium', 'MeteorDrop' }) do assert(workdefs.work_for_item(id) == 'Mining', id) end
 -- A cooked Sandwich is not mined because its id contains "sand".
 assert(workdefs.work_for_item('Sandwich') == 'EmitFlame', tostring(workdefs.work_for_item('Sandwich')))
 print('workdefs: look-alike ids are not base products; real ones keep their work')

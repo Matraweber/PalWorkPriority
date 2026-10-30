@@ -1344,19 +1344,19 @@ local function run_camp(cfg, camp, stats, prepare_stock)
         local typed = pcall(measured, "scheduler: work typing", function()
             for i, w in ipairs(got) do
                 local key = keys and keys[i] or nil
-                local v, reason = nil, nil
+                local v, reason, lasting = nil, nil, nil
                 local cached = key and known[key]
                 if cached == false then
                     reason = "ignored"
                 elseif cached ~= nil then
                     v = cached
                 else
-                    v, reason = api.work_suitability(w)
+                    v, reason, lasting = api.work_suitability(w)
                 end
                 types[i], reasons[i] = v, reason
                 if v ~= nil then
                     if key then fresh[key], memo[key] = v, v else keyless[v] = true end
-                elseif key and reason == "ignored" then
+                elseif key and reason == "ignored" and lasting == true then
                     memo[key] = false
                 end
             end

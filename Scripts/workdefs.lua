@@ -246,6 +246,8 @@ M.ITEM_WORK = {
     { "quartz",       "Mining" },
     { "crystal",      "Mining" },
     { "sand",         "Mining" },
+    { "chromium",     "Mining" }, -- Chromite deposits
+    { "meteordrop",   "Mining" }, -- meteorite rocks
 
     -- oil before anything that could swallow it
     { "oil",          "OilExtraction" },
