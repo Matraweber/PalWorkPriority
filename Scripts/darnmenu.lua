@@ -36,11 +36,12 @@ local USER_NAME = "PalWorkPriority_user"
 -- to set the same thing and a second thing to keep in step. The scalars are
 -- the ones with no in-game route at all, which is the gap worth closing.
 --
--- One exception (0.5.1): the work_priority NUMBERS that new Pals take with
--- use_work_priority_for_new_pals on. The stand sets one Pal's numbers; these
--- are the defaults behind every Pal, and before this they had no in-game
--- route. Only 1-5 is offered and only over a number: an X in config.lua
--- switches a job off for every Pal, which stays a config.lua decision.
+-- 0.5.1: the page covers config.lua as far as it can, so nothing has to be
+-- hand-edited (user's request 2026-11-10). work_priority's per-job default
+-- (1-5 or X) and chat_prefix joined the scalars. The stand sets one Pal's
+-- numbers and the Production Limits panel the limits; pal_overrides and the
+-- container class lists stay in config.lua. The page shows what config.lua
+-- says (M.register(base)), and a value saved here wins over it, as before.
 --
 -- live = false throughout, honestly. These are read when config loads, and the
 -- pass, the grid and the panel all capture what they need from it, so a change
@@ -81,6 +82,7 @@ return {
     item_limits_on_rocks = true,
     storage_scope = "camp",
     log_level = "info",
+    chat_prefix = "!pwp",
     key_panel = { key = "F1", modifiers = { "ALT" } },
     key_pass  = { key = "F2", modifiers = { "ALT" } },
     key_stock = { key = "F3", modifiers = { "ALT" } },
@@ -119,51 +121,39 @@ return {
           help = "The most Pals the mod puts on the same job." },
         { path = "min_suitability_rank", label = "Lowest work level to dedicate", kind = "number",
           integer = true, min = 1, max = 5, step = 1,
-          help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Edited Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game." },
+          help = "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Ranked Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game." },
         { path = "leave_unordered_pals_to_game", label = "Leave Pals with equal numbers to the game", kind = "bool",
           help = "A Pal whose jobs all have the same number is not steered; the game picks its work. X and production limits still apply." },
         { path = "use_work_priority_for_new_pals", label = "New Pals use default numbers", kind = "bool",
-          help = "A new Pal gets the numbers below for its jobs, as 0.4.1 did with config.lua. Switching this on gives them once to every Pal whose jobs all have the same number. Change a number on the stand and that Pal keeps yours." },
-        { subtitle = "Default numbers for new Pals (1 first, 5 last)" },
-        { path = "new_pal_priority_Transport", label = "Transporting", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Transporting. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_ProductMedicine", label = "Medicine Production", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Medicine Production. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Cool", label = "Cooling", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Cooling. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_GenerateElectricity", label = "Generating Electricity", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Generating Electricity. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Collection", label = "Gathering", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Gathering. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Handcraft", label = "Handiwork", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Handiwork. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_EmitFlame", label = "Kindling", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Kindling. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Watering", label = "Watering", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Watering. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Seeding", label = "Planting", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Planting. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Deforest", label = "Lumbering", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Lumbering. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_Mining", label = "Mining", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Mining. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_OilExtraction", label = "Oil Extraction", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Oil Extraction. A job that is X in config.lua stays X." },
-        { path = "new_pal_priority_MonsterFarm", label = "Farming", kind = "enum", values = { "1", "2", "3", "4", "5" },
-          dependsOn = "use_work_priority_for_new_pals",
-          help = "The number a new Pal gets for Farming. A job that is X in config.lua stays X." },
+          help = "A Pal the mod has not saved yet gets the numbers below. The first time this is on, Pals whose jobs all have the same number get them too, even ones you set equal. After that the stand's numbers are kept. A Pal whose jobs all end up equal is still left to the game." },
+        { subtitle = "Default numbers for new Pals (1 first, 5 last, X never)",
+          help = "These start as config.lua's work_priority. A value saved here replaces config.lua's." },
+        { path = "new_pal_priority_Transport", label = "Transporting", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Transporting while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_ProductMedicine", label = "Medicine Production", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Medicine Production while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Cool", label = "Cooling", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Cooling while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_GenerateElectricity", label = "Generating Electricity", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Generating Electricity while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Collection", label = "Gathering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Gathering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Handcraft", label = "Handiwork", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Handiwork while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_EmitFlame", label = "Kindling", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Kindling while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Watering", label = "Watering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Watering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Seeding", label = "Planting", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Planting while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Deforest", label = "Lumbering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Lumbering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_Mining", label = "Mining", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Mining while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_OilExtraction", label = "Oil Extraction", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Oil Extraction while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+        { path = "new_pal_priority_MonsterFarm", label = "Farming", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
+          help = "The number a new Pal gets for Farming while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
       },
     },
     {
@@ -198,11 +188,13 @@ return {
       },
     },
     {
-      title = "Logging",
+      title = "Logging and chat",
       options = {
         { path = "log_level", label = "Log detail", kind = "enum",
           values = { "debug", "info", "warn", "error" },
           help = "How much goes into priority.log. info is the normal amount, debug is a lot." },
+        { path = "chat_prefix", label = "Chat command prefix", kind = "text", maxLen = 32,
+          help = "!pwp by default. Typed in front of the mod's chat commands, as in \"!pwp help\"." },
       },
     },
   },
@@ -364,12 +356,12 @@ end
 -- The index is re-read every time the menu opens, so a freshly registered page
 -- appears without a restart. Failing is not worth shouting about: DarnMenu may
 -- simply not be installed, in which case both files are inert.
-function M.register()
+function M.register(base)
     local shared = M.shared_dir()
     if shared == nil then return false end
 
     local schema = shared .. "DarnMenu_schema_" .. SCHEMA_NAME .. ".lua"
-    if not write_if_changed(schema, SCHEMA_SOURCE) then return false end
+    if not write_if_changed(schema, M.schema_text(base)) then return false end
 
     local index_path = shared .. "DarnMenu_schema_index.lua"
     local names, recovered = names_of(read_table(index_path)), false
@@ -418,6 +410,7 @@ local KEYS = {
     item_limits_on_rocks = "boolean",
     storage_scope = "string",
     log_level = "string",
+    chat_prefix = "string",
 }
 
 -- A hotkey the player may have rebound, resolved to what RegisterKeyBind wants.
@@ -583,21 +576,28 @@ function M.apply(cfg)
         end
     end
 
-    -- The job numbers, only with the setting on and only over a number.
+    -- The jobs' default numbers: "1"-"5" or "X", or a number typed into the
+    -- file by hand. They replace config.lua's work_priority entry like any
+    -- other saved value; the numbers only rank with the setting on.
     for _, job in ipairs(M.NEW_PAL_JOBS) do
         local key = "new_pal_priority_" .. job
         local value = user[key]
         if value ~= nil then
-            local prio = type(value) == "string" and math.tointeger(tonumber(value)) or nil
+            local prio
+            if value == "X" then prio = false
+            elseif type(value) == "string" or type(value) == "number" then
+                prio = math.tointeger(tonumber(value))
+                if prio ~= nil and (prio < 1 or prio > 5) then prio = nil end
+            end
             local current = type(cfg.work_priority) == "table" and cfg.work_priority[job] or nil
-            if prio == nil or prio < 1 or prio > 5 then
+            if prio == nil then
                 log.warn("darnmenu: ignored \"" .. (options[key] and options[key].label or key) .. "\" = " ..
-                    tostring(value) .. " from Mods/shared/" .. USER_NAME .. ".lua (not 1-5); keeping " ..
+                    tostring(value) .. " from Mods/shared/" .. USER_NAME .. ".lua (not 1-5 or X); keeping " ..
                     tostring(current) .. " from config.lua")
-            elseif cfg.use_work_priority_for_new_pals == true and type(current) == "number" and current ~= prio then
+            elseif current ~= prio then
                 -- A copy: the table may be shared with what config.lua loaded.
                 local copy = {}
-                for k, v in pairs(cfg.work_priority) do copy[k] = v end
+                for k, v in pairs(type(cfg.work_priority) == "table" and cfg.work_priority or {}) do copy[k] = v end
                 copy[job] = prio
                 cfg.work_priority = copy
                 n = n + 1
@@ -610,6 +610,48 @@ function M.apply(cfg)
             "Mods/shared/" .. USER_NAME .. ".lua")
     end
     return n
+end
+
+-- The page with its defaults taken from config.lua (base: config.lua as
+-- loaded, before the menu's own values). Before 0.5.1 the page always showed
+-- the shipped values, so a player with Transport = 5 in config.lua saw 1
+-- (review 2026-11-10). A value the checks refuse keeps the shipped default.
+-- The menu's saved values are untouched: they still win over these.
+local function literal(value)
+    if type(value) == "boolean" then return tostring(value) end
+    if math.type(value) == "integer" then return string.format("%d", value) end
+    if type(value) == "string" then return string.format("%q", value) end
+    return nil
+end
+function M.schema_text(base)
+    if type(base) ~= "table" then return SCHEMA_SOURCE end
+    local configuration = require("configuration")
+    local text = SCHEMA_SOURCE
+    local function put(key, value)
+        local shown = literal(value)
+        if shown == nil then return end
+        local pattern = "\n    " .. key .. " = [^\n]-,\n"
+        local found = text:find(pattern)
+        if not found then return end
+        text = text:gsub(pattern, function() return "\n    " .. key .. " = " .. shown .. ",\n" end, 1)
+    end
+    for key, want in pairs(KEYS) do
+        local value = base[key]
+        if key == "max_pals_per_work_type" and value == nil then value = 0 end
+        local ok, valid = pcall(configuration.validate, { [key] = value })
+        if value ~= nil and type(value) == want and (ok and valid or (key == "max_pals_per_work_type" and value == 0)) then
+            put(key, value)
+        end
+    end
+    local wp = type(base.work_priority) == "table" and base.work_priority or {}
+    for _, job in ipairs(M.NEW_PAL_JOBS) do
+        local prio = wp[job]
+        if prio == false then put("new_pal_priority_" .. job, "X")
+        elseif math.tointeger(prio) and prio >= 1 and prio <= 5 then
+            put("new_pal_priority_" .. job, string.format("%d", prio))
+        end
+    end
+    return text
 end
 
 return M

@@ -34,10 +34,13 @@ return {
     run_on_world_load = true,
 
     -- Which jobs the mod manages. A whole number from 1 to 5 means managed,
-    -- false means X for every Pal. The numbers rank only with
+    -- false means X: no Pal does it unless that Pal has a number of its own
+    -- for it (set on the stand). The numbers rank only with
     -- use_work_priority_for_new_pals = true (below). Otherwise rank Pals on
     -- the stand, and a Pal you never ranked is left to the game
-    -- (leave_unordered_pals_to_game below).
+    -- (leave_unordered_pals_to_game below). With DarnMenu installed these
+    -- can also be set in game (ESC > Darn Mod Options); a value saved there
+    -- wins over this file.
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.
@@ -85,13 +88,15 @@ return {
     -- steers every Pal, as 0.4.1 did.
     leave_unordered_pals_to_game = true,
 
-    -- true: a new Pal gets the work_priority numbers above for its jobs, as
-    -- 0.4.1 did, and the mod steers it. The first launch with this on also
-    -- gives them once to every Pal whose jobs all have the same number (as
-    -- after a fresh install). X stays X. A number you set on the stand is
-    -- kept, equal numbers too. The numbers can also be set in game under
-    -- ESC > Darn Mod Options if DarnMenu is installed. false: a Pal with
-    -- equal numbers is left to the game.
+    -- true: a Pal the mod has not saved yet gets the work_priority numbers
+    -- above, as 0.4.1 did, and the mod steers it unless its jobs still all
+    -- have the same number (a one-job Pal, or jobs with equal numbers above).
+    -- The first launch with this on also gives them once to every Pal whose
+    -- jobs all have the same number, even ones you set equal, if the mod
+    -- was installed fresh (config-ranks.txt then records that it ran).
+    -- After that, numbers you set on the stand are kept, equal ones too.
+    -- false: new Pals start with every job equal (see
+    -- leave_unordered_pals_to_game).
     use_work_priority_for_new_pals = false,
 
     -- A reached Mining limit stops only the natural rocks whose main drop is
@@ -101,7 +106,7 @@ return {
     item_limits_on_rocks = true,
 
     -- Lowest work level to dedicate: the Pal's level for that job (the small
-    -- number on the job icon), not the 1-5 priority. Edited Pals only: a job
+    -- number on the job icon), not the 1-5 priority. Ranked Pals only: a job
     -- below this level is switched off for them. Pals with equal numbers are
     -- left to the game (see leave_unordered_pals_to_game). 1 means "can do
     -- the job at all"; raise it to stop level-1 pals clogging jobs a level-3

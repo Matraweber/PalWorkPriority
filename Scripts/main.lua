@@ -371,6 +371,14 @@ local function load_config(at_startup)
     -- validate sees it, so a value from the menu is checked by exactly the
     -- same rules as a value typed into the file. Absent DarnMenu, or absent a
     -- saved file, this changes nothing.
+    -- What config.lua itself says, before the menu's values go on top: the
+    -- page shows these as its defaults (darnmenu.register below).
+    local page_base = {}
+    for k, v in pairs(loaded) do page_base[k] = v end
+    if type(loaded.work_priority) == "table" then
+        page_base.work_priority = {}
+        for k, v in pairs(loaded.work_priority) do page_base.work_priority[k] = v end
+    end
     pcall(function() darnmenu.apply(loaded) end)
     local valid_cfg, cfg_error = configuration.validate(loaded)
     if not valid_cfg then
@@ -379,16 +387,16 @@ local function load_config(at_startup)
     end
     cfg = validate(loaded)
     caps.configure(cfg)
-    -- use_work_priority_for_new_pals: the config numbers unranked Pals take.
-    local ranks = nil
-    if cfg.use_work_priority_for_new_pals == true then
-        ranks = {}
-        for name, prio in pairs(cfg.work_priority or {}) do
-            local value = workdefs.value(name)
-            if value and type(prio) == "number" then ranks[value] = prio end
-        end
+    -- use_work_priority_for_new_pals: the numbers new Pals take. The X jobs
+    -- go to the store either way, so a capture stores them as X.
+    local ranks, xs = nil, {}
+    if cfg.use_work_priority_for_new_pals == true then ranks = {} end
+    for name, prio in pairs(cfg.work_priority or {}) do
+        local value = workdefs.value(name)
+        if value and prio == false then xs[value] = true end
+        if value and ranks and type(prio) == "number" then ranks[value] = prio end
     end
-    store.set_rank_defaults(ranks)
+    store.set_rank_defaults(ranks, xs)
     log.set_level(cfg.log_level)
     if not fallback and config_rejected then
         config_rejected = nil
@@ -399,7 +407,7 @@ local function load_config(at_startup)
     -- Written on every load, so an edit to the schema reaches the menu without
     -- anyone remembering to do it by hand. Idempotent: it only writes when the
     -- bytes differ.
-    pcall(function() darnmenu.register() end)
+    pcall(function() darnmenu.register(page_base) end)
     return true
 end
 
@@ -498,11 +506,6 @@ local function run_pass(reason, explicit)
         return
     end
 
-    -- use_work_priority_for_new_pals: once after it is switched on, Pals
-    -- whose jobs all have the same number take the config numbers. Test mode
-    -- changes nothing, so it waits. A no-op once done this launch.
-    if not cfg.dry_run then store.reconcile_rank_defaults(DIR .. "config-ranks.txt") end
-
     if not cfg.enabled then
         if explicit then
             log.say(reason .. ": disabled. Use '" .. cfg.chat_prefix .. " on' to enable")
@@ -536,6 +539,12 @@ local function run_pass(reason, explicit)
 
     -- Armed again, so a later switch-off sweeps again.
     restored_for_disabled = false
+
+    -- use_work_priority_for_new_pals: the first time it is on, a fresh
+    -- install's Pals whose jobs all have the same number take the default
+    -- numbers. Not while the mod is off or in test mode, which changes
+    -- nothing. A no-op once done this launch.
+    if not cfg.dry_run then store.reconcile_rank_defaults(DIR .. "config-ranks.txt") end
 
     -- One pass at a time.
     --

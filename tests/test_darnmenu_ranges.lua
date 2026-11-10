@@ -54,13 +54,15 @@ for path, entry in pairs(options) do
             end
         end
     elseif option.kind == 'enum' and path:find('^new_pal_priority_') then
-        -- A job's default number: written into work_priority, setting on only.
+        -- A job's default: written into work_priority, "X" as false, on or off.
         local job = path:sub(#'new_pal_priority_' + 1)
-        assert(option.dependsOn == 'use_work_priority_for_new_pals', path .. ' does not depend on the setting')
+        assert(option.dependsOn == nil, path .. ' is greyed out while the setting is off, but X applies then too')
         for _, value in ipairs(option.values) do
             enums = enums + 1
-            local cfg = apply({ use_work_priority_for_new_pals = true, [path] = value })
-            assert(#warnings == 0 and cfg.work_priority[job] == tonumber(value), path .. '=' .. value .. ' was not applied')
+            local want = tonumber(value)
+            if value == 'X' then want = false end
+            local cfg = apply({ [path] = value })
+            assert(#warnings == 0 and cfg.work_priority[job] == want, path .. '=' .. value .. ' was not applied')
         end
     elseif option.kind == 'enum' then
         for _, choice in ipairs(option.values) do
@@ -72,7 +74,7 @@ for path, entry in pairs(options) do
         end
     end
 end
-assert(numbers == 3 and enums == 8 + 13 * 5, 'schema options went missing: ' .. numbers .. ' numbers, ' .. enums .. ' choices')
+assert(numbers == 3 and enums == 8 + 13 * 6, 'schema options went missing: ' .. numbers .. ' numbers, ' .. enums .. ' choices')
 assert(options.interval_seconds.option.min == 5, 'Seconds between rechecks must start at 5')
 
 -- The page's own defaults are valid on their own.
@@ -105,9 +107,9 @@ for _, case in ipairs({
     assert(#warnings == 1 and warnings[1]:find(tostring(value), 1, true), key .. ' did not warn')
 end
 
--- The job numbers (0.5.1): every job but the inert Anyone, the shipped
--- numbers as the page defaults, ignored while the setting is off, never over
--- an X in config.lua, bad values skipped with a warning, config's table kept.
+-- The jobs' defaults (0.5.1): every job but the inert Anyone, the shipped
+-- numbers as the page's own defaults, "X" or a typed number accepted, bad
+-- values skipped with a warning, config.lua's table never changed in place.
 do
     local shipped = base().work_priority
     local listed = 0
@@ -119,23 +121,64 @@ do
         end
     end
     assert(listed == #darnmenu.NEW_PAL_JOBS and listed == 13)
+    -- Setting off: the value still replaces config.lua's (X must work then).
     local cfg, n = apply({ new_pal_priority_Transport = '5' })
-    assert(cfg.work_priority.Transport == 1 and n == 0 and #warnings == 0, 'applied with the setting off')
+    assert(cfg.work_priority.Transport == 5 and n == 1 and #warnings == 0, 'not applied with the setting off')
+    local cx = apply({ new_pal_priority_Watering = 'X' })
+    assert(cx.work_priority.Watering == false, 'X did not reach work_priority')
+    local typed = apply({ new_pal_priority_Mining = 2 })
+    assert(typed.work_priority.Mining == 2 and #warnings == 0, 'a number typed into the file was refused')
     local loaded = base()
-    darnmenu.user_settings = function() return { use_work_priority_for_new_pals = true, new_pal_priority_Mining = '2' } end
+    darnmenu.user_settings = function() return { new_pal_priority_Mining = '2' } end
     local same = loaded.work_priority
     darnmenu.apply(loaded)
     assert(loaded.work_priority.Mining == 2 and same.Mining == 4, "config.lua's table was changed in place")
-    for _, bad in ipairs({ '6', '0', 'X', 3, '2.5' }) do
-        local c, m = apply({ use_work_priority_for_new_pals = true, new_pal_priority_Transport = bad })
-        assert(c.work_priority.Transport == 1 and m == 1, 'bad job number ' .. tostring(bad) .. ' applied')
-        assert(#warnings == 1 and warnings[1]:find('"Transporting"', 1, true), 'bad job number did not warn')
+    for _, bad in ipairs({ '6', '0', 'x', 7, '2.5', true }) do
+        local c, m = apply({ new_pal_priority_Transport = bad })
+        assert(c.work_priority.Transport == 1 and m == 0, 'bad job value ' .. tostring(bad) .. ' applied')
+        assert(#warnings == 1 and warnings[1]:find('"Transporting"', 1, true), 'bad job value did not warn')
     end
+    -- A number on the page lifts an X from config.lua, like any saved value.
     local xcfg = base()
     xcfg.work_priority.Watering = false
-    darnmenu.user_settings = function() return { use_work_priority_for_new_pals = true, new_pal_priority_Watering = '2' } end
+    darnmenu.user_settings = function() return { new_pal_priority_Watering = '2' } end
     darnmenu.apply(xcfg)
-    assert(xcfg.work_priority.Watering == false, 'the page undid an X from config.lua')
+    assert(xcfg.work_priority.Watering == 2, 'a saved page value lost to config.lua')
+end
+
+-- The page shows config.lua (review 2026-11-10): its defaults come from the
+-- file as loaded; a value the checks refuse keeps the shipped default.
+do
+    local function page(base_cfg)
+        local chunk = assert(load(darnmenu.schema_text(base_cfg), '=page', 't', {}))
+        return chunk().defaults
+    end
+    assert(darnmenu.schema_text(nil) == darnmenu.schema_text(nil) and page(nil).new_pal_priority_Transport == '1')
+    local own = base()
+    own.work_priority.Transport, own.work_priority.Watering = 5, false
+    own.interval_seconds, own.use_work_priority_for_new_pals, own.chat_prefix = 30, true, '!w'
+    own.max_pals_per_work_type, own.storage_scope = nil, 'global'
+    local d = page(own)
+    assert(d.new_pal_priority_Transport == '5' and d.new_pal_priority_Watering == 'X', 'job defaults not from config.lua')
+    assert(d.interval_seconds == 30 and d.use_work_priority_for_new_pals == true and d.chat_prefix == '!w')
+    assert(d.max_pals_per_work_type == 0 and d.storage_scope == 'global', 'no limit or scope not shown')
+    assert(d.key_panel and d.key_panel.key == 'F1', 'a hotkey default was lost')
+    own.interval_seconds, own.log_level = 2, 'loud'
+    d = page(own)
+    assert(d.interval_seconds == 10 and d.log_level == 'info', 'a refused value reached the page')
+    local shipped = page(base())
+    for k, v in pairs(schema.defaults) do
+        if type(v) ~= 'table' then assert(shipped[k] == v, k .. ': the shipped config.lua does not give the shipped page') end
+    end
+end
+
+-- The chat prefix is on the page and checked like config.lua's.
+do
+    assert(options.chat_prefix and options.chat_prefix.option.kind == 'text')
+    local c = apply({ chat_prefix = '!w' })
+    assert(c.chat_prefix == '!w' and #warnings == 0)
+    c = apply({ chat_prefix = '' })
+    assert(c.chat_prefix == '!pwp' and #warnings == 1, 'an empty prefix was applied')
 end
 
 -- No user file: nothing changes and nothing is said.
@@ -151,7 +194,7 @@ assert(label('min_suitability_rank') == 'Lowest work level to dedicate')
 -- Review round 4, scheduler P2-1: the old help said a Pal below the level
 -- "may still do it", which is false for an edited Pal (the job is switched
 -- off) and says nothing about Pals with equal numbers (left to the game).
-assert(options.min_suitability_rank.option.help == "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Edited Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game.",
+assert(options.min_suitability_rank.option.help == "The Pal's work level for that job (the small number on the job icon), not the 1-5 priority. Ranked Pals only: a job below this level is switched off for them. Pals with equal numbers are left to the game.",
     'min_suitability_rank help: ' .. tostring(options.min_suitability_rank.option.help))
 assert(options.storage_scope.section == 'Production limits' and options.item_limits_on_rocks.section == 'Production limits')
 -- Review round 2: Off does not free X jobs, and a limit is when Pals stop.

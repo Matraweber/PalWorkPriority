@@ -444,23 +444,35 @@ local function async_candidate(data,baseline,key,capture)
     if r.state~='rejected' then M.state,M.error='error',r.reason or r.state end
     return false,r.state
 end
--- use_work_priority_for_new_pals (0.5.1): work value -> the config.lua number
--- a Pal you have not ranked takes, as in 0.4.1; nil while the setting is off.
--- Asked for on Nexus 2026-11-08: ranking every new Pal by hand was "a major
--- downgrade" from one set of defaults in config.lua.
+-- use_work_priority_for_new_pals (0.5.1): work value -> the default number a
+-- new Pal takes (config.lua's work_priority, or the DarnMenu page); nil while
+-- the setting is off. Asked for on Nexus 2026-11-08: ranking every new Pal by
+-- hand was "a major downgrade" from one set of defaults in config.lua.
 --
 -- Three places use it: a job with no stored number shows it (effective), a
--- fresh install's capture stores it instead of 1 (capture_baseline), and
--- switching the setting on gives it once to every Pal whose jobs all had the
--- same number (reconcile_rank_defaults). Stored numbers otherwise win. The
--- first build read every all-equal row as "not ranked" on every refresh, so
--- a player who set a Pal to 1 1 1 1 saw 3 3 4 4 (in-game test 2026-11-10).
+-- fresh install's capture stores it instead of 1 (capture_baseline), and the
+-- first time the setting is on, a fresh install's Pals whose jobs all had the
+-- same number take it once (reconcile_rank_defaults). Stored numbers
+-- otherwise win. The first build read every all-equal row as "not ranked" on
+-- every refresh, so a player who set a Pal to 1 1 1 1 saw 3 3 4 4 (in-game
+-- test 2026-11-10).
 M.rank_defaults = nil
-function M.set_rank_defaults(map) M.rank_defaults = map; M.rank_marker_done = false end
+-- Jobs that are X in config.lua or on the DarnMenu page: work value -> true.
+-- A capture stores them as X, setting on or off. Before 0.5.1 it stored 1, so
+-- on a fresh install an X in config.lua never held for any Pal (review
+-- 2026-11-10; the user chose to fix it in both cases).
+M.config_x = {}
+function M.set_rank_defaults(map, x)
+    M.rank_defaults, M.config_x = map, x or {}
+    M.rank_marker_done = false
+end
 
--- Unranked: two or more numbered jobs, all with the same number. That is a
--- fresh install's captured all-1 row, or all-equal set by hand: the rule of
--- scheduler_plan.unordered and the stand's same-number hint.
+-- Unranked: two or more stored numbers, all the same. Only the stored cells
+-- are seen, so this matches what the Pal showed only where every job it can
+-- do is stored: a fresh install's file (baseline), whose capture stores them
+-- all. A 0.4.1 or upgraded row stores only clicked cells; {Transport=5,
+-- Farming=5} with Handiwork unclicked showed Handiwork first (review
+-- 2026-11-10, P1), so the conversion never runs on those files.
 local function unranked(row)
     if type(row) ~= 'table' then return false end
     local seen, count = nil, 0
@@ -473,58 +485,76 @@ local function unranked(row)
     return count >= 2
 end
 
--- The marker file says whether the one-time conversion has run for the
--- current "on" period: converted=1 after it, converted=0 once the setting is
--- seen off, so switching it on again converts again. It is its own file so
--- priorities.txt keeps the format 0.5.0 reads.
+-- config-ranks.txt says the one-time conversion has run: converted=1. It is
+-- written once and never goes back, so equal numbers set by hand are kept
+-- even when the setting is switched off and on again (review 2026-11-10).
+-- Its own file, so priorities.txt keeps the format 0.5.0 reads. A hand edit
+-- may end the line with CR or spaces.
 local function decode_marker(text)
-    local v = text:match('^converted=([01])\n?$')
+    local v = text:match('^converted=([01])%s*$')
     if v then return v end
     return nil, 'invalid marker'
 end
-M.rank_marker_done, M.rank_marker_pending = false, false
+M.rank_marker_done, M.rank_marker_pending, M.rank_marker_retry_at = false, false, 0
+M.rank_converted = nil -- Pals converted this launch, for the stand's one-time notice
+local marker_warned = false
 
--- Once per launch on the machine that saves: brings the marker in step with
--- the setting, converting unranked Pals when it was just switched on. nil
--- means "not now, try again on a later pass"; a number is how many Pals
--- changed. The marker is written only after priorities.txt has saved.
-function M.reconcile_rank_defaults(marker)
+-- The machine that saves calls this on every pass; after the first answer it
+-- costs nothing. nil means "not now, try again on a later pass"; a number is
+-- how many Pals changed. The marker is written only after priorities.txt has
+-- saved, and a failed marker write is tried again (review 2026-11-10: it gave
+-- up for the session, so the next launch converted hand-set rows again).
+function M.reconcile_rank_defaults(marker, now)
     if M.rank_marker_done then return 0 end
+    if not M.rank_marker_pending and (M.rank_defaults == nil or not M.baseline) then
+        M.rank_marker_done = true
+        return 0
+    end
+    now = now or os.clock()
+    if now < M.rank_marker_retry_at then return nil end
     if activation_busy() or settings_gate.blocked() or persistence or persistence_blocked or retiring
         or not M.path or not M.decided or M.is_client or M.submit
         or M.state ~= 'saved' or dirty_at ~= nil then return nil end
     local current, meta = file.read(marker, decode_marker)
     if current == nil and meta.state ~= 'missing' then
         M.rank_marker_done = true
-        log.warn('config-ranks.txt is unreadable (' .. tostring(meta.error or meta.state)
-            .. '); Pals with equal numbers keep them. Delete the file to convert them again.')
+        log.warn('config-ranks.txt (next to config.lua) is unreadable (' .. tostring(meta.error or meta.state)
+            .. '); Pals with equal numbers keep them. Delete it and its .bak to convert them.')
         return 0
     end
-    local want = M.rank_defaults ~= nil and '1' or '0'
+    if current == '1' and not M.rank_marker_pending then
+        M.rank_marker_done = true
+        return 0
+    end
     local n = 0
-    if (current or '0') ~= want and want == '1' and not M.rank_marker_pending then
+    if not M.rank_marker_pending then
         for key, row in pairs(M.data) do
             if unranked(row) then
                 local touched = false
                 for value, p in pairs(row) do
-                    local to = M.rank_defaults[value]
-                    if type(p) == 'number' and to ~= nil and to ~= p then row[value] = to; touched = true end
+                    if type(p) == 'number' then
+                        local to = M.rank_defaults[value]
+                        if M.config_x[value] then to = false end
+                        if to ~= nil and to ~= p then row[value] = to; touched = true end
+                    end
                 end
                 if touched then changed(key); n = n + 1 end
             end
         end
         M.rank_marker_pending = true
-        log.info('use_work_priority_for_new_pals switched on: ' .. n .. ' Pal(s) whose jobs all had the same '
+        M.rank_converted = n
+        log.info('New Pals use default numbers, first time on: ' .. n .. ' Pal(s) whose jobs all had the same '
             .. 'number now use the default numbers (once; equal numbers set from now on are kept)')
         if n > 0 and not M.save() then return nil end
     end
-    if (current or '0') ~= want then
-        local ok, err = file.write(marker, 'converted=' .. want .. '\n', meta.generation or 0, decode_marker)
-        if not ok then
-            M.rank_marker_done = true
-            log.warn('could not write config-ranks.txt: ' .. tostring(err))
-            return n
+    local ok, err = file.write(marker, 'converted=1\n', meta.generation or 0, decode_marker)
+    if not ok then
+        M.rank_marker_retry_at = now + 30
+        if not marker_warned then
+            marker_warned = true
+            log.warn('could not write config-ranks.txt (next to config.lua), trying again: ' .. tostring(err))
         end
+        return nil
     end
     M.rank_marker_done, M.rank_marker_pending = true, false
     return n
@@ -725,9 +755,10 @@ function M.capture_baseline(key, capable, off)
     local row = {}
     for value in pairs(capable) do
         if valid(key, value, 1) then
-            -- With use_work_priority_for_new_pals on, the config number.
+            -- Unticked in the game, or X in config.lua: X. Otherwise the
+            -- default number with use_work_priority_for_new_pals on, else 1.
             local ranked = M.rank_defaults and M.rank_defaults[value]
-            if off[value] then row[value] = false else row[value] = ranked or 1 end
+            if off[value] or M.config_x[value] then row[value] = false else row[value] = ranked or 1 end
         end
     end
     if persistence then local data=candidate_data();data[key]=row;return async_candidate(data,M.baseline,key,true) end

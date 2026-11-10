@@ -1135,6 +1135,28 @@ local function reset_notice()
     return text
 end
 
+-- The one-time conversion of use_work_priority_for_new_pals, said once on
+-- the host's stand like the reset notice (review 2026-11-10: only
+-- priority.log had it, so Pals' numbers changed with no word).
+local convert_note = {}
+local function converted_notice()
+    local now = os.clock()
+    if convert_note.until_at then
+        if now <= convert_note.until_at and convert_note.generation == stand_lifecycle.generation then
+            return convert_note.text
+        end
+        return nil
+    end
+    local n = store.rank_converted
+    if math.type(n) ~= "integer" or n < 1 then return nil end
+    local text = string.format("Pal Work Priority: %d Pal(s) with equal numbers now use the default numbers "
+        .. "(New Pals use default numbers is on).", n)
+    if #text > M.LEGEND_MAX_CHARS then return nil end
+    convert_note.text, convert_note.until_at = text, now + M.RESET_NOTICE_SECONDS
+    convert_note.generation = stand_lifecycle.generation
+    return text
+end
+
 local function edit_presentation(key, work)
     local blocked=M.settings_message()
     if blocked then return "?","unknown",blocked end
@@ -1196,7 +1218,7 @@ end
 
 function M.legend_text()
     return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
-        or pak_message() or refused_notice() or reset_notice() or selection_issue() or M.config_message()
+        or pak_message() or refused_notice() or reset_notice() or converted_notice() or selection_issue() or M.config_message()
         or shared_edit_legend()
 end
 
