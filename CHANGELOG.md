@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 - unreleased
+## 0.5.1 - 2026-11-10
 
 A small release with one new option and two fixes from Nexus reports. All of
 it was tested in the game in singleplayer, at 1280x720 and 1920x1080. The
