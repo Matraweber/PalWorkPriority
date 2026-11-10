@@ -444,6 +444,45 @@ local function async_candidate(data,baseline,key,capture)
     if r.state~='rejected' then M.state,M.error='error',r.reason or r.state end
     return false,r.state
 end
+-- use_work_priority_for_new_pals (0.5.1): work value -> the config.lua number
+-- a Pal you have not ranked takes, as in 0.4.1; nil while the setting is off.
+-- Asked for on Nexus 2026-11-08: ranking every new Pal by hand was "a major
+-- downgrade" from one set of defaults in config.lua.
+M.rank_defaults = nil
+function M.set_rank_defaults(map) M.rank_defaults = map end
+
+-- Unranked: two or more numbered jobs, all with the same number. That is a
+-- fresh install's captured all-1 row, or all-equal set by hand: the rule of
+-- scheduler_plan.unordered and the stand's same-number hint.
+local function unranked(row)
+    if type(row) ~= 'table' then return false end
+    local seen, count = nil, 0
+    for _, p in pairs(row) do
+        if type(p) == 'number' then
+            if seen ~= nil and seen ~= p then return false end
+            seen, count = p, count + 1
+        end
+    end
+    return count >= 2
+end
+
+-- A stored number that stands for "not ranked", so the config number shows.
+local function adopts(row, value, p)
+    local defaults = M.rank_defaults
+    return defaults ~= nil and type(p) == 'number' and defaults[value] ~= nil and unranked(row)
+end
+
+-- The first edit to an unranked Pal keeps what it showed: its numbers become
+-- the config numbers before the clicked job changes. Without this, one click
+-- made the row ranked and every other job dropped back to the stored 1.
+local function adopt_defaults(row)
+    local defaults = M.rank_defaults
+    if defaults == nil or not unranked(row) then return end
+    for value, p in pairs(row) do
+        if type(p) == 'number' and defaults[value] ~= nil then row[value] = defaults[value] end
+    end
+end
+
 local function candidate_data()
     local out={};for key,row in pairs(M.data) do out[key]={};for value,prio in pairs(row) do out[key][value]=prio end end;return out
 end
@@ -573,10 +612,11 @@ function M.apply_set(key, value, prio)
     if settings_gate.blocked() then return false,'settings_recovering' end
     if M.is_client or not M.decided or not valid(key, value, prio)
         or (M.state == 'error' and dirty_at == nil) then return false end
-    if persistence then local data=candidate_data();data[key]=data[key] or {};data[key][value]=prio
+    if persistence then local data=candidate_data();data[key]=data[key] or {};adopt_defaults(data[key]);data[key][value]=prio
         return async_candidate(data,M.baseline,key,false) end
     if persistence_blocked then return false,'detached' end
     M.data[key] = M.data[key] or {}
+    adopt_defaults(M.data[key])
     M.data[key][value] = prio
     changed(key)
     return true -- accepted in memory; state remains "saving" until flush succeeds.
@@ -650,14 +690,17 @@ function M.capture_baseline(key, capable, off)
 end
 
 function M.effective(cfg, pal, work_name, work_value)
+    local stored = nil
     if pal.key and work_value then
-        local edit = M.get(pal.key, work_value)
-        if edit ~= nil then return edit end
+        stored = M.get(pal.key, work_value)
+        if stored ~= nil and not adopts(M.data[pal.key], work_value, stored) then return stored end
     end
     local overrides = cfg.pal_overrides or {}
     local entry = pal.name and overrides[pal.name] or nil
     if entry == nil and pal.species then entry = overrides[pal.species] end
     if type(entry) == 'table' and entry[work_name] ~= nil then return entry[work_name] end
+    -- An unranked row with use_work_priority_for_new_pals on: the config number.
+    if stored ~= nil then return M.rank_defaults[work_value] end
     if M.baseline then return nil end -- unknown baseline must not become permission.
     -- A Pal nobody edited reads as 1 for every managed job, so the scheduler
     -- leaves it to the game (scheduler_plan.unordered; user's decision
@@ -665,7 +708,10 @@ function M.effective(cfg, pal, work_name, work_value)
     -- which are X for everyone; its 1-5 ranking no longer steers untouched
     -- Pals (it sent a Lamball hauling past an empty ranch).
     local default = (cfg.work_priority or {})[work_name]
-    if type(default) == 'number' then return 1 end
+    if type(default) == 'number' then
+        local ranked = M.rank_defaults and work_value and M.rank_defaults[work_value]
+        return ranked or 1
+    end
     return default
 end
 

@@ -379,6 +379,16 @@ local function load_config(at_startup)
     end
     cfg = validate(loaded)
     caps.configure(cfg)
+    -- use_work_priority_for_new_pals: the config numbers unranked Pals take.
+    local ranks = nil
+    if cfg.use_work_priority_for_new_pals == true then
+        ranks = {}
+        for name, prio in pairs(cfg.work_priority or {}) do
+            local value = workdefs.value(name)
+            if value and type(prio) == "number" then ranks[value] = prio end
+        end
+    end
+    store.set_rank_defaults(ranks)
     log.set_level(cfg.log_level)
     if not fallback and config_rejected then
         config_rejected = nil

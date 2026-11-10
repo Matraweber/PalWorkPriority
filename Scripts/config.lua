@@ -34,9 +34,10 @@ return {
     run_on_world_load = true,
 
     -- Which jobs the mod manages. A whole number from 1 to 5 means managed,
-    -- false means X for every Pal. Which number does not matter: the numbers
-    -- below no longer rank anything. Rank Pals on the stand; a Pal you never
-    -- ranked is left to the game (leave_unordered_pals_to_game below).
+    -- false means X for every Pal. The numbers rank only with
+    -- use_work_priority_for_new_pals = true (below). Otherwise rank Pals on
+    -- the stand, and a Pal you never ranked is left to the game
+    -- (leave_unordered_pals_to_game below).
     --
     -- These are the internal names, not the in-game labels. The mapping is
     -- in workdefs.lua if you want the English names.
@@ -83,6 +84,12 @@ return {
     -- Give one job a different number and the mod steers that Pal. false
     -- steers every Pal, as 0.4.1 did.
     leave_unordered_pals_to_game = true,
+
+    -- true: a Pal you have not ranked (every job the same number, as after
+    -- install) uses the work_priority numbers above, as 0.4.1 did, and the mod
+    -- steers it. X stays X. Change a number on the stand and that Pal keeps
+    -- your numbers from then on. false: such a Pal is left to the game.
+    use_work_priority_for_new_pals = false,
 
     -- A reached Mining limit stops only the natural rocks whose main drop is
     -- that item (stone rocks for a Stone limit; ore keeps being mined).
