@@ -178,4 +178,34 @@ assert(store.capture_baseline("caught", { [T] = true, [M] = true, [W] = true }, 
 assert(store.data.caught[T] == 1 and store.data.caught[M] == 1 and store.data.caught[W] == false,
     "with the setting off a config X job was captured as 1")
 
+-- A briefly locked marker while the conversion waits for it: tried again,
+-- not given up (re-review P3-3).
+fresh({ cap = { [T] = 1, [M] = 1 } }, true); launch(ranks)
+fs.fault = function(op, path) return op == "rename" and path:find("config%-ranks") ~= nil end
+assert(store.reconcile_rank_defaults(MARKER, 100) == nil and store.rank_marker_pending)
+fs.fault = function(op, path) return op == "open" and path:find("^config%-ranks") ~= nil end
+assert(store.reconcile_rank_defaults(MARKER, 131) == nil and not store.rank_marker_done, "a locked marker gave up")
+fs.fault = nil
+assert(store.reconcile_rank_defaults(MARKER, 162) == 0 and marker() == "1" and store.rank_marker_done)
+
+-- A job that was X on a fresh install and is a number now: the Pals saved
+-- with X keep it, and the mod says how many, once (re-review P2-1).
+local XFILE = "config-x.txt"
+local function xlist() return fs.files[XFILE] and fs.files[XFILE]:match("x=([%d,]*)") end
+fresh({ cap = { [T] = 1, [W] = false }, other = { [T] = 2, [M] = 1 } }, true); launch(ranks)
+store.x_lifted = nil
+assert(store.reconcile_config_x(XFILE) == true and xlist() == tostring(W), "the X jobs were not kept")
+assert(store.x_lifted == nil, "a first launch reported a lifted X")
+store.set_rank_defaults(ranks, {}) -- Watering is a number now
+assert(store.reconcile_config_x(XFILE) == true and xlist() == "", "the new X list was not written")
+assert(store.x_lifted and store.x_lifted.pals == 1 and store.x_lifted.labels[1] == "Watering",
+    "lifting an X was not reported")
+assert(#warned >= 1 and warned[#warned]:find("Watering was X", 1, true))
+store.x_lifted = nil
+store.set_rank_defaults(ranks, {})
+assert(store.reconcile_config_x(XFILE) == true and store.x_lifted == nil, "reported twice")
+-- Upgraded files read X live: nothing kept, nothing said.
+fresh({ cap = { [T] = 1, [W] = false } }); launch(ranks)
+assert(store.reconcile_config_x(XFILE) == true and fs.files[XFILE] == nil)
+
 print("config ranks: new Pals take default numbers, fresh installs convert once, upgraded rows, X and hand-set numbers hold")

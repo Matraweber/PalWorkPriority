@@ -464,7 +464,7 @@ M.rank_defaults = nil
 M.config_x = {}
 function M.set_rank_defaults(map, x)
     M.rank_defaults, M.config_x = map, x or {}
-    M.rank_marker_done = false
+    M.rank_marker_done, M.x_done = false, false
 end
 
 -- Unranked: two or more stored numbers, all the same. Only the stored cells
@@ -516,6 +516,12 @@ function M.reconcile_rank_defaults(marker, now)
         or not M.path or not M.decided or M.is_client or M.submit
         or M.state ~= 'saved' or dirty_at ~= nil then return nil end
     local current, meta = file.read(marker, decode_marker)
+    if current == nil and meta.state ~= 'missing' and M.rank_marker_pending then
+        -- The rows are already converted and saved; giving up here let the
+        -- next launch convert hand-set rows again (re-review P3-3).
+        M.rank_marker_retry_at = now + 30
+        return nil
+    end
     if current == nil and meta.state ~= 'missing' then
         M.rank_marker_done = true
         log.warn('config-ranks.txt (next to config.lua) is unreadable (' .. tostring(meta.error or meta.state)
@@ -558,6 +564,81 @@ function M.reconcile_rank_defaults(marker, now)
     end
     M.rank_marker_done, M.rank_marker_pending = true, false
     return n
+end
+
+-- A fresh install saves an X job as X for every Pal it captures, and a
+-- stored X wins, so changing the job back to a number later leaves those
+-- Pals at X (re-review 2026-11-10, P2-1; the user chose to keep capturing X
+-- and to say so). config-x.txt keeps the X jobs of the last launch: when one
+-- of them is a number now, M.x_lifted says which and how many Pals still
+-- have X for it, once, for the log and the stand. Fresh installs only;
+-- elsewhere a config X is read live and lifting it simply works.
+local function decode_x(text)
+    local list = text:match('^x=([%d,]*)%s*$')
+    if list == nil then return nil, 'invalid x list' end
+    local set = {}
+    for n in list:gmatch('%d+') do set[tonumber(n)] = true end
+    return set
+end
+local function encode_x(set)
+    local values = {}
+    for value in pairs(set) do values[#values + 1] = value end
+    table.sort(values)
+    return 'x=' .. table.concat(values, ',') .. '\n'
+end
+M.x_done, M.x_retry_at, M.x_lifted = false, 0, nil
+function M.reconcile_config_x(path, now)
+    if M.x_done then return true end
+    if not M.baseline then M.x_done = true; return true end
+    now = now or os.clock()
+    if now < M.x_retry_at then return nil end
+    if activation_busy() or settings_gate.blocked() or persistence or persistence_blocked or retiring
+        or not M.path or not M.decided or M.is_client or M.submit
+        or M.state ~= 'saved' or dirty_at ~= nil then return nil end
+    local before, meta = file.read(path, decode_x)
+    if before == nil and meta.state ~= 'missing' then
+        M.x_retry_at = now + 30
+        return nil
+    end
+    local current = M.config_x or {}
+    if before then
+        local lifted, pals = {}, 0
+        for value in pairs(before) do
+            if not current[value] then lifted[#lifted + 1] = value end
+        end
+        table.sort(lifted)
+        if #lifted > 0 then
+            for _, row in pairs(M.data) do
+                for _, value in ipairs(lifted) do
+                    if row[value] == false then pals = pals + 1; break end
+                end
+            end
+            if pals > 0 then
+                local workdefs, labels = require('workdefs'), {}
+                for _, value in ipairs(lifted) do
+                    local name = workdefs.name(value)
+                    labels[#labels + 1] = name and workdefs.LABEL[name] or tostring(value)
+                end
+                M.x_lifted = { values = lifted, labels = labels, pals = pals }
+                log.warn(pals .. ' Pal(s) saved while ' .. table.concat(labels, ', ') .. ' was X still have X '
+                    .. 'for it. Change them on the Monitoring Stand.')
+            end
+        end
+    end
+    local changed_set = before == nil
+    if before then
+        for value in pairs(before) do if not current[value] then changed_set = true end end
+        for value in pairs(current) do if not before[value] then changed_set = true end end
+    end
+    if changed_set then
+        local ok = file.write(path, encode_x(current), meta.generation or 0, decode_x)
+        if not ok then
+            M.x_retry_at = now + 30
+            return nil
+        end
+    end
+    M.x_done = true
+    return true
 end
 
 local function candidate_data()

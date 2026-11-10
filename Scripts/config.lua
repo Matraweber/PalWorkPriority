@@ -35,7 +35,9 @@ return {
 
     -- Which jobs the mod manages. A whole number from 1 to 5 means managed,
     -- false means X: no Pal does it unless that Pal has a number of its own
-    -- for it (set on the stand). The numbers rank only with
+    -- for it (set on the stand). On a fresh install a Pal the mod saves while
+    -- a job is X keeps X for it, even if you change the job back here; the
+    -- stand says how many, and you change them there. The numbers rank only with
     -- use_work_priority_for_new_pals = true (below). Otherwise rank Pals on
     -- the stand, and a Pal you never ranked is left to the game
     -- (leave_unordered_pals_to_game below). With DarnMenu installed these

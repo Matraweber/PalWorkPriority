@@ -166,6 +166,12 @@ do
     own.interval_seconds, own.log_level = 2, 'loud'
     d = page(own)
     assert(d.interval_seconds == 10 and d.log_level == 'info', 'a refused value reached the page')
+    -- Values validate takes but the page cannot offer keep the shipped default;
+    -- config.lua's false for no limit shows as 0 (re-review P3-1, P3-2).
+    own.interval_seconds, own.min_suitability_rank, own.max_pals_per_work_type = 600, 6, false
+    d = page(own)
+    assert(d.interval_seconds == 10 and d.min_suitability_rank == 1, 'an out-of-range value reached the page')
+    assert(d.max_pals_per_work_type == 0, 'false for no limit did not show as 0')
     local shipped = page(base())
     for k, v in pairs(schema.defaults) do
         if type(v) ~= 'table' then assert(shipped[k] == v, k .. ': the shipped config.lua does not give the shipped page') end

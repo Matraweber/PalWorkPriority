@@ -37,7 +37,9 @@ and 0.5.1 players and servers can play together (not tested yet).
 - The stand legend no longer touches the last Pal row at 1920x1080 (report by
   CerbinTalYalas). It is a little thinner and leaves a gap at 720p and 1080p.
 - On a fresh install, a job that is X in `config.lua` is now X for every new
-  Pal. It was saved as 1. Pals saved before keep their numbers.
+  Pal. It was saved as 1. Pals saved before keep their numbers. A Pal saved
+  while a job is X keeps that X if you change the job back later. The stand
+  then says how many Pals that is, and you change them there.
 
 ## 0.5.0 - 2026-10-30
 

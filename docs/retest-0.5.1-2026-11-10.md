@@ -101,6 +101,21 @@ Not acted on, with reasons: a stored number already beats `pal_overrides`
 (scheduler P3-4) is false, the user file held only changed keys; async
 persistence never converts (not shipped).
 
+## Re-review of the fixes (persistence agent, 992927e)
+
+No P1; the claimed fixes held. Four findings, all confirmed and fixed with a
+test each (each test fails with its fix taken out):
+
+- **P2-1:** an X saved on a fresh install sticks to each Pal, while the help
+  said it could be undone. Texts corrected; `config-x.txt` keeps the last X
+  jobs and the stand says once "1 Pal(s) saved while Watering was X still
+  have X for it. Change them on the stand." Seen in game (staged: baseline
+  header, `x=2`, Pal Recruiter Watering X); the file then read `x=`.
+- **P3-1:** `max_pals_per_work_type = false` showed 3 on the page; now 0.
+- **P3-2:** page defaults validate but ignored the page's own ranges (600 s);
+  now the same `refusal` check as `apply`.
+- **P3-3:** a locked marker during a pending retry gave up; now retried.
+
 The user's further request: change config.lua in game. Answered by the page
 covering it (all settings but `pal_overrides` and the container lists), not
 by the mod rewriting config.lua.

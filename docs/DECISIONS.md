@@ -166,7 +166,10 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   On a fresh install every Pal is captured, and the capture stored 1 for a
   job that is X in `config.lua`, so that X never held for any saved Pal.
   Now it is X whether `use_work_priority_for_new_pals` is on or off. Pals
-  saved before keep their numbers. *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
+  saved before keep their numbers. The stored X wins later too, so lifting
+  the job's X leaves those Pals at X (re-review P2-1, user's choice to keep
+  it and say so): `config-x.txt` keeps the last launch's X jobs, and the log
+  and stand say once how many Pals still have X for a lifted job. *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
 - **2026-11-10 - The options page covers config.lua instead of the mod
   rewriting it (user asked for an in-game way).** The page shows
   `config.lua`'s values as its defaults (`darnmenu.register(base)`), a value

@@ -544,7 +544,11 @@ local function run_pass(reason, explicit)
     -- install's Pals whose jobs all have the same number take the default
     -- numbers. Not while the mod is off or in test mode, which changes
     -- nothing. A no-op once done this launch.
-    if not cfg.dry_run then store.reconcile_rank_defaults(DIR .. "config-ranks.txt") end
+    if not cfg.dry_run then
+        store.reconcile_rank_defaults(DIR .. "config-ranks.txt")
+        -- A job that was X and is a number now: say which Pals kept the X.
+        store.reconcile_config_x(DIR .. "config-x.txt")
+    end
 
     -- One pass at a time.
     --

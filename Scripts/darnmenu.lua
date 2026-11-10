@@ -129,31 +129,31 @@ return {
         { subtitle = "Default numbers for new Pals (1 first, 5 last, X never)",
           help = "These start as config.lua's work_priority. A value saved here replaces config.lua's." },
         { path = "new_pal_priority_Transport", label = "Transporting", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Transporting while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Transporting while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_ProductMedicine", label = "Medicine Production", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Medicine Production while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Medicine Production while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Cool", label = "Cooling", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Cooling while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Cooling while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_GenerateElectricity", label = "Generating Electricity", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Generating Electricity while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Generating Electricity while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Collection", label = "Gathering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Gathering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Gathering while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Handcraft", label = "Handiwork", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Handiwork while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Handiwork while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_EmitFlame", label = "Kindling", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Kindling while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Kindling while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Watering", label = "Watering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Watering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Watering while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Seeding", label = "Planting", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Planting while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Planting while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Deforest", label = "Lumbering", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Lumbering while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Lumbering while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_Mining", label = "Mining", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Mining while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Mining while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_OilExtraction", label = "Oil Extraction", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Oil Extraction while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Oil Extraction while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_MonsterFarm", label = "Farming", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
-          help = "The number a new Pal gets for Farming while New Pals use default numbers is on. X: a Pal with no number of its own for it never does it, on or off." },
+          help = "The number a new Pal gets for Farming while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
       },
     },
     {
@@ -635,12 +635,21 @@ function M.schema_text(base)
         if not found then return end
         text = text:gsub(pattern, function() return "\n    " .. key .. " = " .. shown .. ",\n" end, 1)
     end
+    -- The same check M.apply uses, so the page never offers a value it
+    -- would refuse (re-review P3-2: validate alone let 600 seconds through
+    -- a 5-300 range). config.lua spells "no limit" as nil or false.
+    local options = {}
+    for _, section in ipairs((M.schema() or {}).sections or {}) do
+        for _, option in ipairs(section.options or {}) do
+            if option.path then options[option.path] = option end
+        end
+    end
     for key, want in pairs(KEYS) do
         local value = base[key]
-        if key == "max_pals_per_work_type" and value == nil then value = 0 end
-        local ok, valid = pcall(configuration.validate, { [key] = value })
-        if value ~= nil and type(value) == want and (ok and valid or (key == "max_pals_per_work_type" and value == 0)) then
-            put(key, value)
+        if key == "max_pals_per_work_type" and (value == nil or value == false) then value = 0 end
+        if value ~= nil and type(value) == want then
+            local ok, why = pcall(refusal, key, value, options[key], configuration)
+            if ok and why == nil then put(key, value) end
         end
     end
     local wp = type(base.work_priority) == "table" and base.work_priority or {}

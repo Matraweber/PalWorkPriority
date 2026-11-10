@@ -1157,6 +1157,30 @@ local function converted_notice()
     return text
 end
 
+-- A job that was X on a fresh install is a number now, but the Pals saved
+-- while it was X keep X (store.reconcile_config_x). Said once, like above.
+local lifted_note = {}
+local function lifted_notice()
+    local now = os.clock()
+    if lifted_note.until_at then
+        if now <= lifted_note.until_at and lifted_note.generation == stand_lifecycle.generation then
+            return lifted_note.text
+        end
+        return nil
+    end
+    local lifted = store.x_lifted
+    if type(lifted) ~= "table" or math.type(lifted.pals) ~= "integer" or lifted.pals < 1 then return nil end
+    local text = string.format("Pal Work Priority: %d Pal(s) saved while %s was X still have X for it. "
+        .. "Change them on the stand.", lifted.pals, table.concat(lifted.labels or {}, ", "))
+    if #text > M.LEGEND_MAX_CHARS then
+        text = string.format("Pal Work Priority: %d Pal(s) still have X for jobs that are no longer X. "
+            .. "Change them on the stand.", lifted.pals)
+    end
+    lifted_note.text, lifted_note.until_at = text, now + M.RESET_NOTICE_SECONDS
+    lifted_note.generation = stand_lifecycle.generation
+    return text
+end
+
 local function edit_presentation(key, work)
     local blocked=M.settings_message()
     if blocked then return "?","unknown",blocked end
@@ -1218,7 +1242,7 @@ end
 
 function M.legend_text()
     return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
-        or pak_message() or refused_notice() or reset_notice() or converted_notice() or selection_issue() or M.config_message()
+        or pak_message() or refused_notice() or reset_notice() or converted_notice() or lifted_notice() or selection_issue() or M.config_message()
         or shared_edit_legend()
 end
 
