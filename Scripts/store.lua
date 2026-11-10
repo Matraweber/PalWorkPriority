@@ -448,8 +448,15 @@ end
 -- a Pal you have not ranked takes, as in 0.4.1; nil while the setting is off.
 -- Asked for on Nexus 2026-11-08: ranking every new Pal by hand was "a major
 -- downgrade" from one set of defaults in config.lua.
+--
+-- Three places use it: a job with no stored number shows it (effective), a
+-- fresh install's capture stores it instead of 1 (capture_baseline), and
+-- switching the setting on gives it once to every Pal whose jobs all had the
+-- same number (reconcile_rank_defaults). Stored numbers otherwise win. The
+-- first build read every all-equal row as "not ranked" on every refresh, so
+-- a player who set a Pal to 1 1 1 1 saw 3 3 4 4 (in-game test 2026-11-10).
 M.rank_defaults = nil
-function M.set_rank_defaults(map) M.rank_defaults = map end
+function M.set_rank_defaults(map) M.rank_defaults = map; M.rank_marker_done = false end
 
 -- Unranked: two or more numbered jobs, all with the same number. That is a
 -- fresh install's captured all-1 row, or all-equal set by hand: the rule of
@@ -466,21 +473,61 @@ local function unranked(row)
     return count >= 2
 end
 
--- A stored number that stands for "not ranked", so the config number shows.
-local function adopts(row, value, p)
-    local defaults = M.rank_defaults
-    return defaults ~= nil and type(p) == 'number' and defaults[value] ~= nil and unranked(row)
+-- The marker file says whether the one-time conversion has run for the
+-- current "on" period: converted=1 after it, converted=0 once the setting is
+-- seen off, so switching it on again converts again. It is its own file so
+-- priorities.txt keeps the format 0.5.0 reads.
+local function decode_marker(text)
+    local v = text:match('^converted=([01])\n?$')
+    if v then return v end
+    return nil, 'invalid marker'
 end
+M.rank_marker_done, M.rank_marker_pending = false, false
 
--- The first edit to an unranked Pal keeps what it showed: its numbers become
--- the config numbers before the clicked job changes. Without this, one click
--- made the row ranked and every other job dropped back to the stored 1.
-local function adopt_defaults(row)
-    local defaults = M.rank_defaults
-    if defaults == nil or not unranked(row) then return end
-    for value, p in pairs(row) do
-        if type(p) == 'number' and defaults[value] ~= nil then row[value] = defaults[value] end
+-- Once per launch on the machine that saves: brings the marker in step with
+-- the setting, converting unranked Pals when it was just switched on. nil
+-- means "not now, try again on a later pass"; a number is how many Pals
+-- changed. The marker is written only after priorities.txt has saved.
+function M.reconcile_rank_defaults(marker)
+    if M.rank_marker_done then return 0 end
+    if activation_busy() or settings_gate.blocked() or persistence or persistence_blocked or retiring
+        or not M.path or not M.decided or M.is_client or M.submit
+        or M.state ~= 'saved' or dirty_at ~= nil then return nil end
+    local current, meta = file.read(marker, decode_marker)
+    if current == nil and meta.state ~= 'missing' then
+        M.rank_marker_done = true
+        log.warn('config-ranks.txt is unreadable (' .. tostring(meta.error or meta.state)
+            .. '); Pals with equal numbers keep them. Delete the file to convert them again.')
+        return 0
     end
+    local want = M.rank_defaults ~= nil and '1' or '0'
+    local n = 0
+    if (current or '0') ~= want and want == '1' and not M.rank_marker_pending then
+        for key, row in pairs(M.data) do
+            if unranked(row) then
+                local touched = false
+                for value, p in pairs(row) do
+                    local to = M.rank_defaults[value]
+                    if type(p) == 'number' and to ~= nil and to ~= p then row[value] = to; touched = true end
+                end
+                if touched then changed(key); n = n + 1 end
+            end
+        end
+        M.rank_marker_pending = true
+        log.info('use_work_priority_for_new_pals switched on: ' .. n .. ' Pal(s) whose jobs all had the same '
+            .. 'number now use the default numbers (once; equal numbers set from now on are kept)')
+        if n > 0 and not M.save() then return nil end
+    end
+    if (current or '0') ~= want then
+        local ok, err = file.write(marker, 'converted=' .. want .. '\n', meta.generation or 0, decode_marker)
+        if not ok then
+            M.rank_marker_done = true
+            log.warn('could not write config-ranks.txt: ' .. tostring(err))
+            return n
+        end
+    end
+    M.rank_marker_done, M.rank_marker_pending = true, false
+    return n
 end
 
 local function candidate_data()
@@ -612,11 +659,10 @@ function M.apply_set(key, value, prio)
     if settings_gate.blocked() then return false,'settings_recovering' end
     if M.is_client or not M.decided or not valid(key, value, prio)
         or (M.state == 'error' and dirty_at == nil) then return false end
-    if persistence then local data=candidate_data();data[key]=data[key] or {};adopt_defaults(data[key]);data[key][value]=prio
+    if persistence then local data=candidate_data();data[key]=data[key] or {};data[key][value]=prio
         return async_candidate(data,M.baseline,key,false) end
     if persistence_blocked then return false,'detached' end
     M.data[key] = M.data[key] or {}
-    adopt_defaults(M.data[key])
     M.data[key][value] = prio
     changed(key)
     return true -- accepted in memory; state remains "saving" until flush succeeds.
@@ -679,7 +725,9 @@ function M.capture_baseline(key, capable, off)
     local row = {}
     for value in pairs(capable) do
         if valid(key, value, 1) then
-            if off[value] then row[value] = false else row[value] = 1 end
+            -- With use_work_priority_for_new_pals on, the config number.
+            local ranked = M.rank_defaults and M.rank_defaults[value]
+            if off[value] then row[value] = false else row[value] = ranked or 1 end
         end
     end
     if persistence then local data=candidate_data();data[key]=row;return async_candidate(data,M.baseline,key,true) end
@@ -693,20 +741,19 @@ function M.effective(cfg, pal, work_name, work_value)
     local stored = nil
     if pal.key and work_value then
         stored = M.get(pal.key, work_value)
-        if stored ~= nil and not adopts(M.data[pal.key], work_value, stored) then return stored end
+        if stored ~= nil then return stored end
     end
     local overrides = cfg.pal_overrides or {}
     local entry = pal.name and overrides[pal.name] or nil
     if entry == nil and pal.species then entry = overrides[pal.species] end
     if type(entry) == 'table' and entry[work_name] ~= nil then return entry[work_name] end
-    -- An unranked row with use_work_priority_for_new_pals on: the config number.
-    if stored ~= nil then return M.rank_defaults[work_value] end
     if M.baseline then return nil end -- unknown baseline must not become permission.
     -- A Pal nobody edited reads as 1 for every managed job, so the scheduler
     -- leaves it to the game (scheduler_plan.unordered; user's decision
     -- 2026-10-27). config.work_priority only says which jobs are managed and
     -- which are X for everyone; its 1-5 ranking no longer steers untouched
-    -- Pals (it sent a Lamball hauling past an empty ranch).
+    -- Pals (it sent a Lamball hauling past an empty ranch), unless
+    -- use_work_priority_for_new_pals asks for it.
     local default = (cfg.work_priority or {})[work_name]
     if type(default) == 'number' then
         local ranked = M.rank_defaults and work_value and M.rank_defaults[work_value]

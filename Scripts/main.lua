@@ -498,6 +498,11 @@ local function run_pass(reason, explicit)
         return
     end
 
+    -- use_work_priority_for_new_pals: once after it is switched on, Pals
+    -- whose jobs all have the same number take the config numbers. Test mode
+    -- changes nothing, so it waits. A no-op once done this launch.
+    if not cfg.dry_run then store.reconcile_rank_defaults(DIR .. "config-ranks.txt") end
+
     if not cfg.enabled then
         if explicit then
             log.say(reason .. ": disabled. Use '" .. cfg.chat_prefix .. " on' to enable")

@@ -85,10 +85,13 @@ return {
     -- steers every Pal, as 0.4.1 did.
     leave_unordered_pals_to_game = true,
 
-    -- true: a Pal you have not ranked (every job the same number, as after
-    -- install) uses the work_priority numbers above, as 0.4.1 did, and the mod
-    -- steers it. X stays X. Change a number on the stand and that Pal keeps
-    -- your numbers from then on. false: such a Pal is left to the game.
+    -- true: a new Pal gets the work_priority numbers above for its jobs, as
+    -- 0.4.1 did, and the mod steers it. The first launch with this on also
+    -- gives them once to every Pal whose jobs all have the same number (as
+    -- after a fresh install). X stays X. A number you set on the stand is
+    -- kept, equal numbers too. The numbers can also be set in game under
+    -- ESC > Darn Mod Options if DarnMenu is installed. false: a Pal with
+    -- equal numbers is left to the game.
     use_work_priority_for_new_pals = false,
 
     -- A reached Mining limit stops only the natural rocks whose main drop is
