@@ -108,6 +108,11 @@ local cell_text_count = 0       -- bounded ownership registry; never evict live 
 -- Which menu instance those TextBlocks were injected into. See live_menu.
 local menu_name = nil
 local cell_last = {}            -- cell full name -> last style token written
+-- cell full name -> last tooltip text written. UMG builds a new Slate tooltip
+-- on every SetToolTipText and closes the one being shown, so writing it on
+-- every refresh closed a hovered tooltip after a second or two (Nexus report
+-- 2026-11-10). Cleared with cell_last.
+local cell_tip = {}
 local cell_cb = {}              -- cell full name -> the checkbox's own visibility
 local edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
 local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like cell_text
@@ -353,6 +358,7 @@ local function invalidate_cells(rebound)
     -- more; cells are resolved inside the call that uses them.
     cell_row = {}
     cell_last = {}
+    cell_tip = {}
     inject_epoch = inject_epoch + 1
 end
 
@@ -1364,6 +1370,13 @@ local function same_number(cfg, pal, ranks)
     return same
 end
 
+-- Only a changed text is written (cell_tip above).
+local function set_tooltip(cell, cell_name, text)
+    if cell_name and cell_tip[cell_name] == text then return end
+    local ok = pcall(function() cell:SetToolTipText(make_ftext(text)) end)
+    if cell_name then cell_tip[cell_name] = ok and text or nil end
+end
+
 -- The cell back to the game: its checkbox, no receiver, no number, and no
 -- tooltip of ours unless the tooltip is where the legend lives.
 local function give_back(cell, cell_name)
@@ -1372,7 +1385,7 @@ local function give_back(cell, cell_name)
     cell_paths[cell_name] = hint
     if existing and alive(existing) then set_cell(existing, cell_name, "", "blank") end
     local tip = M.legend_mode == "tooltip" and M.legend_text() or ""
-    pcall(function() cell:SetToolTipText(make_ftext(tip)) end)
+    set_tooltip(cell, cell_name, tip)
     if not restore_checkbox(cell, cell_name) then return "failed" end
     return "vanilla"
 end
@@ -1450,7 +1463,7 @@ local function handle_cell(cfg, cell, known_name)
             set_cell(existing, cell_name, "", "blank")
         end
         -- Recycled rows must not carry another Pal's edit error on a vanilla dash.
-        pcall(function() cell:SetToolTipText(make_ftext("")) end)
+        set_tooltip(cell, cell_name, "")
         if not restore_checkbox(cell, cell_name) then return "failed" end
         return
     end
@@ -1501,7 +1514,7 @@ local function handle_cell(cfg, cell, known_name)
         .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
     if known and same_number(cfg,pal,ranks) then help=help.."\n"..M.SAME_NUMBER_HINT end
     if locked then help=locked end
-    pcall(function() cell:SetToolTipText(make_ftext(help)) end)
+    set_tooltip(cell, cell_name, help)
     if M.selection and M.selection.key == pal.key and M.selection.work == t then glyph = "[" .. glyph .. "]" end
     local result = set_cell(tb, cell_name, glyph, colour)
     local shown, visible = pcall(function() return tb:SetVisibility(3) end)

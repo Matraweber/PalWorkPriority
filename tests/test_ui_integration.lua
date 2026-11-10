@@ -60,7 +60,7 @@ local function fixture(keys)
         end
         function o:SetColorAndOpacity(v) fresh(); self.colour=v end
         function o:SetBrushColor(v) fresh(); self.brush=v end
-        function o:SetToolTipText(v) fresh(); self.tooltip=v end
+        function o:SetToolTipText(v) fresh(); self.tooltip=v; self.tooltip_writes=(self.tooltip_writes or 0)+1 end
         function o:SetFont(v) fresh(); self.Font=v end
         function o:SetJustification() fresh() end
         function o:SetShadowOffset() fresh() end
@@ -1778,6 +1778,32 @@ end)
 
 -- Round 4 (performance P3-2): every cell's tooltip carries the edit legend,
 -- and building it asks the scheduler for its count. It is built once.
+-- Nexus 2026-11-10: every SetToolTipText builds a new Slate tooltip and
+-- closes the one shown, so a refresh that changes nothing must write none.
+check('a refresh that changes nothing writes no tooltip',function()
+    local f=fixture({'a','b','c'})
+    local scheduler=package.loaded.scheduler
+    local count={2,5,3}
+    package.loaded.scheduler={steering_count=function() return count[1],count[2],count[3] end}
+    local ok,err=pcall(function()
+        f.authority=true
+        for _,row in ipairs(f.rows) do f.bind(row) end
+        assert(f.ui.refresh(f.cfg))
+        local function writes() local n=0; for _,c in ipairs(f.cells) do n=n+(c.tooltip_writes or 0) end; return n end
+        local before=writes()
+        assert(before>0,'the first refresh wrote no tooltip')
+        assert(f.ui.refresh(f.cfg))
+        assert(writes()==before,'an unchanged refresh wrote '..(writes()-before)..' tooltips')
+        -- A changed text is written: the steering count is in every tooltip.
+        count={3,5,2}
+        assert(f.ui.refresh(f.cfg))
+        assert(writes()>before,'a changed tooltip was not written')
+        assert(f.cells[1].tooltip:find('Steering 3 of 5',1,true),f.cells[1].tooltip)
+    end)
+    package.loaded.scheduler=scheduler; f.authority=false
+    assert(ok,err)
+end)
+
 check('one refresh builds the edit legend once, not once per cell',function()
     local f=fixture({'a','b','c'})
     local scheduler=package.loaded.scheduler
