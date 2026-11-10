@@ -4,8 +4,9 @@
 
 A small release with one new option and two fixes from Nexus reports. All of
 it was tested in the game in singleplayer, at 1280x720 and 1920x1080. The
-server was not tested with 0.5.1. Its network protocol is unchanged, so 0.5.0
-and 0.5.1 players and servers can play together (not tested yet).
+network protocol is unchanged, so 0.5.0 and 0.5.1 players and servers play
+together: tested on a dedicated server with a 0.5.1 player on a 0.5.0
+server, 0.5.1 on 0.5.1, and a 0.5.0 player on a 0.5.1 server.
 
 ### New
 

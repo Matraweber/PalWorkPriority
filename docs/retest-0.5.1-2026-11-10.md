@@ -116,6 +116,33 @@ test each (each test fails with its fix taken out):
   now the same `refusal` check as `apply`.
 - **P3-3:** a locked marker during a pending retry gave up; now retried.
 
+## Dedicated server (GPortal "RAM", 1 base, 9 Pals, 2026-11-10)
+
+Joined with `restart-server-stand.ahk --launch --any-guild`; each time the
+client log showed "synchronization: client; ready" and one edit (Vixy's
+Gathering 1 -> 2, then back) was applied by the server ("priority Collection
+set to 2 by a player", Vixy fenced to Farming, then left to the game again).
+
+| Client | Server | Joined | Edit applied |
+| --- | --- | --- | --- |
+| 0.5.1 | 0.5.0 (86a76e4) | 16:29:29 | yes |
+| 0.5.1 | 0.5.1 (f5e45ee) | 16:50:51 | yes |
+| 0.5.0 (master) | 0.5.1 (f5e45ee) | 17:01:33 | yes, no version warning |
+
+- Server install: `ftp_session.py` install of `pwp-server-scripts-f5e45ee.zip`
+  as tag `f5e45ee-c`, "verified: all 60 files read back identical" after six
+  dropped transfers were retried. Server log: "Pal Work Priority 0.5.1 loaded",
+  `PWP_READY version=0.5.1`. Rollback target for 0.5.0:
+  `Scripts-before-f5e45ee-b`.
+- Two earlier installs reported "already exists" because two FTP sessions
+  served the same queue (the user's `--save-login` run kept running); see
+  LESSONS. The server's settings were copied first to
+  `D:\PalWorkPriority-backups\server-before-0.5.1-*`.
+- Side effect: the server now stores Vixy's Gathering 1 explicitly (it was
+  unstored); the value is unchanged.
+- The FTP login had to be saved again: GPortal moved the server on
+  2026-11-03 (new FTP address), and the kept login timed out.
+
 The user's further request: change config.lua in game. Answered by the page
 covering it (all settings but `pal_overrides` and the container lists), not
 by the mod rewriting config.lua.

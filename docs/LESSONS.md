@@ -324,6 +324,18 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Tooling traps
 
+- **`ftp_session.py --save-login` keeps running as a session.** With a second
+  session started by the agent, both served the same queue: one installed,
+  the other found the fresh backup and wrote "already exists; nothing done"
+  over the good result (2026-11-10, twice). Before starting a session, list
+  processes for `ftp_session` (the WindowsApps Python is `python3.11.exe`).
+- **The stand macro needs the saved standing spot.** Walking two steps
+  closer to the stand on the server moved the saved position, and the next
+  launches' V press opened nothing. Do not move the character in test
+  worlds; if it moved, step back until the stand prompt shows.
+- **`schtasks /change` waits for a run-as password on stdin.** Without
+  `< /dev/null` it hung the shell until the tool limit (2026-11-10).
+
 - **`git status` hid CRLF on disk.** With `eol=lf`, 12 Lua files had CRLF in
   the working copy, so `release.py` packaged bytes no commit holds. Package
   from git blobs, not the disk (2026-10-29).
