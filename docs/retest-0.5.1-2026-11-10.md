@@ -143,6 +143,36 @@ set to 2 by a player", Vixy fenced to Farming, then left to the game again).
 - The FTP login had to be saved again: GPortal moved the server on
   2026-11-03 (new FTP address), and the kept login timed out.
 
+## Release (2026-11-10)
+
+- master fast-forwarded to 84c8f0b (CHANGELOG dated), tag `v0.5.1`, both
+  pushed with `dev-0.5.1`. `tools/release.py --verify-reproducible`: a second
+  build gave the same hashes.
+
+| Archive | SHA-256 |
+| --- | --- |
+| `PalWorkPriority-0.5.1-manual.zip` (Nexus main file) | `607fa8e8f8e89e6a0d5f2e03cc9ea3341265c871b129bb66f58a674f9151396f` |
+| `PalWorkPriority-0.5.1-workshop.zip` | `7e20c965f1b0c02439e1003c4b8a9a8a40bd219daef29994069d0f5c50ec0592` |
+| `PalWorkPriority-0.5.1-server.zip` (Nexus optional file) | `dda6c9b4d3c9e8a4c0bcb43f2eb89a91ad86317fea0f3b76c53580024bbd253d` |
+
+- **Steam Workshop:** `workshop_upload.py prepare` (67 files, change note
+  2439 bytes), `upload`; the user pressed OK at 17:10. The change notes page
+  shows "Update: 10 Nov @ 5:10pm" with the 0.5.1 section. `check` still said
+  NOT YET right after (Steam had not downloaded the update to this PC);
+  run it again before relying on the local copy.
+- **Nexus (mod 5376):** "Pal Work Priority 0.5.1" updated the 0.5.0 main file
+  in place (primary, 0.5.0 under previous files, not archived), mod version
+  0.5.1, six changelog lines. "Dedicated server files 0.5.1" updated the
+  optional server file (mod-manager download off).
+- **Store pages:** both descriptions changed in place for 0.5.1 (title, the
+  new option, updating from 0.5.0, the options page covering config.lua,
+  0.5.0 and 0.5.1 playing together; Nexus: Vortex wording without a
+  version). Checked on the public pages.
+- **Replies (user's request):** Nexus replies to CerbinTalYalas (tooltip and
+  legend fixed, the controls line kept, French client not tested) and to
+  valdacil (the new option, the one-time conversion on a clean install).
+- The GPortal server keeps 0.5.1 (user's decision).
+
 The user's further request: change config.lua in game. Answered by the page
 covering it (all settings but `pal_overrides` and the container lists), not
 by the mod rewriting config.lua.
