@@ -181,7 +181,14 @@ M.LEGEND_MAX_CHARS = 160
 -- the HUD (the weapon name at y 614 is the highest). In units that band is
 -- 159-193 above the bottom on any 16:9 or 16:10 screen, because the game
 -- scales by height and keeps both the stand and the HUD where they are.
-M.LEGEND_LIFT = 163
+-- At 1920x1080 (2026-11-10, reported on Nexus from a French client) that
+-- band held with no room left: the 30 px legend began on the pixel after
+-- the last row (row to y 886, legend y 887-916), so any change in text
+-- height put it on the row. The backing's top and bottom padding went from
+-- 3 to 1 (26 units high) and the lift to 162: 162-188 units, 6 under the
+-- row at 1080p and 4 px under it at 720p, still above the weapon name.
+M.LEGEND_LIFT = 162
+M.LEGEND_PAD_Y = 1
 -- The config reset notice (configuration.upgrade_message) used to appear
 -- only in the Production Limits panel, which a player who was updated by
 -- the Workshop may never open (onboarding P2-4). The stand shows it once
@@ -1272,7 +1279,7 @@ local function refresh_legend(menu)
                 write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=kind=="Overlay" and M.LEGEND_LIFT or 4}))
             end
             write(box:SetBrushColor(LEGEND_BACKING))
-            write(box:SetPadding({Left=10,Top=3,Right=10,Bottom=3}))
+            write(box:SetPadding({Left=10,Top=M.LEGEND_PAD_Y,Right=10,Bottom=M.LEGEND_PAD_Y}))
             write(box:SetVisibility(3))
             local font=tb.Font; font.Size=M.LEGEND_FONT_SIZE; write(tb:SetFont(font))
             write(tb:SetColorAndOpacity({SpecifiedColor=LEGEND_TEXT,ColorUseRule=0}))
