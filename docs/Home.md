@@ -21,6 +21,7 @@ and a Related line. Superseded notes were merged into these and deleted on
 
 ## Latest
 
+- [0.5.1: in-game tests and review round (2026-11-10)](retest-0.5.1-2026-11-10.md) · 2026-11-10
 - [Fourth strict review round, final pre-ship check (2026-10-30)](review-round4-2026-10-30.md) · 2026-10-30
 - [Round-4 fixes: merge and retest in game (2026-10-30)](retest-r4-2026-10-30.md) · 2026-10-30
 - [Final 0.5.0 build: archives, clean installs, 0.4.1 upgrade, Workshop dry run (2026-10-30)](g7-final-build-2026-10-30.md) · 2026-10-30

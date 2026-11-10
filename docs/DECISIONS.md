@@ -162,6 +162,20 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## Saving and settings
 
+- **2026-11-10 - A config.lua X is captured as X (user's decision, 0.5.1).**
+  On a fresh install every Pal is captured, and the capture stored 1 for a
+  job that is X in `config.lua`, so that X never held for any saved Pal.
+  Now it is X whether `use_work_priority_for_new_pals` is on or off. Pals
+  saved before keep their numbers. *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
+- **2026-11-10 - The options page covers config.lua instead of the mod
+  rewriting it (user asked for an in-game way).** The page shows
+  `config.lua`'s values as its defaults (`darnmenu.register(base)`), a value
+  saved there wins as before, and it gained each job's default (1-5 or X,
+  applies with the setting off too) and `chat_prefix`. `pal_overrides` and
+  the container class lists stay file-only (the stand sets per-Pal numbers).
+  *Rejected:* writing `config.lua` from the mod (a hand-edited file with
+  comments; two writers would disagree). *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
+
 - **2026-10-29 - 0.4.1 leniency is per value.** 0.4.1's rules apply to each
   `config.lua` value that still equals its parsed `config.migration.bak`. A
   value typed under 0.5 is checked strictly. This narrows the earlier
@@ -304,6 +318,20 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   config ranking (it sent a Lamball hauling past an empty ranch). Untouched
   Pals ignore `max_pals_per_work_type`, as vanilla has no such limit.
   *Evidence:* [g4-old-reports-2026-10-27](g4-old-reports-2026-10-27.md).
+- **2026-11-10 - Config ranking comes back as an opt-in (user's decision,
+  0.5.1).** `use_work_priority_for_new_pals` (off by default; DarnMenu "New
+  Pals use default numbers") gives a Pal the mod has not saved yet the
+  `work_priority` numbers, so the entry above holds unless a player asks
+  (valdacil: ranking every new Pal by hand was "a major downgrade"). A
+  stored number always wins. The first time it is on, a fresh install's
+  Pals whose jobs all have the same number get the numbers once, hand-set
+  equal ones included; `config-ranks.txt` records it and is never reset.
+  Upgraded installs are not converted: their rows hold only clicked cells.
+  *Rejected:* reading every all-equal row as unranked on every refresh (the
+  first build: a Pal set to 1 1 1 1 showed 3 3 4 4), "Bugs only" or
+  "Keep as built" (user chose convert once), converting again after off/on
+  (overwrote hand-set rows), a marker line inside priorities.txt (touches
+  the byte-exact recovery comparison). *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
 - **2026-10-27 - "Fishing" is Handiwork; built, Workable ponds and Handiwork
   research labs count as one seat each.** The pond's work has no declared type
   and the label "Fishing"; the game's tooltip names Handiwork. Pond and lab
@@ -573,6 +601,14 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
   versions under Release and scope.)
 
 ## UI and input
+
+- **2026-11-10 - The stand legend is 26 units high at lift 162.** At
+  1920x1080 the 30 px legend started on the pixel after the last row
+  (CerbinTalYalas). Backing padding 3 -> 1 and lift 163 -> 162 leave 5 px
+  under the row at 720p and 1080p and stay above the HUD weapon names.
+  *Rejected:* showing the footer only for status messages (the reporter's
+  patch; it undoes the round-3 onboarding fix). Tooltips are now written only
+  when their text changes, so a hovered one stays open. *Evidence:* [retest-0.5.1-2026-11-10](retest-0.5.1-2026-11-10.md).
 
 - **2026-10-29 - The stand legend states the scale again: "1 first, X never".**
   Round 2 kept the scale in the cell tooltip only. The crowding review showed that

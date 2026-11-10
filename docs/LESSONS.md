@@ -92,6 +92,17 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Evidence: how we fooled ourselves
 
+- **256 green tests, broken on the first click.** The first
+  `use_work_priority_for_new_pals` design read every all-equal row as
+  "not ranked"; its test covered "unranked, then one edit" but never "ranked,
+  then edited to equal". In game, a Pal set to 1 1 1 1 showed 3 3 4 4
+  (2026-11-10). Click through every state a player can reach, not only the
+  ones the design names.
+- **Stored cells are not what a Pal showed.** On installs from 0.4.1 a row
+  holds only the clicked cells; unclicked jobs show the default. A rule
+  judged on stored cells alone would have rewritten deliberate rankings
+  (review P1, 2026-11-10, caught before any build left the PC).
+
 - **Two frame captures differed by 4.5 ms per frame for reasons that were not the
   mod.** One ran at in-game night, the other had Chrome in front. With the game in
   front and the same daylight the difference was gone. Capture both conditions with
@@ -179,6 +190,13 @@ discovers a new one, with the date and a link to the evidence.
 
 ## Process: what slowed the project down
 
+- **An edit is not in the game until it is deployed.** A legend measurement
+  after a code change showed the old position because deploy.ps1 had not run
+  again (2026-11-10). Deploy, then `diff -q` the installed file.
+- **Never `git checkout` a file to run a negative check.** It threw away the
+  uncommitted tooltip fix (2026-11-10; restored from a copy). Copy the file,
+  mutate the copy in place, restore from the copy.
+
 - **A wait must also know the cases where its success line never comes.** Joining a
   server whose `config.lua` is rejected, the server macro waited for a handshake that
   a locked server never confirms. My bounded wait would only have ended at its time
@@ -249,6 +267,10 @@ discovers a new one, with the date and a link to the evidence.
   brought the repaint bug back three times). Grep DECISIONS for the idea first.
 
 ## Lua traps
+
+- **`a and false or b` is always `b`.** It was written twice on 2026-11-10,
+  once in store.lua (config X would have kept its number) and once in a test
+  (a false failure). Use an `if`.
 
 - **A button's release can land on the menu underneath.** The panel closed on
   B's press; the release then reached the Monitoring Stand, which closes on

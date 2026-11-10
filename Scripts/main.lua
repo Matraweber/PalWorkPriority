@@ -55,7 +55,7 @@ for _, entry in ipairs({
 }) do measurement.bind(entry[1],entry[2],entry[3]) end
 
 local MOD_NAME = "Pal Work Priority"
-local VERSION = "0.5.0"
+local VERSION = "0.5.1"
 
 -- ---------------------------------------------------------------------------
 -- Paths

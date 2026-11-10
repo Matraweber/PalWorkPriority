@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.1 - unreleased
+
+A small release with one new option and two fixes from Nexus reports. All of
+it was tested in the game in singleplayer, at 1280x720 and 1920x1080. The
+server was not tested with 0.5.1. Its network protocol is unchanged, so 0.5.0
+and 0.5.1 players and servers can play together (not tested yet).
+
+### New
+
+- **New Pals use default numbers** (off by default, request by valdacil).
+  Switched on, a Pal the mod has not saved yet gets the `work_priority`
+  numbers from `config.lua` instead of 1 for every job, as 0.4.1 did, and the
+  mod steers it. A Pal whose jobs still all have the same number, such as a
+  Pal with one job, is left to the game as before. Set it in `config.lua`
+  (`use_work_priority_for_new_pals = true`) or on the options page.
+- **The first time you switch it on**, on a fresh install, Pals whose jobs
+  all have the same number get the default numbers once, including ones you
+  set equal yourself. The stand says how many. After that, numbers you set
+  on the stand are kept, equal ones too, even if you switch the option off
+  and on again. Installs updated from 0.4.1 already show the default numbers
+  for every job a Pal has no number of its own for, and nothing there is
+  changed.
+- **The options page covers `config.lua`.** ESC > Darn Mod Options (needs
+  the optional DarnMenu) now has every job's default number (1 to 5, or X)
+  and the chat command prefix, and shows the values from your `config.lua`
+  instead of the shipped ones. A value saved on the page wins over
+  `config.lua`. Only `pal_overrides` and the container lists stay in
+  `config.lua`.
+
+### Fixed
+
+- A hovered cell's tooltip on the stand stays open. It closed after a second
+  or two because it was written again on every refresh (diagnosed with a
+  patch by CerbinTalYalas).
+- The stand legend no longer touches the last Pal row at 1920x1080 (report by
+  CerbinTalYalas). It is a little thinner and leaves a gap at 720p and 1080p.
+- On a fresh install, a job that is X in `config.lua` is now X for every new
+  Pal. It was saved as 1. Pals saved before keep their numbers.
+
 ## 0.5.0 - 2026-10-30
 
 A reliability release. It fixes the problems reported most since 0.4.1, such
