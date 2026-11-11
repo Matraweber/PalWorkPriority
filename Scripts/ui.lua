@@ -119,6 +119,9 @@ local legend_names, legend_count = {}, 0 -- bounded string-only ownership, like 
 -- menu full name -> the name of the legend Border whose style is written.
 -- The backing, padding and visibility are set once per Border, not each beat.
 local legend_styled = {}
+-- menu full name -> the visibility last written to its legend Border (3 shown,
+-- 1 collapsed), so show_stand_legend = false costs no engine call per beat.
+local legend_shown = {}
 -- One line under the stand (review 2026-10-21): what each mouse button does,
 -- the rule a newcomer trips over and where the limits panel is. Two lines were
 -- tried and the upper one ran into the game's own "unused Stat Points" bar,
@@ -146,7 +149,10 @@ local legend_styled = {}
 -- "all equal", which the equal-numbers rule covers in the same words.
 M.LEGEND_SCALE = "1 first, X never"
 M.LEGEND_START = M.LEGEND_SCALE .. " (all start equal: game picks)"
-M.LEGEND_CONTROLS = "Left click/Enter: toward 1 (1 wraps to X) | Right click: toward X | Arrows, keys 1-5, X"
+-- 0.5.2 (Nexus suggestion, 2026-11-11): "toward 1 / toward X" was hard to
+-- follow, so the controls say raise and lower, the same words as the cell
+-- tooltip below. The scale right before them says which end is first.
+M.LEGEND_CONTROLS = "Left click/Enter: raise (1 wraps to X) | Right click: lower | Arrows, keys 1-5, X"
 M.LEGEND_PANEL = "ALT+F1: Limits panel"
 M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_PANEL}, " | ")
 -- On a controller (StandInput contract 3, 2026-10-22). Y is the stand's own
@@ -157,14 +163,35 @@ M.EDIT_LEGEND = table.concat({M.LEGEND_START, M.LEGEND_CONTROLS, M.LEGEND_PANEL}
 -- A arrives as code 10 and LB as 11, both toward 1; RB is 12, toward X.
 -- "Limits", not "Limits panel": the pad line carries the same scale and
 -- starting state as the mouse line and has six characters less room.
-M.PAD_CONTROLS = "LB/A (bottom button): toward 1 (1 wraps to X) | RB: toward X | X (left button): set X"
+M.PAD_CONTROLS = "LB/A (bottom button): raise (1 wraps to X) | RB: lower | X (left button): set X"
 M.PAD_PANEL = "View button: Limits"
 M.PAD_LEGEND = table.concat({M.LEGEND_START, M.PAD_CONTROLS, M.PAD_PANEL}, " | ")
 -- On a client: the plain scale (see M.edit_legend).
 M.CLIENT_LEGEND = table.concat({M.LEGEND_SCALE, M.LEGEND_CONTROLS, M.LEGEND_PANEL}, " | ")
 M.PAD_CLIENT_LEGEND = table.concat({M.LEGEND_SCALE, M.PAD_CONTROLS, M.PAD_PANEL}, " | ")
--- What the legend line no longer has room for, in each cell's tooltip.
-M.MARKS_HELP = "1 highest, 5 lowest, X off.  * sending  ! not saved  ? unknown"
+-- A cell's tooltip (0.5.2, proposed on Nexus by CerbinTalYalas, 2026-11-11).
+-- Before, it opened with the whole footer line (150+ characters split by
+-- " | "), said the scale twice in different words and put what the hovered
+-- cell means last. Now: the cell's value and the scale, the cell's own
+-- detail (its "* ! ?" mark in front, so a mark is explained where it is),
+-- the equal-numbers hint where it applies, then one control per line and
+-- the steering count. A missing pak replaces the controls; a locked stand
+-- still shows only the reason it is locked.
+M.TIP_SCALE = "1 = first, 5 = last, X = never"
+M.TIP_CONTROLS = table.concat({
+    "Left click / Enter: raise priority (1 wraps to X)",
+    "Right click: lower priority",
+    "1-5 / X: set the hovered or selected cell (click or arrow into the stand first)",
+    "Arrows: select a cell",
+    "ALT+F1: Production Limits panel",
+}, "\n")
+M.TIP_PAD_CONTROLS = table.concat({
+    "LB / A (bottom button): raise priority (1 wraps to X)",
+    "RB: lower priority",
+    "X (left button): set X",
+    "D-pad: select a cell",
+    "View button: Production Limits panel",
+}, "\n")
 -- Every legend line must fit one 1280x720 screen at 14 pt. Measured at 12 pt
 -- on 2026-10-28: 152 characters drew 730 px wide, so 14 pt is about 5.6 px a
 -- character and 160 characters about 900 px with the backing's padding.
@@ -242,7 +269,20 @@ M.SAME_NUMBER_HINT = "Same number on every job: the game picks. Give jobs differ
 -- The count is the host's guild in every base, while the stand lists one
 -- base, so it says "(all bases)" where that fits (newcomer round 4, P3-3).
 -- Returns the full, the short and the shortest wording.
+--
+-- legend_round (below) exists only while one refresh runs. The footer and
+-- every cell's tooltip both name the count (0.5.2), so the answer is kept
+-- in it and the scheduler is still asked once per refresh.
+local legend_round
 local function steering_status()
+    if legend_round and legend_round.steering then
+        return table.unpack(legend_round.steering, 1, legend_round.steering.n)
+    end
+    local result = table.pack(M.steering_answer())
+    if legend_round then legend_round.steering = result end
+    return table.unpack(result, 1, result.n)
+end
+function M.steering_answer()
     if api.has_authority() ~= true then return nil end
     local scheduler = package.loaded.scheduler
     if type(scheduler) ~= "table" or type(scheduler.steering_count) ~= "function" then return nil end
@@ -276,20 +316,25 @@ end
 -- A client has no count and does not know how this server's priorities
 -- stand, so it gets the plain scale: "all start equal" read as a claim
 -- about this server (onboarding round 4, P3).
+local function with_panel_key(text)
+    local label
+    pcall(function()
+        local dm = package.loaded.darnmenu
+        label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels.key_panel or nil
+    end)
+    if type(label) == "string" and label ~= "" and #label <= 24 then
+        label = label:upper()
+        return (text:gsub("ALT%+F1", function() return label end))
+    end
+    return text
+end
+
 function M.edit_legend()
     local controls, panel = M.LEGEND_CONTROLS, M.LEGEND_PANEL
     if api.last_input_type == 1 then
         controls, panel = M.PAD_CONTROLS, M.PAD_PANEL
     else
-        local label
-        pcall(function()
-            local dm = package.loaded.darnmenu
-            label = type(dm) == "table" and type(dm.labels) == "table" and dm.labels.key_panel or nil
-        end)
-        if type(label) == "string" and label ~= "" and #label <= 24 then
-            label = label:upper()
-            panel = (panel:gsub("ALT%+F1", function() return label end))
-        end
+        panel = with_panel_key(panel)
     end
     if api.has_authority() ~= true then return fit_legend({{M.LEGEND_SCALE, controls, panel}}) end
     local status, short, shortest = steering_status()
@@ -308,7 +353,7 @@ end
 -- tooltip carries it, and building it asks the scheduler for its count, so
 -- it was built about 100 times a second with the stand open. legend_round
 -- exists only while one refresh runs; an input paint touches two cells.
-local legend_round
+-- (Declared above steering_status, which keeps its answer in it.)
 local function shared_edit_legend()
     if not legend_round then return M.edit_legend() end
     if legend_round.text == nil then legend_round.text = M.edit_legend() end
@@ -322,6 +367,36 @@ local function with_one_legend(fn, ...)
     legend_round = nil
     if not result[1] then error(result[2], 0) end
     return table.unpack(result, 2, result.n)
+end
+
+-- The controls block of a cell's tooltip and the steering count, the part
+-- every cell shares. Built once per refresh (legend_round.tip), so the count
+-- is still asked once, and the text only changes when the count or the input
+-- device does: the tooltip then stays open while hovered (cell_tip).
+local function tip_controls()
+    local text = api.last_input_type == 1 and M.TIP_PAD_CONTROLS or with_panel_key(M.TIP_CONTROLS)
+    local status = steering_status()
+    if status then text = text .. "\n\n" .. status end
+    return text
+end
+
+local function shared_tip_controls()
+    if not legend_round then return tip_controls() end
+    if legend_round.tip == nil then legend_round.tip = tip_controls() end
+    return legend_round.tip
+end
+
+-- value: the glyph before its mark ("1"-"5", "X" or "?"). controls: the
+-- shared block above, or the missing-pak message in its place.
+function M.cell_help(value, marker, detail, same, controls)
+    local head
+    if value == "?" then head = "Priority unknown"
+    else head = "Priority " .. value .. " (" .. M.TIP_SCALE .. ")" end
+    detail = detail or "Priority data unavailable."
+    if marker ~= nil and marker ~= "" then detail = marker .. " " .. detail end
+    local help = head .. "\n" .. detail
+    if same then help = help .. "\n" .. M.SAME_NUMBER_HINT end
+    return help .. "\n\n" .. controls
 end
 
 local function warn_once(key, message)
@@ -443,6 +518,7 @@ function M.reset()
     edit_states = { epoch=session.epoch, transport=net.local_nonce, entries={}, count=0, sequence=0, incomplete=false }
     legend_names, legend_count = {}, 0
     legend_styled = {}
+    legend_shown = {}
     menu_name = nil
     row_pal = {}
     menu_likely_open = false
@@ -1240,10 +1316,16 @@ function M.config_message()
     if type(configuration) == "table" and configuration.rejection ~= nil then return M.CONFIG_PAUSED end
 end
 
-function M.legend_text()
-    return M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
+-- show_stand_legend = false (0.5.2, Nexus suggestion 2026-11-11): the line
+-- under the stand only shows when it has something to say. Every reason and
+-- notice above still shows; only the controls line goes, and every cell's
+-- tooltip names the controls. nil when there is nothing to show.
+function M.legend_text(cfg)
+    local notice = M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
         or pak_message() or refused_notice() or reset_notice() or converted_notice() or lifted_notice() or selection_issue() or M.config_message()
-        or shared_edit_legend()
+    if notice then return notice end
+    if type(cfg) == "table" and cfg.show_stand_legend == false then return nil end
+    return shared_edit_legend()
 end
 
 -- One small legend in a known multi-child root. Ownership is names only; each
@@ -1258,7 +1340,7 @@ end
 local LEGEND_BACKING = { R = 0.014, G = 0.021, B = 0.035, A = 0.85 }
 local LEGEND_TEXT = { R = 0.93, G = 0.94, B = 0.96, A = 1.0 }
 M.LEGEND_FONT_SIZE = 14
-local function refresh_legend(menu)
+local function refresh_legend(menu, cfg)
     local ok,shown=pcall(function()
         local name=full_name(menu)
         local tree=menu.WidgetTree
@@ -1304,6 +1386,7 @@ local function refresh_legend(menu)
             tb=StaticConstructObject(class,tree)
             if not alive(tb) then return false end
             legend_styled[name]=nil -- a new text block takes the style below
+            legend_shown[name]=nil
             if not alive(box:AddChild(tb)) then return false end
         end
         -- The style is the same on every beat, so it is written once per
@@ -1324,15 +1407,22 @@ local function refresh_legend(menu)
                 -- Bottom-aligned in an Overlay too, so lifted the same way.
                 write(slot:SetPadding({Left=4,Top=4,Right=4,Bottom=kind=="Overlay" and M.LEGEND_LIFT or 4}))
             end
+            legend_shown[name]=nil -- a new Border: its visibility is written below
             write(box:SetBrushColor(LEGEND_BACKING))
             write(box:SetPadding({Left=10,Top=M.LEGEND_PAD_Y,Right=10,Bottom=M.LEGEND_PAD_Y}))
-            write(box:SetVisibility(3))
             local font=tb.Font; font.Size=M.LEGEND_FONT_SIZE; write(tb:SetFont(font))
             write(tb:SetColorAndOpacity({SpecifiedColor=LEGEND_TEXT,ColorUseRule=0}))
             write(tb:SetVisibility(3))
             legend_styled[name]=legend_names[name]
         end
-        write(tb:SetText(make_ftext(M.legend_text())))
+        local text=M.legend_text(cfg)
+        -- Collapsed, not an empty dark box, when there is nothing to say.
+        local visibility=text and 3 or 1
+        if legend_shown[name]~=visibility then
+            write(box:SetVisibility(visibility))
+            legend_shown[name]=visibility
+        end
+        if text then write(tb:SetText(make_ftext(text))) end
         return true
     end)
     M.legend_mode=ok and shown and "footer" or "tooltip"
@@ -1432,12 +1522,13 @@ end
 
 -- The cell back to the game: its checkbox, no receiver, no number, and no
 -- tooltip of ours unless the tooltip is where the legend lives.
-local function give_back(cell, cell_name)
+local function give_back(cell, cell_name, cfg)
     stand_pointer.disable(cell, cell_name)
     local existing, _, hint = tree_lookup.find(cell, cell_text[cell_name], alive, cell_paths[cell_name])
     cell_paths[cell_name] = hint
     if existing and alive(existing) then set_cell(existing, cell_name, "", "blank") end
-    local tip = M.legend_mode == "tooltip" and M.legend_text() or ""
+    local tip = M.legend_mode == "tooltip" and M.legend_text(cfg) or ""
+    if tip == nil then tip = "" end
     set_tooltip(cell, cell_name, tip)
     if not restore_checkbox(cell, cell_name) then return "failed" end
     return "vanilla"
@@ -1466,7 +1557,7 @@ local function handle_cell(cfg, cell, known_name)
 
     -- Before the row lookup: an unbound row's cell may still carry an earlier
     -- session's hidden checkbox, and it goes back too.
-    if M.vanilla_message() then return give_back(cell, cell_name) end
+    if M.vanilla_message() then return give_back(cell, cell_name, cfg) end
 
     local rname = cell_row[cell_name]
     if not rname then
@@ -1556,17 +1647,16 @@ local function handle_cell(cfg, cell, known_name)
         glyph, colour = tostring(math.floor(prio)), colour_for(prio)
     end
 
+    -- The tooltip is built from the value before its mark (M.cell_help).
+    local locked=M.lock_message() or M.settings_message() or store_blocked
+    local help
+    if locked then help=locked
+    else
+        help=M.cell_help(glyph, marker, detail, known and same_number(cfg,pal,ranks),
+            pak_message() or shared_tip_controls())
+    end
     glyph=glyph..marker
     colour=edit_colour or colour
-    local locked=M.lock_message() or M.settings_message() or store_blocked
-    if locked then detail=locked end
-    -- The legend line names the controls; the number scale and the marks
-    -- live here (M.MARKS_HELP).
-    local help=(pak_message() or shared_edit_legend()).."\n"..M.MARKS_HELP
-        .."\nClick or use arrows to focus the stand; then hover a priority and press 1-5/X."
-        .."\nWithout hover, number keys edit the focused cell.\n"..(detail or "Priority data unavailable.")
-    if known and same_number(cfg,pal,ranks) then help=help.."\n"..M.SAME_NUMBER_HINT end
-    if locked then help=locked end
     set_tooltip(cell, cell_name, help)
     if M.selection and M.selection.key == pal.key and M.selection.work == t then glyph = "[" .. glyph .. "]" end
     local result = set_cell(tb, cell_name, glyph, colour)
@@ -1940,7 +2030,7 @@ function M.refresh(cfg,flush_receipt)
     -- per-cell paint inside it is a discarded pcall, so all 62 could fail and
     -- the epoch still committed. The gate then returned early for ever after.
     local painted, complete, tree_meta = with_one_legend(function()
-        refresh_legend(menu)
+        refresh_legend(menu, cfg)
         return refresh_cells(cfg, menu)
     end)
 
@@ -2189,7 +2279,7 @@ function M.nav(cfg,direction,origin)
     end
     paint_input(cfg,cells,selected and selected.cell,previous)
     -- The legend names a "!" on the new selection now, not a second later.
-    if not previous or previous.key~=wanted.key or previous.work~=wanted.work then refresh_legend(menu) end
+    if not previous or previous.key~=wanted.key or previous.work~=wanted.work then refresh_legend(menu, cfg) end
     return true
 end
 

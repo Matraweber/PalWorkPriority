@@ -83,6 +83,7 @@ return {
     storage_scope = "camp",
     log_level = "info",
     chat_prefix = "!pwp",
+    show_stand_legend = true,
     key_panel = { key = "F1", modifiers = { "ALT" } },
     key_pass  = { key = "F2", modifiers = { "ALT" } },
     key_stock = { key = "F3", modifiers = { "ALT" } },
@@ -154,6 +155,13 @@ return {
           help = "The number a new Pal gets for Oil Extraction while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
         { path = "new_pal_priority_MonsterFarm", label = "Farming", kind = "enum", values = { "1", "2", "3", "4", "5", "X" },
           help = "The number a new Pal gets for Farming while New Pals use default numbers is on. X: no new Pal does it. On a fresh install a Pal saved while it is X keeps X; change those on the stand." },
+      },
+    },
+    {
+      title = "Monitoring Stand",
+      options = {
+        { path = "show_stand_legend", label = "Show the controls line under the stand", kind = "bool",
+          help = "Off hides the line that names the controls. It still shows warnings and notices, and every cell's tooltip lists the controls. Only your own stand changes." },
       },
     },
     {
@@ -411,6 +419,7 @@ local KEYS = {
     storage_scope = "string",
     log_level = "string",
     chat_prefix = "string",
+    show_stand_legend = "boolean",
 }
 
 -- A hotkey the player may have rebound, resolved to what RegisterKeyBind wants.

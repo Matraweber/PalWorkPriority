@@ -192,4 +192,10 @@ return {
     -- Chat command prefix. Type "!pwp help" in chat (multiplayer) for the
     -- command list; the README has it too.
     chat_prefix = "!pwp",
+
+    -- The line under the Monitoring Stand that names the controls. false
+    -- hides it; it then shows only for warnings and notices (a locked stand,
+    -- a change that was not saved). Every cell's tooltip still lists the
+    -- controls. Each player sets this for their own stand.
+    show_stand_legend = true,
 }

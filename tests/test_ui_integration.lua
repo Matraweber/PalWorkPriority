@@ -967,14 +967,21 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     assert(legends[1].Font.Size==14,'legend is not 14 pt')
     local c=legends[1].colour.SpecifiedColor
     assert(c.R>0.85 and c.G>0.85 and c.B>0.85,'legend text is not light on the dark backing')
-    -- The number scale and the marks moved from the line to every cell's
-    -- tooltip (round 2) to make room for the wrap and the equal-numbers rule.
-    assert(f.cells[1].tooltip:find(f.ui.MARKS_HELP,1,true),'cell tooltip lost the marks')
-    assert(f.ui.MARKS_HELP:find('X off',1,true) and f.ui.MARKS_HELP:find('! not saved',1,true)
-        and f.ui.MARKS_HELP:find('* sending',1,true) and f.ui.MARKS_HELP:find('? unknown',1,true))
+    -- 0.5.2 (Nexus, 2026-11-11): the tooltip opens with the cell's value and
+    -- the scale, then the cell's detail with its mark in front, then one
+    -- control per line. It no longer repeats the footer line.
+    local tip=f.cells[1].tooltip
+    assert(tip:find('Priority 1 ('..f.ui.TIP_SCALE..')\n* Sending',1,true)==1,tip)
+    assert(tip:find('\n\n'..f.ui.TIP_CONTROLS,1,true),'cell tooltip lost the controls: '..tip)
+    assert(not tip:find(' | ',1,true),'cell tooltip still carries the footer line: '..tip)
+    assert(not tip:find('Steering',1,true),'a client tooltip showed a steering count')
+    assert(f.ui.TIP_CONTROLS:find('Left click / Enter: raise priority (1 wraps to X)\nRight click: lower priority',1,true))
+    assert(f.ui.cell_help('?','','Connecting.',false,'C')=='Priority unknown\nConnecting.\n\nC')
+    assert(f.ui.cell_help('X','!','Not saved.',true,'C')=='Priority X ('..f.ui.TIP_SCALE..')\n! Not saved.\n'
+        ..f.ui.SAME_NUMBER_HINT..'\n\nC')
     -- One line: the mouse first, then the panel key. A second line ran into
     -- the game's "unused Stat Points" bar (in game, 2026-10-22).
-    assert(legends[1].text:find('Left click/Enter: toward 1 (1 wraps to X)',1,true) and legends[1].text:find('Right click: toward X',1,true))
+    assert(legends[1].text:find('Left click/Enter: raise (1 wraps to X)',1,true) and legends[1].text:find('Right click: lower',1,true))
     -- A client opens with the plain scale: it cannot know how this server's
     -- priorities stand (onboarding round 4, P3).
     assert(legends[1].text:find('1 first, X never | ',1,true)==1)
@@ -1238,7 +1245,7 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
         assert(not text:find('\n',1,true),'stand legend must stay one line')
     end
     assert(f.ui.PAD_LEGEND:find('X (left button): set X',1,true) and not f.ui.PAD_LEGEND:find('X: off',1,true))
-    assert(f.ui.PAD_LEGEND:find('LB/A (bottom button): toward 1',1,true),'pad legend does not say where A sits')
+    assert(f.ui.PAD_LEGEND:find('LB/A (bottom button): raise',1,true),'pad legend does not say where A sits')
     assert(f.ui.PAD_LEGEND:find('View button: Limits',1,true))
     -- Decision 2026-10-29: a left click (LB / A on a pad) wraps from 1 to X,
     -- and equal numbers leave the Pal to the game. Both legends say it, and
@@ -1246,15 +1253,15 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
     -- crowding P2-1/P3-8: both open with what the numbers mean, and the
     -- starting state is "equal", not "1" (an unticked job starts as X).
     for _,text in ipairs({f.ui.EDIT_LEGEND,f.ui.PAD_LEGEND}) do
-        assert(text:find('toward 1 (1 wraps to X)',1,true),'legend hides the wrap: '..text)
+        assert(text:find('raise (1 wraps to X)',1,true),'legend hides the wrap: '..text)
         assert(text:find('1 first, X never (all start equal: game picks) | ',1,true)==1,
             'legend does not open with the scale and the starting state: '..text)
         assert(not text:find('All start at 1',1,true),'legend claims every job starts at 1: '..text)
         -- Clear separators (accessibility P2-3: "(1 wraps to X)  Right click" ran together).
         assert(not text:find('  ',1,true),'legend parts run together: '..text)
     end
-    assert(f.ui.EDIT_LEGEND=='1 first, X never (all start equal: game picks) | Left click/Enter: toward 1 (1 wraps to X)'
-        ..' | Right click: toward X | Arrows, keys 1-5, X | ALT+F1: Limits panel',f.ui.EDIT_LEGEND)
+    assert(f.ui.EDIT_LEGEND=='1 first, X never (all start equal: game picks) | Left click/Enter: raise (1 wraps to X)'
+        ..' | Right click: lower | Arrows, keys 1-5, X | ALT+F1: Limits panel',f.ui.EDIT_LEGEND)
     -- The longest rebound key drops the starting state rather than overflow,
     -- and keeps the scale, every control and the panel key.
     assert(rebound==f.ui.LEGEND_SCALE..' | '..f.ui.LEGEND_CONTROLS..' | '..string.rep('W',24)..': Limits panel',rebound)
@@ -1262,6 +1269,44 @@ check('every stand legend fits one 1280x720 line and names controller buttons',f
     assert(require('store').cycle(1,-1)==false)
     local api=package.loaded.palapi; api.last_input_type=1
     assert(f.ui.legend_text()==f.ui.PAD_CLIENT_LEGEND); api.last_input_type=nil
+end)
+
+-- 0.5.2 (Nexus suggestion, 2026-11-11): show_stand_legend = false hides the
+-- controls line, and the line comes back for anything it has to say.
+check('show_stand_legend false hides the controls line but not a notice',function()
+    local f=fixture()
+    local cfg={}; for k,v in pairs(f.cfg) do cfg[k]=v end
+    cfg.show_stand_legend=false
+    assert(f.ui.refresh(cfg))
+    local box=f.legends()[1].parent
+    assert(box.visibility==1,'hidden legend still drawn: '..tostring(box.visibility))
+    assert(f.ui.legend_text(cfg)==nil)
+    -- The controls are still in every cell's tooltip.
+    assert(f.cells[1].tooltip:find(f.ui.TIP_CONTROLS,1,true),f.cells[1].tooltip)
+    -- A rejected config.lua still says so on the host's line, and the line
+    -- collapses again once it is fixed.
+    local configuration=package.loaded.configuration
+    local ok,err=pcall(function()
+        f.authority=true
+        package.loaded.configuration={rejection='config.lua rejected: invalid interval_seconds.'}
+        f.ui.detach(); assert(f.ui.refresh(cfg))
+        assert(box.visibility==3 and f.legends()[1].text==f.ui.CONFIG_PAUSED,f.legends()[1].text)
+        package.loaded.configuration={}
+        f.ui.detach(); assert(f.ui.refresh(cfg))
+        assert(box.visibility==1,'the line stayed after its notice')
+    end)
+    package.loaded.configuration=configuration; f.authority=false
+    assert(ok,err)
+    -- Collapsed once, not written again on every beat.
+    local writes=0; local set=box.SetVisibility
+    box.SetVisibility=function(self,v) writes=writes+1; return set(self,v) end
+    for _=1,3 do f.ui.detach(); assert(f.ui.refresh(cfg)) end
+    assert(writes==0,'hidden legend rewrote its visibility '..writes..' times')
+    -- Back on (nil means on): the controls line returns.
+    cfg.show_stand_legend=nil
+    f.ui.detach(); assert(f.ui.refresh(cfg))
+    assert(box.visibility==3 and f.legends()[1].text==f.ui.CLIENT_LEGEND,f.legends()[1].text)
+    box.SetVisibility=set
 end)
 
 check('stand editing without the pak is named for every input, not just the mouse',function()
@@ -1400,7 +1445,8 @@ check('unknown root uses tooltip legend without replacing native content',functi
     assert(f.ui.refresh(f.cfg))
     assert(#root.children==1 and root.children[1]==inner,'legend replaced native single-child content')
     assert(f.ui.legend_mode=='tooltip')
-    assert(f.cells[1].tooltip:find(f.ui.CLIENT_LEGEND,1,true),'fallback lost the help legend')
+    assert(f.cells[1].tooltip:find(f.ui.TIP_CONTROLS,1,true),'fallback lost the controls')
+    assert(f.cells[1].tooltip:find(f.ui.TIP_SCALE,1,true),'fallback lost the scale')
 end)
 
 check('row recycling clears another Pals tooltip on incapable vanilla cells',function()
@@ -1491,9 +1537,11 @@ check('the legend shows the steering count only where the passes run',function()
         assert(some:find('ALT+F1: Limits panel',1,true) and #some<=f.ui.LEGEND_MAX_CHARS,some)
         count={1,1,0}
         assert(f.ui.edit_legend():find('1 first, X never | Steering 1 of 1 (all bases) | ',1,true)==1,f.ui.edit_legend())
-        -- Three-digit counts do not fit with "(all bases)": the plain count.
+        -- 0.5.2: the shorter controls ("raise", "lower") leave room for
+        -- three-digit counts with "(all bases)"; four digits get the plain count
+        -- once the panel key is long (below).
         count={120,200,0}
-        assert(f.ui.edit_legend():find('1 first, X never | Steering 120 of 200 Pals | ',1,true)==1,f.ui.edit_legend())
+        assert(f.ui.edit_legend():find('1 first, X never | Steering 120 of 200 (all bases) | ',1,true)==1,f.ui.edit_legend())
         -- The longest counts with the longest rebound key still fit one line
         -- and keep every control and the panel key.
         local dm=package.loaded.darnmenu
@@ -1526,6 +1574,19 @@ check('the legend shows the steering count only where the passes run',function()
         package.loaded.scheduler={steering_count=function() return 2,5,3 end}
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.legends()[1].text:find('1 first, X never | Steering 2 of 5 (all bases) | ',1,true)==1,f.legends()[1].text)
+        -- And the host's tooltip ends with it, under the controls (0.5.2).
+        local tip=f.cells[1].tooltip
+        assert(tip:sub(-#'\n\nSteering 2 of 5 (all bases)')=='\n\nSteering 2 of 5 (all bases)',tip)
+        -- A pad names its buttons in the tooltip, and the bound panel key is named.
+        local api=package.loaded.palapi; api.last_input_type=1
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.cells[1].tooltip:find(f.ui.TIP_PAD_CONTROLS,1,true),f.cells[1].tooltip)
+        api.last_input_type=nil
+        local dm=package.loaded.darnmenu
+        package.loaded.darnmenu={labels={key_panel='ALT+F7'}}
+        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        assert(f.cells[1].tooltip:find('ALT+F7: Production Limits panel',1,true),f.cells[1].tooltip)
+        package.loaded.darnmenu=dm
     end)
     package.loaded.scheduler=scheduler; f.authority=false
     assert(ok,err)
@@ -1580,7 +1641,7 @@ check('the config reset notice shows once on the stand and is not acknowledged t
         assert(text==package.loaded.configuration.upgrade_message,'the stand did not show the reset notice: '..text)
         assert(#text<=f.ui.LEGEND_MAX_CHARS and not text:find('\n',1,true))
         -- Cell tooltips keep the controls.
-        assert(f.cells[1].tooltip:find(f.ui.LEGEND_CONTROLS,1,true))
+        assert(f.cells[1].tooltip:find(f.ui.TIP_CONTROLS,1,true))
         -- The panel acknowledging it meanwhile does not cut it short.
         package.loaded.configuration.upgrade_reset=false
         now=now+f.ui.RESET_NOTICE_SECONDS-1
