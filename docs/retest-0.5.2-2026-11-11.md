@@ -102,7 +102,7 @@ the restart macro), relaunched. Hovering needs one real click on the game
 window after a launch; a number key then needed one arrow key first, which is
 what the new hint says. Anubis's Mining went 3 -> 2 -> 3 and is stored as 3.
 
-Tests after the fixes: Lua 256 scripts 0 failures (stand 102 checks),
+Tests after the fixes: Lua 256 scripts 0 failures (stand 101 checks),
 luacheck clean.
 
 ## Test world restored

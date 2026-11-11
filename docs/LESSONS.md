@@ -340,6 +340,10 @@ discovers a new one, with the date and a link to the evidence.
   (2026-11-11). `tools/observe-pal-hover.ahk <x> <y>` (game pixels at
   1280x720) run from an interactive one-off scheduled task does, and
   `remote.py "snap"` captures the tooltip. Delete the task afterwards.
+  After a relaunch it showed nothing until one real click on the game's
+  title bar, and a move to the spot the pointer already sits on is no move:
+  hover somewhere else first, then the cell. Watch the `/tr` quoting: one
+  `\"` too many left the task failing with result 2 (2026-11-11).
 
 - **`git status` hid CRLF on disk.** With `eol=lf`, 12 Lua files had CRLF in
   the working copy, so `release.py` packaged bytes no commit holds. Package
