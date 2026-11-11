@@ -1376,13 +1376,17 @@ check('an input paint asks the steering count once',function()
     package.loaded.scheduler={steering_count=function() calls=calls+1; return 2,5,3 end}
     local ok,err=pcall(function()
         f.authority=true
+        -- The line off (the default): the tooltips carry the count, and a
+        -- hidden line asks for none, so every call here is the paint's.
+        f.cfg.show_stand_legend=false
         for _,row in ipairs(f.rows) do f.bind(row) end
         assert(f.ui.refresh(f.cfg)); f.ui.bind_mouse(function() return f.cfg end)
         f.focus_cell(f.cells[1]); f.key(f.cells[1],7); assert(f.ui.selection.key=='b')
         calls=0
         f.key(f.cells[2],6); assert(f.ui.selection.key=='a')
-        -- One for the two repainted cells, one for the line under the stand.
-        assert(calls<=2,'steering_count asked '..calls..' times for one arrow')
+        -- Once for the two repainted cells (exactly: 0 would mean the paint
+        -- never built the tooltip block, 2 that each cell asked).
+        assert(calls==1,'steering_count asked '..calls..' times for one arrow')
     end)
     package.loaded.scheduler=scheduler; f.authority=false
     assert(ok,err)

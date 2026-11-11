@@ -136,6 +136,12 @@ hovering on one we dont need it in 2 places". Now:
 
 Lua 256 scripts 0 failures, luacheck clean, public texts OK.
 
+Re-review P3s (user: "fix both"): the steering test now runs with the line
+off and asserts exactly 1 call per arrow (it measured 1 with the fix, 2
+without; the old `<= 2` also passed at 0). The other P3, controller mode
+leaking into later tests, does not happen: every check builds a fresh
+fixture with a new palapi table and reloads ui.lua; nothing changed.
+
 ## Test world restored
 
 The DarnMenu user file was copied first to
