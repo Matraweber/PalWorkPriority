@@ -605,6 +605,15 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-11-11 - The stand's controls line can be switched off; it stays on
+  by default.** `show_stand_legend = false` (config.lua or the options page)
+  hides it until there is a notice, and the cell tooltip now lists every
+  control (CerbinTalYalas's layout). Default on, so the round-3 onboarding fix
+  still reaches a new player. The controls say "raise" and "lower" instead of
+  "toward 1" and "toward X". *Rejected:* a hotkey to toggle it live (every
+  Alt+F slot is taken, see the key list in main.lua) and hiding the line by
+  default. *Evidence:* [retest-0.5.2-2026-11-11](retest-0.5.2-2026-11-11.md).
+
 - **2026-11-10 - The stand legend is 26 units high at lift 162.** At
   1920x1080 the 30 px legend started on the pixel after the last row
   (CerbinTalYalas). Backing padding 3 -> 1 and lift 163 -> 162 leave 5 px

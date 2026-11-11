@@ -72,7 +72,7 @@ left click:   X → 5 → 4 → 3 → 2 → 1 → X
 right click:  1 → 2 → 3 → 4 → 5 → X → 1
 ```
 
-You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5 or X. The legend under the stand opens with the scale: 1 first, X never. It lists the clicks and keys and reminds you that 1 wraps to X. It also says either that all jobs start equal, so the game picks until you give a Pal different numbers, or how many Pals the mod steers. Hold the pointer over a cell to see the 1-5 scale and the marks. `*` is still being sent, `!` was not saved and `?` is unknown.
+You can also type a number. Click a cell or move to it with the arrow keys first, then press 1 to 5 or X. The legend under the stand opens with the scale: 1 first, X never. It lists the clicks and keys and reminds you that 1 wraps to X. It also says either that all jobs start equal, so the game picks until you give a Pal different numbers, or how many Pals the mod steers. `show_stand_legend = false` (options page: "Show the controls line under the stand") hides that line until there is a warning to show. Hold the pointer over a cell to see its number, what it means and every control, one per line. A mark next to a number is explained there too: `*` is still being sent, `!` was not saved and `?` is unknown.
 
 A dash means the Pal cannot do that job at all. It is not a priority.
 
@@ -123,6 +123,7 @@ Restart the game after a change. `!pwp reload` also reads `config.lua` again, bu
 | `use_work_priority_for_new_pals` | `false` | `true` gives a Pal the mod has not saved yet the `work_priority` numbers, as 0.4.1 did. The first time it is on, a fresh install's Pals whose jobs all have the same number get them once (the stand says how many). Numbers you set on the stand are kept |
 | `item_limits_on_rocks` | `true` | `false` makes Mining limits stop all mining |
 | `storage_scope` | `"camp"` | `"global"` counts every loaded base of your guild |
+| `show_stand_legend` | `true` | `false` hides the controls line under the stand. It still appears for warnings and notices, and each cell's tooltip lists the controls. Only your own stand changes |
 
 If an upgrade had to reset `config.lua`, the panel tells you. The notice stays until you have opened the panel. Values from 0.4.1 that 0.4.1 accepted but 0.5 does not, such as a recheck every 3 seconds, are moved into the allowed range and the log warns about it. A `config.lua` saved with a BOM (some editors add one) is read normally. Keep these files when you update or reinstall. They are all in the `PalWorkPriority` folder.
 

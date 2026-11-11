@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.2 - unreleased
+
+Two suggestions from CerbinTalYalas on Nexus.
+
+### Changed
+
+- **A clearer cell tooltip on the stand.** It now opens with the cell's
+  number and what the numbers mean (1 = first, 5 = last, X = never), then
+  what that cell shows, with its `*`, `!` or `?` mark explained right there,
+  then one control per line and the steering count. Before, it began with
+  the whole line under the stand and said the scale twice in different
+  words. With a controller it names the pad buttons. Layout and wording
+  proposed by CerbinTalYalas.
+- **"Raise" and "lower"** replace "toward 1" and "toward X" in the line
+  under the stand and in the tooltip.
+
+### New
+
+- **`show_stand_legend`** (on by default). Switched off in `config.lua` or
+  on the options page ("Show the controls line under the stand"), the line
+  under the stand that names the controls is hidden. It still appears for
+  warnings and notices, such as a locked stand or a change that was not
+  saved, and every cell's tooltip lists the controls. Each player sets it
+  for their own stand. Restart the game after changing it.
+
 ## 0.5.1 - 2026-11-10
 
 A small release with one new option and two fixes from Nexus reports. All of

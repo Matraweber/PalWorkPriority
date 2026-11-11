@@ -335,6 +335,11 @@ discovers a new one, with the date and a link to the evidence.
   worlds; if it moved, step back until the stand prompt shows.
 - **`schtasks /change` waits for a run-as password on stdin.** Without
   `< /dev/null` it hung the shell until the tool limit (2026-11-10).
+- **Desktop-control mouse moves do not raise the stand's tooltips.** Moving
+  the pointer with computer use over a cell showed nothing, twice
+  (2026-11-11). `tools/observe-pal-hover.ahk <x> <y>` (game pixels at
+  1280x720) run from an interactive one-off scheduled task does, and
+  `remote.py "snap"` captures the tooltip. Delete the task afterwards.
 
 - **`git status` hid CRLF on disk.** With `eol=lf`, 12 Lua files had CRLF in
   the working copy, so `release.py` packaged bytes no commit holds. Package
