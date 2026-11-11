@@ -6,25 +6,25 @@ Two suggestions from CerbinTalYalas on Nexus.
 
 ### Changed
 
-- **A clearer cell tooltip on the stand.** It now opens with what the
-  numbers mean (1 = first, 5 = last, X = never), then what that cell shows,
-  with its `*`, `!` or `?` mark explained right there, then one control per
-  line and the steering count. Before, it began with the whole line under
-  the stand and said the scale twice in different words. It no longer says
-  to click a cell before typing a number: a click is already an edit. An
-  edit keeps the tooltip open. Layout proposed by CerbinTalYalas.
-- **"Raise" and "lower"** replace "toward 1" and "toward X" in the line
-  under the stand and in the tooltip.
+- **The controls are in the cell tooltip, once.** Hover a cell: the tooltip
+  says what the numbers mean (1 = first, 5 = last, X = never), what that
+  cell shows, with its `*`, `!` or `?` mark explained right there, then one
+  control per line and how many Pals the mod steers. Before, it began with
+  the whole line under the stand and said the scale twice in different
+  words. It no longer says to click a cell before typing a number: a click
+  is already an edit. Layout proposed by CerbinTalYalas.
+- **The line under the stand only shows warnings and notices** (a locked
+  stand, a change that was not saved), so nothing is said twice. On a
+  controller it still names the buttons, because a tooltip needs the mouse.
+- **"Raise" and "lower"** replace "toward 1" and "toward X".
 
 ### New
 
-- **`show_stand_legend`** (on by default). Switched off in `config.lua` or
-  on the options page ("Show the controls line under the stand"), the line
-  under the stand that names the controls is hidden. It still appears for
-  warnings and notices, such as a locked stand or a change that was not
-  saved, and while you use a controller. With the mouse, hover a cell to see
-  the controls. Each player sets it for their own stand. Restart the game
-  after changing it.
+- **`show_stand_legend`** (off by default). Switched on in `config.lua` or on
+  the options page ("Show the controls line under the stand"), the line
+  under the stand shows the scale, the controls and the steering count as in
+  0.5.1, and the cell tooltips leave them out. Each player sets it for their
+  own stand. Restart the game after changing it.
 
 ## 0.5.1 - 2026-11-10
 

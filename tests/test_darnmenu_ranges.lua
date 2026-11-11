@@ -188,17 +188,19 @@ do
 end
 
 -- 0.5.2 (Nexus suggestion, 2026-11-11): the controls line under the stand
--- can be switched off on the page, and config.lua's value is the default.
+-- is off by default (user, 2026-11-11: the controls in one place, the
+-- tooltip) and can be switched on on the page; config.lua's value is the
+-- page default.
 do
     assert(options.show_stand_legend and options.show_stand_legend.option.kind == 'bool')
-    assert(schema.defaults.show_stand_legend == true)
-    local c = apply({ show_stand_legend = false })
-    assert(c.show_stand_legend == false and #warnings == 0, 'the switch was not applied')
-    c = apply({ show_stand_legend = 'no' })
-    assert(c.show_stand_legend == true and #warnings == 1, 'a non-boolean switch was applied')
-    local own = base(); own.show_stand_legend = false
+    assert(schema.defaults.show_stand_legend == false)
+    local c = apply({ show_stand_legend = true })
+    assert(c.show_stand_legend == true and #warnings == 0, 'the switch was not applied')
+    c = apply({ show_stand_legend = 'yes' })
+    assert(c.show_stand_legend == false and #warnings == 1, 'a non-boolean switch was applied')
+    local own = base(); own.show_stand_legend = true
     local d = assert(load(darnmenu.schema_text(own), '=page', 't', {}))().defaults
-    assert(d.show_stand_legend == false, 'config.lua false not shown on the page')
+    assert(d.show_stand_legend == true, 'config.lua true not shown on the page')
     assert(require('configuration').validate({ show_stand_legend = 1 }) == nil, 'validate took a number')
 end
 

@@ -33,7 +33,7 @@ Your priorities and limits carry over when the Workshop copy updates, and so do 
 2. Subscribe to Experimental UE4SS for Palworld, switch it on in the game's Mod Management and start the game once. After that the folder `<Palworld>\Mods\NativeMods\UE4SS` exists.
 3. Close the game. Extract the zip into `<Palworld>` and let it merge the folders. The target must be exactly `<Palworld>`. Some tools add the zip's name as an extra folder at the end of the target. Remove that part before you extract. You get `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\` and `<Palworld>\Pal\Content\Paks\LogicMods\PalWorkPriority.pak`.
 4. Check that `<Palworld>\Mods\NativeMods\UE4SS\Mods\PalWorkPriority\Scripts\main.lua` exists. If it does not, the files went into the wrong folder.
-5. Start the game, load your world and open a Monitoring Stand. It shows numbers. Every job the game had ticked starts at 1, so the game still picks. To test the mod, right click a 1. It becomes 2, and a moment later the line under the stand says "Steering 1 of" and your number of Pals. Left click that cell once to put it back. No stand yet? Alt+F1 opens the Production Limits panel, which proves the mod loaded. If Alt+F1 takes a screenshot instead, that is the NVIDIA overlay, see [Troubleshooting](#troubleshooting).
+5. Start the game, load your world and open a Monitoring Stand. It shows numbers. Every job the game had ticked starts at 1, so the game still picks. To test the mod, right click a 1. It becomes 2. Hold the pointer over a cell: a moment later its tooltip ends with "Steering 1 of" and your number of Pals. Left click that cell once to put it back. No stand yet? Alt+F1 opens the Production Limits panel, which proves the mod loaded. If Alt+F1 takes a screenshot instead, that is the NVIDIA overlay, see [Troubleshooting](#troubleshooting).
 
 If you switch the Workshop copy off after a manual install, extract the zip again. The game may remove files the two copies share.
 
@@ -72,7 +72,7 @@ left click:   X → 5 → 4 → 3 → 2 → 1 → X
 right click:  1 → 2 → 3 → 4 → 5 → X → 1
 ```
 
-You can also type a number. Hover a cell or move to it with the arrow keys, then press 1 to 5 or X. A click is already an edit. If a number key does nothing, press an arrow key once first. The legend under the stand opens with the scale: 1 first, X never. It lists the clicks and keys and reminds you that 1 wraps to X. It also says either that all jobs start equal, so the game picks until you give a Pal different numbers, or how many Pals the mod steers. `show_stand_legend = false` (options page: "Show the controls line under the stand") hides that line until there is a warning to show. On a controller it stays. Hold the pointer over a cell to see what the numbers mean, what that cell shows and every control, one per line. A mark next to a number is explained there too: `*` is still being sent, `!` was not saved and `?` is unknown.
+You can also type a number. Hover a cell or move to it with the arrow keys, then press 1 to 5 or X. A click is already an edit. If a number key does nothing, press an arrow key once first. Hold the pointer over a cell to see what the numbers mean (1 first, 5 last, X never), what that cell shows, every control, one per line, and how many Pals the mod steers. A mark next to a number is explained there too: `*` is still being sent, `!` was not saved and `?` is unknown. The line under the stand only shows warnings and notices, such as a locked stand. On a controller it names the buttons, because a tooltip needs the mouse. `show_stand_legend = true` (options page: "Show the controls line under the stand") shows the scale, the controls and the steering count in that line instead, and the tooltips then leave them out.
 
 A dash means the Pal cannot do that job at all. It is not a priority.
 
@@ -123,7 +123,7 @@ Restart the game after a change. `!pwp reload` also reads `config.lua` again, bu
 | `use_work_priority_for_new_pals` | `false` | `true` gives a Pal the mod has not saved yet the `work_priority` numbers, as 0.4.1 did. The first time it is on, a fresh install's Pals whose jobs all have the same number get them once (the stand says how many). Numbers you set on the stand are kept |
 | `item_limits_on_rocks` | `true` | `false` makes Mining limits stop all mining |
 | `storage_scope` | `"camp"` | `"global"` counts every loaded base of your guild |
-| `show_stand_legend` | `true` | `false` hides the controls line under the stand. It still appears for warnings and notices, and on a controller. Hover a cell with the mouse to see the controls. Only your own stand changes |
+| `show_stand_legend` | `false` | `true` shows the controls and the steering count in a line under the stand instead of in each cell's tooltip. Off, the line only shows warnings and notices, and the buttons on a controller. Only your own stand changes |
 
 If an upgrade had to reset `config.lua`, the panel tells you. The notice stays until you have opened the panel. Values from 0.4.1 that 0.4.1 accepted but 0.5 does not, such as a recheck every 3 seconds, are moved into the allowed range and the log warns about it. A `config.lua` saved with a BOM (some editors add one) is read normally. Keep these files when you update or reinstall. They are all in the `PalWorkPriority` folder.
 

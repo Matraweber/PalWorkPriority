@@ -193,10 +193,10 @@ return {
     -- command list; the README has it too.
     chat_prefix = "!pwp",
 
-    -- The line under the Monitoring Stand that names the controls. false
-    -- hides it; it then shows only for warnings and notices (a locked stand,
-    -- a change that was not saved). Hover a cell with the mouse to see the
-    -- controls. On a controller the line stays. Each player sets this for
-    -- their own stand.
-    show_stand_legend = true,
+    -- The controls are in the tooltip of the cell you hover. true also shows
+    -- them in a line under the Monitoring Stand (the tooltip then leaves them
+    -- out). Off, that line only shows warnings and notices (a locked stand, a
+    -- change that was not saved). On a controller the line always names the
+    -- buttons. Each player sets this for their own stand.
+    show_stand_legend = false,
 }

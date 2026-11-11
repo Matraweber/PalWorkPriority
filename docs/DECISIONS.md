@@ -605,8 +605,19 @@ Format: **Decision** - why. *Rejected:* alternatives and the reason. *Evidence:*
 
 ## UI and input
 
+- **2026-11-11 (later) - The controls are said once, in the cell tooltip;
+  the line under the stand is off by default.** Seeing the line and the new
+  tooltip together, the user said "we don't need it in 2 places": the
+  tooltip of the hovered cell carries the scale, the controls and the
+  steering count, the line only shows warnings and notices. This replaces
+  the default below and the round-3 onboarding choice of an always-on line.
+  On a controller the line still names the buttons (a tooltip needs the
+  mouse). `show_stand_legend = true` brings the 0.5.1 line back, and the
+  tooltips then leave the controls out; while the line shows a notice
+  instead, the tooltips carry them. *Evidence:* [retest-0.5.2-2026-11-11](retest-0.5.2-2026-11-11.md).
+
 - **2026-11-11 - The stand's controls line can be switched off; it stays on
-  by default.** `show_stand_legend = false` (config.lua or the options page)
+  by default.** (Default replaced the same day, above.) `show_stand_legend = false` (config.lua or the options page)
   hides it until there is a notice, and the cell tooltip now lists every
   control (CerbinTalYalas's layout). Default on, so the round-3 onboarding fix
   still reaches a new player. The controls say "raise" and "lower" instead of

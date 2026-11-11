@@ -105,6 +105,37 @@ what the new hint says. Anubis's Mining went 3 -> 2 -> 3 and is stored as 3.
 Tests after the fixes: Lua 256 scripts 0 failures (stand 101 checks),
 luacheck clean.
 
+## Controls in one place (the user's call after seeing it)
+
+With the line on (then the default) and the new tooltip, the scale, the
+controls and the steering count were on screen twice. The user: "only when
+hovering on one we dont need it in 2 places". Now:
+
+- `show_stand_legend` defaults to `false` (config.lua, DarnMenu page; no key
+  at all is off). The line shows only notices, and the buttons on a
+  controller.
+- `M.legend_text` returns whether its text is the controls line;
+  `refresh_legend` keeps that in `M.line_names_controls`, and a cell's
+  tooltip adds the controls block only when the line is not showing it
+  (also while a notice stands in its place, and without a line).
+- Tests: the fixture runs with the line on (its footer tests are about the
+  line); new asserts for "line on: no controls or count in the tooltip",
+  "no key: collapsed", "pad: the line has the buttons, the tooltip not",
+  and the count once per refresh with the line off. Three breaks of the
+  rule (tooltip always with controls, a notice hiding them, no key = on)
+  are each caught (scratchpad mutate053.py).
+- Re-review of 8ac55e8 (stand bugs agent): no P1; its P2 was the CHANGELOG
+  line "an edit keeps the tooltip open", not true on a Pal's first edit
+  (the equal-numbers hint goes), a second later on the host (the steering
+  count moves) and on every client edit ("Sending"). The line was removed.
+- In game (deployed after a normal quit, relaunched, no setting saved
+  anywhere): no line under the stand (ScreenShot00439); the hovered cell's
+  tooltip has the scale, the controls and "Steering 11 of 14 (all bases)"
+  (ScreenShot00440). Not seen in game: `show_stand_legend = true` with the
+  short tooltip (covered by the tests).
+
+Lua 256 scripts 0 failures, luacheck clean, public texts OK.
+
 ## Test world restored
 
 The DarnMenu user file was copied first to

@@ -83,7 +83,7 @@ return {
     storage_scope = "camp",
     log_level = "info",
     chat_prefix = "!pwp",
-    show_stand_legend = true,
+    show_stand_legend = false,
     key_panel = { key = "F1", modifiers = { "ALT" } },
     key_pass  = { key = "F2", modifiers = { "ALT" } },
     key_stock = { key = "F3", modifiers = { "ALT" } },
@@ -161,7 +161,7 @@ return {
       title = "Monitoring Stand",
       options = {
         { path = "show_stand_legend", label = "Show the controls line under the stand", kind = "bool",
-          help = "Off hides the line that names the controls until there is a warning or notice. Hover a cell with the mouse to see the controls. On a controller the line stays. Only your own stand changes." },
+          help = "Off: hover a cell to see the controls, and the line under the stand only shows warnings and notices. On: the line names the controls and the tooltip leaves them out. On a controller the line always shows. Only your own stand changes." },
       },
     },
     {

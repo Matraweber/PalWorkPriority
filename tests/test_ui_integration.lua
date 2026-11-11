@@ -15,7 +15,7 @@ local function fixture(keys)
     end
     local f = {authority=false, viewport=true, objects={}, menus={}, rows={}, cells={},
         writes={}, pending={}, hooks={}, bindings={}, buttons={}, warnings={}, rank_calls=0,
-        stale_calls=0, serial=0, cfg={}, counts={}, timings={}}
+        stale_calls=0, serial=0, cfg={show_stand_legend=true}, counts={}, timings={}}
     local function noop() end
     package.loaded.log = {perf=false, count=function(label)
         f.counts[label]=(f.counts[label] or 0)+1; return {ms=0}
@@ -973,12 +973,20 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     assert(legends[1].Font.Size==14,'legend is not 14 pt')
     local c=legends[1].colour.SpecifiedColor
     assert(c.R>0.85 and c.G>0.85 and c.B>0.85,'legend text is not light on the dark backing')
-    -- 0.5.2 (Nexus, 2026-11-11): the tooltip opens with the cell's value and
-    -- the scale, then the cell's detail with its mark in front, then one
-    -- control per line. It no longer repeats the footer line.
+    -- 0.5.2 (Nexus, 2026-11-11): the tooltip opens with the scale, then the
+    -- cell's detail with its mark in front, then one control per line. The
+    -- controls are in one place only (user, 2026-11-11): this fixture has the
+    -- line on, so the tooltip leaves them out; with the line off (the
+    -- default, no key) the tooltip has them.
     local tip=f.cells[1].tooltip
     assert(tip:find('Priority: '..f.ui.TIP_SCALE..'\n* Sending',1,true)==1,tip)
+    assert(not tip:find(f.ui.TIP_CONTROLS,1,true),'the controls are in the line and in the tooltip: '..tip)
+    local off={}; for k,v in pairs(f.cfg) do off[k]=v end; off.show_stand_legend=nil
+    f.ui.detach(); assert(f.ui.refresh(off))
+    tip=f.cells[1].tooltip
     assert(tip:find('\n\n'..f.ui.TIP_CONTROLS,1,true),'cell tooltip lost the controls: '..tip)
+    assert(legends[1].parent.visibility==1,'the default showed the controls line')
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
     assert(not tip:find(' | ',1,true),'cell tooltip still carries the footer line: '..tip)
     assert(not tip:find('Steering',1,true),'a client tooltip showed a steering count')
     assert(f.ui.TIP_CONTROLS:find('Left click / Enter: raise priority (1 wraps to X)\nRight click: lower priority',1,true))
@@ -1330,8 +1338,12 @@ check('show_stand_legend false hides the controls line but not a notice',functio
     assert(#again==1 and again[1].parent~=box and again[1].parent.visibility==1,
         'a new Border was drawn while the line is off')
     box=again[1].parent
-    -- Back on (nil means on): the controls line returns.
+    -- No key at all is the default, off: still collapsed.
     cfg.show_stand_legend=nil
+    f.ui.detach(); assert(f.ui.refresh(cfg))
+    assert(box.visibility==1,'no key showed the controls line')
+    -- On: the controls line returns, and the tooltips leave the controls out.
+    cfg.show_stand_legend=true
     f.ui.detach(); assert(f.ui.refresh(cfg))
     assert(box.visibility==3 and f.legends()[1].text==f.ui.CLIENT_LEGEND,f.legends()[1].text)
 end)
@@ -1643,17 +1655,27 @@ check('the legend shows the steering count only where the passes run',function()
         package.loaded.scheduler={steering_count=function() return 2,5,3 end}
         f.ui.detach(); assert(f.ui.refresh(f.cfg))
         assert(f.legends()[1].text:find('1 first, X never | Steering 2 of 5 (all bases) | ',1,true)==1,f.legends()[1].text)
-        -- And the host's tooltip ends with it, under the controls (0.5.2).
+        -- Once only: with the line showing it, the tooltip has no count.
+        assert(not f.cells[1].tooltip:find('Steering',1,true),f.cells[1].tooltip)
+        -- With the line off, the host's tooltip ends with it, under the controls.
+        local off={}; for k,v in pairs(f.cfg) do off[k]=v end; off.show_stand_legend=false
+        f.ui.detach(); assert(f.ui.refresh(off))
         local tip=f.cells[1].tooltip
         assert(tip:sub(-#'\n\nSteering 2 of 5 (all bases)')=='\n\nSteering 2 of 5 (all bases)',tip)
-        -- A pad names its buttons in the tooltip, and the bound panel key is named.
+        -- A pad: the line names the buttons even when off (no tooltip without
+        -- a mouse), so the tooltip leaves them out.
         local api=package.loaded.palapi; api.last_input_type=1
-        f.ui.detach(); assert(f.ui.refresh(f.cfg))
-        assert(f.cells[1].tooltip:find(f.ui.TIP_PAD_CONTROLS,1,true),f.cells[1].tooltip)
+        local pad_ok,pad_err=pcall(function()
+            f.ui.detach(); assert(f.ui.refresh(off))
+            assert(f.legends()[1].text:find(f.ui.PAD_CONTROLS,1,true),f.legends()[1].text)
+            assert(not f.cells[1].tooltip:find(f.ui.TIP_PAD_CONTROLS,1,true),f.cells[1].tooltip)
+        end)
         api.last_input_type=nil
+        assert(pad_ok,pad_err)
+        -- The bound panel key is named in the tooltip.
         local dm=package.loaded.darnmenu
         package.loaded.darnmenu={labels={key_panel='ALT+F7'}}
-        f.ui.detach(); assert(f.ui.refresh(f.cfg))
+        f.ui.detach(); assert(f.ui.refresh(off))
         assert(f.cells[1].tooltip:find('ALT+F7: Production Limits panel',1,true),f.cells[1].tooltip)
         package.loaded.darnmenu=dm
     end)
@@ -1917,6 +1939,8 @@ check('a refresh that changes nothing writes no tooltip',function()
     package.loaded.scheduler={steering_count=function() return count[1],count[2],count[3] end}
     local ok,err=pcall(function()
         f.authority=true
+        -- The line off, so the count is in every tooltip.
+        f.cfg.show_stand_legend=false
         for _,row in ipairs(f.rows) do f.bind(row) end
         assert(f.ui.refresh(f.cfg))
         local function writes() local n=0; for _,c in ipairs(f.cells) do n=n+(c.tooltip_writes or 0) end; return n end
@@ -1949,8 +1973,17 @@ check('one refresh builds the edit legend once, not once per cell',function()
         end
         assert(f.legends()[1].text:find('Steering 2 of 5 (all bases)',1,true))
         for _,cell in ipairs(f.cells) do
+            assert(not cell.tooltip:find('Steering',1,true),'count in the line and the tooltip: '..cell.tooltip)
+        end
+        -- Line off: every tooltip has it, still asked once per refresh.
+        f.cfg.show_stand_legend=false
+        f.ui.detach(); calls=0
+        assert(f.ui.refresh(f.cfg))
+        assert(calls==1,'steering_count asked '..calls..' times in one refresh')
+        for _,cell in ipairs(f.cells) do
             assert(cell.tooltip:find('Steering 2 of 5 (all bases)',1,true),cell.tooltip)
         end
+        f.cfg.show_stand_legend=true
         -- Outside a refresh it is built fresh, not taken from the last one.
         package.loaded.scheduler.steering_count=function() return 4,5,1 end
         assert(f.ui.legend_text():find('Steering 4 of 5',1,true),f.ui.legend_text())

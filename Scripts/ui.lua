@@ -389,7 +389,8 @@ local function shared_tip_controls()
 end
 
 -- value: the glyph before its mark ("1"-"5", "X" or "?"). controls: the
--- shared block above, or the missing-pak message in its place.
+-- shared block above, the missing-pak message in its place, or nil when the
+-- line under the stand already names the controls (M.controls_line_shown).
 -- The first line does not repeat the cell's number (review 2026-11-11): the
 -- cell shows it, and with it every edit of the hovered cell changed the
 -- text, which closes an open tooltip (cell_tip).
@@ -401,7 +402,8 @@ function M.cell_help(value, marker, detail, same, controls)
     if marker ~= nil and marker ~= "" then detail = marker .. " " .. detail end
     local help = head .. "\n" .. detail
     if same then help = help .. "\n" .. M.SAME_NUMBER_HINT end
-    return help .. "\n\n" .. controls
+    if controls then help = help .. "\n\n" .. controls end
+    return help
 end
 
 local function warn_once(key, message)
@@ -524,6 +526,7 @@ function M.reset()
     legend_names, legend_count = {}, 0
     legend_styled = {}
     legend_shown = {}
+    M.line_names_controls = false
     menu_name = nil
     row_pal = {}
     menu_likely_open = false
@@ -1321,18 +1324,26 @@ function M.config_message()
     if type(configuration) == "table" and configuration.rejection ~= nil then return M.CONFIG_PAUSED end
 end
 
--- show_stand_legend = false (0.5.2, Nexus suggestion 2026-11-11): the line
--- under the stand only shows when it has something to say. Every reason and
--- notice above still shows; only the controls line goes, and a cell's
--- tooltip names the controls. A tooltip opens only under the mouse, so on a
--- controller the line stays (review 2026-11-11: a pad player had no button
--- names left). nil when there is nothing to show.
+-- Whether the line under the stand names the controls (0.5.2). The user's
+-- call (2026-11-11): the controls in one place, the tooltip of the hovered
+-- cell, not also in the line ("we don't need it in 2 places"). So the line
+-- is off unless show_stand_legend = true, and it only says what it has to
+-- (every reason and notice in M.legend_text). A tooltip opens only under the
+-- mouse, so on a controller the line stays (review 2026-11-11). No cfg at
+-- all (an old caller) keeps the line, as before 0.5.2.
+function M.controls_line_shown(cfg)
+    if api.last_input_type == 1 or type(cfg) ~= "table" then return true end
+    return cfg.show_stand_legend == true
+end
+
+-- nil when there is nothing to show (the line is then collapsed). The
+-- second value is true when the text is the controls line itself.
 function M.legend_text(cfg)
     local notice = M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
         or pak_message() or refused_notice() or reset_notice() or converted_notice() or lifted_notice() or selection_issue() or M.config_message()
-    if notice then return notice end
-    if type(cfg) == "table" and cfg.show_stand_legend == false and api.last_input_type ~= 1 then return nil end
-    return shared_edit_legend()
+    if notice then return notice, false end
+    if not M.controls_line_shown(cfg) then return nil, false end
+    return shared_edit_legend(), true
 end
 
 -- One small legend in a known multi-child root. Ownership is names only; each
@@ -1422,7 +1433,10 @@ local function refresh_legend(menu, cfg)
             write(tb:SetVisibility(3))
             legend_styled[name]=legend_names[name]
         end
-        local text=M.legend_text(cfg)
+        local text, names_controls=M.legend_text(cfg)
+        -- Cells leave the controls out of their tooltip only while this
+        -- line shows them (a notice in their place puts them back there).
+        M.line_names_controls=names_controls
         -- Collapsed, not an empty dark box, when there is nothing to say.
         local visibility=text and 3 or 1
         if legend_shown[name]~=visibility then
@@ -1433,6 +1447,7 @@ local function refresh_legend(menu, cfg)
         return true
     end)
     M.legend_mode=ok and shown and "footer" or "tooltip"
+    if M.legend_mode~="footer" then M.line_names_controls=false end
 end
 refresh_legend = measurement.callback("stand: legend refresh", refresh_legend)
 
@@ -1658,8 +1673,14 @@ local function handle_cell(cfg, cell, known_name)
     local help
     if locked then help=locked
     else
-        help=M.cell_help(glyph, marker, detail, known and same_number(cfg,pal,ranks),
-            pak_message() or shared_tip_controls())
+        -- The controls once: in the tooltip unless the line under the stand
+        -- shows them right now (M.line_names_controls, written by
+        -- refresh_legend; false without a line, in legend_mode "tooltip").
+        local controls=pak_message()
+        if not controls and not M.line_names_controls then
+            controls=shared_tip_controls()
+        end
+        help=M.cell_help(glyph, marker, detail, known and same_number(cfg,pal,ranks), controls)
     end
     glyph=glyph..marker
     colour=edit_colour or colour
