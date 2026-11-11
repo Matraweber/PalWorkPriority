@@ -154,6 +154,28 @@ fixture with a new palapi table and reloads ui.lua; nothing changed.
   `*` (confirmed by the server, ScreenShot00442), left-clicked back to 1
   (ScreenShot00443). The server stays on 0.5.1.
 
+## Released (2026-11-11)
+
+- Tag v0.5.2 = e116ff2, master and tag pushed; README wording "a 0.5
+  version (0.5.0, 0.5.1 and 0.5.2 all play together)" in 1a33cab after the
+  tag (docs only, same wording as both store pages).
+- Archives `build/release-0.5.2` from git blobs, reproducible: manual
+  b2939dc8..., server 53853c7e..., workshop d4bf5ec3...; the Workshop zip's
+  Lua equals the commit, `default_config.lua` has `show_stand_legend = false`.
+- Steam Workshop: `workshop_upload.py prepare` + `upload`, the user pressed
+  OK, change notes "Update: 11 Nov @ 12:35pm". Description: heading 0.5.2,
+  the "First minute" check reads the count in the tooltip, "Updating from an
+  earlier 0.5 version", "a 0.5 version (0.5.0, 0.5.1 and 0.5.2 all play
+  together)". `check` PASS later the same day (Steam's copy equals the stage).
+- Nexus (after a partial outage; one "Failed to finalise upload (500)" and
+  one silent failed save, both retried): main file updated to "Pal Work
+  Priority 0.5.2" (primary, mod version set to 0.5.2), optional "Dedicated
+  server files 0.5.2" (mod manager download off, as before), 0.5.1 files in
+  the older versions. Description: the same four changes ("0.4.1 or an
+  earlier 0.5 version" there). Checked on the public pages.
+- Reply to CerbinTalYalas posted in their thread (ledger rows 98-99).
+- Server RAM stays on 0.5.1 (0.5.2 client tested on it).
+
 ## Test world restored
 
 The DarnMenu user file was copied first to
