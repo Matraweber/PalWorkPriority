@@ -71,6 +71,40 @@ DarnMenu: the option, apply, a refused non-boolean, the page default from
 Lua 256 scripts 0 failures, luacheck clean (ui.lua 115 top-level locals,
 panel.lua unchanged at 193), Python 842 OK (85 skipped).
 
+## Review round (newcomer UX, stand bugs, test coverage)
+
+No P1. Confirmed, the user picked fixes 1, 2, 4, 5 and "drop the number":
+
+- **P2 (UX, also stand bugs P3-2):** a tooltip opens only under the mouse,
+  so with the line off a controller player had no button names, and four
+  texts said every tooltip lists the controls. The line now stays while the
+  last input was a controller; texts reworded.
+- **P2 (UX):** "(click or arrow into the stand first)" made the first click an
+  edit (stand_pointer queues a step on the press). Now "(if nothing happens,
+  press an arrow key first)"; README the same. Seen in game: one Right arrow
+  on a freshly opened stand selected Verdash's X cell without a click
+  (ScreenShot00426).
+- **P3 (stand bugs):** the first line carried the number, so an edit of the
+  hovered cell rewrote the text and closed the tooltip on the host. Now
+  "Priority: 1 = first, 5 = last, X = never". Seen in game: tooltip open,
+  number key 3, cell 2 -> 3, tooltip still open (ScreenShot00437/00438).
+- **P2 (tests):** pak-missing tooltip, settings-lock tooltip, hidden line
+  updated by an arrow (M.nav passes cfg), rebuilt Border stays collapsed,
+  pad keeps the line, steering asked once per input paint. Each new test
+  fails with its fix taken out (8 of 8, scratchpad mutate052.py).
+- **P3 cleanups:** dead guard in give_back removed; paint_input runs in one
+  legend round.
+- Not changed: "raise (3>2, 1>X)" in the footer (user skipped); the tooltip
+  font size is the game's tooltip style.
+
+In-game check of the fixes: deployed after a normal quit (quit-only copy of
+the restart macro), relaunched. Hovering needs one real click on the game
+window after a launch; a number key then needed one arrow key first, which is
+what the new hint says. Anubis's Mining went 3 -> 2 -> 3 and is stored as 3.
+
+Tests after the fixes: Lua 256 scripts 0 failures (stand 102 checks),
+luacheck clean.
+
 ## Test world restored
 
 The DarnMenu user file was copied first to

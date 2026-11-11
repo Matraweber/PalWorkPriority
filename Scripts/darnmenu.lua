@@ -161,7 +161,7 @@ return {
       title = "Monitoring Stand",
       options = {
         { path = "show_stand_legend", label = "Show the controls line under the stand", kind = "bool",
-          help = "Off hides the line that names the controls. It still shows warnings and notices, and every cell's tooltip lists the controls. Only your own stand changes." },
+          help = "Off hides the line that names the controls until there is a warning or notice. Hover a cell with the mouse to see the controls. On a controller the line stays. Only your own stand changes." },
       },
     },
     {

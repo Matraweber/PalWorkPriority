@@ -195,7 +195,7 @@ do
     local c = apply({ show_stand_legend = false })
     assert(c.show_stand_legend == false and #warnings == 0, 'the switch was not applied')
     c = apply({ show_stand_legend = 'no' })
-    assert(c.show_stand_legend ~= false and #warnings == 1, 'a non-boolean switch was applied')
+    assert(c.show_stand_legend == true and #warnings == 1, 'a non-boolean switch was applied')
     local own = base(); own.show_stand_legend = false
     local d = assert(load(darnmenu.schema_text(own), '=page', 't', {}))().defaults
     assert(d.show_stand_legend == false, 'config.lua false not shown on the page')

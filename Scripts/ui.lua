@@ -181,7 +181,9 @@ M.TIP_SCALE = "1 = first, 5 = last, X = never"
 M.TIP_CONTROLS = table.concat({
     "Left click / Enter: raise priority (1 wraps to X)",
     "Right click: lower priority",
-    "1-5 / X: set the hovered or selected cell (click or arrow into the stand first)",
+    -- Not "click first": a click is already an edit (review 2026-11-11). An
+    -- arrow key works on a freshly opened stand (seen in game, 2026-11-11).
+    "1-5 / X: set the hovered or selected cell (if nothing happens, press an arrow key first)",
     "Arrows: select a cell",
     "ALT+F1: Production Limits panel",
 }, "\n")
@@ -388,10 +390,13 @@ end
 
 -- value: the glyph before its mark ("1"-"5", "X" or "?"). controls: the
 -- shared block above, or the missing-pak message in its place.
+-- The first line does not repeat the cell's number (review 2026-11-11): the
+-- cell shows it, and with it every edit of the hovered cell changed the
+-- text, which closes an open tooltip (cell_tip).
 function M.cell_help(value, marker, detail, same, controls)
     local head
     if value == "?" then head = "Priority unknown"
-    else head = "Priority " .. value .. " (" .. M.TIP_SCALE .. ")" end
+    else head = "Priority: " .. M.TIP_SCALE end
     detail = detail or "Priority data unavailable."
     if marker ~= nil and marker ~= "" then detail = marker .. " " .. detail end
     local help = head .. "\n" .. detail
@@ -1318,13 +1323,15 @@ end
 
 -- show_stand_legend = false (0.5.2, Nexus suggestion 2026-11-11): the line
 -- under the stand only shows when it has something to say. Every reason and
--- notice above still shows; only the controls line goes, and every cell's
--- tooltip names the controls. nil when there is nothing to show.
+-- notice above still shows; only the controls line goes, and a cell's
+-- tooltip names the controls. A tooltip opens only under the mouse, so on a
+-- controller the line stays (review 2026-11-11: a pad player had no button
+-- names left). nil when there is nothing to show.
 function M.legend_text(cfg)
     local notice = M.vanilla_message() or M.lock_message() or M.settings_message() or M.store_message()
         or pak_message() or refused_notice() or reset_notice() or converted_notice() or lifted_notice() or selection_issue() or M.config_message()
     if notice then return notice end
-    if type(cfg) == "table" and cfg.show_stand_legend == false then return nil end
+    if type(cfg) == "table" and cfg.show_stand_legend == false and api.last_input_type ~= 1 then return nil end
     return shared_edit_legend()
 end
 
@@ -1528,7 +1535,6 @@ local function give_back(cell, cell_name, cfg)
     cell_paths[cell_name] = hint
     if existing and alive(existing) then set_cell(existing, cell_name, "", "blank") end
     local tip = M.legend_mode == "tooltip" and M.legend_text(cfg) or ""
-    if tip == nil then tip = "" end
     set_tooltip(cell, cell_name, tip)
     if not restore_checkbox(cell, cell_name) then return "failed" end
     return "vanilla"
@@ -2139,25 +2145,29 @@ end
 -- Only the edited cell and the former navigation focus need immediate paint.
 -- All wrappers belong to this action's freshly proved roster. Data/snapshot
 -- invalidations still get a complete refresh at the normal maintenance beat.
+-- One legend round, so the steering count and the tooltip controls are
+-- built once per input paint, not once per painted cell (review 2026-11-11).
 local function paint_input(cfg, cells, edited, previous)
-    same_memo = {}
-    for _, cell in ipairs(cells or {}) do
-        local paint = cell == edited
-        if not paint and previous then
-            local pal, work = cell_target(cell)
-            paint = pal and pal.key == previous.key and work == previous.work
-        end
-        if paint then
-            local name = full_name(cell)
-            if name then cell_last[name] = nil end
-            local ok, result = pcall(handle_cell, cfg, cell, name)
-            if not ok or (result ~= "rendered" and result ~= "vanilla") then
-                -- Do not consume the full-grid generation on a partial draw.
-                invalidate_cells()
-                if not ok then warn_once("input paint", "stand edit could not be drawn: " .. tostring(result)) end
+    return with_one_legend(function()
+        same_memo = {}
+        for _, cell in ipairs(cells or {}) do
+            local paint = cell == edited
+            if not paint and previous then
+                local pal, work = cell_target(cell)
+                paint = pal and pal.key == previous.key and work == previous.work
+            end
+            if paint then
+                local name = full_name(cell)
+                if name then cell_last[name] = nil end
+                local ok, result = pcall(handle_cell, cfg, cell, name)
+                if not ok or (result ~= "rendered" and result ~= "vanilla") then
+                    -- Do not consume the full-grid generation on a partial draw.
+                    invalidate_cells()
+                    if not ok then warn_once("input paint", "stand edit could not be drawn: " .. tostring(result)) end
+                end
             end
         end
-    end
+    end)
 end
 
 -- dir -1 for left click (towards priority 1), +1 for right click.

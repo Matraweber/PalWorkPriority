@@ -439,7 +439,13 @@ check('missing input asset preserves numbers but never revives raw hover editing
     -- Both lookups answered "not found": that is the missing pak.
     assert(require('stand_pointer').asset_missing==true)
     assert(f.ui.legend_text()==f.ui.PAK_MISSING)
-    assert(f.cells[1].tooltip:find(f.ui.PAK_MISSING,1,true))
+    local tip=f.cells[1].tooltip
+    assert(tip:sub(-#('\n\n'..f.ui.PAK_MISSING))=='\n\n'..f.ui.PAK_MISSING,tip)
+    assert(not tip:find(f.ui.TIP_CONTROLS,1,true),'a stand without its pak lists clicks that do nothing')
+    local api=package.loaded.palapi; api.last_input_type=1
+    f.ui.detach(); assert(f.ui.refresh(f.cfg))
+    tip=f.cells[1].tooltip; api.last_input_type=nil
+    assert(not tip:find(f.ui.TIP_PAD_CONTROLS,1,true) and tip:find(f.ui.PAK_MISSING,1,true),tip)
 end)
 
 -- Round 2 (P3): an invalid AssetRegistry CDO was reported as a missing pak.
@@ -971,13 +977,17 @@ check('pending values have colour, explanatory tooltip and one visible legend',f
     -- the scale, then the cell's detail with its mark in front, then one
     -- control per line. It no longer repeats the footer line.
     local tip=f.cells[1].tooltip
-    assert(tip:find('Priority 1 ('..f.ui.TIP_SCALE..')\n* Sending',1,true)==1,tip)
+    assert(tip:find('Priority: '..f.ui.TIP_SCALE..'\n* Sending',1,true)==1,tip)
     assert(tip:find('\n\n'..f.ui.TIP_CONTROLS,1,true),'cell tooltip lost the controls: '..tip)
     assert(not tip:find(' | ',1,true),'cell tooltip still carries the footer line: '..tip)
     assert(not tip:find('Steering',1,true),'a client tooltip showed a steering count')
     assert(f.ui.TIP_CONTROLS:find('Left click / Enter: raise priority (1 wraps to X)\nRight click: lower priority',1,true))
+    assert(not f.ui.TIP_CONTROLS:find('click or arrow',1,true),'the tooltip tells players to click before typing')
     assert(f.ui.cell_help('?','','Connecting.',false,'C')=='Priority unknown\nConnecting.\n\nC')
-    assert(f.ui.cell_help('X','!','Not saved.',true,'C')=='Priority X ('..f.ui.TIP_SCALE..')\n! Not saved.\n'
+    -- Review 2026-11-11: the number is not repeated, so an edit of the
+    -- hovered cell leaves its tooltip text (and the open tooltip) alone.
+    assert(f.ui.cell_help('3','','Set.',false,'C')==f.ui.cell_help('2','','Set.',false,'C'),'the first line names the number')
+    assert(f.ui.cell_help('X','!','Not saved.',true,'C')=='Priority: '..f.ui.TIP_SCALE..'\n! Not saved.\n'
         ..f.ui.SAME_NUMBER_HINT..'\n\nC')
     -- One line: the mouse first, then the panel key. A second line ran into
     -- the game's "unused Stat Points" bar (in game, 2026-10-22).
@@ -1302,11 +1312,68 @@ check('show_stand_legend false hides the controls line but not a notice',functio
     box.SetVisibility=function(self,v) writes=writes+1; return set(self,v) end
     for _=1,3 do f.ui.detach(); assert(f.ui.refresh(cfg)) end
     assert(writes==0,'hidden legend rewrote its visibility '..writes..' times')
+    box.SetVisibility=set
+    -- On a controller the line stays: a tooltip needs the mouse (review
+    -- 2026-11-11), and it collapses again when the mouse is back.
+    local api=package.loaded.palapi; api.last_input_type=1
+    f.ui.detach(); assert(f.ui.refresh(cfg))
+    assert(box.visibility==3 and f.legends()[1].text==f.ui.PAD_CLIENT_LEGEND,f.legends()[1].text)
+    api.last_input_type=nil
+    f.ui.detach(); assert(f.ui.refresh(cfg))
+    assert(box.visibility==1,'the line stayed after the pad')
+    -- A rebuilt root (the old Border gone): the new Border starts collapsed
+    -- too, not as an empty dark bar.
+    for i,w in ipairs(f.root.children) do if w==box then table.remove(f.root.children,i); break end end
+    box.dead=true
+    f.ui.detach(); assert(f.ui.refresh(cfg))
+    local again=f.legends()
+    assert(#again==1 and again[1].parent~=box and again[1].parent.visibility==1,
+        'a new Border was drawn while the line is off')
+    box=again[1].parent
     -- Back on (nil means on): the controls line returns.
     cfg.show_stand_legend=nil
     f.ui.detach(); assert(f.ui.refresh(cfg))
     assert(box.visibility==3 and f.legends()[1].text==f.ui.CLIENT_LEGEND,f.legends()[1].text)
-    box.SetVisibility=set
+end)
+
+-- P2-2 of the review: an arrow key updates the hidden line at once, with the
+-- player's own cfg (M.nav passes it to refresh_legend).
+check('with the line off, an arrow onto a "!" cell shows its reason and off it hides it',function()
+    local f=fixture({'a','b'})
+    local cfg={}; for k,v in pairs(f.cfg) do cfg[k]=v end
+    cfg.show_stand_legend=false
+    assert(f.ui.refresh(cfg)); f.ui.bind_mouse(function() return cfg end)
+    f.ui.edit_status('a',1,'rejected','not_authorized')
+    assert(f.ui.refresh(cfg))
+    local box=f.legends()[1].parent
+    assert(box.visibility==1)
+    f.focus_cell(f.cells[1]); f.key(f.cells[1],7); assert(f.ui.selection.key=='b')
+    assert(box.visibility==1,'a clean cell brought the controls line back')
+    f.key(f.cells[2],6); assert(f.ui.selection.key=='a')
+    assert(box.visibility==3 and f.legends()[1].text=='! The server did not authorize this edit.',f.legends()[1].text)
+    f.key(f.cells[1],7); assert(f.ui.selection.key=='b')
+    assert(box.visibility==1,'the reason outstayed the selection')
+end)
+
+-- Review 2026-11-11 (P3-4): an arrow or edit repaints two cells; the
+-- steering count is asked once for them, not once per cell.
+check('an input paint asks the steering count once',function()
+    local f=fixture({'a','b'})
+    local scheduler=package.loaded.scheduler
+    local calls=0
+    package.loaded.scheduler={steering_count=function() calls=calls+1; return 2,5,3 end}
+    local ok,err=pcall(function()
+        f.authority=true
+        for _,row in ipairs(f.rows) do f.bind(row) end
+        assert(f.ui.refresh(f.cfg)); f.ui.bind_mouse(function() return f.cfg end)
+        f.focus_cell(f.cells[1]); f.key(f.cells[1],7); assert(f.ui.selection.key=='b')
+        calls=0
+        f.key(f.cells[2],6); assert(f.ui.selection.key=='a')
+        -- One for the two repainted cells, one for the line under the stand.
+        assert(calls<=2,'steering_count asked '..calls..' times for one arrow')
+    end)
+    package.loaded.scheduler=scheduler; f.authority=false
+    assert(ok,err)
 end)
 
 check('stand editing without the pak is named for every input, not just the mouse',function()
@@ -1468,11 +1535,13 @@ check('settings fence explains recovery and terminal closure, blocks queued edit
     assert(f.ui.legend_text():find('Loading saved settings',1,true))
     assert(f.texts(f.cells[1])[1].text=='?')
     assert(f.cells[1].tooltip:find('temporarily locked',1,true))
+    assert(f.cells[1].tooltip==f.ui.settings_message(),'a locked cell got controls: '..f.cells[1].tooltip)
     f.session.drain(error); assert(#f.writes==0)
     assert(not f.ui.capture_direct() and not f.ui.nav(f.cfg,'raise'))
     assert(gate.require_restart(token)); assert(f.ui.refresh(f.cfg))
     assert(f.ui.legend_text():find('Restart the game',1,true))
     assert(f.cells[1].tooltip:find('Restart the game',1,true))
+    assert(f.cells[1].tooltip==f.ui.settings_message(),'a closed cell got controls: '..f.cells[1].tooltip)
     assert(f.legends()[1].text==f.ui.legend_text(),'footer did not change on closure')
     f.key(f.cells[1],false); f.session.drain(error); assert(#f.writes==0)
     assert(gate.release(token));assert(f.ui.refresh(f.cfg))
