@@ -226,7 +226,7 @@ M.LEGEND_PAD_Y = 1
 M.RESET_NOTICE_SECONDS = 12
 -- Bumped with main.lua's VERSION, like net.OLD_CLIENT_NOTICE
 -- (tests/test_ui_integration.lua compares the two).
-M.MOD_VERSION = "0.5.1"
+M.MOD_VERSION = "0.5.2"
 -- A client whose server never completes the mod's handshake gets the game's
 -- own stand back (audit A5, 2026-10-28): no "?" cells, the vanilla checkboxes,
 -- and one line saying why. The same words as the panel's handshake_timeout

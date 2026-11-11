@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.5.2 - unreleased
+## 0.5.2 - 2026-11-11
 
-Two suggestions from CerbinTalYalas on Nexus.
+Two suggestions from CerbinTalYalas on Nexus. The network protocol is
+unchanged, so 0.5.0, 0.5.1 and 0.5.2 players and servers play together.
 
 ### Changed
 

@@ -142,6 +142,18 @@ without; the old `<= 2` also passed at 0). The other P3, controller mode
 leaking into later tests, does not happen: every check builds a fresh
 fixture with a new palapi table and reloads ui.lua; nothing changed.
 
+## Release checks (0.5.2, 2026-11-11)
+
+- Version 0.5.2 in main.lua, ui.lua, Info.json; CHANGELOG dated; README
+  version lines. Network protocol unchanged.
+- **Dedicated server (GPortal "RAM", still 0.5.1 = f5e45ee):** a 0.5.2 client
+  joined with `restart-server-stand.ahk --launch --any-guild` at 12:22:26
+  ("synchronization: client; ready", "Pal Work Priority 0.5.2 loaded").
+  Stand drawn with the server's numbers and no line under it
+  (ScreenShot00441). Vixy's Gathering right-clicked 1 -> 2, shown without
+  `*` (confirmed by the server, ScreenShot00442), left-clicked back to 1
+  (ScreenShot00443). The server stays on 0.5.1.
+
 ## Test world restored
 
 The DarnMenu user file was copied first to
